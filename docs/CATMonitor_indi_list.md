@@ -556,3 +556,88 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 | GPU | nvidia-smi 命令输出 | nvidia-smi |
 | NPU | npu-smi 命令输出 | npu-smi |
 | Network | /proc/net/dev, /sys/class/net/, /proc/net/tcp, /proc/net/tcp6 | 无 |
+
+---
+
+## 附录B：已实现采集指标清单
+
+> 以下 37 个指标均已实现并通过测试（v0.1.0），按部件分类汇总。
+
+### CPU（7 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | usage | CPU使用率 | High | % |
+| 2 | load_average | 系统负载 | High | - |
+| 3 | temperature | CPU温度 | Medium | °C |
+| 4 | frequency | CPU频率 | Medium | MHz |
+| 5 | context_switches | 上下文切换次数 | Low | 次/s |
+| 6 | process_count | 运行进程数 | Low | 个 |
+| 7 | model_info | CPU型号信息 | Low | - |
+
+### Memory（6 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | usage | 内存使用率 | High | % |
+| 2 | swap_usage | Swap使用率 | High | % |
+| 3 | ecc_ce_errors | CE可纠正错误数 | High | 次 |
+| 4 | ecc_uce_errors | UCE不可纠正错误数 | High | 次 |
+| 5 | oom_count | OOM触发次数 | Medium | 次 |
+| 6 | page_faults | 缺页错误次数 | Low | 次/s |
+
+### Disk（7 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | space_usage | 磁盘空间使用率 | High | % |
+| 2 | iops | 读写IOPS | Medium | 次/s |
+| 3 | throughput | 读写吞吐量 | Medium | MB/s |
+| 4 | io_wait | I/O等待占比 | Medium | % |
+| 5 | smart_status | SMART健康状态 | Medium | - |
+| 6 | smart_temperature | 硬盘温度 | Low | °C |
+| 7 | io_errors | I/O错误计数 | Low | 次 |
+
+### GPU（7 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | utilization | GPU使用率 | High | % |
+| 2 | memory_usage | 显存使用率 | High | % |
+| 3 | temperature | GPU温度 | High | °C |
+| 4 | power_draw | GPU功耗 | Medium | W |
+| 5 | fan_speed | 风扇转速 | Medium | % |
+| 6 | ecc_errors | ECC错误数 | Medium | 次 |
+| 7 | clock_frequency | 时钟频率 | Low | MHz |
+
+### NPU（5 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | utilization | NPU使用率 | High | % |
+| 2 | memory_usage | NPU显存使用率 | High | % |
+| 3 | temperature | NPU温度 | High | °C |
+| 4 | power_draw | NPU功耗 | Medium | W |
+| 5 | health_status | NPU健康状态 | Medium | - |
+
+### Network（5 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | throughput | 网络吞吐量 | High | bytes/s |
+| 2 | packet_count | 包收发数 | Medium | 个/s |
+| 3 | error_count | 错误包计数 | Medium | 次 |
+| 4 | interface_status | 网卡接口状态 | Medium | - |
+| 5 | connection_count | 网络连接数 | Low | 个 |
+
+### 统计汇总
+
+| 部件 | 指标数 | High | Medium | Low |
+|------|--------|------|--------|-----|
+| CPU | 7 | 2 | 2 | 3 |
+| Memory | 6 | 4 | 1 | 1 |
+| Disk | 7 | 1 | 3 | 3 |
+| GPU | 7 | 3 | 3 | 1 |
+| NPU | 5 | 3 | 2 | 0 |
+| Network | 5 | 1 | 3 | 1 |
+| **合计** | **37** | **14** | **14** | **9** |

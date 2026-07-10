@@ -1,0 +1,3 @@
+nr_free_pages 1500000
+pgfault 2836432
+pgmajfault 1234

@@ -1,0 +1,11 @@
+bin/
+catmonitor
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.idea/
+.vscode/

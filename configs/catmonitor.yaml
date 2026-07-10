@@ -1,0 +1,36 @@
+# CATMonitor Configuration File
+
+server:
+  # Server type: auto | cpu_only | accelerated
+  # auto: detect GPU/NPU automatically
+  type: auto
+
+collectors:
+  cpu:
+    enabled: true
+    interval: 3s
+  memory:
+    enabled: true
+    interval: 3s
+  disk:
+    enabled: true
+    interval: 5s
+  gpu:
+    enabled: true
+    interval: 3s
+  npu:
+    enabled: true
+    interval: 3s
+  network:
+    enabled: true
+    interval: 3s
+
+storage:
+  data_dir: /var/lib/catmonitor/data
+  max_file_age: 168h
+  rotation: daily
+
+health:
+  enabled: true
+  interval: 5s
+  weight_scheme: auto
