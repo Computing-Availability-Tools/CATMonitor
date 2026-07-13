@@ -9,3 +9,4 @@ catmonitor
 *.out
 .idea/
 .vscode/
+web/data/

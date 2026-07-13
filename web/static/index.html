@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CATMonitor 设备健康度</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="#/" class="brand-link">CATMonitor</a>
+      <span class="subtitle">设备健康度</span>
+    </div>
+    <nav id="nav" class="nav"></nav>
+    <div class="topright">
+      <div class="scorepill" id="scorePill" title="整体健康度">
+        <span class="pill-dot" id="pillDot"></span>
+        <span id="pillScore">--</span>
+        <span class="pill-grade" id="pillGrade">--</span>
+      </div>
+      <div class="controls">
+        <label>刷新间隔 <input type="number" id="intervalInput" min="1" step="1" value="5"> 秒</label>
+        <button id="applyBtn" class="btn">应用</button>
+        <button id="refreshBtn" class="btn btn-primary">立即刷新</button>
+        <label class="auto"><input type="checkbox" id="autoToggle" checked> 自动</label>
+      </div>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden" role="status"></div>
+
+  <main id="page" class="page"></main>
+
+  <footer class="foot">CATMonitor Web · 数据来自本地 snapshot.json · 与采集守护进程解耦 · 多页可扩展</footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

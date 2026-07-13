@@ -1,0 +1,11 @@
+server:
+  addr: ":9527"
+
+collector:
+  refresh_interval: 5s
+  history_points: 60
+  # enabled_components: []   # empty = all (cpu, memory, disk, gpu, npu, network)
+
+storage:
+  snapshot_path: web/data/snapshot.json
+  runtime_path: web/data/runtime.json
