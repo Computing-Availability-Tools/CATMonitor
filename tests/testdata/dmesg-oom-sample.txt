@@ -1,0 +1,5 @@
+[  123.456789] python invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+[  123.456790] Out of memory: Killed process 1234 (java) total-vm:1234567kB, anon-rss:234567kB, file-rss:34567kB, shmem-rss:0kB
+[  456.789012] systemd[1]: Starting Daily Cleanup of Temporary Directories...
+[  789.012345] Out of memory: Killed process 5678 (python3) total-vm:234567kB, anon-rss:34567kB
+[  999.999999] random: crng init done

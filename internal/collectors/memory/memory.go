@@ -7,14 +7,12 @@ import (
 )
 
 type MemoryCollector struct {
-	mockDmesg        string
-	prevPageFaults   uint64
-	prevMajorFaults  uint64
-	prevTotalPhys    uint64
-	prevAvailPhys    uint64
-	prevTotalPage    uint64
-	prevAvailPage    uint64
-	hasPrevPhys      bool
+	prevPageFaults      uint64
+	prevMajorFaults     uint64
+	prevSwapIn          uint64
+	prevSwapOut         uint64
+	hasPrevSwapIO       bool
+	moduleInfoCollected bool
 }
 
 func New() *MemoryCollector {
@@ -33,23 +31,52 @@ func (c *MemoryCollector) Collect() ([]collector.Metric, error) {
 	now := time.Now()
 	var metrics []collector.Metric
 
-	if usageMetrics, err := c.collectUsage(now); err == nil {
-		metrics = append(metrics, usageMetrics...)
+	// Memory pool + swap (from /proc/meminfo).
+	if m, err := c.collectUsage(now); err == nil {
+		metrics = append(metrics, m...)
 	}
-	if swapMetrics, err := c.collectSwapUsage(now); err == nil {
-		metrics = append(metrics, swapMetrics...)
+	if m, err := c.collectSwapUsage(now); err == nil {
+		metrics = append(metrics, m...)
 	}
-	if ceMetrics, err := c.collectECCErrors("ce_count", "ecc_ce_errors", now); err == nil {
-		metrics = append(metrics, ceMetrics...)
+	// Swap in/out activity (from /proc/vmstat, delta).
+	if m, err := c.collectSwapIO(now); err == nil {
+		metrics = append(metrics, m...)
 	}
-	if uceMetrics, err := c.collectECCErrors("ue_count", "ecc_uce_errors", now); err == nil {
-		metrics = append(metrics, uceMetrics...)
+	// Pressure + fragmentation.
+	if m, err := c.collectSaturation(now); err == nil {
+		metrics = append(metrics, m...)
 	}
-	if oomMetrics, err := c.collectOOMCount(now); err == nil {
-		metrics = append(metrics, oomMetrics...)
+	if m, err := c.collectFragmentation(now); err == nil {
+		metrics = append(metrics, m...)
 	}
-	if pfMetrics, err := c.collectPageFaults(now); err == nil {
-		metrics = append(metrics, pfMetrics...)
+	// ECC errors (from /sys EDAC).
+	if m, err := c.collectECCErrors("ce_count", "ecc_ce_errors", now); err == nil {
+		metrics = append(metrics, m...)
+	}
+	if m, err := c.collectECCErrors("ue_count", "ecc_uce_errors", now); err == nil {
+		metrics = append(metrics, m...)
+	}
+	// OOM + page faults (from dmesg / /proc/vmstat).
+	if m, err := c.collectOOMCount(now); err == nil {
+		metrics = append(metrics, m...)
+	}
+	if m, err := c.collectPageFaults(now); err == nil {
+		metrics = append(metrics, m...)
+	}
+	// Isolated + free page counters (from /proc/vmstat).
+	if m, err := c.collectPageCounters(now); err == nil {
+		metrics = append(metrics, m...)
+	}
+	// Memory power (from ipmitool SDR, shared 30s cache).
+	if m, err := c.collectPower(now); err == nil {
+		metrics = append(metrics, m...)
+	}
+	// Static DIMM inventory (from dmidecode, startup-once).
+	if !c.moduleInfoCollected {
+		if m, err := c.collectModuleInfo(now); err == nil {
+			metrics = append(metrics, m...)
+		}
+		c.moduleInfoCollected = true
 	}
 
 	return metrics, nil

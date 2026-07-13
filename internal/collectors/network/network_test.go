@@ -7,41 +7,30 @@ import (
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
 
-func TestParseNetDev(t *testing.T) {
-	stats, err := parseNetDev("../../../tests/testdata/proc")
-	if err != nil {
-		t.Fatalf("parseNetDev failed: %v", err)
-	}
+const (
+	testdataProc = "../../../tests/testdata/proc"
+	testdataSys  = "../../../tests/testdata/sys"
+)
 
-	if len(stats) != 2 {
-		t.Fatalf("expected 2 interfaces, got %d", len(stats))
-	}
-
-	eth0, ok := stats["eth0"]
-	if !ok {
-		t.Fatal("missing 'eth0' interface")
-	}
-	if eth0.rxBytes != 5000000 {
-		t.Errorf("expected rxBytes 5000000, got %d", eth0.rxBytes)
-	}
-	if eth0.txBytes != 3000000 {
-		t.Errorf("expected txBytes 3000000, got %d", eth0.txBytes)
-	}
-	if eth0.rxErrs != 2 {
-		t.Errorf("expected rxErrs 2, got %d", eth0.rxErrs)
-	}
-	if eth0.rxDrop != 1 {
-		t.Errorf("expected rxDrop 1, got %d", eth0.rxDrop)
-	}
+func useTestdata(t *testing.T) {
+	t.Helper()
+	proc.SetRoot(testdataProc)
+	sys.SetRoot(testdataSys)
+	t.Cleanup(func() {
+		proc.SetRoot("/proc")
+		sys.SetRoot("/sys")
+	})
 }
 
 func TestCollectIntegration(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
 
-	// First call - total bytes and error_count but no throughput/packet_count
+	// First call: total bytes and error_count but no throughput/packet_count.
 	metrics, err := c.Collect()
 	if err != nil {
 		t.Fatalf("first Collect failed: %v", err)
@@ -74,14 +63,12 @@ func TestCollectIntegration(t *testing.T) {
 		}
 	}
 
-	// Second call - should have throughput and packet_count
+	// Second call: should have throughput and packet_count.
 	metrics2, err := c.Collect()
 	if err != nil {
 		t.Fatalf("second Collect failed: %v", err)
 	}
-
-	hasThroughput := false
-	hasPacketCount := false
+	hasThroughput, hasPacketCount := false, false
 	for _, m := range metrics2 {
 		if m.Name == "throughput" && m.Labels["interface"] == "eth0" {
 			hasThroughput = true
@@ -97,7 +84,7 @@ func TestCollectIntegration(t *testing.T) {
 		t.Error("expected packet_count metrics on second call")
 	}
 
-	// Verify lo is filtered out
+	// lo should be filtered out.
 	for _, m := range metrics2 {
 		if m.Labels["interface"] == "lo" {
 			t.Error("lo interface should be filtered out")
@@ -106,16 +93,14 @@ func TestCollectIntegration(t *testing.T) {
 }
 
 func TestCollectInterfaceStatus(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetSysPath("../../../tests/testdata/sys")
-
 	now := time.Now()
+
 	metrics, err := c.collectInterfaceStatus(now)
 	if err != nil {
 		t.Fatalf("collectInterfaceStatus failed: %v", err)
 	}
-
-	// Should have eth0 (up), lo is filtered
 	foundEth0 := false
 	for _, m := range metrics {
 		if m.Labels["interface"] == "eth0" {
@@ -137,19 +122,17 @@ func TestCollectInterfaceStatus(t *testing.T) {
 }
 
 func TestCollectConnectionCount(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
 	now := time.Now()
 
 	metrics, err := c.collectConnectionCount(now)
 	if err != nil {
 		t.Fatalf("collectConnectionCount failed: %v", err)
 	}
-
 	if len(metrics) == 0 {
 		t.Fatal("expected at least 1 connection_count metric")
 	}
-
 	statesFound := map[string]bool{}
 	for _, m := range metrics {
 		if m.Name != "connection_count" {
@@ -157,7 +140,6 @@ func TestCollectConnectionCount(t *testing.T) {
 		}
 		statesFound[m.Labels["state"]] = true
 	}
-
 	if !statesFound["LISTEN"] {
 		t.Error("expected LISTEN state")
 	}
@@ -171,7 +153,6 @@ func TestCollectConnectionCount(t *testing.T) {
 
 func TestCollectorInterface(t *testing.T) {
 	c := New()
-
 	if c.Name() != "network" {
 		t.Errorf("expected name 'network', got '%s'", c.Name())
 	}
@@ -186,17 +167,5 @@ func TestCollectorInterface(t *testing.T) {
 	}
 	if !c.DefaultEnabled() {
 		t.Error("expected default enabled true")
-	}
-}
-
-func TestParseUint(t *testing.T) {
-	if v := parseUint("12345"); v != 12345 {
-		t.Errorf("expected 12345, got %d", v)
-	}
-	if v := parseUint("invalid"); v != 0 {
-		t.Errorf("expected 0 for invalid input, got %d", v)
-	}
-	if v := parseUint(""); v != 0 {
-		t.Errorf("expected 0 for empty input, got %d", v)
 	}
 }

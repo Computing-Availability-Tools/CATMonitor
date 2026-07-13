@@ -1,0 +1,4 @@
+[Hardware Error]: Machine Check Exception on CPU 0: corrected error
+[Hardware Error]: Machine Check Exception on CPU 0: corrected error
+[Hardware Error]: Machine Check Exception on CPU 1: uncorrectable error
+[Hardware Error]: Machine Check Exception on CPU 0: corrected error

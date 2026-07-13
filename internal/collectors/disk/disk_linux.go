@@ -3,17 +3,15 @@
 package disk
 
 import (
-	"bufio"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/dmesg"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/smartctl"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/statfs"
 )
 
 var deviceFilter = regexp.MustCompile(`^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+)$`)
@@ -28,90 +26,93 @@ var virtualFS = map[string]bool{
 	"fuse.gvfsd-fuse": true,
 }
 
-var linuxDiskPaths = struct {
-	procPath string
-}{procPath: "/proc"}
-
-func (c *DiskCollector) SetProcPath(path string) {
-	linuxDiskPaths.procPath = path
-	c.procPath = path
-}
-
 func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 	now := time.Now()
 	var metrics []collector.Metric
 
-	mounts, err := parseMounts(linuxDiskPaths.procPath)
+	// space_usage per real mount point.
+	mounts, err := proc.Default().Mounts()
 	if err != nil {
 		return nil, err
 	}
-
 	for _, m := range mounts {
-		if virtualFS[m.fstype] {
+		if virtualFS[m.Fstype] {
 			continue
 		}
-		spaceMetrics, err := c.collectSpaceUsage(m.device, m.mountPoint, m.fstype, now)
+		spaceMetrics, err := c.collectSpaceUsage(m.Device, m.MountPoint, m.Fstype, now)
 		if err != nil {
 			continue
 		}
 		metrics = append(metrics, spaceMetrics...)
 	}
 
-	iopsMetrics, _ := c.collectIOPS(now)
-	metrics = append(metrics, iopsMetrics...)
-
-	throughputMetrics, _ := c.collectThroughput(now)
-	metrics = append(metrics, throughputMetrics...)
-
-	ioWaitMetrics, _ := c.collectIoWait(now)
-	metrics = append(metrics, ioWaitMetrics...)
-
-	ioErrMetrics, _ := c.collectIoErrors(now)
-	metrics = append(metrics, ioErrMetrics...)
-
-	smartMetrics, _ := c.collectSMART(now)
-	metrics = append(metrics, smartMetrics...)
+	if iopsMetrics, err := c.collectIOPS(now); err == nil {
+		metrics = append(metrics, iopsMetrics...)
+	}
+	if throughputMetrics, err := c.collectThroughput(now); err == nil {
+		metrics = append(metrics, throughputMetrics...)
+	}
+	if ioWaitMetrics, err := c.collectIoWait(now); err == nil {
+		metrics = append(metrics, ioWaitMetrics...)
+	}
+	if ioErrMetrics, err := c.collectIoErrors(now); err == nil {
+		metrics = append(metrics, ioErrMetrics...)
+	}
+	if smartMetrics, err := c.collectSMART(now); err == nil {
+		metrics = append(metrics, smartMetrics...)
+	}
 
 	return metrics, nil
 }
 
 func (c *DiskCollector) collectSpaceUsage(device, mountPoint, fstype string, now time.Time) ([]collector.Metric, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(mountPoint, &stat); err != nil {
+	st, err := statfs.Default().Statfs(mountPoint)
+	if err != nil {
 		return nil, err
 	}
 
-	totalBytes := stat.Blocks * uint64(stat.Bsize)
-	freeBytes := stat.Bfree * uint64(stat.Bsize)
-	availBytes := stat.Bavail * uint64(stat.Bsize)
-	usedBytes := totalBytes - freeBytes
-
 	usage := 0.0
-	if totalBytes > 0 {
-		usage = float64(usedBytes) / float64(totalBytes) * 100
+	if st.Total > 0 {
+		usage = float64(st.Used) / float64(st.Total) * 100
 	}
 
 	labels := map[string]string{"device": device, "mount_point": mountPoint, "fstype": fstype}
 	metrics := []collector.Metric{
 		{Component: "disk", Name: "space_usage", Value: roundFloat(usage, 2), Unit: "%", Labels: labels, Timestamp: now},
-		{Component: "disk", Name: "space_detail", Value: float64(totalBytes) / (1024 * 1024), Unit: "MB", Labels: withField(labels, "total"), Timestamp: now},
-		{Component: "disk", Name: "space_detail", Value: float64(usedBytes) / (1024 * 1024), Unit: "MB", Labels: withField(labels, "used"), Timestamp: now},
-		{Component: "disk", Name: "space_detail", Value: float64(availBytes) / (1024 * 1024), Unit: "MB", Labels: withField(labels, "available"), Timestamp: now},
+		{Component: "disk", Name: "space_detail", Value: float64(st.Total) / (1024 * 1024), Unit: "MB", Labels: withField(labels, "total"), Timestamp: now},
+		{Component: "disk", Name: "space_detail", Value: float64(st.Used) / (1024 * 1024), Unit: "MB", Labels: withField(labels, "used"), Timestamp: now},
+		{Component: "disk", Name: "space_detail", Value: float64(st.Avail) / (1024 * 1024), Unit: "MB", Labels: withField(labels, "available"), Timestamp: now},
 	}
 	return metrics, nil
 }
 
-func (c *DiskCollector) collectIOPS(now time.Time) ([]collector.Metric, error) {
-	current, err := parseDiskStats(linuxDiskPaths.procPath)
+// filteredDiskStats reads /proc/diskstats via the proc source and applies the
+// device filter, returning only real block devices.
+func (c *DiskCollector) filteredDiskStats() (map[string]proc.DiskStat, error) {
+	all, err := proc.Default().Diskstats()
 	if err != nil {
 		return nil, err
 	}
+	result := make(map[string]proc.DiskStat)
+	for dev, s := range all {
+		if !deviceFilter.MatchString(dev) {
+			continue
+		}
+		result[dev] = s
+	}
+	return result, nil
+}
 
+func (c *DiskCollector) collectIOPS(now time.Time) ([]collector.Metric, error) {
+	current, err := c.filteredDiskStats()
+	if err != nil {
+		return nil, err
+	}
 	var metrics []collector.Metric
 	for dev, curr := range current {
 		if prev, ok := c.prevDiskStats[dev]; ok {
-			readIops := float64(curr.readsCompleted-prev.readsCompleted) / 5.0
-			writeIops := float64(curr.writesCompleted-prev.writesCompleted) / 5.0
+			readIops := float64(curr.ReadsCompleted-prev.ReadsCompleted) / 5.0
+			writeIops := float64(curr.WritesCompleted-prev.WritesCompleted) / 5.0
 			metrics = append(metrics, collector.Metric{
 				Component: "disk", Name: "iops", Value: roundFloat(readIops, 0), Unit: "次/s",
 				Labels: map[string]string{"device": dev, "direction": "read"}, Timestamp: now,
@@ -127,16 +128,15 @@ func (c *DiskCollector) collectIOPS(now time.Time) ([]collector.Metric, error) {
 }
 
 func (c *DiskCollector) collectThroughput(now time.Time) ([]collector.Metric, error) {
-	current, err := parseDiskStats(linuxDiskPaths.procPath)
+	current, err := c.filteredDiskStats()
 	if err != nil {
 		return nil, err
 	}
-
 	var metrics []collector.Metric
 	for dev, curr := range current {
 		if prev, ok := c.prevDiskStats[dev]; ok {
-			readMB := float64(curr.sectorsRead-prev.sectorsRead) * 512 / (1024 * 1024) / 5.0
-			writeMB := float64(curr.sectorsWritten-prev.sectorsWritten) * 512 / (1024 * 1024) / 5.0
+			readMB := float64(curr.SectorsRead-prev.SectorsRead) * 512 / (1024 * 1024) / 5.0
+			writeMB := float64(curr.SectorsWritten-prev.SectorsWritten) * 512 / (1024 * 1024) / 5.0
 			metrics = append(metrics, collector.Metric{
 				Component: "disk", Name: "throughput", Value: roundFloat(readMB, 2), Unit: "MB/s",
 				Labels: map[string]string{"device": dev, "direction": "read"}, Timestamp: now,
@@ -151,19 +151,20 @@ func (c *DiskCollector) collectThroughput(now time.Time) ([]collector.Metric, er
 }
 
 func (c *DiskCollector) collectIoWait(now time.Time) ([]collector.Metric, error) {
-	current, err := parseCPUStatForIoWait(linuxDiskPaths.procPath)
+	stat, err := proc.Default().Stat()
 	if err != nil {
 		return nil, err
 	}
-
+	curr, ok := stat.Cores["cpu"]
+	if !ok {
+		return nil, nil
+	}
 	var metrics []collector.Metric
-	if c.prevCPUTimes != nil && len(current) >= 5 && len(c.prevCPUTimes) >= 5 {
-		prevTotal := sumU64(c.prevCPUTimes)
-		currTotal := sumU64(current)
-		prevIoWait := c.prevCPUTimes[4]
-		currIoWait := current[4]
+	if c.hasPrevCPU {
+		prevTotal := cpuStatTotal(c.prevCPU)
+		currTotal := cpuStatTotal(curr)
 		totalDelta := float64(currTotal - prevTotal)
-		ioWaitDelta := float64(currIoWait - prevIoWait)
+		ioWaitDelta := float64(curr.Iowait - c.prevCPU.Iowait)
 		if totalDelta > 0 {
 			ioWaitPct := ioWaitDelta / totalDelta * 100
 			metrics = append(metrics, collector.Metric{
@@ -172,134 +173,40 @@ func (c *DiskCollector) collectIoWait(now time.Time) ([]collector.Metric, error)
 			})
 		}
 	}
-	c.prevCPUTimes = current
+	c.prevCPU = curr
+	c.hasPrevCPU = true
 	return metrics, nil
 }
 
 func (c *DiskCollector) collectIoErrors(now time.Time) ([]collector.Metric, error) {
-	var output string
-	if c.mockDmesg != "" {
-		output = c.mockDmesg
-	} else {
-		cmd := exec.Command("dmesg")
-		out, err := cmd.Output()
-		if err != nil {
-			return nil, err
-		}
-		output = string(out)
+	output, err := dmesg.Default().Text()
+	if err != nil {
+		return nil, err
 	}
-
 	count := 0
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(output, "\n") {
 		l := strings.ToLower(line)
 		if strings.Contains(l, "i/o error") || strings.Contains(l, "blk_update_request") {
 			count++
 		}
 	}
-
 	return []collector.Metric{{
 		Component: "disk", Name: "io_errors", Value: float64(count), Unit: "次", Timestamp: now,
 	}}, nil
 }
 
 func (c *DiskCollector) collectSMART(now time.Time) ([]collector.Metric, error) {
-	stats, err := parseDiskStats(linuxDiskPaths.procPath)
+	devs, err := c.filteredDiskStats()
 	if err != nil {
 		return nil, err
 	}
-
 	var metrics []collector.Metric
-	for dev := range stats {
-		if output, ok := c.mockSmartctl[dev]; ok {
-			metrics = append(metrics, parseSmartOutput(dev, output, now)...)
-			continue
-		}
-		cmd := exec.Command("smartctl", "-H", "/dev/"+dev)
-		out, err := cmd.Output()
+	for dev := range devs {
+		output, err := smartctl.Default().Health(dev)
 		if err != nil {
 			continue
 		}
-		metrics = append(metrics, parseSmartOutput(dev, string(out), now)...)
+		metrics = append(metrics, parseSmartOutput(dev, output, now)...)
 	}
 	return metrics, nil
-}
-
-func parseDiskStats(procPath string) (map[string]diskStats, error) {
-	f, err := os.Open(filepath.Join(procPath, "diskstats"))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	result := make(map[string]diskStats)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 11 {
-			continue
-		}
-		dev := fields[2]
-		if !deviceFilter.MatchString(dev) {
-			continue
-		}
-		reads := parseU64(fields[3])
-		sectorsRead := parseU64(fields[5])
-		writes := parseU64(fields[7])
-		sectorsWritten := parseU64(fields[9])
-		result[dev] = diskStats{
-			readsCompleted:  reads,
-			sectorsRead:     sectorsRead,
-			writesCompleted: writes,
-			sectorsWritten:  sectorsWritten,
-		}
-	}
-	return result, scanner.Err()
-}
-
-func parseCPUStatForIoWait(procPath string) ([]uint64, error) {
-	f, err := os.Open(filepath.Join(procPath, "stat"))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "cpu ") {
-			fields := strings.Fields(line)
-			if len(fields) < 6 {
-				return nil, nil
-			}
-			times := make([]uint64, 0, len(fields)-1)
-			for _, f := range fields[1:] {
-				val, err := strconv.ParseUint(f, 10, 64)
-				if err != nil {
-					break
-				}
-				times = append(times, val)
-			}
-			return times, nil
-		}
-	}
-	return nil, scanner.Err()
-}
-
-func parseMounts(procPath string) ([]MountInfo, error) {
-	f, err := os.Open(filepath.Join(procPath, "mounts"))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var mounts []MountInfo
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 3 {
-			continue
-		}
-		mounts = append(mounts, MountInfo{device: fields[0], mountPoint: fields[1], fstype: fields[2]})
-	}
-	return mounts, scanner.Err()
 }

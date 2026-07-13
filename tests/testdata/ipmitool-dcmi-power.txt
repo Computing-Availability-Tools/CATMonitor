@@ -1,0 +1,2 @@
+Instantaneous power reading:   125.500 Watts
+Power Cap:                      300.000 Watts
