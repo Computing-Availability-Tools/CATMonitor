@@ -40,13 +40,18 @@ func NewEvaluator(scheme WeightScheme) *Evaluator {
 
 // Evaluate takes all collected metrics and produces a health score.
 func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
-	// Group metrics by component
 	byComponent := groupByComponent(metrics)
+
+	// Auto-detect server type: if GPU or NPU metrics are present, use accelerated scheme
+	if _, hasGPU := byComponent["gpu"]; hasGPU {
+		e.scheme = Accelerated8CardScheme
+	} else if _, hasNPU := byComponent["npu"]; hasNPU {
+		e.scheme = Accelerated8CardScheme
+	}
 
 	components := make(map[string]ComponentScore)
 	totalScore := 0
 
-	// Evaluate each component
 	if cpuMetrics, ok := byComponent["cpu"]; ok {
 		score := evaluateCPU(cpuMetrics, e.scheme.CPU)
 		components["cpu"] = score
@@ -77,7 +82,6 @@ func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 		totalScore += score.Score
 	}
 
-	// If no GPU/NPU metrics, still account for their max score being 0
 	serverType := "cpu_only"
 	if e.scheme.GPU > 0 {
 		if _, hasGPU := byComponent["gpu"]; hasGPU {

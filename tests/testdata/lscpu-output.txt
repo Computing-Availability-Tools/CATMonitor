@@ -1,0 +1,12 @@
+Architecture:        x86_64
+CPU op-mode(s):      32-bit, 64-bit
+Byte Order:          Little Endian
+CPU(s):              28
+On-line CPU(s) list: 0-27
+Thread(s) per core:  2
+Core(s) per socket:  14
+Socket(s):           2
+Die(s) per socket:   1
+NUMA node(s):        2
+NUMA node0 CPU(s):   0-13
+NUMA node1 CPU(s):   14-27

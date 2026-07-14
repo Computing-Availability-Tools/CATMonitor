@@ -15,7 +15,8 @@
 │                   (守护进程入口)                       │
 ├─────────────────────────────────────────────────────┤
 │  internal/config        internal/storage              │
-│  (配置管理)              (JSON文件写入)                │
+│  internal/platform       (JSON文件写入)               │
+│  (配置管理 + 平台适配)                                 │
 ├─────────────────────────────────────────────────────┤
 │            internal/collector (采集核心)               │
 │     ┌──────────┐  ┌──────────┐  ┌──────────────┐    │
@@ -30,13 +31,39 @@
 │     └──────────┘  └──────────┘  └──────────────┘    │
 ├─────────────────────────────────────────────────────┤
 │            internal/collectors (采集器实现)           │
-│  ┌─────┐ ┌────────┐ ┌──────┐ ┌─────┐ ┌─────┐ ┌──────┐│
-│  │ CPU │ │ Memory │ │ Disk │ │ GPU │ │ NPU │ │ Network││
-│  └─────┘ └────────┘ └──────┘ └─────┘ └─────┘ └──────┘│
+│   ┌─────┬──────────┬──────┬─────┬─────┬──────────┐  │
+│   │ CPU │  Memory  │ Disk │ GPU │ NPU │  Network │  │
+│   │ ┌───┴───┐ ┌───┴──┐ ┌┴───┐ │     │     │ ┌───┬──┐│  │
+│   │ │Linux │ │Linux │ │Linux│ │ 跨平台 (nvidia/npu-smi)  │
+│   │ │/proc │ │/proc │ │Statfs│ │     │     │ │Linux│Win││  │
+│   │ ├──────┤ ├──────┤ ├─────┤ │     │     │ │/proc│PS ││  │
+│   │ │ Win  │ │ Win  │ │ Win │ │     │     │ │/net │API││  │
+│   │ │k32.dll│ │k32.dll│ │k32.dll│    │     │ └───┴──┘│  │
+│   │ └──────┘ └──────┘ └─────┘ │     │     │         │  │
+│   └───────────────────────────┴─────┴─────┴─────────┘  │
 └─────────────────────────────────────────────────────┘
 ```
 
-### 1.2 扩展机制：Collector 接口 + Registry 注册表
+### 1.2 跨平台架构设计
+
+核心策略：**共享逻辑 + 平台数据源分离**，通过 Go 构建标签在编译时选择。
+
+```
+collectors/{component}/
+  ├── {component}.go         ← 共享：struct, Collect(), 指标定义, delta 逻辑
+  ├── {component}_linux.go   ← Linux: /proc, /sys, syscall.Statfs
+  ├── {component}_windows.go ← Windows: kernel32.dll, PowerShell
+  └── {component}_test.go    ← 测试 (//go:build linux)
+```
+
+**关键原则**：
+- `Collector` 接口、`Metric` 结构体、健康度模块不感知平台差异
+- 每个采集器的 `Collect()` 方法调用平台特定的数据采集函数
+- Linux 代码（/proc, /sys, syscall.Statfs, dmesg, smartctl）完整保留在 `_linux.go`
+- Windows 代码使用 Go `syscall` 包直接调用 kernel32.dll / iphlpapi.dll，零第三方依赖
+- GPU/NPU 采集器无需分离（nvidia-smi 和 npu-smi 在双平台均可通过 os/exec 调用）
+
+### 1.3 扩展机制：Collector 接口 + Registry 注册表
 
 核心设计原则：**新增部件只需实现 `Collector` 接口并在 `init()` 中注册**，调度引擎自动发现并调度。
 
@@ -94,7 +121,7 @@ func (c *FPGACollector) DefaultEnabled() bool                 { return true }
 
 在 `main.go` 中通过 `import _ "catmonitor/internal/collectors/fpga"` 即可激活，核心代码无需任何修改。
 
-### 1.3 目录结构
+### 1.4 目录结构
 
 ```
 CATMonitor/
@@ -106,42 +133,53 @@ CATMonitor/
 │   │   ├── collector.go             # Collector 接口 + Metric 类型定义
 │   │   ├── registry.go              # 注册表（扩展机制核心）
 │   │   └── scheduler.go             # 调度引擎（按周期定时调用各 Collector）
-│   ├── collectors/                   # 具体采集器实现（每个部件一个包）
+│   ├── platform/                    # 平台抽象层（新增）
+│   │   ├── platform.go              # 共享接口（DataDir, ConfigPath）
+│   │   ├── platform_linux.go        # Linux 默认路径
+│   │   └── platform_windows.go      # Windows 默认路径
+│   ├── collectors/                  # 具体采集器实现
 │   │   ├── cpu/
-│   │   │   ├── cpu.go               # CPU 采集器
-│   │   │   └── cpu_test.go
+│   │   │   ├── cpu.go               # 共享：struct, Collect(), 工具函数
+│   │   │   ├── cpu_linux.go         # Linux: /proc/stat, /sys/class/thermal
+│   │   │   ├── cpu_windows.go       # Windows: GetSystemTimes + PowerShell
+│   │   │   └── cpu_test.go          # 测试 (//go:build linux)
 │   │   ├── memory/
-│   │   │   ├── memory.go
-│   │   │   └── memory_test.go
+│   │   │   ├── memory.go            # 共享
+│   │   │   ├── memory_linux.go      # Linux: /proc/meminfo, /sys/edac, dmesg
+│   │   │   ├── memory_windows.go    # Windows: GlobalMemoryStatusEx
+│   │   │   └── memory_test.go       # 测试 (//go:build linux)
 │   │   ├── disk/
-│   │   │   ├── disk.go
-│   │   │   └── disk_test.go
+│   │   │   ├── disk.go              # 共享
+│   │   │   ├── disk_linux.go        # Linux: /proc/mounts, syscall.Statfs, smartctl
+│   │   │   ├── disk_windows.go      # Windows: GetDiskFreeSpaceExW, GetLogicalDrives
+│   │   │   └── disk_test.go         # 测试 (//go:build linux)
 │   │   ├── gpu/
-│   │   │   ├── gpu.go               # 通过 nvidia-smi 采集
+│   │   │   ├── gpu.go               # 跨平台: nvidia-smi (os/exec)
 │   │   │   └── gpu_test.go
 │   │   ├── npu/
-│   │   │   ├── npu.go               # 通过 npu-smi 采集（华为昇腾）
+│   │   │   ├── npu.go               # 跨平台: npu-smi (os/exec)
 │   │   │   └── npu_test.go
 │   │   └── network/
-│   │       ├── network.go
-│   │       └── network_test.go
-│   ├── health/                      # 健康度评估模块（独立）
-│   │   ├── health.go                # HealthEvaluator 接口
+│   │       ├── network.go           # 共享
+│   │       ├── network_linux.go     # Linux: /proc/net/dev, /sys/class/net
+│   │       ├── network_windows.go   # Windows: Get-NetAdapterStatistics (PowerShell)
+│   │       └── network_test.go      # 测试 (//go:build linux)
+│   ├── health/                      # 健康度评估模块（独立，纯逻辑跨平台）
+│   │   ├── health.go                # HealthEvaluator + Evaluate() 入口
 │   │   ├── rules.go                 # 评分规则定义（权重、扣分项）
 │   │   ├── scorer.go                # 计分器实现
 │   │   └── health_test.go
 │   ├── config/                      # 配置管理
-│   │   ├── config.go                # 配置结构体 + 加载逻辑
-│   │   └── config_test.go
+│   │   └── config.go                # 配置结构体 + 加载逻辑
 │   └── storage/                     # 数据存储
-│       ├── storage.go               # JSON 文件写入器
-│       └── storage_test.go
+│       └── storage.go               # JSON 文件写入器
 ├── configs/
 │   └── catmonitor.yaml              # 默认配置文件
 ├── docs/
-│   └── CATMonitor_indi_list.md      # 指标清单文档
+│   ├── CATMonitor_indi_list.md      # 指标清单文档
+│   └── test_report.md               # 测试报告
 ├── tests/
-│   ├── framework.go                 # 测试框架（通用断言、Mock工具）
+│   ├── framework.go                 # 测试框架
 │   ├── integration_test.go          # 集成测试
 │   └── testdata/                    # 测试数据（/proc、/sys 模拟文件）
 ├── scripts/
@@ -151,21 +189,22 @@ CATMonitor/
 └── Makefile
 ```
 
-### 1.4 数据流与数据格式
+### 1.5 数据流与数据格式
 
 ```
   Scheduler 按各自周期触发
          │
          ▼
   Collector.Collect()  ──→  []Metric
-         │
+         │                    │
+         │ Linux: /proc, /sys │ Windows: kernel32, PowerShell
          ▼
   Storage.Write(metrics)  ──→  JSON 文件
-  (路径: /var/lib/catmonitor/data/{component}_{date}.jsonl)
+  (路径: {data_dir}/{component}_{date}.jsonl)
          │
          ▼
   HealthEvaluator.Evaluate(latestMetrics)  ──→  HealthScore
-         │
+         │                                     (自动检测 GPU/NPU)
          ▼
   Storage.WriteHealth(score)  ──→  health_{date}.jsonl
 ```
@@ -194,9 +233,10 @@ CATMonitor/
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/cpu` |
-| 数据来源 | `/proc/stat`、`/proc/loadavg`、`/sys/class/thermal/`、`/sys/devices/system/cpu/cpu*/cpufreq/`、`/proc/cpuinfo` |
-| 外部依赖 | 无（全部使用内核虚拟文件系统） |
-| 采集方式 | 直接读取文件 + 解析，CPU 使用率需维护上一次采集的快照计算差值 |
+| Linux 数据来源 | `/proc/stat`、`/proc/loadavg`、`/sys/class/thermal/`、`/sys/devices/system/cpu/cpu*/cpufreq/`、`/proc/cpuinfo` |
+| Windows 数据来源 | `GetSystemTimes` (kernel32.dll) for usage; PowerShell `Get-CimInstance Win32_Processor` for frequency/model_info; `(Get-Process).Count` for process_count |
+| 外部依赖 | 无（纯 Go syscall + os/exec） |
+| 采集方式 | Linux: 读取 /proc + /sys 文件解析；Windows: syscall 调用 + PowerShell
 
 **采集逻辑**：
 1. **usage**：读取 `/proc/stat` 中 `cpu` 行和 `cpu0`~`cpuN` 行的 10 个时间字段（user/nice/system/idle/iowait/irq/softirq/steal/guest/guest_nice），与上次快照差值计算使用率。公式：`usage% = (total_delta - idle_delta) / total_delta × 100`。每个核心和总体各输出一条。
@@ -214,9 +254,10 @@ CATMonitor/
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/memory` |
-| 数据来源 | `/proc/meminfo`、`/sys/devices/system/edac/mc/`、`/proc/vmstat` |
-| 外部依赖 | `dmesg` 或 `journalctl`（仅 OOM 指标） |
-| 采集方式 | 文件读取 + 解析，ECC 错误需读取 EDAC 框架文件 |
+| Linux 数据来源 | `/proc/meminfo`、`/sys/devices/system/edac/mc/`、`/proc/vmstat` |
+| Windows 数据来源 | `GlobalMemoryStatusEx` (kernel32.dll) for usage/swap_usage |
+| 外部依赖 | Linux: `dmesg`（仅 OOM 指标）；Windows: 无 |
+| 采集方式 | Linux: 文件读取 + 解析；Windows: syscall 调用（纯 Go） |
 
 **采集逻辑**：
 1. **usage**：读取 `/proc/meminfo` 的 `MemTotal`、`MemAvailable` 字段，使用率 = `(MemTotal - MemAvailable) / MemTotal × 100`。同时输出 total/used/available 明细值（MB）。
@@ -233,9 +274,10 @@ CATMonitor/
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/disk` |
-| 数据来源 | `/proc/mounts`、`statfs` 系统调用、`/proc/diskstats`、`/proc/stat` |
-| 外部依赖 | `smartctl`（仅 SMART 指标，Phase 3） |
-| 采集方式 | 系统调用 + 文件解析，IOPS/吞吐量需差值计算 |
+| Linux 数据来源 | `/proc/mounts`、`statfs` 系统调用、`/proc/diskstats`、`/proc/stat` |
+| Windows 数据来源 | `GetDiskFreeSpaceExW` + `GetLogicalDrives` + `GetVolumeInformationW` (kernel32.dll) |
+| 外部依赖 | Linux: `smartctl`（仅 SMART 指标）；Windows: 无 |
+| 采集方式 | Linux: 系统调用 + 文件解析；Windows: syscall 调用（纯 Go） |
 
 **采集逻辑**：
 1. **space_usage**：读取 `/proc/mounts` 获取挂载点列表，过滤虚拟文件系统（proc/sysfs/devtmpfs/tmpfs/overlay 等），对每个挂载点调用 `statfs()` 获取总块数、空闲块数、块大小，计算使用率。同时输出 total/used/available 明细值（MB）。
@@ -253,10 +295,11 @@ CATMonitor/
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/gpu` |
-| 数据来源 | `nvidia-smi` 命令输出 |
+| 数据来源 | `nvidia-smi` 命令输出（Linux/Windows 双平台通过 os/exec 调用） |
 | 外部依赖 | `nvidia-smi`（NVIDIA 驱动自带） |
 | 采集方式 | 单次 `nvidia-smi --query-gpu=...` 批量查询，解析 CSV 输出 |
-| 可用性检测 | 启动时执行 `which nvidia-smi`，不可用则跳过该采集器 |
+| 平台分离 | 无需分离，`os/exec` 在双平台行为一致 |
+| 可用性检测 | 启动时执行 `exec.LookPath("nvidia-smi")`，不可用则跳过 |
 
 **采集逻辑**：
 
@@ -284,10 +327,11 @@ nvidia-smi \
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/npu` |
-| 数据来源 | `npu-smi info` 命令输出 |
+| 数据来源 | `npu-smi info` 命令输出（Linux/Windows 双平台通过 os/exec 调用） |
 | 外部依赖 | `npu-smi`（昇腾驱动自带） |
 | 采集方式 | 执行 `npu-smi info`，解析表格格式输出 |
-| 可用性检测 | 启动时执行 `which npu-smi`，不可用则跳过该采集器 |
+| 平台分离 | 无需分离，有驱动时双平台可用 |
+| 可用性检测 | 启动时执行 `exec.LookPath("npu-smi")`，不可用则跳过 |
 
 **采集逻辑**：
 
@@ -306,9 +350,10 @@ nvidia-smi \
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/network` |
-| 数据来源 | `/proc/net/dev`、`/sys/class/net/`、`/proc/net/tcp`、`/proc/net/tcp6` |
-| 外部依赖 | 无 |
-| 采集方式 | 文件读取 + 解析，吞吐量/包数需差值计算 |
+| Linux 数据来源 | `/proc/net/dev`、`/sys/class/net/`、`/proc/net/tcp`、`/proc/net/tcp6` |
+| Windows 数据来源 | PowerShell `Get-NetAdapterStatistics` + `Get-NetAdapter` + `Get-NetTCPConnection` |
+| 外部依赖 | Windows: PowerShell 4.0+ |
+| 采集方式 | Linux: 文件读取 + 解析；Windows: os/exec 调用 PowerShell |
 
 **采集逻辑**：
 1. **throughput**：读取 `/proc/net/dev`，取 `bytes` 字段（接收第1列、发送第9列），差值除以间隔得出 bytes/s。过滤 `lo` 回环接口。
@@ -350,7 +395,12 @@ internal/health/
 
 ### 3.3 权重自适应判定逻辑
 
-检测系统中是否存在 GPU/NPU 设备（`nvidia-smi` / `npu-smi` 是否可用），有则使用加速卡方案，无则使用 CPU-only 方案。4卡与8卡暂使用同一权重，后续可差异化。
+`Evaluate()` 方法在分组 metrics 后自动检测：
+- 如果存在 GPU 指标（`byComponent["gpu"]` 非空），切换到 `Accelerated8CardScheme`（CPU:10, Mem:20, Disk:10, GPU:60）
+- 如果存在 NPU 指标，同上
+- 否则使用默认 `CPUOnlyScheme`（CPU:30, Mem:40, Disk:30）
+
+> 判定逻辑基于实际采集到的指标，而非 `nvidia-smi` / `npu-smi` 是否可用。这样在无硬件或有硬件但采集失败时都能正确选择方案。
 
 ---
 
@@ -431,8 +481,8 @@ catmonitor [command] [flags]
 
 | 参数 | 短选项 | 默认值 | 说明 |
 |------|--------|--------|------|
-| `--config` | `-c` | `/etc/catmonitor/catmonitor.yaml` | 配置文件路径 |
-| `--data-dir` | `-d` | `/var/lib/catmonitor/data` | 数据输出目录 |
+| `--config` | `-c` | 平台自适应 (Linux: `/etc/catmonitor/catmonitor.yaml`, Windows: `C:\ProgramData\catmonitor\catmonitor.yaml`) | 配置文件路径 |
+| `--data-dir` | `-d` | 平台自适应 (Linux: `/var/lib/catmonitor/data`, Windows: `C:\ProgramData\catmonitor\data`) | 数据输出目录 |
 | `--component` | 无 | 空（全部） | 只采集指定部件，逗号分隔：`cpu,memory,disk` |
 | `--output` | `-o` | `json` | 输出格式：`json` / `table` / `yaml` |
 | `--interval` | `-i` | 空（使用配置） | 覆盖采集周期，如 `5s` |

@@ -1,0 +1,6 @@
+smartctl 7.1 2019-12-30 r5020 (local build)
+Copyright (C) 2002-19, Bruce Allen, Christian Franke, Shinji Fujita
+www.smartmontools.org
+
+=== START OF READ SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED

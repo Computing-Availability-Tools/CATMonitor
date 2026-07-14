@@ -1,3 +1,7 @@
 nr_free_pages 1500000
+nr_isolated_anon 80
+nr_isolated_file 48
 pgfault 2836432
 pgmajfault 1234
+pswpin 100
+pswpout 50

@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,7 +57,7 @@ func Default() *Config {
 			"network": {Enabled: true, Interval: 3 * time.Second},
 		},
 		Storage: StorageConfig{
-			DataDir:    "/var/lib/catmonitor/data",
+			DataDir:    platform.DataDir(),
 			MaxFileAge: 168 * time.Hour,
 			Rotation:   "daily",
 		},

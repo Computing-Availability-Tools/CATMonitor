@@ -16,6 +16,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/health"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/storage"
 
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/cpu"
@@ -26,7 +27,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -64,16 +65,16 @@ Commands:
   version      Show version information
 
 Flags:
-  -c, --config      Config file path (default: /etc/catmonitor/catmonitor.yaml)
-  -d, --data-dir    Data output directory (default: /var/lib/catmonitor/data)
+  -c, --config      Config file path (default: ` + platform.ConfigPath() + `)
+  -d, --data-dir    Data output directory (default: ` + platform.DataDir() + `)
   -o, --output      Output format: json|table (default: json)
   -v, --verbose     Verbose logging`)
 }
 
 func loadConfig() *config.Config {
 	fs := flag.NewFlagSet("catmonitor", flag.ContinueOnError)
-	configPath := fs.String("config", "/etc/catmonitor/catmonitor.yaml", "Config file path")
-	fs.String("c", "/etc/catmonitor/catmonitor.yaml", "Config file path (short)")
+	configPath := fs.String("config", platform.ConfigPath(), "Config file path")
+	fs.String("c", platform.ConfigPath(), "Config file path (short)")
 	fs.String("o", "", "Output format: json|table")
 	fs.String("output", "", "Output format: json|table")
 	fs.Parse(os.Args[2:])
