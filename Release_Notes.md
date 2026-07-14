@@ -4,6 +4,37 @@
 
 ---
 
+## v0.2.1
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.2.1 |
+| 发布时间 | 2026-07-14 |
+| 发布人 | sunnytao, ggboom12138 |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/jw (5461263) → main |
+
+### 变更摘要
+
+- **Web 仪表盘（新模块）**：新增独立二进制 `catmonitor-web`（`web/` 目录），可视化单台服务器健康度与各部件采集指标。SPA 概览页（健康度面板 + 设备规格面板 + 部件芯片 + 概览卡网格 + 趋势 sparkline）+ 部件详情页（趋势面板 + 全部指标表）。与采集守护进程/CLI 完全解耦，不修改主项目任何文件
+- **解耦架构**：以 `web/data/snapshot.json` 为读写解耦边界，采集 goroutine 为唯一写者（原子写），HTTP 层只读快照；`health`/`metrics` 字段直接复用主项目结构体，不重新定义
+- **静态设备规格采集**：`hwinfo.go` 启动期一次性采集跨部件身份（device_model/gpu_info/npu_info/disk_info/net_info，外部命令缺失优雅降级）+ `collector.go` staticStash 缓存 CPU/内存首周期静态指标，合并写入每个快照的 `specs` 字段
+- **端口占用自动回退**：`listenWithFallback` 启动时 `net.Listen` 探测，`EADDRINUSE` 时端口 +1 递增（默认 9527 → 9528…）直至空闲，跨平台有效
+- **REST API**：`/api/snapshot`、`/api/collectors`、`GET|POST /api/config`（间隔热生效 + runtime.json 持久化）、`POST /api/refresh`
+- **可扩展性**：新增部件采集器只需在 `web/main.go` 加一行 blank import，导航/概览卡/详情页自动出现；新增趋势 sparkline 在 `trackedSeries` 加一行 spec
+- **零新增依赖**：前端原生 HTML/CSS/JS `//go:embed` 内嵌进二进制，go.mod 仍仅 `gopkg.in/yaml.v3`；`Web_SPEC.md` 为 Web 模块唯一设计与规格文档
+- **版本号**：`cmd/catmonitor` version 升至 `0.2.1`
+- **测试**：168 用例全过（collectors 62 / sources 70 / health 20 / web 16），`go vet` 零警告，Linux/Windows 双平台编译通过，CLI（~4.3MB）与 Web（~9.1MB）二进制构建成功
+
+### 已知限制（后续跟进）
+
+- Web 为单机本地视图，不含认证与多机聚合（预留多 snapshot 源聚合）
+- Web 历史仅存内存环形缓冲，重启清空，未落盘（预留 JSONL 持久化）
+- Web 前端轮询而非推送（预留 WebSocket/SSE）
+- 继承 v0.2.0 已知限制：gpu/npu 未迁移来源层、per-metric 周期未实现、Windows 来源层迁移延后、`-c` 短选项 bug
+
+---
+
 ## v0.2.0
 
 | 项目 | 说明 |

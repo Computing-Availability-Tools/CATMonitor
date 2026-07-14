@@ -8,7 +8,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 说明 |
 |------|------|
-| 版本号 | v0.2.0 |
+| 版本号 | v0.2.1 |
 | 发布时间 | 2026-07-14 |
 | 发布人 | sunnytao, ggboom12138 |
 | 平台支持 | Linux (x86_64), Windows (x86_64) |
@@ -21,6 +21,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 - **跨平台**：Linux 和 Windows 双平台支持，通过构建标签隔离平台代码
 - **易扩展架构**：新增部件采集器只需实现统一接口并注册，核心代码零修改
 - **健康度评估**：基于采集指标自动计算服务器健康度评分（0-100 分），自动检测 GPU/NPU 切换权重方案
+- **Web 仪表盘**（v0.2.1 新增）：独立 `catmonitor-web` 二进制，可视化单机健康度与各部件指标，SPA 概览页 + 部件详情页 + 趋势 sparkline + 静态设备规格面板，默认端口 9527（被占用时自动递增），零新依赖（Go 标准库 + `//go:embed` 内嵌前端）
 - **可配置**：每个指标的采集周期、是否启用均可通过配置文件调整
 - **守护进程**：Linux 下以 systemd 服务常驻运行，持续采集和评估
 
@@ -34,6 +35,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 | 配置 | YAML |
 | 外部依赖 | 仅 `gopkg.in/yaml.v3`，GPU/NPU 通过命令行工具采集（无 CGo） |
 | Windows API | kernel32.dll / iphlpapi.dll 通过 Go syscall 调用，零第三方依赖 |
+| Web 仪表盘 | Go 标准库 `net/http` + `//go:embed` 内嵌原生 HTML/CSS/JS 前端，无构建步骤，零新依赖 |
 
 ## 快速开始
 
@@ -106,6 +108,47 @@ catmonitor list
 # 查看守护进程状态
 catmonitor status
 ```
+
+## Web 仪表盘（v0.2.1 新增）
+
+CATMonitor 提供独立的 Web 仪表盘二进制 `catmonitor-web`，可视化单台服务器的健康度与各部件采集指标。Web 服务与采集守护进程/CLI 完全解耦，通过 `web/data/snapshot.json` 文件作为读写解耦边界，不修改主项目任何文件。
+
+### 构建
+
+```bash
+# 构建 Web 仪表盘二进制
+go build -o web/bin/catmonitor-web ./web
+# Windows: GOOS=windows go build -o web/bin/catmonitor-web.exe ./web
+```
+
+### 运行
+
+```bash
+# 启动 Web 仪表盘（默认监听 :9527，被占用时自动 +1 递增）
+./web/bin/catmonitor-web -config web/config.yaml
+# 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting" addr=...）
+```
+
+> 工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `web/data/...`）。
+
+### 功能页面
+
+- **概览页**：整体健康度（总分 + 进度条 + 等级）+ 设备规格面板（设备/CPU/内存/硬盘/网卡/GPU/NPU 身份，点击展开完整规格）+ 各部件状态芯片 + 部件概览卡片网格（含头条趋势 sparkline + 关键指标）
+- **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（自动渲染所有该部件历史序列的 sparkline）+ 全部指标表（覆盖每核心/每挂载点/每卡）
+- **可配置刷新间隔**：界面调整 → `POST /api/config` 热生效 + 持久化到 `runtime.json`（重启保留）
+
+### REST API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/snapshot` | 读取最新快照（健康度 + 指标 + 历史 + 静态规格） |
+| GET | `/api/collectors` | 采集器注册表元数据（驱动导航） |
+| GET / POST | `/api/config` | 读取 / 更新刷新间隔 |
+| POST | `/api/refresh` | 请求立即采集 |
+
+### 扩展性
+
+新增部件采集器只需在 `web/main.go` 加一行 blank import `_ ".../internal/collectors/xxx"`，导航/概览卡/详情页自动出现；新增趋势 sparkline 在 `web/collector.go` 的 `trackedSeries` 加一行 spec。详见 [Web_SPEC.md](Web_SPEC.md)。
 
 ## 命令一览
 
@@ -193,6 +236,7 @@ internal/source/{source}/     # 来源层（v0.2.0 新增）
 |------|------|
 | [SPEC.md](SPEC.md) | 技术规格与需求 |
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
+| [Web_SPEC.md](Web_SPEC.md) | Web 仪表盘设计与规格 |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单 |
 | [docs/test_report.md](docs/test_report.md) | 测试报告 |
 
@@ -225,6 +269,16 @@ CATMonitor/
 │   ├── platform/            # 平台抽象层（路径默认值）
 │   ├── config/              # 配置管理
 │   └── storage/             # 数据存储（JSONL）
+├── web/                      # Web 仪表盘（v0.2.1 新增）
+│   ├── main.go              # 入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
+│   ├── collector.go         # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 静态规格 stash
+│   ├── snapshot.go          # Snapshot 结构 + 原子读写
+│   ├── hwinfo.go            # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info）
+│   ├── server.go            # HTTP 路由与处理函数
+│   ├── config.go            # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
+│   ├── config.yaml          # 默认配置
+│   ├── static/              # 前端资源（//go:embed 内嵌）
+│   └── data/                # 运行时数据（snapshot.json / runtime.json，git 忽略）
 ├── configs/                 # 默认配置
 ├── docs/                    # 文档
 ├── tests/                   # 测试框架与数据

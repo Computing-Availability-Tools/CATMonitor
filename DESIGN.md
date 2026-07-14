@@ -11,8 +11,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    cmd/catmonitor                    │
-│                   (守护进程入口)                       │
+│              cmd/catmonitor        web/ (v0.2.1)       │
+│              (守护进程入口)      (catmonitor-web 仪表盘)│
 ├─────────────────────────────────────────────────────┤
 │  internal/config        internal/storage              │
 │  internal/platform       (JSON文件写入)               │
@@ -34,11 +34,11 @@
 │   ┌─────┬──────────┬──────┬─────┬─────┬──────────┐  │
 │   │ CPU │  Memory  │ Disk │ GPU │ NPU │  Network │  │
 │   │ ┌───┴───┐ ┌───┴──┐ ┌┴───┐ │     │     │ ┌───┬──┐│  │
-│   │ │Linux │ │Linux │ │Linux│ │ 跨平台 (nvidia/npu-smi)  │
-│   │ │/proc │ │/proc │ │Statfs│ │     │     │ │Linux│Win││  │
-│   │ ├──────┤ ├──────┤ ├─────┤ │     │     │ │/proc│PS ││  │
-│   │ │ Win  │ │ Win  │ │ Win │ │     │     │ │/net │API││  │
-│   │ │k32.dll│ │k32.dll│ │k32.dll│    │     │ └───┴──┘│  │
+│   │ │Linux │ │Linux │ │Linux│ │     │     │ │Linux│Win││  │
+│   │ │/proc │ │/proc │ │Statfs│ │     │     │ │/proc│PS ││  │
+│   │ ├──────┤ ├──────┤ ├─────┤ │     │     │ │/net │API││  │
+│   │ │ Win  │ │ Win  │ │ Win │ │     │     │ └───┴──┘│  │
+│   │ │k32.dll│ │k32.dll│ │k32.dll│    │     │         │  │
 │   │ └──────┘ └──────┘ └─────┘ │     │     │         │  │
 │   └───────────────────────────┴─────┴─────┴─────────┘  │
 ├─────────────────────────────────────────────────────┤
@@ -57,6 +57,8 @@
 ```
 
 > v0.2.0 引入来源层（`internal/source/`）后，Linux 采集器通过来源包间接访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等系统接口；Windows 保留直接 syscall 实现（来源层迁移延后）。来源返回 parsed struct，带缓存（ipmi/dmesg/smartctl）与可注入 fetcher，便于单元测试 mock。
+>
+> v0.2.1 新增 `web/` 模块（独立二进制 `catmonitor-web`），与主项目同一 Go module，不新增 go.mod、不改主项目任何文件。Web 复用采集器注册表与健康度模块（blank import），以 `web/data/snapshot.json` 为读写解耦边界：采集 goroutine 是唯一写者，HTTP 层只读快照文件。
 
 ### 1.2 跨平台架构设计
 
@@ -202,6 +204,17 @@ CATMonitor/
 │   │   └── config.go                # 配置结构体 + 加载逻辑
 │   └── storage/                     # 数据存储
 │       └── storage.go               # JSON 文件写入器
+├── web/                             # Web 仪表盘（v0.2.1 新增，独立二进制）
+│   ├── main.go                      # 入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
+│   ├── static.go                    # //go:embed static，内嵌前端资源
+│   ├── config.go                    # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
+│   ├── collector.go                 # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
+│   ├── snapshot.go                  # Snapshot 结构（含 Specs 字段）+ 原子读写
+│   ├── hwinfo.go                    # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info）
+│   ├── server.go                     # HTTP 路由与处理函数
+│   ├── config.yaml                   # 默认配置
+│   ├── static/                       # 前端资源（index.html + style.css + app.js）
+│   └── data/                         # 运行时数据（snapshot.json / runtime.json，git 忽略）
 ├── configs/
 │   └── catmonitor.yaml              # 默认配置文件
 ├── docs/
@@ -750,3 +763,119 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 ```
+
+---
+
+## 6. Web 仪表盘设计（v0.2.1 新增）
+
+> 详细规格见 [Web_SPEC.md](Web_SPEC.md)。本节描述架构、数据流与扩展机制。
+
+### 6.1 模块定位与解耦
+
+`web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**不新增 go.mod、不改主项目任何文件**。与 `cmd/catmonitor`、`internal/collectors`、`internal/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+
+### 6.2 目录结构
+
+```
+web/
+├── main.go            # 入口：blank-import 采集器 + 起采集 goroutine + HTTP server + 信号处理 + 端口回退
+├── static.go          # //go:embed static，内嵌前端资源
+├── config.go          # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
+├── collector.go       # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
+├── snapshot.go        # Snapshot 结构（含 Specs 字段）+ 原子读写
+├── hwinfo.go          # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info），非注册采集器
+├── server.go          # HTTP 路由与处理函数
+├── config.yaml        # 默认配置
+├── static/
+│   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
+│   ├── style.css       # 浅色卡片式主题
+│   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 扩展 manifest
+└── data/              # 运行时数据（运行时生成，git 忽略）
+    ├── snapshot.json  # 采集 goroutine 写，HTTP 层读
+    └── runtime.json   # 界面调整的刷新间隔持久化
+```
+
+### 6.3 数据流与解耦边界
+
+```
+  采集 goroutine (DataCollector)          HTTP server (net/http)
+    定时: 遍历注册表 → Collect()            静态页 + REST API
+         → health.Evaluate()                  读取 snapshot.json
+         → 原子写 snapshot.json                  ↑读（不调采集器）
+                  │写
+                  └──────── snapshot.json ────────┘
+                                  ↑热更新间隔
+                   浏览器（SPA：概览 + 各部件详情页）fetch /api/snapshot
+```
+
+**解耦边界**：HTTP 层**只读** `snapshot.json`，**绝不直接调用采集器**；采集 goroutine 是 `snapshot.json` 的**唯一写者**（写临时文件 + `os.Rename` 原子写，读者永不会读到半截文件）。
+
+### 6.4 Snapshot 数据模型
+
+`Snapshot`（`snapshot.go`）是 HTTP 层唯一数据源，字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `timestamp` | time | 本次快照生成时间 |
+| `refresh_interval_ms` | int | 当前生效的采集周期（毫秒），供前端轮询对齐 |
+| `history_points` | int | 历史环形缓冲容量 |
+| `health` | `health.HealthScore` | 健康度结果（直接复用 `internal/health` 序列化） |
+| `metrics` | `[]collector.Metric` | 本次采集的全部指标（复用 `internal/collector.Metric`） |
+| `history` | `map[string][]float64` | 趋势序列，key 形如 `<component>_<suffix>`，供详情页按部件前缀过滤 |
+| `specs` | `[]collector.Metric` | 静态设备规格（一次性身份信息），`omitempty`：无任何静态指标时不出现 |
+
+> `health` 与 `metrics` 直接使用主项目结构体 JSON tag，**不重新定义**，保证与采集器/健康度模块的契约一致。
+
+### 6.5 DataCollector 采集与历史
+
+- `Run(ctx)`：立即采集一次，进入 `select` 循环：定时器到期 → 采集；`reload` 通道 → 重置定时器（间隔热更新）；`collectNow` 通道 → 立即采集；`ctx.Done` → 退出。
+- `collectOnce()`：遍历 `collector.DefaultRegistry.All()` → `Collect()` → `health.NewEvaluator(health.GetScheme("auto")).Evaluate()` → 组装 `Snapshot` → `WriteAtomic`。
+- **历史趋势**由可扩展的 `trackedSeries` spec 列表驱动（key 形如 `<component>_<suffix>`），环形缓冲每 key 保留最近 `history_points` 个点。当前跟踪 cpu_usage / cpu_load_average / memory_usage / memory_swap_usage / disk_space_usage 及 GPU/NPU 利用率/显存/温度。
+- **静态规格 stash**：CPU/内存采集器首周期产出一次静态指标后被抑制，Web 侧 `filterStatic` 提取并缓存到 `staticStash`，之后每周期重新注入快照。
+
+### 6.6 硬件身份采集（hwinfo.go）
+
+`main.go` 启动时起 goroutine 调 `collectHWSpecs()`（**非注册采集器**），收集跨部件身份指标：
+
+| metric name | component | 来源 |
+|-------------|-----------|------|
+| `device_model` | system | dmidecode SMBIOS type 1 |
+| `gpu_info` | gpu | nvidia-smi |
+| `npu_info` | npu | npu-smi info |
+| `disk_info` | disk | /sys/block + smartctl 富化 |
+| `net_info` | network | /sys/class/net（跳过 lo） |
+
+外部命令缺失则降级（不报错），`/sys` 始终可用。结果经 `SetHWSpecs` 存入 `hwSpecs`（`hwMu` 保护），每周期合入 `specs = staticStash + hwSpecs`。
+
+### 6.7 端口占用回退（main.go listenWithFallback）
+
+启动 HTTP 前先以 `net.Listen("tcp", addr)` 探测端口，避免 `ListenAndServe` 异步失败难定位：
+
+1. `net.SplitHostPort` 解析 host/port；不可解析则直接 listen 原值（不回退）。
+2. 循环 `net.Listen`：成功返回；失败且 `errors.Is(err, syscall.EADDRINUSE)` → 端口 +1 重试。
+3. 其他错误（权限不足等）直接失败退出。listener 交给 `http.Server.Serve`，实际绑定地址回写配置并打印日志。跨平台有效。
+
+### 6.8 HTTP API 与前端设计
+
+- **路由**（`server.go`）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`。详见 SPEC §9.7。
+- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline）+ 全部指标表。
+- **显示 manifest**（`app.js`）：`MANIFEST`（部件显示名/关键指标）、`SERIES_LABELS`（序列显示名）、`NAV_ORDER`（导航排序）、`SPEC_DEFS`/`LABEL_NAMES`（规格面板）。未登记部件/指标/序列均有通用回退，不会崩溃。
+
+### 6.9 扩展机制
+
+| 扩展需求 | 改动位置 | 自动部分 |
+|----------|----------|----------|
+| 新部件采集器 | `web/main.go`（blank import） | 导航/概览卡/详情页 |
+| 部件显示名/关键指标 | `web/static/app.js` MANIFEST | — |
+| 新趋势 sparkline | `web/collector.go` trackedSeries 加一行 | 详情页趋势面板 |
+| 趋势显示名 | `web/static/app.js` SERIES_LABELS | — |
+| 新静态身份指标（采集器侧） | 加入 `staticMetricNames` 即被 stash 进 `specs` | specs modal 自动渲染 |
+
+> **结论：一行 blank import 即可让新部件完整可用**；后续按需在 MANIFEST/trackedSeries 美化。`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端。
+
+### 6.10 已知限制与后续预留
+
+1. **单机本地视图**：不含认证、不含多机聚合；如需多机，预留"多个 snapshot 源 + 概览聚合"。
+2. **轮询而非推送**：前端 `setInterval` 轮询 `/api/snapshot`；如需实时推送，预留 WebSocket/SSE（`snapshot.json` 解耦边界可直接复用）。
+3. **无持久化历史存储**：历史仅存内存环形缓冲（重启清空），未落盘；如需长期趋势，预留 JSONL 落盘。
+4. **指标展示优先级**：当前 metric 不携带优先级字段，概览关键指标靠 MANIFEST 人工指定；未来若主项目 Metric 增加优先级可改为自动选取。
