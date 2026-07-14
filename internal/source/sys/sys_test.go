@@ -214,6 +214,74 @@ func TestNetInterfaces(t *testing.T) {
 	}
 }
 
+func TestNetInterfaceInfo(t *testing.T) {
+	s := New(testdataSys)
+	info, err := s.NetInterfaceInfo("eth0")
+	if err != nil || info == nil {
+		t.Fatalf("NetInterfaceInfo failed: %v", err)
+	}
+	if info.Name != "eth0" {
+		t.Errorf("Name: got %q", info.Name)
+	}
+	if info.MAC != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("MAC: got %q", info.MAC)
+	}
+	if info.MTU != 1500 {
+		t.Errorf("MTU: got %d", info.MTU)
+	}
+	if info.Speed != 1000 {
+		t.Errorf("Speed: got %d want 1000", info.Speed)
+	}
+	if info.Driver != "e1000" {
+		t.Errorf("Driver: got %q want e1000", info.Driver)
+	}
+}
+
+func TestNetInterfaceInfoVirtual(t *testing.T) {
+	// "lo" has address/mtu but no device/driver symlink; must not error.
+	s := New(testdataSys)
+	info, err := s.NetInterfaceInfo("lo")
+	if err != nil || info == nil {
+		t.Fatalf("NetInterfaceInfo(lo) failed: %v", err)
+	}
+	if info.Driver != "" {
+		t.Errorf("lo Driver should be empty, got %q", info.Driver)
+	}
+	if info.Speed != -1 {
+		t.Errorf("lo Speed should be -1 (no speed file), got %d", info.Speed)
+	}
+}
+
+func TestBlockDevices(t *testing.T) {
+	s := New(testdataSys)
+	devs, err := s.BlockDevices()
+	if err != nil {
+		t.Fatalf("BlockDevices failed: %v", err)
+	}
+	byName := map[string]BlockDev{}
+	for _, d := range devs {
+		byName[d.Name] = d
+	}
+	// sda + sdb are real; loop0 must be filtered out.
+	if _, ok := byName["loop0"]; ok {
+		t.Error("loop0 should be filtered out (virtual device)")
+	}
+	if len(byName) < 2 {
+		t.Fatalf("expected sda+sdb, got %v", byName)
+	}
+	sda := byName["sda"]
+	if sda.Model != "Virtual Disk" {
+		t.Errorf("sda Model: got %q", sda.Model)
+	}
+	if sda.SizeBytes != 730960*512 {
+		t.Errorf("sda SizeBytes: got %d want %d", sda.SizeBytes, 730960*512)
+	}
+	sdb := byName["sdb"]
+	if sdb.SizeBytes != 2147483648*512 {
+		t.Errorf("sdb SizeBytes: got %d", sdb.SizeBytes)
+	}
+}
+
 func TestThermal(t *testing.T) {
 	s := New(testdataSys)
 	zones, err := s.Thermal()

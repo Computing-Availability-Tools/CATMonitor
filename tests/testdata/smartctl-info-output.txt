@@ -1,0 +1,17 @@
+smartctl 7.2 2022-08-01 r5155 (local build)
+Copyright (C) 2002-22, Bruce Allen, Christian Franke, Shinji Fujita
+www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Family:     Samsung SSD 970 EVO
+Device Model:     Samsung SSD 970 EVO 500GB
+Serial Number:    S4P2NX0K123456A
+LU WWN Device Id: 5 002538 9B6012A3F
+Firmware Version: 2B2QEXE7
+PCI Vendor/Subsystem ID: 0x144d/0xa809
+User Capacity:     500,107,862,016 bytes [500 GB]
+Sector Sizes:      512 bytes logical, 512 bytes physical
+Rotation Rate:     Solid State Device
+Form Factor:       M.2
+PCIe Version:      3 x4
+Transport protocol: PCIe

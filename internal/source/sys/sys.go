@@ -39,6 +39,28 @@ type ThermalZone struct {
 	TempMilliC int    // temperature in millidegrees Celsius
 }
 
+// NetIfaceInfo holds the static identity of one network interface read from
+// /sys/class/net/<iface>/. Fields are best-effort: virtual/non-PCI interfaces
+// may have an empty Driver, and Speed is -1 when no link is up or the kernel
+// does not expose a fixed speed.
+type NetIfaceInfo struct {
+	Name   string
+	MAC    string // /sys/class/net/<iface>/address (empty for some virt ifaces)
+	MTU    int    // /sys/class/net/<iface>/mtu
+	Speed  int    // /sys/class/net/<iface>/speed (Mbps); -1 if unreadable
+	Driver string // basename of .../device/driver symlink (empty for virt ifaces)
+}
+
+// BlockDev holds the static identity of one real block device read from
+// /sys/block/<dev>/. Works without root and without smartmontools, so disk
+// count + capacity + model are available even on virtual machines where
+// smartctl/dmidecode are absent.
+type BlockDev struct {
+	Name      string // "sda", "nvme0n1", ...
+	Model     string // /sys/block/<dev>/device/model (empty for some virt devs)
+	SizeBytes int64  // /sys/block/<dev>/size × 512
+}
+
 // Source is the typed interface for the /sys data source.
 type Source interface {
 	// CpuFreqs returns scaling_cur_freq (kHz) per online core that exposes a
@@ -72,6 +94,12 @@ type Source interface {
 	// NetInterfaces lists all network interface names under
 	// /sys/class/net/ (including "lo"); callers filter as needed.
 	NetInterfaces() ([]string, error)
+	// NetInterfaceInfo returns the static identity (MAC, MTU, speed, driver)
+	// of one interface. Speed is -1 when not exposed (no link / virtual).
+	NetInterfaceInfo(iface string) (*NetIfaceInfo, error)
+	// BlockDevices returns the real block devices under /sys/block (loop/ram/sr
+	// skipped), each with model and size. Works without root or smartmontools.
+	BlockDevices() ([]BlockDev, error)
 }
 
 type defaultSource struct {
@@ -304,6 +332,75 @@ func (s *defaultSource) NetInterfaces() ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// NetInterfaceInfo reads the static identity of one interface from
+// /sys/class/net/<iface>/. Missing files (e.g. driver for virtual ifaces) are
+// skipped silently; the caller only gets the fields that /sys exposes.
+func (s *defaultSource) NetInterfaceInfo(iface string) (*NetIfaceInfo, error) {
+	base := filepath.Join(s.root, "class", "net", iface)
+	info := &NetIfaceInfo{Name: iface, Speed: -1}
+	if data, err := os.ReadFile(filepath.Join(base, "address")); err == nil {
+		info.MAC = strings.TrimSpace(string(data))
+	}
+	if data, err := os.ReadFile(filepath.Join(base, "mtu")); err == nil {
+		if mtu, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			info.MTU = mtu
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(base, "speed")); err == nil {
+		if sp, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			info.Speed = sp
+		}
+	}
+	// driver is a symlink: /sys/class/net/<iface>/device/driver -> .../drivers/<name>
+	if link, err := os.Readlink(filepath.Join(base, "device", "driver")); err == nil {
+		info.Driver = filepath.Base(link)
+	}
+	return info, nil
+}
+
+// BlockDevices lists real block devices from /sys/block, skipping loop/ram/sr
+// virtual devices. Each entry carries model (from device/model) and size
+// (sectors × 512). Missing model files yield an empty Model (common for NVMe
+// or virtual devices), not an error.
+func (s *defaultSource) BlockDevices() ([]BlockDev, error) {
+	dir := filepath.Join(s.root, "block")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []BlockDev
+	for _, e := range entries {
+		name := e.Name()
+		if !isRealBlockDevice(name) {
+			continue
+		}
+		bd := BlockDev{Name: name}
+		if data, err := os.ReadFile(filepath.Join(dir, name, "device", "model")); err == nil {
+			bd.Model = strings.TrimSpace(string(data))
+		}
+		if data, err := os.ReadFile(filepath.Join(dir, name, "size")); err == nil {
+			if sectors, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
+				bd.SizeBytes = sectors * 512
+			}
+		}
+		out = append(out, bd)
+	}
+	return out, nil
+}
+
+// isRealBlockDevice skips virtual block devices that have no real hardware
+// identity (loop, ram, sr/rom, zram, md software RAID).
+func isRealBlockDevice(name string) bool {
+	if strings.HasPrefix(name, "loop") ||
+		strings.HasPrefix(name, "ram") ||
+		strings.HasPrefix(name, "sr") ||
+		strings.HasPrefix(name, "zram") ||
+		strings.HasPrefix(name, "md") {
+		return false
+	}
+	return true
 }
 
 func (s *defaultSource) Thermal() ([]ThermalZone, error) {

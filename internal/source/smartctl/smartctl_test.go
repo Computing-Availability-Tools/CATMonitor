@@ -113,3 +113,90 @@ var errFail = &testErr{"simulated smartctl failure"}
 type testErr struct{ msg string }
 
 func (e *testErr) Error() string { return e.msg }
+
+func TestParseDiskInfo(t *testing.T) {
+	out := readMock(t, "../../../tests/testdata/smartctl-info-output.txt")
+	di := parseDiskInfo(out)
+	if di == nil {
+		t.Fatal("expected DiskInfo, got nil")
+	}
+	if di.Model != "Samsung SSD 970 EVO 500GB" {
+		t.Errorf("Model: got %q", di.Model)
+	}
+	if di.Serial != "S4P2NX0K123456A" {
+		t.Errorf("Serial: got %q", di.Serial)
+	}
+	if di.Firmware != "2B2QEXE7" {
+		t.Errorf("Firmware: got %q", di.Firmware)
+	}
+	if di.Size != "500 GB" {
+		t.Errorf("Size: got %q", di.Size)
+	}
+	if di.Interface != "PCIe" {
+		t.Errorf("Interface: got %q want PCIe", di.Interface)
+	}
+}
+
+func TestInfoMockInject(t *testing.T) {
+	want := readMock(t, "../../../tests/testdata/smartctl-info-output.txt")
+	SetInfoFetcher(func(dev string) (string, error) { return want, nil })
+	defer ResetFetcher()
+
+	di, err := Default().Info("sda")
+	if err != nil || di == nil {
+		t.Fatalf("Info with mock failed: %v", err)
+	}
+	if di.Model != "Samsung SSD 970 EVO 500GB" {
+		t.Errorf("Model: got %q", di.Model)
+	}
+}
+
+func TestInfoCacheHit(t *testing.T) {
+	SetCacheTTL(1 * time.Hour)
+	defer SetCacheTTL(defaultCacheTTL)
+	defer ResetFetcher()
+
+	calls := 0
+	want := readMock(t, "../../../tests/testdata/smartctl-info-output.txt")
+	SetInfoFetcher(func(dev string) (string, error) { calls++; return want, nil })
+
+	Default().Info("sda")
+	Default().Info("sda")
+	if calls != 1 {
+		t.Errorf("info fetcher should be called once (cache), got %d", calls)
+	}
+}
+
+func TestInfoCachesFailure(t *testing.T) {
+	SetCacheTTL(1 * time.Hour)
+	defer SetCacheTTL(defaultCacheTTL)
+	defer ResetFetcher()
+
+	calls := 0
+	SetInfoFetcher(func(dev string) (string, error) { calls++; return "", errFail })
+	if _, err := Default().Info("sda"); err != nil {
+		t.Fatalf("failed fetch should return nil,nil, got %v", err)
+	}
+	if _, err := Default().Info("sda"); err != nil {
+		t.Fatalf("second call should not error, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("failed info fetcher should be cached (1 call), got %d", calls)
+	}
+}
+
+func TestExtractCapacity(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"User Capacity:    500,107,862,016 bytes [500 GB]", "500 GB"},
+		{"User Capacity:    1,000,000,000 bytes [1.00 TB]", "1.00 TB"},
+		{"User Capacity:    1,000,000,000 bytes", "1,000,000,000 bytes"},
+	}
+	for _, c := range cases {
+		if got := extractCapacity(c.in); got != c.want {
+			t.Errorf("extractCapacity(%q): got %q want %q", c.in, got, c.want)
+		}
+	}
+}

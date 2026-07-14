@@ -20,6 +20,12 @@ type Snapshot struct {
 	Health          health.HealthScore   `json:"health"`
 	Metrics         []collector.Metric   `json:"metrics"`
 	History         map[string][]float64 `json:"history"`
+	// Specs holds stashed static device specs (CPU model, frequency, cache,
+	// topology, memory modules). Collectors emit these once at startup then
+	// suppress them via flags; without this stash the snapshot would lose all
+	// device specs after the first cycle. Populated by collectOnce from the
+	// first cycle that yields any static metric, then re-injected every cycle.
+	Specs []collector.Metric `json:"specs,omitempty"`
 }
 
 // WriteAtomic writes the snapshot to disk atomically: write to a temp file in

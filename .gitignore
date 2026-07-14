@@ -10,3 +10,4 @@ catmonitor
 .idea/
 .vscode/
 web/data/
+web/.runtime-*.tmp

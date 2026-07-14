@@ -26,20 +26,35 @@ type MemoryDevice struct {
 	SizeMB      int // 0 for "No Module Installed"
 }
 
+// SystemInfo holds the SMBIOS System Information (type 1) entry describing the
+// server/device identity. Static; cached permanently after the first call.
+type SystemInfo struct {
+	Manufacturer string // e.g. "Supermicro"
+	ProductName string // e.g. "X12STW-F" (board/product); "To be filled by O.E.M." when unset
+	Version      string // product version / board revision
+	Serial       string // system serial number
+}
+
 // Source is the typed interface for the dmidecode data source.
 type Source interface {
 	// MemoryDevices returns all DIMM entries (including empty slots, which
 	// have SizeMB=0). Cached after the first successful call.
 	MemoryDevices() ([]MemoryDevice, error)
+	// SystemInfo returns the SMBIOS type 1 (System Information) entry.
+	// Cached after the first successful call; nil if dmidecode is unavailable.
+	SystemInfo() (*SystemInfo, error)
 	// Available reports whether dmidecode is on PATH. Note: root permission
 	// to actually read SMBIOS is verified at call time, not here.
 	Available() bool
 }
 
 type defaultSource struct {
-	once    sync.Once
-	cached  []MemoryDevice
-	mockOut string
+	once        sync.Once
+	cached      []MemoryDevice
+	systemOnce  sync.Once
+	cachedSys   *SystemInfo
+	mockOut     string
+	mockSysOut  string
 }
 
 var defaultSrc = &defaultSource{}
@@ -52,6 +67,13 @@ func SetMock(out string) {
 	defaultSrc.mockOut = out
 	defaultSrc.once = sync.Once{}
 	defaultSrc.cached = nil
+}
+
+// SetSystemMock injects canned `dmidecode --type 1` output for testing.
+func SetSystemMock(out string) {
+	defaultSrc.mockSysOut = out
+	defaultSrc.systemOnce = sync.Once{}
+	defaultSrc.cachedSys = nil
 }
 
 func (s *defaultSource) Available() bool {
@@ -79,6 +101,69 @@ func (s *defaultSource) MemoryDevices() ([]MemoryDevice, error) {
 		return nil, perr
 	}
 	return s.cached, nil
+}
+
+func (s *defaultSource) SystemInfo() (*SystemInfo, error) {
+	var perr error
+	s.systemOnce.Do(func() {
+		var out string
+		if s.mockSysOut != "" {
+			out = s.mockSysOut
+		} else {
+			o, err := exec.Command("dmidecode", "--type", "1").Output()
+			if err != nil {
+				perr = err
+				return
+			}
+			out = string(o)
+		}
+		s.cachedSys = parseSystemInfo(out)
+	})
+	if perr != nil {
+		return nil, perr
+	}
+	return s.cachedSys, nil
+}
+
+// parseSystemInfo walks `dmidecode --type 1` output and extracts the System
+// Information fields. Returns nil if no System Information section is found.
+func parseSystemInfo(out string) *SystemInfo {
+	inSystem := false
+	var si SystemInfo
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "Handle "):
+			inSystem = false
+		case strings.HasPrefix(line, "System Information"):
+			inSystem = true
+			found = true
+		case strings.HasPrefix(line, "\t"):
+			if !inSystem {
+				continue
+			}
+			kv := strings.SplitN(strings.TrimSpace(line), ":", 2)
+			if len(kv) < 2 {
+				continue
+			}
+			key := strings.TrimSpace(kv[0])
+			val := strings.TrimSpace(kv[1])
+			switch key {
+			case "Manufacturer":
+				si.Manufacturer = val
+			case "Product Name":
+				si.ProductName = val
+			case "Version":
+				si.Version = val
+			case "Serial Number":
+				si.Serial = val
+			}
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &si
 }
 
 // parseDmidecode walks the dmidecode --type 17 output, splitting on "Handle"

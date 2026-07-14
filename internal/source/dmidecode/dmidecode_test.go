@@ -86,3 +86,44 @@ func TestMemoryDevicesCaches(t *testing.T) {
 		t.Errorf("cache should serve same result; got %d vs %d", len(d1), len(d2))
 	}
 }
+
+func TestParseSystemInfo(t *testing.T) {
+	out := readMock(t, "../../../tests/testdata/dmidecode-type1.txt")
+	si := parseSystemInfo(out)
+	if si == nil {
+		t.Fatal("expected SystemInfo, got nil")
+	}
+	if si.Manufacturer != "Supermicro" {
+		t.Errorf("Manufacturer: got %q", si.Manufacturer)
+	}
+	if si.ProductName != "X12STW-F" {
+		t.Errorf("ProductName: got %q", si.ProductName)
+	}
+	if si.Version != "1.0" {
+		t.Errorf("Version: got %q", si.Version)
+	}
+	if si.Serial != "S12345678X" {
+		t.Errorf("Serial: got %q", si.Serial)
+	}
+}
+
+func TestParseSystemInfoEmpty(t *testing.T) {
+	if si := parseSystemInfo("Handle 0x0002, DMI type 4, 0 bytes\nProcessor\n"); si != nil {
+		t.Errorf("expected nil when no System Information section, got %+v", si)
+	}
+}
+
+func TestSystemInfoCaches(t *testing.T) {
+	SetSystemMock(readMock(t, "../../../tests/testdata/dmidecode-type1.txt"))
+	s1, err := Default().SystemInfo()
+	if err != nil || s1 == nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	s2, err := Default().SystemInfo()
+	if err != nil || s2 == nil {
+		t.Fatalf("second call failed: %v", err)
+	}
+	if s1 != s2 {
+		t.Error("SystemInfo should be cached (same pointer)")
+	}
+}
