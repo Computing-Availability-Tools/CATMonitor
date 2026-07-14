@@ -1,0 +1,2 @@
+NPU Topology:
+8 * HCCS-Link
