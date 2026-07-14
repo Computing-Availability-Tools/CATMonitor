@@ -4,6 +4,38 @@
 
 ---
 
+## v0.2.0
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.2.0 |
+| 发布时间 | 2026-07-14 |
+| 发布人 | sunnytao, ggboom12138 |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (b114848) → main (merge 21c7083) |
+
+### 变更摘要
+
+- **来源层（source layer）**：新增 `internal/source/` 9 个来源包（proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl），抽象数据获取与解析；采集器不再直接 `os.ReadFile`/`exec`，来源返回 parsed struct + 单例 + `SetRoot`/可注入 fetcher + 缓存
+- **CPU 指标扩展 7 → 40**：拓扑/核状态/频率/缓存/BuddyInfo/MCE 错误/IPMI 温度功率
+- **Memory 指标扩展 6 → 19**：usage_detail/swap/PSI 饱和度/碎片化/页计数/DIMM 模块/功率
+- **disk/network 迁移**：迁移到来源层（指标集不变，行为不变）
+- **平台抽象层**：`internal/platform` 抽象配置路径与数据目录跨平台化
+- **健康度自动检测**：`Evaluate()` 根据是否存在 GPU/NPU 指标自动选择权重方案
+- **缺陷修复 4 项**：/sys 符号链接过滤、swap 无 swap 机器产出、ipmitool negative cache、statfs build tag
+- **测试**：141 用例全过（collectors 62 / sources 59 / health 20），覆盖率 69.0%~92.3%，`go vet` 零警告，Linux/Windows 双平台编译通过
+- **零新增依赖**：go.mod 仍仅 `gopkg.in/yaml.v3`
+
+### 已知限制（后续跟进）
+
+- gpu/npu 未迁移到来源层（待建 nvsmi/npsmi 来源）
+- health 未给 CPU MCE / Memory saturation 加扣分规则
+- per-metric 采集周期未实现（仍为 per-collector interval）
+- Windows 来源层迁移延后（`*_windows.go` 保留原实现，扩展指标当前 Linux 专有）
+- `-c` 短选项 bug 未修（建议使用 `--config`）
+
+---
+
 ## v0.1.1
 
 | 项目 | 说明 |

@@ -30,6 +30,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 3. **健康度独立**：评分规则与采集逻辑解耦，便于后续修改评价规则
 4. **可测试**：内置测试框架，每增加一个指标即验证，每阶段输出测试报告
 5. **跨平台**：通过 Go 构建标签（build tags）隔离平台代码，Linux 和 Windows 共享采集器核心逻辑，仅数据采集层分离
+6. **来源层抽象**（v0.2.0）：数据获取与解析集中在 `internal/source/`，采集器不再直接 `os.ReadFile`/`exec`；来源返回 parsed struct，单例 + 可注入 fetcher，部分来源（ipmi/dmesg/smartctl）带缓存 + 失败缓存，避免无硬件时反复 exec
 
 ---
 
@@ -113,15 +114,17 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 ### 3.2 各部件指标概要
 
+> v0.2.0 通过来源层（`internal/source/`）扩展，CPU 7→40、Memory 6→19，disk/network 迁移到来源层（指标集不变）。完整清单见 [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md)。
+
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
-| CPU | 7 | 2 | 2 | 3 |
-| Memory | 6 | 4 | 1 | 1 |
+| CPU | 40 | 4 | 12 | 24 |
+| Memory | 19 | 4 | 7 | 8 |
 | Disk | 7 | 1 | 3 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
 | NPU | 5 | 3 | 2 | 0 |
 | Network | 5 | 1 | 3 | 1 |
-| **合计** | **37** | **14** | **14** | **9** |
+| **合计** | **83** | **16** | **30** | **37** |
 
 ### 3.3 每个指标必须包含的属性
 
@@ -261,6 +264,20 @@ health:
 | Go 标准库 (Windows) | kernel32.dll, iphlpapi.dll 调用 | 通过 syscall.NewLazyDLL |
 
 GPU 采集通过 `os/exec` 调用 `nvidia-smi`，NPU 通过调用 `npu-smi`，不引入 CGo 绑定，保证跨环境编译。Windows 平台通过 Go `syscall` 包调用 kernel32.dll / iphlpapi.dll / PowerShell，无需额外第三方依赖。
+
+### 7.1 来源层外部命令（v0.2.0，Linux）
+
+来源层 `internal/source/` 通过 `os/exec` 调用以下系统命令（无硬件/未安装时返回空，优雅降级，失败结果同样缓存以避免反复 exec）：
+
+| 来源包 | 外部命令 | 用途 | 缓存策略 |
+|--------|---------|------|---------|
+| ipmi | `ipmitool` (sdr/dcmi) | 温度/功率 | 30s + 失败缓存 + 5s 超时 |
+| lscpu | `lscpu` | CPU 拓扑 | 常驻 (sync.Once) |
+| mce | `mcelog` / `dmesg` | MCE 错误 | 无 |
+| dmesg | `dmesg` | OOM / I/O 错误 | 30s + 失败缓存 |
+| dmidecode | `dmidecode --type 17` | DIMM 模块信息 | 常驻 (sync.Once) |
+| smartctl | `smartctl -H` | SMART 健康 | per-dev 60s + 失败缓存 |
+| proc / sys / statfs | （纯文件读取/系统调用，无外部命令） | /proc、/sys、statfs(2) | 无缓存 |
 
 ---
 

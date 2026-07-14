@@ -41,8 +41,22 @@
 │   │ │k32.dll│ │k32.dll│ │k32.dll│    │     │ └───┴──┘│  │
 │   │ └──────┘ └──────┘ └─────┘ │     │     │         │  │
 │   └───────────────────────────┴─────┴─────┴─────────┘  │
+├─────────────────────────────────────────────────────┤
+│         internal/source (来源层 v0.2.0 新增)           │
+│  ┌─────┬──────┬──────┬──────┬──────┬──────┬──────┐   │
+│  │proc │ sys  │ ipmi │lscpu │ mce  │dmesg │...   │   │
+│  │     │      │(缓存)│(常驻)│      │(缓存)│      │   │
+│  └──┬──┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──────┘   │
+│     │     │      │      │      │      │              │
+│  来源层：parsed struct + 单例 + SetRoot/可注入 fetcher │
+│  collector 调用来源拿数据，不再直接 os.ReadFile/exec     │
+├─────────────────────────────────────────────────────┤
+│         Linux 系统接口 (procfs/sysfs/syscall/exec)    │
+│         Windows 系统 API (kernel32/iphlpapi/PS)        │
 └─────────────────────────────────────────────────────┘
 ```
+
+> v0.2.0 引入来源层（`internal/source/`）后，Linux 采集器通过来源包间接访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等系统接口；Windows 保留直接 syscall 实现（来源层迁移延后）。来源返回 parsed struct，带缓存（ipmi/dmesg/smartctl）与可注入 fetcher，便于单元测试 mock。
 
 ### 1.2 跨平台架构设计
 
@@ -51,7 +65,8 @@
 ```
 collectors/{component}/
   ├── {component}.go         ← 共享：struct, Collect(), 指标定义, delta 逻辑
-  ├── {component}_linux.go   ← Linux: /proc, /sys, syscall.Statfs
+  ├── {component}_linux.go   ← Linux: 调用来源层(proc/sys/ipmi/...)采集
+  ├── {component}_metrics.go ← 跨平台(无build tag)：新增指标采集(来源报错→空)
   ├── {component}_windows.go ← Windows: kernel32.dll, PowerShell
   └── {component}_test.go    ← 测试 (//go:build linux)
 ```
@@ -59,9 +74,10 @@ collectors/{component}/
 **关键原则**：
 - `Collector` 接口、`Metric` 结构体、健康度模块不感知平台差异
 - 每个采集器的 `Collect()` 方法调用平台特定的数据采集函数
-- Linux 代码（/proc, /sys, syscall.Statfs, dmesg, smartctl）完整保留在 `_linux.go`
+- Linux 代码通过 `internal/source/` 来源层访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等（v0.2.0）
 - Windows 代码使用 Go `syscall` 包直接调用 kernel32.dll / iphlpapi.dll，零第三方依赖
 - GPU/NPU 采集器无需分离（nvidia-smi 和 npu-smi 在双平台均可通过 os/exec 调用）
+- `*_metrics.go` 为跨平台文件（无 build tag），新增指标方法定义于此；Windows 上来源层不可用时返回空值
 
 ### 1.3 扩展机制：Collector 接口 + Registry 注册表
 
@@ -140,17 +156,19 @@ CATMonitor/
 │   ├── collectors/                  # 具体采集器实现
 │   │   ├── cpu/
 │   │   │   ├── cpu.go               # 共享：struct, Collect(), 工具函数
-│   │   │   ├── cpu_linux.go         # Linux: /proc/stat, /sys/class/thermal
+│   │   │   ├── cpu_linux.go         # Linux: 通过来源层采集 usage/loadavg 等
+│   │   │   ├── cpu_metrics.go       # 跨平台(无tag)：拓扑/频率/缓存/MCE/IPMI 等新指标
 │   │   │   ├── cpu_windows.go       # Windows: GetSystemTimes + PowerShell
 │   │   │   └── cpu_test.go          # 测试 (//go:build linux)
 │   │   ├── memory/
 │   │   │   ├── memory.go            # 共享
-│   │   │   ├── memory_linux.go      # Linux: /proc/meminfo, /sys/edac, dmesg
-│   │   │   ├── memory_windows.go    # Windows: GlobalMemoryStatusEx
+│   │   │   ├── memory_linux.go      # Linux: 通过来源层采集
+│   │   │   ├── memory_metrics.go    # 跨平台(无tag)：swap/PSI/碎片化/DIMM 等新指标
+│   │   │   ├── memory_windows.go     # Windows: GlobalMemoryStatusEx
 │   │   │   └── memory_test.go       # 测试 (//go:build linux)
 │   │   ├── disk/
 │   │   │   ├── disk.go              # 共享
-│   │   │   ├── disk_linux.go        # Linux: /proc/mounts, syscall.Statfs, smartctl
+│   │   │   ├── disk_linux.go        # Linux: 通过来源层(statfs/proc/smartctl/dmesg)
 │   │   │   ├── disk_windows.go      # Windows: GetDiskFreeSpaceExW, GetLogicalDrives
 │   │   │   └── disk_test.go         # 测试 (//go:build linux)
 │   │   ├── gpu/
@@ -161,9 +179,20 @@ CATMonitor/
 │   │   │   └── npu_test.go
 │   │   └── network/
 │   │       ├── network.go           # 共享
-│   │       ├── network_linux.go     # Linux: /proc/net/dev, /sys/class/net
+│   │       ├── network_linux.go     # Linux: 通过来源层(proc/sys)
 │   │       ├── network_windows.go   # Windows: Get-NetAdapterStatistics (PowerShell)
 │   │       └── network_test.go      # 测试 (//go:build linux)
+│   ├── source/                      # 来源层（v0.2.0 新增）：数据获取与解析抽象
+│   │   ├── source.go                # 通用 Source 接口 {Name(); Available()}
+│   │   ├── proc/                    # /proc 全量解析（11 个 typed 方法）
+│   │   ├── sys/                     # /sys 解析（freq/cache/corestate/thermal/net）
+│   │   ├── ipmi/                    # ipmitool SDR/DCMI（30s缓存+失败缓存+5s超时）
+│   │   ├── lscpu/                   # lscpu 拓扑（常驻 sync.Once）
+│   │   ├── mce/                     # mcelog/dmesg MCE 事件
+│   │   ├── dmesg/                   # dmesg（30s缓存+失败缓存）
+│   │   ├── dmidecode/               # dmidecode DIMM（常驻 sync.Once）
+│   │   ├── statfs/                  # statfs(2)（Linux 专有，//go:build linux）
+│   │   └── smartctl/                # smartctl -H（per-dev 60s缓存+失败缓存）
 │   ├── health/                      # 健康度评估模块（独立，纯逻辑跨平台）
 │   │   ├── health.go                # HealthEvaluator + Evaluate() 入口
 │   │   ├── rules.go                 # 评分规则定义（权重、扣分项）
@@ -197,7 +226,9 @@ CATMonitor/
          ▼
   Collector.Collect()  ──→  []Metric
          │                    │
-         │ Linux: /proc, /sys │ Windows: kernel32, PowerShell
+         │ Linux: 经来源层 source.Xxx() 拿 parsed struct
+         │   (proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl)
+         │ Windows: kernel32.dll / PowerShell 直接 syscall
          ▼
   Storage.Write(metrics)  ──→  JSON 文件
   (路径: {data_dir}/{component}_{date}.jsonl)
@@ -221,6 +252,57 @@ CATMonitor/
 ```jsonl
 {"score":85,"grade":"Good","components":{"cpu":{"score":25,"max":30,"details":[...]},"memory":{"score":35,"max":40,"details":[...]}},"timestamp":"2026-07-10T10:30:00Z"}
 ```
+
+### 1.6 来源层设计（v0.2.0 新增）
+
+为解耦采集器与系统数据获取细节，引入 `internal/source/` 来源层。采集器不再直接 `os.ReadFile`/`exec`，而是调用来源包拿 parsed struct。
+
+#### 设计原则
+
+1. **parsed struct 返回**：来源返回 typed struct（如 `proc.CPUStat`、`proc.Meminfo`），采集器只做指标映射，不做字符串解析
+2. **单例 + 可注入**：来源包暴露单例访问点 + `SetRoot(path)`（重定向 /proc、/sys 测试根）+ 可注入 fetcher（测试时 mock exec）
+3. **缓存策略分档**：
+   - **不缓存**：`proc`/`sys`/`statfs`（实时性要求高）
+   - **带 TTL 缓存**：`ipmi`(30s)、`dmesg`(30s)、`smartctl`(per-dev 60s)
+   - **常驻缓存 (sync.Once)**：`lscpu`、`dmidecode`（拓扑静态，启动采集一次）
+4. **失败缓存（negative cache）**：`ipmi`/`dmesg`/`smartctl` 无硬件或未安装时，失败结果也缓存，避免每周期重试 exec
+5. **跨平台降级**：`*_metrics.go` 为跨平台文件（无 build tag），Windows 上来源层不可用时返回空（优雅降级）
+6. **不建 Registry**：决策上暂不引入 `source.Registry` + list，采集器按需 import 来源包
+
+#### 来源包清单
+
+| 包 | 数据源 | typed 方法 | 缓存 | 备注 |
+|----|--------|-----------|------|------|
+| proc | /proc 全量 | Stat/Loadavg/Meminfo/Diskstats/NetDev/Vmstat/Cpuinfo/Buddyinfo/Mounts/NetTCPStates/Pressure | 无 | 11 个方法 |
+| sys | /sys | CpuFreqs/CacheInfos/CpuOnline·Offline·Isolated/Nodes/Edac/NetOperstate/NetInterfaces/Thermal | 无 | 符号链接修复 (IsDir \|\| ModeSymlink) |
+| ipmi | ipmitool SDR/DCMI | SDR()/DCMIPower() | 30s + 失败 + 5s 超时 | fetcher 可注入；温度/功率共用一份 SDR |
+| lscpu | lscpu | Topology() | 常驻 (sync.Once) | 拓扑静态 |
+| mce | mcelog/dmesg | Errors() | 无 | MCE CE/UCE 事件 |
+| dmesg | dmesg | Text() | 30s + 失败 | 供 oom_count / io_errors |
+| dmidecode | dmidecode --type 17 | MemoryDevices() | 常驻 (sync.Once) | DIMM 信息 |
+| statfs | statfs(2) | Statfs(path) | 无 | Linux 专有 (`//go:build linux`)；fetcher 可注入 |
+| smartctl | smartctl -H | Health(dev) | per-dev 60s + 失败 | |
+
+#### 通用接口
+
+```go
+// internal/source/source.go
+type Source interface {
+    Name() string        // 来源名称
+    Available() bool     // 当前环境是否可用（外部命令存在/权限正常）
+}
+```
+
+#### 采集器与来源的依赖关系
+
+| 采集器 | 依赖的来源包 | 产出指标示例 |
+|--------|-------------|-------------|
+| cpu | proc, sys, lscpu, mce, ipmi | usage/time/util, topology, freq, cache, MCE, temperature/power |
+| memory | proc, dmidecode, ipmi, dmesg | usage_detail, swap, PSI 饱和度, 碎片化, DIMM, oom_count, power |
+| disk | proc, statfs, smartctl, dmesg | space_usage, iops, throughput, io_wait, io_errors, SMART |
+| network | proc, sys | throughput, packet_count, error_count, interface_status, connection_count |
+| gpu | （未接入，待建 nvsmi 来源） | utilization, memory_usage, temperature, power_draw, ecc_errors, clock_frequency |
+| npu | （未接入，待建 npsmi 来源） | utilization, memory_usage, temperature, power_draw, health_status |
 
 ---
 
@@ -601,8 +683,8 @@ Registered Collectors:
 ┌──────────┬──────────┬──────────┬──────────┬─────────┬─────────┐
 │ Name     │ Component│ Priority │ Interval │ Enabled │ Metrics │
 ├──────────┼──────────┼──────────┼──────────┼─────────┼─────────┤
-│ cpu      │ cpu      │ High     │ 3s       │ true    │ 7       │
-│ memory   │ memory   │ High     │ 3s       │ true    │ 6       │
+│ cpu      │ cpu      │ High     │ 3s       │ true    │ 40      │
+│ memory   │ memory   │ High     │ 3s       │ true    │ 19      │
 │ disk     │ disk     │ High     │ 5s       │ true    │ 7       │
 │ gpu      │ gpu      │ High     │ 3s       │ true    │ 7       │
 │ npu      │ npu      │ High     │ 3s       │ false   │ 5       │
