@@ -43,7 +43,7 @@ func getSystemCPUTimes() (idle, kernel, user uint64, err error) {
 	return
 }
 
-func (c *CPUCollector) collectUsage(now time.Time) ([]collector.Metric, error) {
+func (c *CPUCollector) collectCpuTimeStats(now time.Time) ([]collector.Metric, error) {
 	idle, kernel, user, err := getSystemCPUTimes()
 	if err != nil {
 		return nil, err
@@ -65,6 +65,9 @@ func (c *CPUCollector) collectUsage(now time.Time) ([]collector.Metric, error) {
 	c.prevKernel = kernel
 	c.prevUser = user
 
+	// Windows GetSystemTimes only exposes idle/kernel/user, so the 8-field
+	// time breakdown and per-state utilization metrics are unavailable and
+	// omitted here (graceful degradation, decision H).
 	return []collector.Metric{{
 		Component: "cpu",
 		Name:      "usage",
@@ -76,10 +79,6 @@ func (c *CPUCollector) collectUsage(now time.Time) ([]collector.Metric, error) {
 }
 
 func (c *CPUCollector) collectLoadAverage(now time.Time) ([]collector.Metric, error) {
-	return nil, nil
-}
-
-func (c *CPUCollector) collectTemperature(now time.Time) ([]collector.Metric, error) {
 	return nil, nil
 }
 

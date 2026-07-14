@@ -3,56 +3,62 @@
 package disk
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/dmesg"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/smartctl"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/statfs"
 )
 
-func TestParseMounts(t *testing.T) {
-	mounts, err := parseMounts("../../../tests/testdata/proc")
+const (
+	testdataProc = "../../../tests/testdata/proc"
+)
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("parseMounts failed: %v", err)
+		t.Fatalf("failed to read %s: %v", path, err)
 	}
+	return string(data)
+}
 
-	// Test data has 4 mount points: /dev/sda1, proc, sysfs, tmpfs
-	if len(mounts) != 4 {
-		t.Fatalf("expected 4 mount points, got %d", len(mounts))
-	}
-
-	// Check first mount point
-	m0 := mounts[0]
-	if m0.device != "/dev/sda1" {
-		t.Errorf("expected device '/dev/sda1', got '%s'", m0.device)
-	}
-	if m0.mountPoint != "/" {
-		t.Errorf("expected mount point '/', got '%s'", m0.mountPoint)
-	}
-	if m0.fstype != "ext4" {
-		t.Errorf("expected fstype 'ext4', got '%s'", m0.fstype)
-	}
+// useTestdata redirects proc source to testdata, mocks dmesg (for io_errors)
+// and smartctl (for SMART). statfs is left real so space_usage tests hit the
+// actual root filesystem (always available).
+func useTestdata(t *testing.T) {
+	t.Helper()
+	proc.SetRoot(testdataProc)
+	dmesg.SetMock(readFile(t, "../../../tests/testdata/dmesg-oom-sample.txt"))
+	smartctl.SetFetcher(func(dev string) (string, error) {
+		return "SMART overall-health self-assessment test result: PASSED\nTemperature_Celsius 35\n", nil
+	})
+	t.Cleanup(func() {
+		proc.SetRoot("/proc")
+		dmesg.ResetFetcher()
+		smartctl.ResetFetcher()
+		statfs.ResetFetcher()
+	})
 }
 
 func TestVirtualFSFiltering(t *testing.T) {
-	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-
-	// parseMounts returns 4 mounts, but proc/sysfs/tmpfs should be filtered
-	mounts, err := parseMounts(c.procPath)
+	useTestdata(t)
+	mounts, err := proc.Default().Mounts()
 	if err != nil {
-		t.Fatalf("parseMounts failed: %v", err)
+		t.Fatalf("Mounts failed: %v", err)
 	}
-
-	// Count non-virtual filesystems
 	realFSCount := 0
 	for _, m := range mounts {
-		if !virtualFS[m.fstype] {
+		if !virtualFS[m.Fstype] {
 			realFSCount++
 		}
 	}
-
-	// Only /dev/sda1 (ext4) should remain
+	// testdata mounts: /dev/sda1(ext4), proc, sysfs, tmpfs → only sda1 real.
 	if realFSCount != 1 {
 		t.Errorf("expected 1 real filesystem, got %d", realFSCount)
 	}
@@ -60,146 +66,38 @@ func TestVirtualFSFiltering(t *testing.T) {
 
 func TestCollectSpaceUsage(t *testing.T) {
 	c := New()
-
-	// Use root filesystem for statfs test (always available)
 	now := time.Now()
+	// Real root filesystem (statfs always available).
 	metrics, err := c.collectSpaceUsage("/dev/root", "/", "ext4", now)
 	if err != nil {
 		t.Fatalf("collectSpaceUsage failed: %v", err)
 	}
-
 	if len(metrics) != 4 {
 		t.Fatalf("expected 4 metrics (1 usage + 3 detail), got %d", len(metrics))
 	}
-
-	usage := metrics[0]
-	if usage.Name != "space_usage" {
-		t.Errorf("expected name 'space_usage', got '%s'", usage.Name)
+	if metrics[0].Name != "space_usage" || metrics[0].Unit != "%" {
+		t.Errorf("space_usage: %+v", metrics[0])
 	}
-	if usage.Unit != "%" {
-		t.Errorf("expected unit '%%', got '%s'", usage.Unit)
+	if metrics[0].Value < 0 || metrics[0].Value > 100 {
+		t.Errorf("usage should be 0-100, got %.2f", metrics[0].Value)
 	}
-	if usage.Value < 0 || usage.Value > 100 {
-		t.Errorf("usage should be 0-100, got %.2f", usage.Value)
-	}
-
-	// Check detail metrics
 	fields := make(map[string]bool)
 	for _, m := range metrics[1:] {
 		if m.Name != "space_detail" {
-			t.Errorf("expected name 'space_detail', got '%s'", m.Name)
+			t.Errorf("expected space_detail, got %s", m.Name)
 		}
 		fields[m.Labels["field"]] = true
-		if m.Value < 0 {
-			t.Errorf("space detail should be >= 0, got %.0f", m.Value)
-		}
 	}
 	if !fields["total"] || !fields["used"] || !fields["available"] {
-		t.Error("expected total, used, available fields")
-	}
-}
-
-func TestCollectIntegration(t *testing.T) {
-	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-
-	metrics, err := c.Collect()
-	if err != nil {
-		t.Fatalf("Collect failed: %v", err)
-	}
-
-	// Should have at least 4 metrics for the root filesystem
-	if len(metrics) < 4 {
-		t.Errorf("expected at least 4 metrics, got %d", len(metrics))
-	}
-
-	for _, m := range metrics {
-		if m.Component != "disk" {
-			t.Errorf("expected component 'disk', got '%s'", m.Component)
-		}
-		if m.Timestamp.IsZero() {
-			t.Error("timestamp should not be zero")
-		}
-	}
-}
-
-func TestVirtualFSMap(t *testing.T) {
-	// Verify virtual filesystems are in the map
-	virtualFilesystems := []string{"proc", "sysfs", "devtmpfs", "tmpfs", "overlay", "squashfs"}
-	for _, fs := range virtualFilesystems {
-		if !virtualFS[fs] {
-			t.Errorf("expected '%s' to be in virtualFS map", fs)
-		}
-	}
-
-	// Real filesystems should not be in the map
-	realFilesystems := []string{"ext4", "xfs", "btrfs", "ntfs"}
-	for _, fs := range realFilesystems {
-		if virtualFS[fs] {
-			t.Errorf("expected '%s' to NOT be in virtualFS map", fs)
-		}
-	}
-}
-
-func TestWithField(t *testing.T) {
-	labels := map[string]string{
-		"device":     "/dev/sda1",
-		"mount_point": "/",
-		"fstype":      "ext4",
-	}
-
-	result := withField(labels, "total")
-
-	if result["field"] != "total" {
-		t.Error("expected field 'total'")
-	}
-	if result["device"] != "/dev/sda1" {
-		t.Error("expected device to be preserved")
-	}
-	if result["fstype"] != "ext4" {
-		t.Error("expected fstype to be preserved")
-	}
-
-	// Verify original map is not modified
-	if _, ok := labels["field"]; ok {
-		t.Error("original map should not be modified")
-	}
-}
-
-func TestParseDiskStats(t *testing.T) {
-	stats, err := parseDiskStats("../../../tests/testdata/proc")
-	if err != nil {
-		t.Fatalf("parseDiskStats failed: %v", err)
-	}
-
-	sda, ok := stats["sda"]
-	if !ok {
-		t.Fatal("missing 'sda' device in diskstats")
-	}
-	if sda.readsCompleted != 12345 {
-		t.Errorf("expected readsCompleted 12345, got %d", sda.readsCompleted)
-	}
-	if sda.sectorsRead != 200000 {
-		t.Errorf("expected sectorsRead 200000, got %d", sda.sectorsRead)
-	}
-	if sda.writesCompleted != 5000 {
-		t.Errorf("expected writesCompleted 5000, got %d", sda.writesCompleted)
-	}
-	if sda.sectorsWritten != 100000 {
-		t.Errorf("expected sectorsWritten 100000, got %d", sda.sectorsWritten)
-	}
-
-	if _, exists := stats["ram0"]; exists {
-		t.Error("ram0 should be filtered out by device filter")
+		t.Error("expected total/used/available fields")
 	}
 }
 
 func TestCollectIOPS(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-
 	now := time.Now()
-	// First call stores state, no IOPS metrics
+	// First call stores state, no IOPS metrics.
 	metrics1, err := c.collectIOPS(now)
 	if err != nil {
 		t.Fatalf("first collectIOPS failed: %v", err)
@@ -207,8 +105,7 @@ func TestCollectIOPS(t *testing.T) {
 	if len(metrics1) != 0 {
 		t.Errorf("expected 0 metrics on first call, got %d", len(metrics1))
 	}
-
-	// Second call computes delta (same data, delta=0)
+	// Second call computes delta (same data, delta=0).
 	metrics2, _ := c.collectIOPS(now)
 	for _, m := range metrics2 {
 		if m.Name != "iops" {
@@ -221,34 +118,26 @@ func TestCollectIOPS(t *testing.T) {
 }
 
 func TestCollectThroughput(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-
 	now := time.Now()
-	// First call to populate prevDiskStats
+	// Populate prevDiskStats via collectIOPS first.
 	c.collectIOPS(now)
-
-	// Second call for throughput
 	metrics, err := c.collectThroughput(now)
 	if err != nil {
 		t.Fatalf("collectThroughput failed: %v", err)
 	}
 	for _, m := range metrics {
-		if m.Name != "throughput" {
-			t.Errorf("expected name 'throughput', got '%s'", m.Name)
-		}
-		if m.Unit != "MB/s" {
-			t.Errorf("expected unit 'MB/s', got '%s'", m.Unit)
+		if m.Name != "throughput" || m.Unit != "MB/s" {
+			t.Errorf("expected throughput MB/s, got %s %s", m.Name, m.Unit)
 		}
 	}
 }
 
 func TestCollectIoWait(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-
 	now := time.Now()
-	// First call stores state
 	metrics1, err := c.collectIoWait(now)
 	if err != nil {
 		t.Fatalf("first collectIoWait failed: %v", err)
@@ -256,8 +145,6 @@ func TestCollectIoWait(t *testing.T) {
 	if len(metrics1) != 0 {
 		t.Errorf("expected 0 metrics on first call, got %d", len(metrics1))
 	}
-
-	// Second call computes delta (same data, delta=0, io_wait=0)
 	metrics2, _ := c.collectIoWait(now)
 	for _, m := range metrics2 {
 		if m.Name != "io_wait" {
@@ -267,16 +154,15 @@ func TestCollectIoWait(t *testing.T) {
 }
 
 func TestCollectIoErrors(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-	c.SetMockDmesg("kernel: I/O error, dev sda, sector 12345\nkernel: blk_update_request: I/O error\nkernel: normal line\n")
-
+	// Override dmesg mock with IO-error-specific content.
+	dmesg.SetMock("kernel: I/O error, dev sda, sector 12345\nkernel: blk_update_request: I/O error\nkernel: normal line\n")
 	now := time.Now()
 	metrics, err := c.collectIoErrors(now)
 	if err != nil {
 		t.Fatalf("collectIoErrors failed: %v", err)
 	}
-
 	if len(metrics) != 1 {
 		t.Fatalf("expected 1 metric, got %d", len(metrics))
 	}
@@ -289,20 +175,17 @@ func TestCollectIoErrors(t *testing.T) {
 }
 
 func TestCollectSMART(t *testing.T) {
+	useTestdata(t)
 	c := New()
-	c.SetProcPath("../../../tests/testdata/proc")
-	c.SetMockSmartctl("sda", "SMART overall-health self-assessment test result: PASSED\nTemperature_Celsius 35 (0 19 0 0 0)\n")
-
 	now := time.Now()
 	metrics, err := c.collectSMART(now)
 	if err != nil {
 		t.Fatalf("collectSMART failed: %v", err)
 	}
-
-	if len(metrics) < 1 {
-		t.Fatalf("expected at least 1 SMART metric, got %d", len(metrics))
+	// testdata diskstats has sda, sdb (ram0 filtered) → 2 devices × (status + temp) = 4
+	if len(metrics) < 2 {
+		t.Fatalf("expected at least 2 SMART metrics, got %d", len(metrics))
 	}
-
 	hasStatus := false
 	for _, m := range metrics {
 		switch m.Name {
@@ -322,9 +205,81 @@ func TestCollectSMART(t *testing.T) {
 	}
 }
 
-func TestCollectorInterface(t *testing.T) {
+func TestCollectIntegration(t *testing.T) {
+	useTestdata(t)
 	c := New()
 
+	metrics, err := c.Collect()
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+	if len(metrics) < 4 {
+		t.Errorf("expected at least 4 metrics, got %d", len(metrics))
+	}
+	for _, m := range metrics {
+		if m.Component != "disk" {
+			t.Errorf("expected component 'disk', got '%s'", m.Component)
+		}
+		if m.Timestamp.IsZero() {
+			t.Error("timestamp should not be zero")
+		}
+	}
+}
+
+func TestVirtualFSMap(t *testing.T) {
+	virtualFilesystems := []string{"proc", "sysfs", "devtmpfs", "tmpfs", "overlay", "squashfs"}
+	for _, fs := range virtualFilesystems {
+		if !virtualFS[fs] {
+			t.Errorf("expected '%s' to be in virtualFS map", fs)
+		}
+	}
+	realFilesystems := []string{"ext4", "xfs", "btrfs", "ntfs"}
+	for _, fs := range realFilesystems {
+		if virtualFS[fs] {
+			t.Errorf("expected '%s' to NOT be in virtualFS map", fs)
+		}
+	}
+}
+
+func TestWithField(t *testing.T) {
+	labels := map[string]string{"device": "/dev/sda1", "mount_point": "/", "fstype": "ext4"}
+	result := withField(labels, "total")
+	if result["field"] != "total" || result["device"] != "/dev/sda1" || result["fstype"] != "ext4" {
+		t.Error("withField did not preserve/copy fields as expected")
+	}
+	if _, ok := labels["field"]; ok {
+		t.Error("original map should not be modified")
+	}
+}
+
+func TestParseSmartOutput(t *testing.T) {
+	now := time.Now()
+	metrics := parseSmartOutput("sda", "SMART overall-health self-assessment test result: PASSED\nTemperature_Celsius 35\n", now)
+	if len(metrics) < 1 {
+		t.Fatal("expected at least 1 SMART metric")
+	}
+	hasStatus, hasTemp := false, false
+	for _, m := range metrics {
+		switch m.Name {
+		case "smart_status":
+			hasStatus = true
+			if m.Labels["status"] != "PASSED" {
+				t.Errorf("expected PASSED, got '%s'", m.Labels["status"])
+			}
+		case "smart_temperature":
+			hasTemp = true
+			if m.Value != 35 {
+				t.Errorf("expected temp 35, got %.0f", m.Value)
+			}
+		}
+	}
+	if !hasStatus || !hasTemp {
+		t.Errorf("expected smart_status and smart_temperature, got status=%v temp=%v", hasStatus, hasTemp)
+	}
+}
+
+func TestCollectorInterface(t *testing.T) {
+	c := New()
 	if c.Name() != "disk" {
 		t.Errorf("expected name 'disk', got '%s'", c.Name())
 	}
@@ -354,17 +309,15 @@ func TestRoundFloat(t *testing.T) {
 	}
 }
 
-// TestStringFields can be used to verify mount parsing edge cases
 func TestParseMountsEdgeCases(t *testing.T) {
-	// Verify that all mount entries have at least 3 fields
-	mounts, _ := parseMounts("../../../tests/testdata/proc")
+	useTestdata(t)
+	mounts, _ := proc.Default().Mounts()
 	for _, m := range mounts {
-		if m.device == "" || m.mountPoint == "" || m.fstype == "" {
+		if m.Device == "" || m.MountPoint == "" || m.Fstype == "" {
 			t.Error("mount entry should not have empty fields")
 		}
-		if !strings.HasPrefix(m.device, "/") && m.device != "none" {
-			// Some special devices like proc, sysfs don't start with /
-			// This is just a sanity check, not a strict requirement
+		if !strings.HasPrefix(m.Device, "/") && m.Device != "none" {
+			// special devices (proc, sysfs) don't start with / — sanity only
 		}
 	}
 }

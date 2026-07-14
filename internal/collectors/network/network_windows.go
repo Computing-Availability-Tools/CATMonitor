@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
 )
 
 type winNetAdapterStat struct {
@@ -72,24 +73,24 @@ func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 		return metrics, nil
 	}
 
-	current := make(map[string]netDevStats)
+	current := make(map[string]proc.NetDevStat)
 	for _, s := range stats {
-		current[s.Name] = netDevStats{
-			rxBytes:   uint64(s.ReceivedBytes),
-			rxPackets: uint64(s.ReceivedPackets),
-			rxErrs:    uint64(s.ReceivedErrors),
-			rxDrop:    uint64(s.ReceivedDiscards),
-			txBytes:   uint64(s.SentBytes),
-			txPackets: uint64(s.SentPackets),
-			txErrs:    uint64(s.SentErrors),
-			txDrop:    uint64(s.SentDiscards),
+		current[s.Name] = proc.NetDevStat{
+			RxBytes:   uint64(s.ReceivedBytes),
+			RxPackets: uint64(s.ReceivedPackets),
+			RxErrs:    uint64(s.ReceivedErrors),
+			RxDrop:    uint64(s.ReceivedDiscards),
+			TxBytes:   uint64(s.SentBytes),
+			TxPackets: uint64(s.SentPackets),
+			TxErrs:    uint64(s.SentErrors),
+			TxDrop:    uint64(s.SentDiscards),
 		}
 	}
 
 	for iface, currStats := range current {
 		if prev, ok := c.prevStats[iface]; ok {
-			rxThroughput := float64(currStats.rxBytes-prev.rxBytes) / 3.0
-			txThroughput := float64(currStats.txBytes-prev.txBytes) / 3.0
+			rxThroughput := float64(currStats.RxBytes-prev.RxBytes) / 3.0
+			txThroughput := float64(currStats.TxBytes-prev.TxBytes) / 3.0
 
 			metrics = append(metrics, collector.Metric{
 				Component: "network", Name: "throughput",
@@ -104,8 +105,8 @@ func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 				Timestamp: now,
 			})
 
-			rxPkts := float64(currStats.rxPackets-prev.rxPackets) / 3.0
-			txPkts := float64(currStats.txPackets-prev.txPackets) / 3.0
+			rxPkts := float64(currStats.RxPackets-prev.RxPackets) / 3.0
+			txPkts := float64(currStats.TxPackets-prev.TxPackets) / 3.0
 			metrics = append(metrics, collector.Metric{
 				Component: "network", Name: "packet_count",
 				Value: roundFloat(rxPkts, 0), Unit: "个/s",
@@ -122,38 +123,38 @@ func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "error_count",
-			Value: float64(currStats.rxErrs), Unit: "次",
+			Value: float64(currStats.RxErrs), Unit: "次",
 			Labels:    map[string]string{"interface": iface, "type": "rx_err"},
 			Timestamp: now,
 		})
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "error_count",
-			Value: float64(currStats.rxDrop), Unit: "次",
+			Value: float64(currStats.RxDrop), Unit: "次",
 			Labels:    map[string]string{"interface": iface, "type": "rx_drop"},
 			Timestamp: now,
 		})
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "error_count",
-			Value: float64(currStats.txErrs), Unit: "次",
+			Value: float64(currStats.TxErrs), Unit: "次",
 			Labels:    map[string]string{"interface": iface, "type": "tx_err"},
 			Timestamp: now,
 		})
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "error_count",
-			Value: float64(currStats.txDrop), Unit: "次",
+			Value: float64(currStats.TxDrop), Unit: "次",
 			Labels:    map[string]string{"interface": iface, "type": "tx_drop"},
 			Timestamp: now,
 		})
 
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "rx_bytes_total",
-			Value: float64(currStats.rxBytes), Unit: "bytes",
+			Value: float64(currStats.RxBytes), Unit: "bytes",
 			Labels:    map[string]string{"interface": iface},
 			Timestamp: now,
 		})
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "tx_bytes_total",
-			Value: float64(currStats.txBytes), Unit: "bytes",
+			Value: float64(currStats.TxBytes), Unit: "bytes",
 			Labels:    map[string]string{"interface": iface},
 			Timestamp: now,
 		})

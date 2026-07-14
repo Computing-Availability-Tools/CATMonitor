@@ -1,30 +1,19 @@
 package network
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
 )
 
 type NetworkCollector struct {
-	prevStats map[string]netDevStats
-}
-
-type netDevStats struct {
-	rxBytes   uint64
-	rxPackets uint64
-	rxErrs    uint64
-	rxDrop    uint64
-	txBytes   uint64
-	txPackets uint64
-	txErrs    uint64
-	txDrop    uint64
+	prevStats map[string]proc.NetDevStat
 }
 
 func New() *NetworkCollector {
 	return &NetworkCollector{
-		prevStats: make(map[string]netDevStats),
+		prevStats: make(map[string]proc.NetDevStat),
 	}
 }
 
@@ -42,11 +31,6 @@ func roundFloat(val float64, precision int) float64 {
 		multiplier *= 10
 	}
 	return float64(int64(val*multiplier+0.5)) / multiplier
-}
-
-func parseUint(s string) uint64 {
-	val, _ := strconv.ParseUint(s, 10, 64)
-	return val
 }
 
 func init() {

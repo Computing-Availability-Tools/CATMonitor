@@ -118,5 +118,3 @@ func (c *MemoryCollector) collectPageFaults(now time.Time) ([]collector.Metric, 
 func (c *MemoryCollector) collectOOMCount(now time.Time) ([]collector.Metric, error) {
 	return nil, nil
 }
-
-func (c *MemoryCollector) SetMockDmesg(s string) { c.mockDmesg = s }

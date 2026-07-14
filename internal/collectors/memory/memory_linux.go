@@ -3,32 +3,20 @@
 package memory
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/dmesg"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
 
-var linuxMemPaths = struct {
-	procPath string
-	sysPath  string
-}{procPath: "/proc", sysPath: "/sys"}
-
-func (c *MemoryCollector) SetProcPath(path string) { linuxMemPaths.procPath = path }
-func (c *MemoryCollector) SetSysPath(path string)  { linuxMemPaths.sysPath = path }
-func (c *MemoryCollector) SetMockDmesg(s string)   { c.mockDmesg = s }
-
 func (c *MemoryCollector) collectUsage(now time.Time) ([]collector.Metric, error) {
-	meminfo, err := parseMeminfo(linuxMemPaths.procPath)
+	meminfo, err := proc.Default().Meminfo()
 	if err != nil {
 		return nil, err
 	}
-
-	var metrics []collector.Metric
 
 	memTotal, ok1 := meminfo["MemTotal"]
 	memAvail, ok2 := meminfo["MemAvailable"]
@@ -41,44 +29,34 @@ func (c *MemoryCollector) collectUsage(now time.Time) ([]collector.Metric, error
 		usage = float64(memTotal-memAvail) / float64(memTotal) * 100
 	}
 
-	metrics = append(metrics, collector.Metric{
-		Component: "memory",
-		Name:      "usage",
-		Value:     roundFloat(usage, 2),
-		Unit:      "%",
-		Timestamp: now,
-	})
-
-	metrics = append(metrics, collector.Metric{
-		Component: "memory",
-		Name:      "usage_detail",
-		Value:     float64(memTotal) / 1024,
-		Unit:      "MB",
-		Labels:    map[string]string{"field": "total"},
-		Timestamp: now,
-	})
-	metrics = append(metrics, collector.Metric{
-		Component: "memory",
-		Name:      "usage_detail",
-		Value:     float64(memTotal-memAvail) / 1024,
-		Unit:      "MB",
-		Labels:    map[string]string{"field": "used"},
-		Timestamp: now,
-	})
-	metrics = append(metrics, collector.Metric{
-		Component: "memory",
-		Name:      "usage_detail",
-		Value:     float64(memAvail) / 1024,
-		Unit:      "MB",
-		Labels:    map[string]string{"field": "available"},
-		Timestamp: now,
-	})
-
+	metrics := []collector.Metric{
+		{Component: "memory", Name: "usage", Value: roundFloat(usage, 2), Unit: "%", Timestamp: now},
+		{Component: "memory", Name: "usage_detail", Value: float64(memTotal) / 1024, Unit: "MB", Labels: map[string]string{"field": "total"}, Timestamp: now},
+		{Component: "memory", Name: "usage_detail", Value: float64(memTotal-memAvail) / 1024, Unit: "MB", Labels: map[string]string{"field": "used"}, Timestamp: now},
+		{Component: "memory", Name: "usage_detail", Value: float64(memAvail) / 1024, Unit: "MB", Labels: map[string]string{"field": "available"}, Timestamp: now},
+	}
+	// Extended pool fields (new per MEM_metrics.md; absent on Windows / older
+	// kernels without the corresponding meminfo key).
+	if v, ok := meminfo["MemFree"]; ok {
+		metrics = append(metrics, collector.Metric{Component: "memory", Name: "usage_detail", Value: float64(v) / 1024, Unit: "MB", Labels: map[string]string{"field": "free"}, Timestamp: now})
+	}
+	if v, ok := meminfo["Buffers"]; ok {
+		metrics = append(metrics, collector.Metric{Component: "memory", Name: "usage_detail", Value: float64(v) / 1024, Unit: "MB", Labels: map[string]string{"field": "buffers"}, Timestamp: now})
+	}
+	if v, ok := meminfo["Cached"]; ok {
+		metrics = append(metrics, collector.Metric{Component: "memory", Name: "usage_detail", Value: float64(v) / 1024, Unit: "MB", Labels: map[string]string{"field": "cached"}, Timestamp: now})
+	}
+	if v, ok := meminfo["SReclaimable"]; ok {
+		metrics = append(metrics, collector.Metric{Component: "memory", Name: "usage_detail", Value: float64(v) / 1024, Unit: "MB", Labels: map[string]string{"field": "sreclaimable"}, Timestamp: now})
+	}
+	if v, ok := meminfo["Unevictable"]; ok {
+		metrics = append(metrics, collector.Metric{Component: "memory", Name: "usage_detail", Value: float64(v) / 1024, Unit: "MB", Labels: map[string]string{"field": "unevictable"}, Timestamp: now})
+	}
 	return metrics, nil
 }
 
 func (c *MemoryCollector) collectSwapUsage(now time.Time) ([]collector.Metric, error) {
-	meminfo, err := parseMeminfo(linuxMemPaths.procPath)
+	meminfo, err := proc.Default().Meminfo()
 	if err != nil {
 		return nil, err
 	}
@@ -94,102 +72,63 @@ func (c *MemoryCollector) collectSwapUsage(now time.Time) ([]collector.Metric, e
 		usage = float64(swapTotal-swapFree) / float64(swapTotal) * 100
 	}
 
-	return []collector.Metric{{
-		Component: "memory",
-		Name:      "swap_usage",
-		Value:     roundFloat(usage, 2),
-		Unit:      "%",
-		Timestamp: now,
-	}}, nil
-}
-
-func (c *MemoryCollector) collectECCErrors(filename, metricName string, now time.Time) ([]collector.Metric, error) {
-	edacPath := filepath.Join(linuxMemPaths.sysPath, "devices", "system", "edac", "mc")
-
-	entries, err := os.ReadDir(edacPath)
-	if err != nil {
-		return nil, nil
-	}
-
-	var metrics []collector.Metric
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "mc") {
-			continue
-		}
-		countPath := filepath.Join(edacPath, entry.Name(), filename)
-		data, err := os.ReadFile(countPath)
-		if err != nil {
-			continue
-		}
-		val := strings.TrimSpace(string(data))
-		count, err := strconv.ParseInt(val, 10, 64)
-		if err != nil {
-			continue
-		}
-		metrics = append(metrics, collector.Metric{
-			Component: "memory",
-			Name:      metricName,
-			Value:     float64(count),
-			Unit:      "次",
-			Labels:    map[string]string{"mc": entry.Name()},
-			Timestamp: now,
-		})
-	}
-
+	metrics := []collector.Metric{{
+		Component: "memory", Name: "swap_usage", Value: roundFloat(usage, 2), Unit: "%", Timestamp: now,
+	}}
+	// swap_detail: raw values (MB), complementary to swap_usage (%).
+	metrics = append(metrics,
+		collector.Metric{Component: "memory", Name: "swap_detail", Value: float64(swapTotal) / 1024, Unit: "MB", Labels: map[string]string{"field": "total"}, Timestamp: now},
+		collector.Metric{Component: "memory", Name: "swap_detail", Value: float64(swapTotal-swapFree) / 1024, Unit: "MB", Labels: map[string]string{"field": "used"}, Timestamp: now},
+		collector.Metric{Component: "memory", Name: "swap_detail", Value: float64(swapFree) / 1024, Unit: "MB", Labels: map[string]string{"field": "free"}, Timestamp: now},
+	)
 	return metrics, nil
 }
 
-func parseMeminfo(procPath string) (map[string]uint64, error) {
-	data, err := os.ReadFile(filepath.Join(procPath, "meminfo"))
+func (c *MemoryCollector) collectECCErrors(filename, metricName string, now time.Time) ([]collector.Metric, error) {
+	edacs, err := sys.Default().Edac()
+	if err != nil {
+		return nil, nil
+	}
+	var metrics []collector.Metric
+	for _, mc := range edacs {
+		var val uint64
+		if filename == "ce_count" {
+			val = mc.CECount
+		} else {
+			val = mc.UECount
+		}
+		metrics = append(metrics, collector.Metric{
+			Component: "memory", Name: metricName, Value: float64(val), Unit: "次",
+			Labels: map[string]string{"mc": mc.Name}, Timestamp: now,
+		})
+	}
+	return metrics, nil
+}
+
+func (c *MemoryCollector) collectOOMCount(now time.Time) ([]collector.Metric, error) {
+	output, err := dmesg.Default().Text()
 	if err != nil {
 		return nil, err
 	}
-
-	result := make(map[string]uint64)
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		l := strings.ToLower(line)
+		if strings.Contains(l, "out of memory") || strings.Contains(l, "killed process") {
+			count++
 		}
-		parts := strings.Split(line, ":")
-		if len(parts) < 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		valStr := strings.TrimSpace(parts[1])
-		valStr = strings.TrimSuffix(valStr, "kB")
-		valStr = strings.TrimSpace(valStr)
-		val, err := strconv.ParseUint(valStr, 10, 64)
-		if err != nil {
-			continue
-		}
-		result[key] = val
 	}
-
-	return result, nil
+	return []collector.Metric{{
+		Component: "memory", Name: "oom_count", Value: float64(count), Unit: "次", Timestamp: now,
+	}}, nil
 }
 
 func (c *MemoryCollector) collectPageFaults(now time.Time) ([]collector.Metric, error) {
-	data, err := os.ReadFile(filepath.Join(linuxMemPaths.procPath, "vmstat"))
+	vs, err := proc.Default().Vmstat()
 	if err != nil {
 		return nil, err
 	}
-
-	var pgfault, pgmajfault uint64
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		switch fields[0] {
-		case "pgfault":
-			pgfault, _ = strconv.ParseUint(fields[1], 10, 64)
-		case "pgmajfault":
-			pgmajfault, _ = strconv.ParseUint(fields[1], 10, 64)
-		}
-	}
+	pgfault := vs["pgfault"]
+	pgmajfault := vs["pgmajfault"]
 
 	var metrics []collector.Metric
 	if c.prevPageFaults > 0 {
@@ -209,36 +148,4 @@ func (c *MemoryCollector) collectPageFaults(now time.Time) ([]collector.Metric, 
 	c.prevPageFaults = pgfault
 	c.prevMajorFaults = pgmajfault
 	return metrics, nil
-}
-
-func (c *MemoryCollector) collectOOMCount(now time.Time) ([]collector.Metric, error) {
-	var output string
-
-	if c.mockDmesg != "" {
-		output = c.mockDmesg
-	} else {
-		cmd := exec.Command("dmesg")
-		out, err := cmd.Output()
-		if err != nil {
-			return nil, err
-		}
-		output = string(out)
-	}
-
-	count := 0
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		l := strings.ToLower(line)
-		if strings.Contains(l, "out of memory") || strings.Contains(l, "killed process") {
-			count++
-		}
-	}
-
-	return []collector.Metric{{
-		Component: "memory",
-		Name:      "oom_count",
-		Value:     float64(count),
-		Unit:      "次",
-		Timestamp: now,
-	}}, nil
 }
