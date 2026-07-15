@@ -52,6 +52,9 @@ func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 	if throughputMetrics, err := c.collectThroughput(now); err == nil {
 		metrics = append(metrics, throughputMetrics...)
 	}
+	if latencyMetrics, err := c.collectLatency(now); err == nil {
+		metrics = append(metrics, latencyMetrics...)
+	}
 	if ioWaitMetrics, err := c.collectIoWait(now); err == nil {
 		metrics = append(metrics, ioWaitMetrics...)
 	}
@@ -144,6 +147,29 @@ func (c *DiskCollector) collectThroughput(now time.Time) ([]collector.Metric, er
 			metrics = append(metrics, collector.Metric{
 				Component: "disk", Name: "throughput", Value: roundFloat(writeMB, 2), Unit: "MB/s",
 				Labels: map[string]string{"device": dev, "direction": "write"}, Timestamp: now,
+			})
+		}
+	}
+	return metrics, nil
+}
+
+func (c *DiskCollector) collectLatency(now time.Time) ([]collector.Metric, error) {
+	current, err := c.filteredDiskStats()
+	if err != nil {
+		return nil, err
+	}
+	var metrics []collector.Metric
+	for dev, curr := range current {
+		if prev, ok := c.prevDiskStats[dev]; ok {
+			readLatency := float64(curr.ReadTime-prev.ReadTime) / 5.0
+			writeLatency := float64(curr.WriteTime-prev.WriteTime) / 5.0
+			metrics = append(metrics, collector.Metric{
+				Component: "disk", Name: "read_latency", Value: roundFloat(readLatency, 2), Unit: "ms/s",
+				Labels: map[string]string{"device": dev}, Timestamp: now,
+			})
+			metrics = append(metrics, collector.Metric{
+				Component: "disk", Name: "write_latency", Value: roundFloat(writeLatency, 2), Unit: "ms/s",
+				Labels: map[string]string{"device": dev}, Timestamp: now,
 			})
 		}
 	}

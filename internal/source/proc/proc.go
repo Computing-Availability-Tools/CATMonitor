@@ -59,6 +59,8 @@ type DiskStat struct {
 	SectorsRead     uint64
 	WritesCompleted uint64
 	SectorsWritten  uint64
+	ReadTime        uint64 // field 7: time spent reading (ms)
+	WriteTime       uint64 // field 11: time spent writing (ms)
 }
 
 // NetDevStat holds per-interface counters from /proc/net/dev. The source
@@ -311,6 +313,8 @@ func (s *defaultSource) Diskstats() (map[string]DiskStat, error) {
 			SectorsRead:     parseUint(fields[5]),
 			WritesCompleted: parseUint(fields[7]),
 			SectorsWritten:  parseUint(fields[9]),
+			ReadTime:        parseUint(fields[6]),
+			WriteTime:       parseUint(fields[10]),
 		}
 	}
 	return result, scanner.Err()

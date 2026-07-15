@@ -14,3 +14,6 @@ web/.runtime-*.tmp
 
 # AGENTS.md is local-only, do not sync to remote
 AGENTS.md
+
+# local_docs is local-only, do not sync to remote
+local_docs/

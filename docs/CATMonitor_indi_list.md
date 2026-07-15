@@ -25,11 +25,12 @@
 |------|--------|------|--------|-----|
 | CPU | 40 | 4 | 12 | 24 |
 | Memory | 19 | 4 | 7 | 8 |
-| Disk | 7 | 1 | 3 | 3 |
+| Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
 | NPU | 74 | 9 | 43 | 22 |
 | Network | 5 | 1 | 3 | 1 |
-| **合计** | **152** | **22** | **71** | **59** |
+| Chassis | 5 | 2 | 3 | 0 |
+| **合计** | **159** | **24** | **76** | **59** |
 
 ---
 
@@ -728,10 +729,12 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 3.1 | space_usage | 磁盘空间使用率 | High | 5s | 是 | % | statfs syscall |
 | 3.2 | iops | 读写IOPS | Medium | 5s | 是 | 次/s | /proc/diskstats |
 | 3.3 | throughput | 读写吞吐量 | Medium | 5s | 是 | MB/s | /proc/diskstats |
-| 3.4 | io_wait | I/O等待占比 | Medium | 5s | 是 | % | /proc/stat |
-| 3.5 | smart_status | SMART健康状态 | Medium | 60s | 否 | - | smartctl -H |
-| 3.6 | smart_temperature | 硬盘温度 | Low | 60s | 否 | °C | smartctl -A |
-| 3.7 | io_errors | I/O错误计数 | Low | 30s | 否 | 次 | /proc/diskstats, dmesg |
+| 3.4 | read_latency | 读耗时 | Medium | 5s | 是 | ms/s | /proc/diskstats (field 7) |
+| 3.5 | write_latency | 写耗时 | Medium | 5s | 是 | ms/s | /proc/diskstats (field 11) |
+| 3.6 | io_wait | I/O等待占比 | Medium | 5s | 是 | % | /proc/stat |
+| 3.7 | smart_status | SMART健康状态 | Medium | 60s | 否 | - | smartctl -H |
+| 3.8 | smart_temperature | 硬盘温度 | Low | 60s | 否 | °C | smartctl -A |
+| 3.9 | io_errors | I/O错误计数 | Low | 30s | 否 | 次 | /proc/diskstats, dmesg |
 
 ### 指标详情
 
@@ -767,7 +770,27 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"disk","name":"throughput","value":25.6,"unit":"MB/s","labels":{"device":"sda","direction":"read"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 3.4 io_wait（I/O等待占比）
+#### 3.4 read_latency（读耗时）
+
+- **数据来源**：`/proc/diskstats` 第 7 字段（read time, ms）
+- **采集方法**：两次采集间 read time 累计值差值除以间隔时间，得每秒读耗时（ms/s）。反映磁盘读 I/O 花费的时间。需 prev 快照，首次不产出
+- **Labels**：`device`（"sda", "sdb", ...）
+- **输出示例**：
+```json
+{"component":"disk","name":"read_latency","value":120.5,"unit":"ms/s","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 3.5 write_latency（写耗时）
+
+- **数据来源**：`/proc/diskstats` 第 11 字段（write time, ms）
+- **采集方法**：两次采集间 write time 累计值差值除以间隔时间，得每秒写耗时（ms/s）。反映磁盘写 I/O 花费的时间。需 prev 快照，首次不产出
+- **Labels**：`device`（"sda", "sdb", ...）
+- **输出示例**：
+```json
+{"component":"disk","name":"write_latency","value":80.3,"unit":"ms/s","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 3.6 io_wait（I/O等待占比）
 
 - **数据来源**：`/proc/stat` 中 `cpu` 行的 `iowait` 字段
 - **采集方法**：读取 `cpu` 行的第5个字段（iowait），与上一次采集的差值除以总 CPU 时间差值，得出 I/O Wait 百分比
@@ -777,7 +800,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"disk","name":"io_wait","value":3.2,"unit":"%","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 3.5 smart_status（SMART健康状态）
+#### 3.7 smart_status（SMART健康状态）
 
 - **数据来源**：`smartctl -H /dev/sdX` 命令输出
 - **采集方法**：遍历块设备，对每个支持 SMART 的设备执行 `smartctl -H`，解析输出中的整体健康评估结果（PASSED/FAILED）。需要 smartmontools 已安装且有 root 权限
@@ -787,7 +810,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"disk","name":"smart_status","value":1,"unit":"","labels":{"device":"sda","status":"PASSED"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 3.6 smart_temperature（硬盘温度）
+#### 3.8 smart_temperature（硬盘温度）
 
 - **数据来源**：`smartctl -A /dev/sdX` 命令输出
 - **采集方法**：执行 `smartctl -A`，解析 SMART 属性表中的 `Temperature_Celsius` 或 `Temperature` 属性获取温度值
@@ -797,7 +820,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"disk","name":"smart_temperature","value":35,"unit":"°C","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 3.7 io_errors（I/O错误计数）
+#### 3.9 io_errors（I/O错误计数）
 
 - **数据来源**：`/proc/diskstats` 错误字段 + `dmesg` 日志
 - **采集方法**：读取 `/proc/diskstats` 中错误相关字段（读错误、写错误），同时搜索 `dmesg` 中的 I/O error 关键词
@@ -1815,6 +1838,92 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 ---
 
+## 7. Chassis 采集指标（机箱环境）
+
+Chassis 采集器通过 `ipmitool sdr` 获取服务器整机级环境指标（整机功耗、进/出风口温度、机箱风扇转速）。与 CPU/Memory collector 共享同一份 30s SDR 缓存。
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 默认周期 | 默认采集 | 单位 | 数据来源 |
+|------|----------|----------|--------|----------|----------|------|----------|
+| 7.1 | power | 整机功耗 | High | 10s | 是 | W | ipmitool SDR "Power" |
+| 7.2 | inlet_temp | 进风口温度 | High | 10s | 是 | °C | ipmitool SDR "Inlet Temp" |
+| 7.3 | outlet_temp | 出风口温度 | Medium | 10s | 是 | °C | ipmitool SDR "Outlet Temp" |
+| 7.4 | fan_speed | 风扇转速 | Medium | 10s | 是 | RPM | ipmitool SDR "FAN* Speed" |
+| 7.5 | fan_power | 风扇功率 | Medium | 10s | 是 | W | ipmitool SDR "FAN* Power" |
+
+### 采集方法
+
+从缓存的 `ipmitool sdr` 输出（30s 缓存，与 cpu/memory collector 共享）中按传感器名筛选：
+- `power`：筛选 name 含 "Power" 且不含 "CPU"/"MEM"/"NPU" 的功率传感器
+- `inlet_temp`：筛选 name 含 "Inlet" + "Temp" 的温度传感器
+- `outlet_temp`：筛选 name 含 "Outlet" + "Temp" 的温度传感器
+- `fan_speed`：筛选 name 含 "FAN" + "Speed" 的风扇传感器，解析风扇编号（1-8）和方向（F 前/R 后）
+
+典型 SDR 输出：
+```
+Inlet Temp        | 28.000     | degrees C  | ok
+Outlet Temp       | 42.000     | degrees C  | ok
+Power             | 1848.000   | Watts      | ok
+FAN1 F Speed      | 9375.000   | RPM        | ok
+FAN1 R Speed      | 9300.000   | RPM        | ok
+```
+
+### 指标详情
+
+#### 7.1 power（整机功耗）
+
+- **数据来源**：ipmitool SDR 中 name 为 "Power" 的传感器
+- **采集方法**：从缓存的 SDR 中筛选 name 含 "power" 且不含 "cpu"/"mem"/"npu" 的功率传感器，取其 Value（W）
+- **Labels**：无
+- **输出示例**：
+```json
+{"component":"chassis","name":"power","value":1848.0,"unit":"W","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 7.2 inlet_temp（进风口温度）
+
+- **数据来源**：ipmitool SDR 中 name 含 "Inlet" + "Temp" 的传感器
+- **采集方法**：从缓存的 SDR 中筛选进风口温度传感器，取 Value（°C）
+- **Labels**：无
+- **输出示例**：
+```json
+{"component":"chassis","name":"inlet_temp","value":28.0,"unit":"°C","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 7.3 outlet_temp（出风口温度）
+
+- **数据来源**：ipmitool SDR 中 name 含 "Outlet" + "Temp" 的传感器
+- **采集方法**：从缓存的 SDR 中筛选出风口温度传感器，取 Value（°C）
+- **Labels**：无
+- **输出示例**：
+```json
+{"component":"chassis","name":"outlet_temp","value":42.0,"unit":"°C","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 7.4 fan_speed（风扇转速）
+
+- **数据来源**：ipmitool SDR 中 name 含 "FAN" + "Speed" 的传感器
+- **采集方法**：从缓存的 SDR 中筛选所有风扇传感器，解析风扇编号（FAN 后的数字）和方向（F 前 / R 后），取 Value（RPM）
+- **Labels**：`fan`（"1"~"8"）、`direction`（"F" 前 / "R" 后）
+- **输出示例**：
+```json
+{"component":"chassis","name":"fan_speed","value":9375,"unit":"RPM","labels":{"fan":"1","direction":"F"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"chassis","name":"fan_speed","value":9300,"unit":"RPM","labels":{"fan":"1","direction":"R"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 7.5 fan_power（风扇功率）
+
+- **数据来源**：ipmitool SDR 中 name 含 "FAN" + "Power" 的传感器
+- **采集方法**：从缓存的 SDR 中筛选所有风扇功率传感器，解析风扇编号，取 Value（W）
+- **Labels**：`fan`（"1"~"8"）
+- **输出示例**：
+```json
+{"component":"chassis","name":"fan_power","value":8.5,"unit":"W","labels":{"fan":"1"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+> 注：chassis `fan_power` 单位为 W（每风扇独立功率），与 `power`（整机总功耗）不同。
+
+---
+
 ## 附录：各采集器数据来源汇总
 
 | 采集器 | 数据来源 | 依赖外部命令 |
@@ -1825,12 +1934,13 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 | GPU | nvidia-smi 命令输出 | nvidia-smi |
 | NPU | libdcmi.so (DCMI dcmi_*), npu-smi info -t (topo/hccs-bw), hccn_tool (-bandwidth/-speed/-link) | DCMI(CGo,需 -tags dcmi), npu-smi, hccn_tool |
 | Network | /proc/net/dev, /sys/class/net/, /proc/net/tcp, /proc/net/tcp6 | 无 |
+| Chassis | ipmitool SDR (Power/Inlet/Outlet Temp/FAN Speed) | ipmitool |
 
 ---
 
 ## 附录B：已实现采集指标清单
 
-> 以下 152 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、NPU 扩展至 74 个指标，且全部 6 个采集器（cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
+> 以下 159 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、Disk 扩展至 9、NPU 扩展至 74 个指标，Chassis 新增 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
 ### CPU（40 个）
 
@@ -1901,17 +2011,19 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 | 18 | module_info | 内存条静态信息 | Low | - |
 | 19 | power | 内存功率 | Medium | W |
 
-### Disk（7 个）
+### Disk（9 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
 | 1 | space_usage | 磁盘空间使用率 | High | % |
 | 2 | iops | 读写IOPS | Medium | 次/s |
 | 3 | throughput | 读写吞吐量 | Medium | MB/s |
-| 4 | io_wait | I/O等待占比 | Medium | % |
-| 5 | smart_status | SMART健康状态 | Medium | - |
-| 6 | smart_temperature | 硬盘温度 | Low | °C |
-| 7 | io_errors | I/O错误计数 | Low | 次 |
+| 4 | read_latency | 读耗时 | Medium | ms/s |
+| 5 | write_latency | 写耗时 | Medium | ms/s |
+| 6 | io_wait | I/O等待占比 | Medium | % |
+| 7 | smart_status | SMART健康状态 | Medium | - |
+| 8 | smart_temperature | 硬盘温度 | Low | °C |
+| 9 | io_errors | I/O错误计数 | Low | 次 |
 
 ### GPU（7 个）
 
@@ -2014,14 +2126,25 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 | 4 | interface_status | 网卡接口状态 | Medium | - |
 | 5 | connection_count | 网络连接数 | Low | 个 |
 
+### Chassis（5 个）
+
+| 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
+|------|----------|----------|--------|------|
+| 1 | power | 整机功耗 | High | W |
+| 2 | inlet_temp | 进风口温度 | High | °C |
+| 3 | outlet_temp | 出风口温度 | Medium | °C |
+| 4 | fan_speed | 风扇转速 | Medium | RPM |
+| 5 | fan_power | 风扇功率 | Medium | W |
+
 ### 统计汇总
 
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
 | CPU | 40 | 4 | 12 | 24 |
 | Memory | 19 | 4 | 7 | 8 |
-| Disk | 7 | 1 | 3 | 3 |
+| Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
 | NPU | 74 | 9 | 43 | 22 |
 | Network | 5 | 1 | 3 | 1 |
-| **合计** | **152** | **22** | **71** | **59** |
+| Chassis | 5 | 2 | 3 | 0 |
+| **合计** | **159** | **24** | **76** | **59** |

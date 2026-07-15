@@ -134,6 +134,34 @@ func TestCollectThroughput(t *testing.T) {
 	}
 }
 
+func TestCollectLatency(t *testing.T) {
+	useTestdata(t)
+	c := New()
+	now := time.Now()
+	// First call stores prev state.
+	c.collectIOPS(now)
+	// Second call computes latency delta.
+	metrics, err := c.collectLatency(now)
+	if err != nil {
+		t.Fatalf("collectLatency failed: %v", err)
+	}
+	// testdata has sda + sdb (ram0 filtered), each produces read_latency + write_latency.
+	if len(metrics) != 4 {
+		t.Fatalf("expected 4 latency metrics (2 devices × 2 directions), got %d", len(metrics))
+	}
+	for _, m := range metrics {
+		if m.Name != "read_latency" && m.Name != "write_latency" {
+			t.Errorf("expected read/write_latency, got %s", m.Name)
+		}
+		if m.Unit != "ms/s" {
+			t.Errorf("expected unit ms/s, got %s", m.Unit)
+		}
+		if m.Labels["device"] == "" {
+			t.Error("device label should not be empty")
+		}
+	}
+}
+
 func TestCollectIoWait(t *testing.T) {
 	useTestdata(t)
 	c := New()

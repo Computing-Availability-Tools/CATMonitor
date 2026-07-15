@@ -19,6 +19,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/storage"
 
+	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/chassis"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/cpu"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/disk"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/gpu"

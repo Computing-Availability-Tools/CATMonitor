@@ -11,11 +11,11 @@
 package dcmi
 
 /*
-#cgo LDFLAGS: -ldcmi
+#cgo CFLAGS: -I/usr/local/Ascend/driver/include
+#cgo LDFLAGS: -L/usr/local/Ascend/driver/lib64/driver -ldcmi
 #include <stdlib.h>
 #include <string.h>
 // The full header is typically at /usr/local/Ascend/driver/include/dcmi_interface_api.h
-// For compilation, ensure the include path is set via CGO_CFLAGS or #cgo CFLAGS.
 #include "dcmi_interface_api.h"
 
 // Wrapper to get char* from struct field (chip_type etc.)

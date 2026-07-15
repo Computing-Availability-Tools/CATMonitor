@@ -6,6 +6,9 @@ server:
   type: auto
 
 collectors:
+  chassis:
+    enabled: true
+    interval: 3s
   cpu:
     enabled: true
     interval: 3s
