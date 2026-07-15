@@ -1,0 +1,3 @@
+HCCS Bandwidth (MB/s), device 0, chip 0
+  TX: 305.6
+  RX: 280.3

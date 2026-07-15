@@ -1,0 +1,5 @@
+Bandwidth (MB/s)
+  Net TX: 1250.0
+  Net RX: 980.0
+  PCIe TX: 2500.0
+  PCIe RX: 2100.0

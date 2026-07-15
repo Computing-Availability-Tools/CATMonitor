@@ -27,9 +27,9 @@
 | Memory | 19 | 4 | 7 | 8 |
 | Disk | 7 | 1 | 3 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
-| NPU | 5 | 3 | 2 | 0 |
+| NPU | 74 | 9 | 43 | 22 |
 | Network | 5 | 1 | 3 | 1 |
-| **合计** | **83** | **16** | **30** | **37** |
+| **合计** | **152** | **22** | **71** | **59** |
 
 ---
 
@@ -913,51 +913,111 @@ nvidia-smi \
 
 ## 5. NPU 采集指标（华为昇腾）
 
-NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。采集器启动时检测 `npu-smi` 是否可用，不可用则自动跳过。
+NPU 采集器通过三类数据源获取华为昇腾 NPU 运行状态，且采用 **device 并行采集**（每块 NPU 一个 goroutine）：
+- **DCMI API**（CGo）：华为 CANN 的 C 库 `libdcmi.so`，通过 `dcmi_*` 函数调用。覆盖绝大多数指标。需 `-tags dcmi` 构建，无 CANN 环境时优雅降级。
+- **npu-smi 命令**：`npu-smi info -t <type>` 子命令（无 CGo）。覆盖通信拓扑、HCCS 带宽。
+- **hccn_tool 命令**：`hccn_tool -i <id> -<opt> -g`（无 CGo）。覆盖网口/PCIe 带宽、RoCE 速度/链路。
+
+> 注：所有 NPU 指标均为 Linux 专属；无 NPU 硬件时采集器整体跳过。DCMI 原始单位（mV/V、毫摄氏度/°C 等）待真机实测。
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 默认周期 | 默认采集 | 单位 | 数据来源 |
 |------|----------|----------|--------|----------|----------|------|----------|
-| 5.1 | utilization | NPU使用率 | High | 3s | 是 | % | npu-smi info |
-| 5.2 | memory_usage | NPU显存使用率 | High | 3s | 是 | % | npu-smi info |
-| 5.3 | temperature | NPU温度 | High | 3s | 是 | °C | npu-smi info |
-| 5.4 | power_draw | NPU功耗 | Medium | 10s | 是 | W | npu-smi info |
-| 5.5 | health_status | NPU健康状态 | Medium | 10s | 是 | - | npu-smi info |
+| 5.1 | utilization | NPU使用率(AICore) | High | 3s | 是 | % | DCMI dcmi_get_device_utilization_rate(AICORE) |
+| 5.2 | memory_usage | NPU显存使用率(HBM) | High | 3s | 是 | % | DCMI dcmi_get_device_hbm_info |
+| 5.3 | temperature | NPU温度 | High | 3s | 是 | °C | DCMI dcmi_get_device_temperature |
+| 5.4 | power_draw | NPU功耗 | Medium | 10s | 是 | W | DCMI dcmi_get_device_power_info |
+| 5.5 | health_status | NPU健康状态 | Medium | 10s | 是 | - | DCMI dcmi_get_device_health |
+| 5.6 | npu_num | NPU设备数量 | Low | 启动时1次 | 是 | 个 | DCMI dcmi_get_card_list |
+| 5.7 | chip_type | NPU芯片类型 | Low | 启动时1次 | 是 | - | DCMI dcmi_get_device_chip_info |
+| 5.8 | driver_version | NPU驱动版本 | Low | 启动时1次 | 是 | - | DCMI dcmi_get_driver_version |
+| 5.9 | driver_health | NPU驱动健康状态 | Medium | 10s | 是 | - | DCMI dcmi_get_driver_health |
+| 5.10 | error_code | NPU错误码 | Medium | 10s | 是 | - | DCMI dcmi_get_device_errorcode_v2 |
+| 5.11 | process_info | NPU进程PID信息 | Low | 30s | 否 | - | DCMI dcmi_get_device_resource_info |
+| 5.12 | process_total | NPU进程总数量 | Low | 30s | 否 | 个 | DCMI dcmi_get_device_resource_info |
+| 5.13 | comm_topo | NPU通信拓扑 | Low | 启动时1次 | 是 | - | npu-smi info -t topo |
+| 5.14 | voltage | NPU电压 | Medium | 10s | 是 | V | DCMI dcmi_get_device_voltage |
+| 5.15 | aicore_voltage | NPU AICore电压 | Medium | 10s | 是 | V | DCMI dcmi_get_device_info(LP/AICORE_VOLTAGE) |
+| 5.16 | hybrid_voltage | NPU Hybrid电压 | Medium | 10s | 是 | V | DCMI dcmi_get_device_info(LP/HYBIRD_VOLTAGE) |
+| 5.17 | cpu_voltage | NPU CPU电压 | Medium | 10s | 是 | V | DCMI dcmi_get_device_info(LP/TAISHAN_VOLTAGE) |
+| 5.18 | ddr_voltage | NPU DDR电压 | Medium | 10s | 是 | V | DCMI dcmi_get_device_info(LP/DDR_VOLTAGE) |
+| 5.19 | acg_count | NPU ACG调频计数 | Low | 60s | 否 | 次 | DCMI dcmi_get_device_info(LP/ACG) |
+| 5.20 | fan_speed | NPU风扇转速 | Medium | 10s | 是 | % | DCMI dcmi_get_device_fan_count+speed |
+| 5.21 | hbm_temp | NPU HBM温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_hbm_info.temp |
+| 5.22 | cluster_temp | NPU Cluster温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(CLUSTER) |
+| 5.23 | peri_temp | NPU Peri温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(PERI) |
+| 5.24 | aicore0_temp | NPU AICORE0温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(AICORE0) |
+| 5.25 | aicore1_temp | NPU AICORE1温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(AICORE1) |
+| 5.26 | ntc1_temp | NPU热敏电阻1温度 | Low | 30s | 否 | °C | DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[0] |
+| 5.27 | ntc2_temp | NPU热敏电阻2温度 | Low | 30s | 否 | °C | DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[1] |
+| 5.28 | ntc3_temp | NPU热敏电阻3温度 | Low | 30s | 否 | °C | DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[2] |
+| 5.29 | ntc4_temp | NPU热敏电阻4温度 | Low | 30s | 否 | °C | DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[3] |
+| 5.30 | soc_max_temp | NPU SOC最高温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(SOC) |
+| 5.31 | fp_max_temp | NPU光模块最高温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(FP) |
+| 5.32 | ndie_temp | NPU NDie温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(N_DIE) |
+| 5.33 | hbm_max_temp | NPU HBM最高温度 | Medium | 10s | 是 | °C | DCMI dcmi_get_device_sensor_info(HBM) |
+| 5.34 | aicpu_freq | NPU AICPU频率 | Medium | 10s | 是 | MHz | DCMI dcmi_get_aicpu_info |
+| 5.35 | aicore_rated_freq | NPU AICore额定频率 | Low | 启动时1次 | 是 | MHz | DCMI dcmi_get_device_frequency(AICORE_MAX) |
+| 5.36 | aicore_freq | NPU AICore频率 | Medium | 10s | 是 | MHz | DCMI dcmi_get_device_frequency(AICORE_CURRENT) |
+| 5.37 | ctrlcpu_freq | NPU CTRLCPU频率 | Medium | 10s | 是 | MHz | DCMI dcmi_get_device_frequency(CTRLCPU) |
+| 5.38 | vector_core_freq | NPU Vector Core频率 | Medium | 10s | 是 | MHz | DCMI dcmi_get_device_frequency(VECTORCORE) |
+| 5.39 | hbm_freq | NPU HBM频率 | Medium | 10s | 是 | MHz | DCMI dcmi_get_device_frequency(HBM) |
+| 5.40 | ddr_freq | NPU DDR频率 | Medium | 10s | 是 | MHz | DCMI dcmi_get_device_frequency(DDR) |
+| 5.41 | npu_util | NPU整体利用率 | High | 3s | 是 | % | DCMI dcmi_get_device_utilization_rate(NPU) |
+| 5.42 | aicpu_util | NPU AICPU利用率 | Medium | 10s | 是 | % | DCMI dcmi_get_device_utilization_rate(AICPU) |
+| 5.43 | ctrlcpu_util | NPU CTRLCPU利用率 | Medium | 10s | 是 | % | DCMI dcmi_get_device_utilization_rate(CTRLCPU) |
+| 5.44 | vector_core_util | NPU Vector Core利用率 | Medium | 10s | 是 | % | DCMI dcmi_get_device_utilization_rate(VECTORCORE) |
+| 5.45 | hbm_bandwidth_util | NPU HBM带宽利用率 | Medium | 10s | 是 | % | DCMI dcmi_get_device_utilization_rate(HBM_BANDWIDTH) |
+| 5.46 | ddr_util | NPU DDR利用率 | Medium | 10s | 是 | % | DCMI dcmi_get_device_utilization_rate(DDR) |
+| 5.47 | ddr_bandwidth_util | NPU DDR带宽利用率 | Medium | 10s | 是 | % | DCMI dcmi_get_device_utilization_rate(DDR_BANDWIDTH) |
+| 5.48 | vdec_util | NPU VDEC利用率 | Low | 30s | 否 | % | DCMI dcmi_get_device_dvpp_ratio_info |
+| 5.49 | vpc_util | NPU VPC利用率 | Low | 30s | 否 | % | DCMI dcmi_get_device_dvpp_ratio_info |
+| 5.50 | venc_util | NPU VENC利用率 | Low | 30s | 否 | % | DCMI dcmi_get_device_dvpp_ratio_info |
+| 5.51 | jpege_util | NPU JPEGE利用率 | Low | 30s | 否 | % | DCMI dcmi_get_device_dvpp_ratio_info |
+| 5.52 | jpegd_util | NPU JPEGD利用率 | Low | 30s | 否 | % | DCMI dcmi_get_device_dvpp_ratio_info |
+| 5.53 | hbm_total_memory | NPU HBM总容量 | Low | 启动时1次 | 是 | MB | DCMI dcmi_get_device_hbm_info.memory_size |
+| 5.54 | hbm_used_memory | NPU HBM已用容量 | High | 3s | 是 | MB | DCMI dcmi_get_device_hbm_info.memory_usage |
+| 5.55 | hbm_single_ecc | NPU HBM单bit错误 | High | 30s | 是 | 次 | DCMI dcmi_get_device_ecc_info(HBM).single_bit_error_cnt |
+| 5.56 | hbm_double_ecc | NPU HBM多bit错误 | High | 30s | 是 | 次 | DCMI dcmi_get_device_ecc_info(HBM).double_bit_error_cnt |
+| 5.57 | hbm_single_ecc_isolated | NPU HBM单bit隔离页数 | Medium | 30s | 是 | 个 | DCMI dcmi_get_device_ecc_info(HBM).single_bit_isolated_pages_cnt |
+| 5.58 | hbm_double_ecc_isolated | NPU HBM多bit隔离页数 | Medium | 30s | 是 | 个 | DCMI dcmi_get_device_ecc_info(HBM).double_bit_isolated_pages_cnt |
+| 5.59 | ddr_single_ecc | NPU DDR单bit错误 | High | 30s | 是 | 次 | DCMI dcmi_get_device_ecc_info(DDR).single_bit_error_cnt |
+| 5.60 | ddr_double_ecc | NPU DDR多bit错误 | High | 30s | 是 | 次 | DCMI dcmi_get_device_ecc_info(DDR).double_bit_error_cnt |
+| 5.61 | ddr_single_ecc_isolated | NPU DDR单bit隔离页数 | Medium | 30s | 是 | 个 | DCMI dcmi_get_device_ecc_info(DDR).single_bit_isolated_pages_cnt |
+| 5.62 | ddr_double_ecc_isolated | NPU DDR多bit隔离页数 | Medium | 30s | 是 | 个 | DCMI dcmi_get_device_ecc_info(DDR).double_bit_isolated_pages_cnt |
+| 5.63 | llc_write_hit_rate | NPU LLC写命中率 | Low | 30s | 否 | % | DCMI dcmi_get_device_llc_perf_para.wr_hit_rate |
+| 5.64 | llc_read_hit_rate | NPU LLC读命中率 | Low | 30s | 否 | % | DCMI dcmi_get_device_llc_perf_para.rd_hit_rate |
+| 5.65 | llc_throughput | NPU LLC吞吐量 | Low | 30s | 否 | MB/s | DCMI dcmi_get_device_llc_perf_para.throughput |
+| 5.66 | net_tx_bandwidth | NPU网口发送带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (TX) |
+| 5.67 | net_rx_bandwidth | NPU网口接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (RX) |
+| 5.68 | roce_link_status | NPU RoCE连接状态 | Medium | 10s | 是 | - | DCMI dcmi_get_device_network_health |
+| 5.69 | roce_speed_status | NPU RoCE连接速度 | Medium | 10s | 是 | - | hccn_tool -i N -speed -g |
+| 5.70 | roce_link_health | NPU RoCE Link状态 | Medium | 10s | 是 | - | hccn_tool -i N -link -g |
+| 5.71 | pcie_tx_bandwidth | NPU PCIe发送带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (PCIe TX) |
+| 5.72 | pcie_rx_bandwidth | NPU PCIe接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (PCIe RX) |
+| 5.73 | hccs_tx_bandwidth | NPU HCCS发送带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i N -c 0 -time 50 |
+| 5.74 | hccs_rx_bandwidth | NPU HCCS接收带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i N -c 0 -time 50 |
 
 ### 采集方法
 
-执行 `npu-smi info` 命令，解析表格输出。典型输出格式：
-
-```
-+-------------------------------------------------------------------------------------------+
-| npu-smi 23.0.0                  Version: 23.0.0                                          |
-+======================+===============+=======================================================+
-| NPU     Name         | Health        | Power(W)     Temp(C)               Hugepages-Usage(page) |
-| Chip                   | Bus-Id        | AICore(%)  Memory-Usage(MB)                            |
-+======================+===============+=======================================================+
-| 0       910A         | OK            | 65.0        42                  0    / 0                 |
-| 0                      | 0000:01:00.0  | 0           0  / 0                                       |
-+======================+===============+=======================================================+
-```
-
-解析每块 NPU 的 Health、Power、Temp、AICore(%)、Memory-Usage 字段。
+DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id, device_id)` 逐 NPU 查询，采用 device 并行采集（每 device 一个 goroutine）。关键 C 结构（来自 `dcmi_interface_api.h`）：`dcmi_hbm_info`、`dcmi_ecc_info`、`dcmi_llc_perf`、`dcmi_dvpp_ratio`、`dcmi_aicpu_info`。npu-smi 子命令：`-t topo`、`-t hccs-bw`。hccn_tool：`-bandwidth`、`-speed`、`-link`。
 
 ### 指标详情
 
-#### 5.1 utilization（NPU使用率）
+#### 5.1 utilization（NPU使用率 AICore）
 
-- **数据来源**：`npu-smi info` 输出中的 AICore(%) 列
-- **采集方法**：解析 `npu-smi info` 表格输出，提取每块 NPU 的 AI Core 使用率
-- **Labels**：`npu_id`（"0", "1", ...）
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_AICORE, &rate)`
+- **采集方法**：CGo 调 DCMI 取 AICore 利用率（0-100）。逐 NPU 采集
+- **Labels**：`npu_id`（"0","1",...）
 - **输出示例**：
 ```json
 {"component":"npu","name":"utilization","value":45,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 5.2 memory_usage（NPU显存使用率）
+#### 5.2 memory_usage（NPU显存使用率 HBM）
 
-- **数据来源**：`npu-smi info` 输出中的 Memory-Usage(MB) 列
-- **采集方法**：解析 `used / total` 格式的显存信息，计算使用率
-- **Labels**：`npu_id`（"0", "1", ...）
+- **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)`
+- **采集方法**：取 `hbm_info.memory_usage / hbm_info.memory_size × 100`（HBM 显存使用率 %）
+- **Labels**：`npu_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"memory_usage","value":32.5,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -965,9 +1025,9 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 
 #### 5.3 temperature（NPU温度）
 
-- **数据来源**：`npu-smi info` 输出中的 Temp(C) 列
-- **采集方法**：解析表格输出，提取每块 NPU 的温度
-- **Labels**：`npu_id`（"0", "1", ...）
+- **数据来源**：DCMI `dcmi_get_device_temperature(card, dev, &temp)`
+- **采集方法**：取设备温度（°C，原始单位待实测）
+- **Labels**：`npu_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"temperature","value":42,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -975,9 +1035,9 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 
 #### 5.4 power_draw（NPU功耗）
 
-- **数据来源**：`npu-smi info` 输出中的 Power(W) 列
-- **采集方法**：解析表格输出，提取每块 NPU 的功耗
-- **Labels**：`npu_id`（"0", "1", ...）
+- **数据来源**：DCMI `dcmi_get_device_power_info(card, dev, &power)`
+- **采集方法**：取设备功耗（W）
+- **Labels**：`npu_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"power_draw","value":65.0,"unit":"W","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -985,15 +1045,703 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 
 #### 5.5 health_status（NPU健康状态）
 
-- **数据来源**：`npu-smi info` 输出中的 Health 列
-- **采集方法**：解析表格输出，提取每块 NPU 的健康状态（OK / Warning / Alarm / Critical）
-- **Labels**：`npu_id`（"0", "1", ...）
+- **数据来源**：DCMI `dcmi_get_device_health(card, dev, &health)`
+- **采集方法**：取设备健康状态码。映射：OK=1, Warning=2, Alarm=3, Critical=4
+- **Labels**：`npu_id`、`status`（"OK"/"Warning"/"Alarm"/"Critical"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"health_status","value":1,"unit":"","labels":{"npu_id":"0","status":"OK"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-> 状态值映射：OK=1, Warning=2, Alarm=3, Critical=4
+#### 5.6 npu_num（NPU设备数量）
+
+- **数据来源**：DCMI `dcmi_get_card_list(...)`
+- **采集方法**：统计 NPU 设备数。启动时采集一次
+- **Labels**：无
+- **输出示例**：
+```json
+{"component":"npu","name":"npu_num","value":8,"unit":"个","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.7 chip_type（NPU芯片类型）
+
+- **数据来源**：DCMI `dcmi_get_device_chip_info(card, dev, ...)`
+- **采集方法**：取芯片型号字符串（如 Ascend910A）。字符串值放 `labels.chip_type`，`value` 填 0（对齐 CPU `model_info` 惯例）
+- **Labels**：`npu_id`、`chip_type`
+- **输出示例**：
+```json
+{"component":"npu","name":"chip_type","value":0,"unit":"","labels":{"npu_id":"0","chip_type":"Ascend910A"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.8 driver_version（NPU驱动版本）
+
+- **数据来源**：DCMI `dcmi_get_driver_version(...)`
+- **采集方法**：取驱动版本字符串，放 `labels.driver_version`，`value` 填 0
+- **Labels**：`driver_version`
+- **输出示例**：
+```json
+{"component":"npu","name":"driver_version","value":0,"unit":"","labels":{"driver_version":"23.0.0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.9 driver_health（NPU驱动健康状态）
+
+- **数据来源**：DCMI `dcmi_get_driver_health(card, dev, &health)`
+- **采集方法**：取驱动健康状态码，0=正常 非0=异常
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"driver_health","value":0,"unit":"","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.10 error_code（NPU错误码）
+
+- **数据来源**：DCMI `dcmi_get_device_errorcode_v2(card, dev, &code)`
+- **采集方法**：取设备级错误码（0=无错误）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"error_code","value":0,"unit":"","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.11 process_info（NPU进程PID信息）
+
+- **数据来源**：DCMI `dcmi_get_device_resource_info(card, dev, ...)`
+- **采集方法**：取占用 NPU 的进程 PID 列表，序列化放 `labels.process_pids`（如 "1234,5678"），`value` 填进程总数
+- **Labels**：`npu_id`、`process_pids`
+- **输出示例**：
+```json
+{"component":"npu","name":"process_info","value":3,"unit":"个","labels":{"npu_id":"0","process_pids":"1234,5678,9012"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.12 process_total（NPU进程总数量）
+
+- **数据来源**：DCMI `dcmi_get_device_resource_info(card, dev, ...)`
+- **采集方法**：取占用 NPU 的进程总数
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"process_total","value":3,"unit":"个","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.13 comm_topo（NPU通信拓扑）
+
+- **数据来源**：`npu-smi info -t topo`
+- **采集方法**：解析拓扑字符串，放 `labels.topo`，`value` 填 0。启动时采集一次
+- **Labels**：`topo`
+- **输出示例**：
+```json
+{"component":"npu","name":"comm_topo","value":0,"unit":"","labels":{"topo":"8*HCCS-Link"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.14 voltage（NPU电压）
+
+- **数据来源**：DCMI `dcmi_get_device_voltage(card, dev, &voltage)`
+- **采集方法**：取设备主电压（V，原始单位待实测）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"voltage","value":0.8,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.15 aicore_voltage（NPU AICore电压）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_AICORE_VOLTAGE_CURRENT, ...)`
+- **采集方法**：取 AICore 当前电压（V）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"aicore_voltage","value":0.8,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.16 hybrid_voltage（NPU Hybrid电压）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_HYBIRD_VOLTAGE_CURRENT, ...)`
+- **采集方法**：取 Hybrid 当前电压（V）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hybrid_voltage","value":0.7,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.17 cpu_voltage（NPU CPU电压）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_TAISHAN_VOLTAGE_CURRENT, ...)`
+- **采集方法**：取 CPU（泰山）当前电压（V）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"cpu_voltage","value":1.0,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.18 ddr_voltage（NPU DDR电压）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_DDR_VOLTAGE_CURRENT, ...)`
+- **采集方法**：取 DDR 当前电压（V）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_voltage","value":1.2,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.19 acg_count（NPU ACG调频计数）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_ACG, ...)`
+- **采集方法**：取 ACG 调频累计计数（次）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"acg_count","value":1234,"unit":"次","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.20 fan_speed（NPU风扇转速）
+
+- **数据来源**：DCMI `dcmi_get_device_fan_count(card, dev, &count)` + `dcmi_get_device_fan_speed(card, dev, fan_id, &speed)`
+- **采集方法**：遍历每风扇，取转速占最大转速百分比（%）
+- **Labels**：`npu_id`、`fan`（"0","1",...）
+- **输出示例**：
+```json
+{"component":"npu","name":"fan_speed","value":65,"unit":"%","labels":{"npu_id":"0","fan":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.21 hbm_temp（NPU HBM温度）
+
+- **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)` → `hbm_info.temp`
+- **采集方法**：取 HBM 温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_temp","value":55,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.22 cluster_temp（NPU Cluster温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_CLUSTER_TEMP_ID, ...)`
+- **采集方法**：取 Cluster 温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"cluster_temp","value":60,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.23 peri_temp（NPU Peri温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_PERI_TEMP_ID, ...)`
+- **采集方法**：取 Peri（外设区）温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"peri_temp","value":58,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.24 aicore0_temp（NPU AICORE0温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_AICORE0_TEMP_ID, ...)`
+- **采集方法**：取 AICORE0 温度（°C）
+- **Labels**：`npu_id`、`aicore`（"0"）
+- **输出示例**：
+```json
+{"component":"npu","name":"aicore0_temp","value":62,"unit":"°C","labels":{"npu_id":"0","aicore":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.25 aicore1_temp（NPU AICORE1温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_AICORE1_TEMP_ID, ...)`
+- **采集方法**：取 AICORE1 温度（°C）
+- **Labels**：`npu_id`、`aicore`（"1"）
+- **输出示例**：
+```json
+{"component":"npu","name":"aicore1_temp","value":61,"unit":"°C","labels":{"npu_id":"0","aicore":"1"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.26 ntc1_temp（NPU热敏电阻1温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[0]`
+- **采集方法**：取热敏电阻 1 温度（°C）
+- **Labels**：`npu_id`、`ntc`（"1"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ntc1_temp","value":45,"unit":"°C","labels":{"npu_id":"0","ntc":"1"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.27 ntc2_temp（NPU热敏电阻2温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[1]`
+- **采集方法**：取热敏电阻 2 温度（°C）
+- **Labels**：`npu_id`、`ntc`（"2"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ntc2_temp","value":44,"unit":"°C","labels":{"npu_id":"0","ntc":"2"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.28 ntc3_temp（NPU热敏电阻3温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[2]`
+- **采集方法**：取热敏电阻 3 温度（°C）
+- **Labels**：`npu_id`、`ntc`（"3"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ntc3_temp","value":43,"unit":"°C","labels":{"npu_id":"0","ntc":"3"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.29 ntc4_temp（NPU热敏电阻4温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[3]`
+- **采集方法**：取热敏电阻 4 温度（°C）
+- **Labels**：`npu_id`、`ntc`（"4"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ntc4_temp","value":42,"unit":"°C","labels":{"npu_id":"0","ntc":"4"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.30 soc_max_temp（NPU SOC最高温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_SOC_TEMP_ID, ...)`
+- **采集方法**：取 SOC 最高温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"soc_max_temp","value":65,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.31 fp_max_temp（NPU光模块最高温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_FP_TEMP_ID, ...)`
+- **采集方法**：取光模块（FP）最高温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"fp_max_temp","value":50,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.32 ndie_temp（NPU NDie温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_N_DIE_TEMP_ID, ...)`
+- **采集方法**：取 NDie 温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ndie_temp","value":58,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.33 hbm_max_temp（NPU HBM最高温度）
+
+- **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_HBM_TEMP_ID, ...)`
+- **采集方法**：取 HBM 最高温度（°C）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_max_temp","value":55,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.34 aicpu_freq（NPU AICPU频率）
+
+- **数据来源**：DCMI `dcmi_get_aicpu_info(card, dev, ...)`
+- **采集方法**：取 AICPU 频率（MHz）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"aicpu_freq","value":1800,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.35 aicore_rated_freq（NPU AICore额定频率）
+
+- **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_AICORE_MAX, &freq)`
+- **采集方法**：取 AICore 额定（最大）频率（MHz）。启动时采集一次（静态）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"aicore_rated_freq","value":2000,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.36 aicore_freq（NPU AICore频率）
+
+- **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_AICORE_CURRENT_, &freq)`
+- **采集方法**：取 AICore 当前频率（MHz）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"aicore_freq","value":1800,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.37 ctrlcpu_freq（NPU CTRLCPU频率）
+
+- **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_CTRLCPU, &freq)`
+- **采集方法**：取 CTRLCPU 频率（MHz）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ctrlcpu_freq","value":2400,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.38 vector_core_freq（NPU Vector Core频率）
+
+- **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_VECTORCORE_CURRENT, &freq)`
+- **采集方法**：取 Vector Core 当前频率（MHz）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"vector_core_freq","value":1800,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.39 hbm_freq（NPU HBM频率）
+
+- **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_HBM, &freq)`
+- **采集方法**：取 HBM 频率（MHz）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_freq","value":1600,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.40 ddr_freq（NPU DDR频率）
+
+- **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_DDR, &freq)`
+- **采集方法**：取 DDR 频率（MHz）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_freq","value":2400,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.41 npu_util（NPU整体利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_NPU, &rate)`
+- **采集方法**：取 NPU 整体利用率（0-100）。与 5.1（AICore 利用率）不同，是整体口径
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"npu_util","value":50,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.42 aicpu_util（NPU AICPU利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_AICPU, &rate)`
+- **采集方法**：取 AICPU 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"aicpu_util","value":30,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.43 ctrlcpu_util（NPU CTRLCPU利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_CTRLCPU, &rate)`
+- **采集方法**：取 CTRLCPU 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ctrlcpu_util","value":20,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.44 vector_core_util（NPU Vector Core利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_VECTORCORE, &rate)`
+- **采集方法**：取 Vector Core 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"vector_core_util","value":25,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.45 hbm_bandwidth_util（NPU HBM带宽利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_HBM_BANDWIDTH, &rate)`
+- **采集方法**：取 HBM 带宽利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_bandwidth_util","value":40,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.46 ddr_util（NPU DDR利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_DDR, &rate)`
+- **采集方法**：取 DDR 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_util","value":15,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.47 ddr_bandwidth_util（NPU DDR带宽利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_DDR_BANDWIDTH, &rate)`
+- **采集方法**：取 DDR 带宽利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_bandwidth_util","value":10,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.48 vdec_util（NPU VDEC利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_VDEC_RATE, ...)`
+- **采集方法**：取视频解码单元 VDEC 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"vdec_util","value":10,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.49 vpc_util（NPU VPC利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_VPC_RATE, ...)`
+- **采集方法**：取视频处理单元 VPC 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"vpc_util","value":5,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.50 venc_util（NPU VENC利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_VENC_RATE, ...)`
+- **采集方法**：取视频编码单元 VENC 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"venc_util","value":8,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.51 jpege_util（NPU JPEGE利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_JPEGE_RATE, ...)`
+- **采集方法**：取 JPEG 编码单元 JPEGE 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"jpege_util","value":3,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.52 jpegd_util（NPU JPEGD利用率）
+
+- **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_JPEGD_RATE, ...)`
+- **采集方法**：取 JPEG 解码单元 JPEGD 利用率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"jpegd_util","value":2,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.53 hbm_total_memory（NPU HBM总容量）
+
+- **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)` → `hbm_info.memory_size`
+- **采集方法**：取 HBM 总容量（MB）。启动时采集一次（静态）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_total_memory","value":32768,"unit":"MB","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.54 hbm_used_memory（NPU HBM已用容量）
+
+- **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)` → `hbm_info.memory_usage`
+- **采集方法**：取 HBM 已用容量（MB）。与 5.2 memory_usage(%) 互补
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_used_memory","value":16384,"unit":"MB","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.55 hbm_single_ecc（NPU HBM单bit错误）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.single_bit_error_cnt`
+- **采集方法**：取 HBM 单 bit（CE）累计错误数，差值得本周期新增
+- **Labels**：`npu_id`、`device_type`（"hbm"）、`kind`（"single"）
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_single_ecc","value":3,"unit":"次","labels":{"npu_id":"0","device_type":"hbm","kind":"single"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.56 hbm_double_ecc（NPU HBM多bit错误）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.double_bit_error_cnt`
+- **采集方法**：取 HBM 多 bit（UE）累计错误数，差值得本周期新增
+- **Labels**：`npu_id`、`device_type`（"hbm"）、`kind`（"double"）
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_double_ecc","value":0,"unit":"次","labels":{"npu_id":"0","device_type":"hbm","kind":"double"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.57 hbm_single_ecc_isolated（NPU HBM单bit隔离页数）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.single_bit_isolated_pages_cnt`
+- **采集方法**：取 HBM 因单 bit 错误被隔离的页数（个）
+- **Labels**：`npu_id`、`device_type`（"hbm"）
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_single_ecc_isolated","value":2,"unit":"个","labels":{"npu_id":"0","device_type":"hbm"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.58 hbm_double_ecc_isolated（NPU HBM多bit隔离页数）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.double_bit_isolated_pages_cnt`
+- **采集方法**：取 HBM 因多 bit 错误被隔离的页数（个）
+- **Labels**：`npu_id`、`device_type`（"hbm"）
+- **输出示例**：
+```json
+{"component":"npu","name":"hbm_double_ecc_isolated","value":0,"unit":"个","labels":{"npu_id":"0","device_type":"hbm"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.59 ddr_single_ecc（NPU DDR单bit错误）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.single_bit_error_cnt`
+- **采集方法**：取 DDR 单 bit（CE）累计错误数，差值得本周期新增
+- **Labels**：`npu_id`、`device_type`（"ddr"）、`kind`（"single"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_single_ecc","value":1,"unit":"次","labels":{"npu_id":"0","device_type":"ddr","kind":"single"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.60 ddr_double_ecc（NPU DDR多bit错误）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.double_bit_error_cnt`
+- **采集方法**：取 DDR 多 bit（UE）累计错误数，差值得本周期新增
+- **Labels**：`npu_id`、`device_type`（"ddr"）、`kind`（"double"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_double_ecc","value":0,"unit":"次","labels":{"npu_id":"0","device_type":"ddr","kind":"double"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.61 ddr_single_ecc_isolated（NPU DDR单bit隔离页数）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.single_bit_isolated_pages_cnt`
+- **采集方法**：取 DDR 因单 bit 错误被隔离的页数（个）
+- **Labels**：`npu_id`、`device_type`（"ddr"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_single_ecc_isolated","value":1,"unit":"个","labels":{"npu_id":"0","device_type":"ddr"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.62 ddr_double_ecc_isolated（NPU DDR多bit隔离页数）
+
+- **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.double_bit_isolated_pages_cnt`
+- **采集方法**：取 DDR 因多 bit 错误被隔离的页数（个）
+- **Labels**：`npu_id`、`device_type`（"ddr"）
+- **输出示例**：
+```json
+{"component":"npu","name":"ddr_double_ecc_isolated","value":0,"unit":"个","labels":{"npu_id":"0","device_type":"ddr"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.63 llc_write_hit_rate（NPU LLC写命中率）
+
+- **数据来源**：DCMI `dcmi_get_device_llc_perf_para(card, dev, &perf)` → `perf.wr_hit_rate`
+- **采集方法**：取 LLC 写命中率（%，原始 0-1 或 0-100 待实测）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"llc_write_hit_rate","value":85,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.64 llc_read_hit_rate（NPU LLC读命中率）
+
+- **数据来源**：DCMI `dcmi_get_device_llc_perf_para(card, dev, &perf)` → `perf.rd_hit_rate`
+- **采集方法**：取 LLC 读命中率（%）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"llc_read_hit_rate","value":90,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.65 llc_throughput（NPU LLC吞吐量）
+
+- **数据来源**：DCMI `dcmi_get_device_llc_perf_para(card, dev, &perf)` → `perf.throughput`
+- **采集方法**：取 LLC 吞吐量（MB/s，原始单位待实测）
+- **Labels**：`npu_id`
+- **输出示例**：
+```json
+{"component":"npu","name":"llc_throughput","value":1250,"unit":"MB/s","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.66 net_tx_bandwidth（NPU网口发送带宽）
+
+- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 Bandwidth TX）
+- **采集方法**：取网口发送带宽（MB/s）
+- **Labels**：`npu_id`、`direction`（"tx"）
+- **输出示例**：
+```json
+{"component":"npu","name":"net_tx_bandwidth","value":1250,"unit":"MB/s","labels":{"npu_id":"0","direction":"tx"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.67 net_rx_bandwidth（NPU网口接收带宽）
+
+- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 Bandwidth RX）
+- **采集方法**：取网口接收带宽（MB/s）
+- **Labels**：`npu_id`、`direction`（"rx"）
+- **输出示例**：
+```json
+{"component":"npu","name":"net_rx_bandwidth","value":980,"unit":"MB/s","labels":{"npu_id":"0","direction":"rx"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.68 roce_link_status（NPU RoCE连接状态）
+
+- **数据来源**：DCMI `dcmi_get_device_network_health(card, dev, ...)`
+- **采集方法**：取 RoCE 连接状态，up=1 / down=0
+- **Labels**：`npu_id`、`status`（"up"/"down"）
+- **输出示例**：
+```json
+{"component":"npu","name":"roce_link_status","value":1,"unit":"","labels":{"npu_id":"0","status":"up"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.69 roce_speed_status（NPU RoCE连接速度）
+
+- **数据来源**：`hccn_tool -i <npu_id> -speed -g`
+- **采集方法**：取 RoCE 速度字符串（如 "100Gbps"），放 `labels.roce_speed`，`value` 填 0
+- **Labels**：`npu_id`、`roce_speed`
+- **输出示例**：
+```json
+{"component":"npu","name":"roce_speed_status","value":0,"unit":"","labels":{"npu_id":"0","roce_speed":"100Gbps"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.70 roce_link_health（NPU RoCE Link状态）
+
+- **数据来源**：`hccn_tool -i <npu_id> -link -g`
+- **采集方法**：取 RoCE 链路状态字符串，放 `labels.roce_link`，`value` 填 0
+- **Labels**：`npu_id`、`roce_link`
+- **输出示例**：
+```json
+{"component":"npu","name":"roce_link_health","value":0,"unit":"","labels":{"npu_id":"0","roce_link":"ACTIVE"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.71 pcie_tx_bandwidth（NPU PCIe发送带宽）
+
+- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 PCIe TX）
+- **采集方法**：取 PCIe 发送带宽（MB/s）
+- **Labels**：`npu_id`、`direction`（"tx"）
+- **输出示例**：
+```json
+{"component":"npu","name":"pcie_tx_bandwidth","value":2500,"unit":"MB/s","labels":{"npu_id":"0","direction":"tx"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.72 pcie_rx_bandwidth（NPU PCIe接收带宽）
+
+- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 PCIe RX）
+- **采集方法**：取 PCIe 接收带宽（MB/s）
+- **Labels**：`npu_id`、`direction`（"rx"）
+- **输出示例**：
+```json
+{"component":"npu","name":"pcie_rx_bandwidth","value":2100,"unit":"MB/s","labels":{"npu_id":"0","direction":"rx"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.73 hccs_tx_bandwidth（NPU HCCS发送带宽）
+
+- **数据来源**：`npu-smi info -t hccs-bw -i <npu_id> -c 0 -time 50`
+- **采集方法**：取 HCCS 发送带宽（MB/s）
+- **Labels**：`npu_id`、`direction`（"tx"）
+- **输出示例**：
+```json
+{"component":"npu","name":"hccs_tx_bandwidth","value":300,"unit":"MB/s","labels":{"npu_id":"0","direction":"tx"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 5.74 hccs_rx_bandwidth（NPU HCCS接收带宽）
+
+- **数据来源**：`npu-smi info -t hccs-bw -i <npu_id> -c 0 -time 50`
+- **采集方法**：取 HCCS 接收带宽（MB/s）
+- **Labels**：`npu_id`、`direction`（"rx"）
+- **输出示例**：
+```json
+{"component":"npu","name":"hccs_rx_bandwidth","value":280,"unit":"MB/s","labels":{"npu_id":"0","direction":"rx"},"timestamp":"2026-07-10T10:30:00Z"}
+```
 
 ---
 
@@ -1075,14 +1823,14 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 | Memory | /proc/meminfo, /proc/vmstat, /proc/pressure/memory, /proc/buddyinfo, /sys/devices/system/edac/mc, dmidecode, ipmitool(SDR), dmesg | dmidecode, ipmitool, dmesg(oom) |
 | Disk | /proc/mounts, statfs syscall, /proc/diskstats, /proc/stat | smartctl (Phase 3) |
 | GPU | nvidia-smi 命令输出 | nvidia-smi |
-| NPU | npu-smi 命令输出 | npu-smi |
+| NPU | libdcmi.so (DCMI dcmi_*), npu-smi info -t (topo/hccs-bw), hccn_tool (-bandwidth/-speed/-link) | DCMI(CGo,需 -tags dcmi), npu-smi, hccn_tool |
 | Network | /proc/net/dev, /sys/class/net/, /proc/net/tcp, /proc/net/tcp6 | 无 |
 
 ---
 
 ## 附录B：已实现采集指标清单
 
-> 以下 83 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19 个指标，且 cpu/memory/disk/network 采集器已接入来源层(source layer)（v0.2.0）。
+> 以下 152 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、NPU 扩展至 74 个指标，且 cpu/memory/disk/network/npu 采集器已接入来源层(source layer)（v0.2.0）。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
 ### CPU（40 个）
 
@@ -1177,15 +1925,84 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 | 6 | ecc_errors | ECC错误数 | Medium | 次 |
 | 7 | clock_frequency | 时钟频率 | Low | MHz |
 
-### NPU（5 个）
+### NPU（74 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
-| 1 | utilization | NPU使用率 | High | % |
-| 2 | memory_usage | NPU显存使用率 | High | % |
+| 1 | utilization | NPU使用率(AICore) | High | % |
+| 2 | memory_usage | NPU显存使用率(HBM) | High | % |
 | 3 | temperature | NPU温度 | High | °C |
 | 4 | power_draw | NPU功耗 | Medium | W |
 | 5 | health_status | NPU健康状态 | Medium | - |
+| 6 | npu_num | NPU设备数量 | Low | 个 |
+| 7 | chip_type | NPU芯片类型 | Low | - |
+| 8 | driver_version | NPU驱动版本 | Low | - |
+| 9 | driver_health | NPU驱动健康状态 | Medium | - |
+| 10 | error_code | NPU错误码 | Medium | - |
+| 11 | process_info | NPU进程PID信息 | Low | - |
+| 12 | process_total | NPU进程总数量 | Low | 个 |
+| 13 | comm_topo | NPU通信拓扑 | Low | - |
+| 14 | voltage | NPU电压 | Medium | V |
+| 15 | aicore_voltage | NPU AICore电压 | Medium | V |
+| 16 | hybrid_voltage | NPU Hybrid电压 | Medium | V |
+| 17 | cpu_voltage | NPU CPU电压 | Medium | V |
+| 18 | ddr_voltage | NPU DDR电压 | Medium | V |
+| 19 | acg_count | NPU ACG调频计数 | Low | 次 |
+| 20 | fan_speed | NPU风扇转速 | Medium | % |
+| 21 | hbm_temp | NPU HBM温度 | Medium | °C |
+| 22 | cluster_temp | NPU Cluster温度 | Medium | °C |
+| 23 | peri_temp | NPU Peri温度 | Medium | °C |
+| 24 | aicore0_temp | NPU AICORE0温度 | Medium | °C |
+| 25 | aicore1_temp | NPU AICORE1温度 | Medium | °C |
+| 26 | ntc1_temp | NPU热敏电阻1温度 | Low | °C |
+| 27 | ntc2_temp | NPU热敏电阻2温度 | Low | °C |
+| 28 | ntc3_temp | NPU热敏电阻3温度 | Low | °C |
+| 29 | ntc4_temp | NPU热敏电阻4温度 | Low | °C |
+| 30 | soc_max_temp | NPU SOC最高温度 | Medium | °C |
+| 31 | fp_max_temp | NPU光模块最高温度 | Medium | °C |
+| 32 | ndie_temp | NPU NDie温度 | Medium | °C |
+| 33 | hbm_max_temp | NPU HBM最高温度 | Medium | °C |
+| 34 | aicpu_freq | NPU AICPU频率 | Medium | MHz |
+| 35 | aicore_rated_freq | NPU AICore额定频率 | Low | MHz |
+| 36 | aicore_freq | NPU AICore频率 | Medium | MHz |
+| 37 | ctrlcpu_freq | NPU CTRLCPU频率 | Medium | MHz |
+| 38 | vector_core_freq | NPU Vector Core频率 | Medium | MHz |
+| 39 | hbm_freq | NPU HBM频率 | Medium | MHz |
+| 40 | ddr_freq | NPU DDR频率 | Medium | MHz |
+| 41 | npu_util | NPU整体利用率 | High | % |
+| 42 | aicpu_util | NPU AICPU利用率 | Medium | % |
+| 43 | ctrlcpu_util | NPU CTRLCPU利用率 | Medium | % |
+| 44 | vector_core_util | NPU Vector Core利用率 | Medium | % |
+| 45 | hbm_bandwidth_util | NPU HBM带宽利用率 | Medium | % |
+| 46 | ddr_util | NPU DDR利用率 | Medium | % |
+| 47 | ddr_bandwidth_util | NPU DDR带宽利用率 | Medium | % |
+| 48 | vdec_util | NPU VDEC利用率 | Low | % |
+| 49 | vpc_util | NPU VPC利用率 | Low | % |
+| 50 | venc_util | NPU VENC利用率 | Low | % |
+| 51 | jpege_util | NPU JPEGE利用率 | Low | % |
+| 52 | jpegd_util | NPU JPEGD利用率 | Low | % |
+| 53 | hbm_total_memory | NPU HBM总容量 | Low | MB |
+| 54 | hbm_used_memory | NPU HBM已用容量 | High | MB |
+| 55 | hbm_single_ecc | NPU HBM单bit错误 | High | 次 |
+| 56 | hbm_double_ecc | NPU HBM多bit错误 | High | 次 |
+| 57 | hbm_single_ecc_isolated | NPU HBM单bit隔离页数 | Medium | 个 |
+| 58 | hbm_double_ecc_isolated | NPU HBM多bit隔离页数 | Medium | 个 |
+| 59 | ddr_single_ecc | NPU DDR单bit错误 | High | 次 |
+| 60 | ddr_double_ecc | NPU DDR多bit错误 | High | 次 |
+| 61 | ddr_single_ecc_isolated | NPU DDR单bit隔离页数 | Medium | 个 |
+| 62 | ddr_double_ecc_isolated | NPU DDR多bit隔离页数 | Medium | 个 |
+| 63 | llc_write_hit_rate | NPU LLC写命中率 | Low | % |
+| 64 | llc_read_hit_rate | NPU LLC读命中率 | Low | % |
+| 65 | llc_throughput | NPU LLC吞吐量 | Low | MB/s |
+| 66 | net_tx_bandwidth | NPU网口发送带宽 | Medium | MB/s |
+| 67 | net_rx_bandwidth | NPU网口接收带宽 | Medium | MB/s |
+| 68 | roce_link_status | NPU RoCE连接状态 | Medium | - |
+| 69 | roce_speed_status | NPU RoCE连接速度 | Medium | - |
+| 70 | roce_link_health | NPU RoCE Link状态 | Medium | - |
+| 71 | pcie_tx_bandwidth | NPU PCIe发送带宽 | Medium | MB/s |
+| 72 | pcie_rx_bandwidth | NPU PCIe接收带宽 | Medium | MB/s |
+| 73 | hccs_tx_bandwidth | NPU HCCS发送带宽 | Medium | MB/s |
+| 74 | hccs_rx_bandwidth | NPU HCCS接收带宽 | Medium | MB/s |
 
 ### Network（5 个）
 
@@ -1205,6 +2022,6 @@ NPU 采集器通过调用 `npu-smi` 命令获取华为昇腾 NPU 运行状态。
 | Memory | 19 | 4 | 7 | 8 |
 | Disk | 7 | 1 | 3 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
-| NPU | 5 | 3 | 2 | 0 |
+| NPU | 74 | 9 | 43 | 22 |
 | Network | 5 | 1 | 3 | 1 |
-| **合计** | **83** | **16** | **30** | **37** |
+| **合计** | **152** | **22** | **71** | **59** |
