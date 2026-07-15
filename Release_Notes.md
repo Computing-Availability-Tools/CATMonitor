@@ -4,6 +4,33 @@
 
 ---
 
+## v0.2.2
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.2.2 |
+| 发布时间 | 2026-07-15 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | v0.2.1 分支 (79dc527) → main |
+
+### 变更摘要
+
+- **NPU 指标扩展**：5 → 74 指标，device 并行采集（每块 NPU 一个 goroutine，单卡失败不影响其他卡），全部指标 Linux 专属
+- **来源层扩展**：新增 `dcmi`(CGo)/`npu_smi`/`hccn_tool`/`nvidia_smi` 4 个来源包，来源层 10 → 14 包，全部 6 个采集器接入来源层
+- **DCMI CGo**：NPU 主体指标通过 `libdcmi.so`（`//go:build cgo && linux && dcmi`，`-tags dcmi` 启用），默认构建排除并优雅降级
+- **GPU 迁移**：gpu collector 从内联 exec 改为调用 `nvidia_smi` 来源包（最后一个接入来源层的 collector）
+- **总指标**：83 → 152
+- **测试**：176 用例全过，`go vet` 零警告，Linux/Windows 双平台编译通过
+
+### 已知限制
+
+- DCMI CGo 未真机验证（需 NPU 服务器 `go build -tags dcmi`）；DCMI 原始单位待实测
+- NPU device 并行未在真多卡环境验证
+- 继承 v0.2.0/v0.2.1 已知限制：per-metric 周期未实现、Windows 来源层迁移延后、`-c` 短选项 bug
+
+---
+
 ## v0.2.1
 
 | 项目 | 说明 |

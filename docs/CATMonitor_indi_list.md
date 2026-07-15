@@ -3,9 +3,9 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.2.0 ｜ **更新日期**: 2026-07-14 ｜ **指标总数**: 83（High 16 / Medium 30 / Low 37）
-> **来源层**: cpu/memory/disk/network 采集器已接入 `internal/source/` 来源层（proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl）；gpu/npu 待后续接入 nvsmi/npsmi。
-> 完整测试报告见 [test_report.md](test_report.md)（141 用例通过，覆盖率 69.0%~92.3%）。
+> **版本**: v0.2.2 ｜ **更新日期**: 2026-07-15 ｜ **指标总数**: 152（High 22 / Medium 71 / Low 59）
+> **来源层**: 全部 6 个采集器（cpu/memory/disk/network/gpu/npu）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
+> 完整测试报告见 [test_report.md](test_report.md)（176 用例通过，覆盖率 30.9%~97.0%）。
 
 ---
 
@@ -1830,7 +1830,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 ## 附录B：已实现采集指标清单
 
-> 以下 152 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、NPU 扩展至 74 个指标，且 cpu/memory/disk/network/npu 采集器已接入来源层(source layer)（v0.2.0）。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
+> 以下 152 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、NPU 扩展至 74 个指标，且全部 6 个采集器（cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
 ### CPU（40 个）
 

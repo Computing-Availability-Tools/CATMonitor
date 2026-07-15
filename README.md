@@ -8,16 +8,16 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 说明 |
 |------|------|
-| 版本号 | v0.2.1 |
-| 发布时间 | 2026-07-14 |
+| 版本号 | v0.2.2 |
+| 发布时间 | 2026-07-15 |
 | 发布人 | sunnytao |
 | 平台支持 | Linux (x86_64), Windows (x86_64) |
 | 许可证 | 内部项目 |
 
 ## 功能特性
 
-- **多部件采集**：支持 CPU、内存、硬盘、GPU、NPU、网卡等部件指标采集，共 83 个指标
-- **来源层架构**：`internal/source/` 抽象数据获取与解析（proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl），采集器不再直接读文件或执行命令，来源返回 parsed struct + 单例 + 可注入 fetcher + 缓存
+- **多部件采集**：支持 CPU、内存、硬盘、GPU、NPU、网卡等部件指标采集，共 152 个指标
+- **来源层架构**：`internal/source/` 抽象数据获取与解析（14 个包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi），全部 6 个采集器已接入来源层，采集器不再直接读文件或执行命令，来源返回 parsed struct + 单例 + 可注入 fetcher + 缓存
 - **跨平台**：Linux 和 Windows 双平台支持，通过构建标签隔离平台代码
 - **易扩展架构**：新增部件采集器只需实现统一接口并注册，核心代码零修改
 - **健康度评估**：基于采集指标自动计算服务器健康度评分（0-100 分），自动检测 GPU/NPU 切换权重方案
@@ -33,7 +33,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 | 平台 | Linux / Windows |
 | 输出 | 本地文件 (JSONL) |
 | 配置 | YAML |
-| 外部依赖 | 仅 `gopkg.in/yaml.v3`，GPU/NPU 通过命令行工具采集（无 CGo） |
+| 外部依赖 | 仅 `gopkg.in/yaml.v3`，GPU 通过 `nvidia_smi` 来源包采集，NPU 通过 `dcmi`(CGo，`-tags dcmi`)/`npu_smi`/`hccn_tool` 来源包采集（默认构建无 CGo） |
 | Windows API | kernel32.dll / iphlpapi.dll 通过 Go syscall 调用，零第三方依赖 |
 | Web 仪表盘 | Go 标准库 `net/http` + `//go:embed` 内嵌原生 HTML/CSS/JS 前端，无构建步骤，零新依赖 |
 
@@ -191,7 +191,7 @@ Flags:
 
 ## 支持的采集指标
 
-共 83 个指标，覆盖 6 个部件。详见 [指标清单](docs/CATMonitor_indi_list.md)。
+共 152 个指标，覆盖 6 个部件。详见 [指标清单](docs/CATMonitor_indi_list.md)。
 
 | 部件 | 指标数 | High | Medium | Low | Linux | Windows |
 |------|--------|------|--------|-----|:-----:|:-------:|
@@ -199,10 +199,11 @@ Flags:
 | Memory | 19 | 4 | 7 | 8 | ✅ | ✅ (基础指标，扩展指标 Linux 专有) |
 | Disk | 7 | 1 | 3 | 3 | ✅ | ✅ (2/7) |
 | GPU | 7 | 3 | 3 | 1 | ✅ | ✅ (7/7) |
-| NPU | 5 | 3 | 2 | 0 | ✅ | ✅ (5/5) |
+| NPU | 74 | 9 | 43 | 22 | ✅ | ✗ (Linux 专有；DCMI 走 CGo `-tags dcmi`，Windows no-op 降级) |
 | Network | 5 | 1 | 3 | 1 | ✅ | ✅ (5/5) |
 
 > v0.2.0 CPU 扩展至 40、Memory 扩展至 19，新增拓扑/频率/缓存/MCE/PSI 饱和度/碎片化等指标，通过来源层采集。Windows 来源层迁移延后，扩展指标当前为 Linux 专有，Windows 保留基础实现（优雅降级）。
+> v0.2.2 NPU 指标 5→74（device 并行采集），新增 dcmi(CGo)/npu_smi/hccn_tool 来源包；GPU 迁移至 nvidia_smi 来源包，全部 6 个采集器接入来源层。NPU 全部指标为 Linux 专有。
 
 ## 跨平台架构
 
@@ -214,7 +215,7 @@ internal/collectors/{component}/
 ├── {component}_windows.go   # Windows: kernel32.dll、iphlpapi.dll、PowerShell
 └── {component}_test.go      # 测试（Linux 测试使用 //go:build linux）
 
-internal/source/{source}/     # 来源层（v0.2.0 新增）
+internal/source/{source}/     # 来源层（14 包，v0.2.0 引入，v0.2.2 扩展至全 6 采集器）
 ├── source.go                # 通用接口：Source{Name(); Available()}
 └── {source}.go              # 数据获取与解析，返回 parsed struct
 ```
@@ -224,11 +225,11 @@ internal/source/{source}/     # 来源层（v0.2.0 新增）
 | CPU | `proc.Stat()`、`lscpu`、`sys`(freq/cache/corestate)、`mce`、`ipmi.SDR` | `GetSystemTimes` (kernel32.dll) + WMI |
 | Memory | `proc.Meminfo/Vmstat/Pressure/Buddyinfo`、`dmidecode`、`ipmi.SDR`、`dmesg` | `GlobalMemoryStatusEx` (kernel32.dll) |
 | Disk | `proc.Diskstats/Stat`、`statfs`、`smartctl`、`dmesg` | `GetDiskFreeSpaceExW` + `GetLogicalDrives` (kernel32.dll) |
-| GPU | `nvidia-smi` | `nvidia-smi` (Windows 原生支持) |
-| NPU | `npu-smi` | `npu-smi` (有驱动时可用) |
+| GPU | `nvidia_smi` 来源包(`nvidia-smi`) | `nvidia_smi` 来源包(Windows 原生支持) |
+| NPU | `dcmi`(CGo `libdcmi.so`)/`npu_smi`/`hccn_tool` 来源包 | —（Linux 专有，Windows no-op 降级） |
 | Network | `proc.NetDev/NetTCPStates`、`sys`(NetInterfaces/Operstate) | `Get-NetAdapterStatistics` / `Get-NetTCPConnection` (PowerShell) |
 
-> 来源层包：`proc`、`sys`、`ipmi`(30s缓存+失败缓存)、`lscpu`(常驻)、`mce`、`dmesg`(30s缓存)、`dmidecode`(常驻)、`statfs`(linux专有)、`smartctl`(per-dev 60s缓存)。采集器通过单例 + `SetRoot`/可注入 fetcher 访问来源，便于测试注入 mock 数据。
+> 来源层包（14 个）：`proc`、`sys`、`ipmi`(30s缓存+失败缓存)、`lscpu`(常驻)、`mce`、`dmesg`(30s缓存)、`dmidecode`(常驻)、`statfs`(linux专有)、`smartctl`(per-dev 60s缓存)、`dcmi`(CGo，`-tags dcmi`，无缓存)、`npu_smi`(Topo 常驻缓存)、`hccn_tool`(per-dev:opt 30s缓存+失败缓存)、`nvidia_smi`(无缓存)。采集器通过单例 + `SetRoot`/可注入 fetcher 访问来源，便于测试注入 mock 数据。
 
 ## 文档
 
@@ -251,10 +252,10 @@ CATMonitor/
 │   │   ├── cpu/             #   cpu.go + cpu_linux.go + cpu_metrics.go + cpu_windows.go
 │   │   ├── memory/          #   memory.go + memory_linux.go + memory_metrics.go + memory_windows.go
 │   │   ├── disk/            #   disk.go + disk_linux.go + disk_windows.go
-│   │   ├── gpu/             #   gpu.go (nvidia-smi, 双平台通用)
-│   │   ├── npu/             #   npu.go (npu-smi, 双平台通用)
+│   │   ├── gpu/             #   gpu.go (经 nvidia_smi 来源包采集, 双平台通用)
+│   │   ├── npu/             #   npu.go + npu_linux.go(74 指标 device 并行) + npu_other.go(!linux no-op)
 │   │   └── network/         #   network.go + network_linux.go + network_windows.go
-│   ├── source/              # 来源层（v0.2.0 新增）：数据获取与解析抽象
+│   ├── source/              # 来源层：数据获取与解析抽象（14 包，v0.2.0 引入，v0.2.2 扩展至全 6 采集器）
 │   │   ├── source.go        #   通用 Source 接口
 │   │   ├── proc/            #   /proc 全量解析
 │   │   ├── sys/             #   /sys 解析（freq/cache/thermal/net）
@@ -264,7 +265,11 @@ CATMonitor/
 │   │   ├── dmesg/           #   dmesg（带缓存）
 │   │   ├── dmidecode/       #   dmidecode DIMM（常驻缓存）
 │   │   ├── statfs/          #   statfs(2)（Linux 专有）
-│   │   └── smartctl/        #   smartctl -H（per-dev 缓存）
+│   │   ├── smartctl/        #   smartctl -H（per-dev 缓存）
+│   │   ├── dcmi/            #   libdcmi.so CGo 绑定（v0.2.2 新增，-tags dcmi，服务 npu）
+│   │   ├── npu_smi/         #   npu-smi -t 拓扑/带宽（v0.2.2 新增，服务 npu）
+│   │   ├── hccn_tool/       #   hccn_tool 带宽/速度/链路（v0.2.2 新增，服务 npu）
+│   │   └── nvidia_smi/      #   nvidia-smi 解析（v0.2.2 新增，服务 gpu）
 │   ├── health/              # 健康度评估模块（独立）
 │   ├── platform/            # 平台抽象层（路径默认值）
 │   ├── config/              # 配置管理

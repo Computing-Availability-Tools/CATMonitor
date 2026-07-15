@@ -42,10 +42,10 @@
 │   │ └──────┘ └──────┘ └─────┘ │     │     │         │  │
 │   └───────────────────────────┴─────┴─────┴─────────┘  │
 ├─────────────────────────────────────────────────────┤
-│         internal/source (来源层 v0.2.0 新增)           │
+│         internal/source (来源层 v0.2.0 引入, v0.2.2 扩展) │
 │  ┌─────┬──────┬──────┬──────┬──────┬──────┬──────┐   │
-│  │proc │ sys  │ ipmi │lscpu │ mce  │dmesg │...   │   │
-│  │     │      │(缓存)│(常驻)│      │(缓存)│      │   │
+│  │proc │ sys  │ ipmi │lscpu │ mce  │dmesg │ +4新 │   │
+│  │     │      │(缓存)│(常驻)│      │(缓存)│dcmi等│   │
 │  └──┬──┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──────┘   │
 │     │     │      │      │      │      │              │
 │  来源层：parsed struct + 单例 + SetRoot/可注入 fetcher │
@@ -59,6 +59,8 @@
 > v0.2.0 引入来源层（`internal/source/`）后，Linux 采集器通过来源包间接访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等系统接口；Windows 保留直接 syscall 实现（来源层迁移延后）。来源返回 parsed struct，带缓存（ipmi/dmesg/smartctl）与可注入 fetcher，便于单元测试 mock。
 >
 > v0.2.1 新增 `web/` 模块（独立二进制 `catmonitor-web`），与主项目同一 Go module，不新增 go.mod、不改主项目任何文件。Web 复用采集器注册表与健康度模块（blank import），以 `web/data/snapshot.json` 为读写解耦边界：采集 goroutine 是唯一写者，HTTP 层只读快照文件。
+>
+> v0.2.2 来源层扩展至 14 包（新增 `dcmi`/`npu_smi`/`hccn_tool`/`nvidia_smi`），全部 6 个采集器接入来源层；NPU 指标 5→74 并在采集器层 device 并行采集（每块 NPU 一个 goroutine，单卡失败不影响其他卡）；DCMI 指标通过 CGo（`//go:build cgo && linux && dcmi`，`-tags dcmi`）绑定 `libdcmi.so`，默认构建排除并优雅降级；GPU 从内联 exec 迁移至 `nvidia_smi` 来源包（最后一个接入来源层的 collector）。
 
 ### 1.2 跨平台架构设计
 
@@ -76,9 +78,10 @@ collectors/{component}/
 **关键原则**：
 - `Collector` 接口、`Metric` 结构体、健康度模块不感知平台差异
 - 每个采集器的 `Collect()` 方法调用平台特定的数据采集函数
-- Linux 代码通过 `internal/source/` 来源层访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等（v0.2.0）
+- Linux 代码通过 `internal/source/` 来源层访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等（v0.2.0；v0.2.2 全 6 采集器接入）
 - Windows 代码使用 Go `syscall` 包直接调用 kernel32.dll / iphlpapi.dll，零第三方依赖
-- GPU/NPU 采集器无需分离（nvidia-smi 和 npu-smi 在双平台均可通过 os/exec 调用）
+- GPU 采集器无需平台分离（`nvidia_smi` 来源包在双平台均可通过 `os/exec` 调用 nvidia-smi）
+- NPU 采集器平台分离：`npu_linux.go`（74 指标 device 并行 + DCMI CGo + npu_smi/hccn_tool）与 `npu_other.go`（`//go:build !linux` no-op stub），Windows 上整体降级跳过
 - `*_metrics.go` 为跨平台文件（无 build tag），新增指标方法定义于此；Windows 上来源层不可用时返回空值
 
 ### 1.3 扩展机制：Collector 接口 + Registry 注册表
@@ -174,17 +177,19 @@ CATMonitor/
 │   │   │   ├── disk_windows.go      # Windows: GetDiskFreeSpaceExW, GetLogicalDrives
 │   │   │   └── disk_test.go         # 测试 (//go:build linux)
 │   │   ├── gpu/
-│   │   │   ├── gpu.go               # 跨平台: nvidia-smi (os/exec)
+│   │   │   ├── gpu.go               # 跨平台: 经 nvidia_smi 来源包采集
 │   │   │   └── gpu_test.go
 │   │   ├── npu/
-│   │   │   ├── npu.go               # 跨平台: npu-smi (os/exec)
+│   │   │   ├── npu.go               # 共享: struct/deviceIDs/prevEcc + device 并行 Collect()
+│   │   │   ├── npu_linux.go         # Linux: ensureDevices + collectStatic + collectDevice(74 指标) (DCMI/npu_smi/hccn_tool)
+│   │   │   ├── npu_other.go         # !linux no-op stub
 │   │   │   └── npu_test.go
 │   │   └── network/
 │   │       ├── network.go           # 共享
 │   │       ├── network_linux.go     # Linux: 通过来源层(proc/sys)
 │   │       ├── network_windows.go   # Windows: Get-NetAdapterStatistics (PowerShell)
 │   │       └── network_test.go      # 测试 (//go:build linux)
-│   ├── source/                      # 来源层（v0.2.0 新增）：数据获取与解析抽象
+│   ├── source/                      # 来源层：数据获取与解析抽象（14 包，v0.2.0 引入，v0.2.2 扩展）
 │   │   ├── source.go                # 通用 Source 接口 {Name(); Available()}
 │   │   ├── proc/                    # /proc 全量解析（11 个 typed 方法）
 │   │   ├── sys/                     # /sys 解析（freq/cache/corestate/thermal/net）
@@ -194,7 +199,11 @@ CATMonitor/
 │   │   ├── dmesg/                   # dmesg（30s缓存+失败缓存）
 │   │   ├── dmidecode/               # dmidecode DIMM（常驻 sync.Once）
 │   │   ├── statfs/                  # statfs(2)（Linux 专有，//go:build linux）
-│   │   └── smartctl/                # smartctl -H（per-dev 60s缓存+失败缓存）
+│   │   ├── smartctl/                # smartctl -H（per-dev 60s缓存+失败缓存）
+│   │   ├── dcmi/                    # libdcmi.so CGo 绑定（v0.2.2，//go:build cgo&&linux&&dcmi，服务 npu）
+│   │   ├── npu_smi/                 # npu-smi -t topo/hccs-bw（v0.2.2，服务 npu）
+│   │   ├── hccn_tool/               # hccn_tool 带宽/速度/链路（v0.2.2，服务 npu）
+│   │   └── nvidia_smi/              # nvidia-smi 9 字段解析（v0.2.2，服务 gpu）
 │   ├── health/                      # 健康度评估模块（独立，纯逻辑跨平台）
 │   │   ├── health.go                # HealthEvaluator + Evaluate() 入口
 │   │   ├── rules.go                 # 评分规则定义（权重、扣分项）
@@ -240,7 +249,8 @@ CATMonitor/
   Collector.Collect()  ──→  []Metric
          │                    │
          │ Linux: 经来源层 source.Xxx() 拿 parsed struct
-         │   (proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl)
+         │   (proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl
+         │    + dcmi/npu_smi/hccn_tool/nvidia_smi)
          │ Windows: kernel32.dll / PowerShell 直接 syscall
          ▼
   Storage.Write(metrics)  ──→  JSON 文件
@@ -266,7 +276,7 @@ CATMonitor/
 {"score":85,"grade":"Good","components":{"cpu":{"score":25,"max":30,"details":[...]},"memory":{"score":35,"max":40,"details":[...]}},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-### 1.6 来源层设计（v0.2.0 新增）
+### 1.6 来源层设计（v0.2.0 引入，v0.2.2 扩展至全 6 采集器 / 14 包）
 
 为解耦采集器与系统数据获取细节，引入 `internal/source/` 来源层。采集器不再直接 `os.ReadFile`/`exec`，而是调用来源包拿 parsed struct。
 
@@ -295,6 +305,10 @@ CATMonitor/
 | dmidecode | dmidecode --type 17 | MemoryDevices() | 常驻 (sync.Once) | DIMM 信息 |
 | statfs | statfs(2) | Statfs(path) | 无 | Linux 专有 (`//go:build linux`)；fetcher 可注入 |
 | smartctl | smartctl -H | Health(dev) | per-dev 60s + 失败 | |
+| dcmi | libdcmi.so (CGo) | Temperature/Power/HbmInfo/UtilizationRate/Frequency/EccInfo/ChipInfo/DriverVersion/LlcPerf/CardList 等 22 方法 | 无 | `//go:build cgo && linux && dcmi`；`-tags dcmi` 启用，默认排除降级；进程内 CGo 无 fork/exec |
+| npu_smi | npu-smi -t | Topo()/HccsBandwidth(devID) | Topo 常驻 (sync.Once) + 5s 超时 | 服务 npu；fetcher 可注入 |
+| hccn_tool | hccn_tool -i -opt -g | Bandwidth(devID)/Speed(devID)/Link(devID) | per-dev:opt 30s + 失败 | 复合缓存 key 修复；服务 npu |
+| nvidia_smi | nvidia-smi | Query() → []GPU(9 字段) | 无 | 指标需新鲜；fetcher 可注入；服务 gpu |
 
 #### 通用接口
 
@@ -314,8 +328,8 @@ type Source interface {
 | memory | proc, dmidecode, ipmi, dmesg | usage_detail, swap, PSI 饱和度, 碎片化, DIMM, oom_count, power |
 | disk | proc, statfs, smartctl, dmesg | space_usage, iops, throughput, io_wait, io_errors, SMART |
 | network | proc, sys | throughput, packet_count, error_count, interface_status, connection_count |
-| gpu | （未接入，待建 nvsmi 来源） | utilization, memory_usage, temperature, power_draw, ecc_errors, clock_frequency |
-| npu | （未接入，待建 npsmi 来源） | utilization, memory_usage, temperature, power_draw, health_status |
+| gpu | nvidia_smi | utilization, memory_usage, temperature, power_draw, fan_speed, ecc_errors, clock_frequency |
+| npu | dcmi, npu_smi, hccn_tool | 74 指标：utilization/memory/temperature/power/health + 电压/风扇/13路温度/频率/利用率/HBM/ECC(delta)/LLC/带宽网络 |
 
 ---
 
@@ -390,15 +404,16 @@ type Source interface {
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/gpu` |
-| 数据来源 | `nvidia-smi` 命令输出（Linux/Windows 双平台通过 os/exec 调用） |
+| 数据来源 | `nvidia_smi` 来源包（`internal/source/nvidia_smi`），底层执行 `nvidia-smi`（Linux/Windows 双平台通过 os/exec 调用） |
 | 外部依赖 | `nvidia-smi`（NVIDIA 驱动自带） |
-| 采集方式 | 单次 `nvidia-smi --query-gpu=...` 批量查询，解析 CSV 输出 |
+| 采集方式 | 调用 `nvidia_smi.Default().Query()` 一次取回全部 GPU 的 9 字段，collector 遍历构建 7 类指标；解析逻辑下沉到来源包 |
 | 平台分离 | 无需分离，`os/exec` 在双平台行为一致 |
-| 可用性检测 | 启动时执行 `exec.LookPath("nvidia-smi")`，不可用则跳过 |
+| 可用性检测 | collector 不再门控 `Available()`，直接调用来源并处理 error（无驱动时返回空，优雅降级） |
+| Mock | 测试通过 `nvidia_smi.SetMock(testdata)` 注入 |
 
 **采集逻辑**：
 
-单次执行以下命令，一次获取所有 GPU 的全部字段：
+来源包单次执行以下命令，一次获取所有 GPU 的全部字段：
 
 ```bash
 nvidia-smi \
@@ -406,7 +421,7 @@ nvidia-smi \
   --format=csv,noheader,nounits
 ```
 
-按行解析输出，每行对应一块 GPU，字段间逗号分隔：
+来源包按行解析输出（每行一块 GPU，字段间逗号分隔），返回 `[]GPU`；collector 遍历产出 7 类指标：
 1. **utilization**：第2列，GPU 计算单元使用率（%）。
 2. **memory_usage**：第3/4列计算，`memory.used / memory.total × 100`，同时输出 used/total 明细。
 3. **temperature**：第5列，核心温度（°C）。
@@ -415,30 +430,55 @@ nvidia-smi \
 6. **ecc_errors**：第8列，不可纠正 ECC 错误累计数。
 7. **clock_frequency**：第9列，图形时钟频率（MHz）。
 
-**错误处理**：`nvidia-smi` 执行超时（默认 10s）或返回错误时，记录日志并跳过本次采集，不影响下次采集。某块 GPU 的字段为 `N/A` 时，该指标值设为 -1 并在 Labels 中标注 `unavailable: true`。
+> v0.2.2 迁移：采集器从内联 `exec.Command("nvidia-smi", ...)` + `parseOutput/parseCSVLine/parseFloat` 改为调用来源包 `nvidia_smi.Default().Query()`，解析逻辑迁移到来源包，行为不变（7 指标，2 GPU × 9 = 18 条）。GPU 是最后一个接入来源层的 collector。
+
+**错误处理**：`nvidia-smi` 执行超时（5s）或返回错误时，来源返回 error，collector 记录日志并跳过本次采集，不影响下次采集。某块 GPU 的字段为 `N/A` 时，该指标值设为 -1 并在 Labels 中标注 `unavailable: true`。
 
 ### 2.5 NPU 采集器（华为昇腾）
 
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/npu` |
-| 数据来源 | `npu-smi info` 命令输出（Linux/Windows 双平台通过 os/exec 调用） |
-| 外部依赖 | `npu-smi`（昇腾驱动自带） |
-| 采集方式 | 执行 `npu-smi info`，解析表格格式输出 |
-| 平台分离 | 无需分离，有驱动时双平台可用 |
-| 可用性检测 | 启动时执行 `exec.LookPath("npu-smi")`，不可用则跳过 |
+| 数据来源 | `dcmi`(CGo)/`npu_smi`/`hccn_tool` 三个来源包；NPU 全部指标为 Linux 专属 |
+| 外部依赖 | `libdcmi.so`（CANN，CGo，需 `-tags dcmi`）；`npu-smi`、`hccn_tool`（昇腾驱动自带，无 CGo） |
+| 采集方式 | **device 并行采集**：collector 层每块 NPU 一个 goroutine，`WaitGroup` 等齐，单卡失败不影响其他卡 |
+| 平台分离 | `npu_linux.go`（`//go:build linux`，实现 74 指标）+ `npu_other.go`（`//go:build !linux`，no-op stub）；Windows 上 `Collect()` 整体降级跳过 |
+| 可用性检测 | `dcmi.Default().Available()` = CGo provider 是否注册（`-tags dcmi` 时为 true）；命令类来源去掉 `Available()` 门控，直接调 + 处理 error |
+| Mock | 测试通过 `dcmi.SetMockProvider()`、`npu_smi.SetMock()`、`hccn_tool.SetMock()` 注入 |
 
-**采集逻辑**：
+**采集逻辑（device 并行）**：
 
-执行 `npu-smi info`，解析表格输出。每块 NPU 占两行，需按 NPU ID 分组解析：
+```
+Collect() {
+  Phase 1: collectStatic(now)        // 全局/静态指标采 1 次：npu_num/comm_topo/driver_version/chip_type
+  Phase 2: for each deviceID {
+    go collectDevice(devID, now)     // 每 device 一个 goroutine，采全部 74 指标
+  }
+  wg.Wait()                          // 等齐，合并结果
+}
+```
 
-1. **utilization**：解析 `AICore(%)` 列，NPU 使用率（%）。
-2. **memory_usage**：解析 `Memory-Usage(MB)` 列，格式为 `used / total`，计算使用率。
-3. **temperature**：解析 `Temp(C)` 列，NPU 温度（°C）。
-4. **power_draw**：解析 `Power(W)` 列，实时功耗（W）。
-5. **health_status**：解析 `Health` 列，状态值映射：OK=1, Warning=2, Alarm=3, Critical=4。
+- 并行在 collector 层（来源层保持单 device 接口，简单可测）；ECC delta 用 mutex 保护 `prevEcc` map。
+- 既有 5 个指标改走 DCMI：utilization(`dcmi_get_device_utilization_rate`)、memory_usage(`dcmi_get_device_hbm_info`)、temperature(`dcmi_get_device_temperature`)、power_draw(`dcmi_get_device_power_info`)、health_status(`dcmi_get_device_health`)。
 
-**错误处理**：`npu-smi` 执行超时（默认 10s）或返回错误时，记录日志并跳过本次采集。不同版本 `npu-smi` 输出格式可能略有差异，解析器需做兼容处理。
+**74 指标分布**：
+
+| 组 | 指标数 | 来源 |
+|----|:------:|------|
+| 既有 5（改 DCMI） | 5 | dcmi |
+| 基础信息 | 8 | dcmi + npu_smi(-t topo) |
+| 电压/风扇 | 7 | dcmi(DeviceInfo LP) |
+| 温度(13 路) | 13 | dcmi(SensorInfo) |
+| 频率(7) | 7 | dcmi(Frequency/AicpuInfo) |
+| 利用率(12) | 12 | dcmi(UtilizationRate/DvppRatio) |
+| HBM 内存 | 2 | dcmi(HbmInfo) |
+| ECC(8) | 8 | dcmi(EccInfo, delta) |
+| LLC(3) | 3 | dcmi(LlcPerf) |
+| 带宽/网络(9) | 9 | hccn_tool + npu_smi(-t hccs-bw) + dcmi(NetworkHealth) |
+| **合计** | **74** | |
+
+**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）。`npu_smi`/`hccn_tool` 命令执行超时（5s）或缺失时返回 error，静默跳过。DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
+
 
 ### 2.6 Network 采集器
 
