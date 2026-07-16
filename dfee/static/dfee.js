@@ -1,0 +1,361 @@
+// ---- config ----
+const HISTORY_POINTS = 60;
+const PALETTE = [
+  '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#9333ea', '#0891b2',
+  '#ca8a04', '#db2777', '#4f46e5', '#059669', '#b45309', '#6b7280',
+];
+
+const SECTIONS = [
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_frequency', 'npu_utilization', 'npu_temperature', 'npu_power', 'npu_voltage', 'npu_acg', 'npu_fan', 'npu_llc_hit_rate', 'npu_llc_throughput'] },
+  { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
+  { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
+  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2 },
+  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2 },
+  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'] },
+];
+
+// ---- state ----
+let refreshIntervalMs = 5000;
+let pollTimer = null;
+let buffers = {};
+let chartDefs = {};
+let canvasMap = {};
+let legendMap = {};
+let badgeMap = {};
+
+// ---- helpers ----
+function el(tag, cls) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  return e;
+}
+function elText(tag, cls, text) {
+  const e = el(tag, cls);
+  e.textContent = text;
+  return e;
+}
+function fmt(v) {
+  if (v === null || v === undefined) return '-';
+  if (Number.isInteger(v)) return String(v);
+  return Number(v).toFixed(2);
+}
+function fmtAxis(v) {
+  if (v === 0) return '0';
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return (v / 1e12).toFixed(1) + 'T';
+  if (abs >= 1e9) return (v / 1e9).toFixed(1) + 'G';
+  if (abs >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return fmt(v);
+}
+function canvasHeight(seriesCount) {
+  if (seriesCount === 0) return 0;
+  return 200;
+}
+function showBanner(msg, isError) {
+  const b = document.getElementById('banner');
+  b.textContent = msg;
+  b.classList.remove('hidden');
+  b.style.background = isError ? '#fee2e2' : '#dcfce7';
+  b.style.color = isError ? '#991b1b' : '#166534';
+}
+function hideBanner() {
+  document.getElementById('banner').classList.add('hidden');
+}
+
+// ---- build sections ----
+function buildSections(charts) {
+  const container = document.getElementById('sections');
+  container.innerHTML = '';
+  canvasMap = {};
+  legendMap = {};
+  badgeMap = {};
+  chartDefs = {};
+  for (const c of charts) chartDefs[c.id] = c;
+
+  for (const sec of SECTIONS) {
+    const secCharts = sec.ids.map(id => chartDefs[id]).filter(c => c);
+    const available = secCharts.filter(c => (c.series || []).length > 0).length;
+
+    const section = el('section', 'section');
+    section.style.setProperty('--section-accent', sec.accent);
+
+    const head = el('div', 'section-head');
+    head.appendChild(elText('span', '', sec.title));
+    head.appendChild(elText('span', 'count', available + '/' + secCharts.length + ' 可用'));
+    section.appendChild(head);
+
+    const grid = el('div', 'chart-grid');
+    if (sec.gridCols) grid.style.gridTemplateColumns = `repeat(${sec.gridCols}, 1fr)`;
+    for (const c of secCharts) {
+      grid.appendChild(buildCard(c));
+    }
+    section.appendChild(grid);
+    container.appendChild(section);
+  }
+}
+
+function buildCard(chart) {
+  const series = chart.series || [];
+  const hasData = series.length > 0;
+  const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
+  const pending = hasData && bufferedCount === 0;
+  const hasEnough = series.some(s => buffers[s.id] && buffers[s.id].length >= 2);
+
+  const card = el('div', 'chart-card');
+  if (!hasData) card.classList.add('compact');
+
+  // header
+  const head = el('div', 'chart-head');
+  const titleText = chart.y_unit ? chart.title + ' (' + chart.y_unit + ')' : chart.title;
+  head.appendChild(elText('span', '', titleText));
+  let badge;
+  if (!hasData) {
+    badge = elText('span', 'badge badge-empty', '无数据');
+  } else if (pending) {
+    badge = elText('span', 'badge badge-pending', '采集中');
+  } else {
+    badge = elText('span', 'badge badge-ok', series.length + ' 条');
+  }
+  head.appendChild(badge);
+  badgeMap[chart.id] = badge;
+  card.appendChild(head);
+
+  if (!hasData) return card;
+
+  // legend (HTML)
+  const legend = el('div', 'legend');
+  legend.id = 'legend-' + chart.id;
+  card.appendChild(legend);
+  legendMap[chart.id] = legend;
+
+  // canvas
+  const body = el('div', 'chart-body');
+  const canvas = document.createElement('canvas');
+  canvas.className = 'chart-canvas';
+  canvas.id = 'canvas-' + chart.id;
+  canvas.style.height = canvasHeight(series.length) + 'px';
+  body.appendChild(canvas);
+  card.appendChild(body);
+  canvasMap[chart.id] = canvas;
+
+  return card;
+}
+
+// ---- buffer update ----
+function updateBuffers(data) {
+  const seen = {};
+  for (const c of data.charts) {
+    for (const s of (c.series || [])) {
+      seen[s.id] = true;
+      if (!buffers[s.id]) buffers[s.id] = [];
+      buffers[s.id].push(s.value);
+      if (buffers[s.id].length > HISTORY_POINTS) buffers[s.id].shift();
+    }
+  }
+  for (const id in buffers) {
+    if (!seen[id]) delete buffers[id];
+  }
+}
+
+// ---- legend update (HTML) ----
+function updateLegend(chart) {
+  const legend = legendMap[chart.id];
+  if (!legend) return;
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  legend.innerHTML = '';
+  for (let i = 0; i < series.length; i++) {
+    const s = series[i];
+    const color = PALETTE[i % PALETTE.length];
+    const val = buffers[s.id][buffers[s.id].length - 1];
+    const unit = s.unit ? ' ' + s.unit : '';
+
+    const item = el('span', 'legend-item');
+    const dot = el('span', 'legend-dot');
+    dot.style.background = color;
+    item.appendChild(dot);
+    item.appendChild(document.createTextNode(s.label));
+    const valSpan = el('span', 'legend-val');
+    valSpan.textContent = ' ' + fmt(val) + unit;
+    item.appendChild(valSpan);
+    legend.appendChild(item);
+  }
+}
+
+// ---- canvas rendering ----
+function renderChart(canvas, chart) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth;
+  const ch = canvas.clientHeight;
+  if (cw === 0 || ch === 0) return;
+  canvas.width = cw * dpr;
+  canvas.height = ch * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cw, ch);
+
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  if (series.length === 0) return;
+
+  // Y axis range
+  let min = Infinity, max = -Infinity;
+  for (const s of series) {
+    for (const v of buffers[s.id]) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (min === max) max = min + 1;
+  // When data is nearly flat (variation < 1% of magnitude), expand Y axis
+  // to start from 0 so grid labels are distinguishable. This is common for
+  // cumulative counters (e.g. network bytes_total) where deltas are tiny.
+  if (min > 0 && (max - min) / max < 0.01) {
+    min = 0;
+  }
+
+  const padL = 64, padR = 8, padT = 8, padB = 16;
+  const plotW = cw - padL - padR;
+  const plotH = ch - padT - padB;
+
+  // grid + Y labels
+  ctx.strokeStyle = '#f1f3f5';
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  const gridN = 4;
+  for (let i = 0; i <= gridN; i++) {
+    const y = padT + (plotH * i) / gridN;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(cw - padR, y);
+    ctx.stroke();
+    const val = max - (max - min) * (i / gridN);
+    const label = fmtAxis(val) + (chart.y_unit ? ' ' + chart.y_unit : '');
+    ctx.fillText(label, padL - 4, y);
+  }
+
+  // X axis — label reflects actual data span, not full capacity.
+  const maxDataLen = Math.max(...series.map(s => buffers[s.id].length));
+  const actualSpan = (refreshIntervalMs * maxDataLen) / 1000;
+  let spanStr = actualSpan >= 3600 ? (actualSpan / 3600).toFixed(0) + 'h' : actualSpan >= 60 ? Math.round(actualSpan / 60) + 'min' : Math.round(actualSpan) + 's';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('−' + spanStr, padL, padT + plotH + 2);
+  ctx.textAlign = 'right';
+  ctx.fillText('now', cw - padR, padT + plotH + 2);
+
+  // polylines — right-aligned: most recent data at right edge, older data
+  // grows leftward as the buffer fills. This prevents a 2-point line from
+  // stretching across the full chart width.
+  const denom = HISTORY_POINTS - 1;
+  for (let si = 0; si < series.length; si++) {
+    const s = series[si];
+    const data = buffers[s.id];
+    const n = data.length;
+    if (n < 2) continue;
+    ctx.strokeStyle = PALETTE[si % PALETTE.length];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = padL + plotW * (i + (HISTORY_POINTS - n)) / denom;
+      const y = padT + plotH - ((data[i] - min) / (max - min)) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
+function updateBadge(chart) {
+  const badge = badgeMap[chart.id];
+  if (!badge) return;
+  const series = chart.series || [];
+  const hasData = series.length > 0;
+  const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
+  if (!hasData) {
+    badge.className = 'badge badge-empty';
+    badge.textContent = '无数据';
+  } else if (bufferedCount === 0) {
+    badge.className = 'badge badge-pending';
+    badge.textContent = '采集中';
+  } else {
+    badge.className = 'badge badge-ok';
+    badge.textContent = series.length + ' 条';
+  }
+}
+
+function renderAllCharts() {
+  for (const c of Object.values(chartDefs)) {
+    updateBadge(c);
+    updateLegend(c);
+    const canvas = canvasMap[c.id];
+    if (canvas) renderChart(canvas, c);
+  }
+}
+
+// ---- data fetching ----
+async function fetchData() {
+  try {
+    const r = await fetch('/api/dfee', { cache: 'no-store' });
+    if (!r.ok) { showBanner('能效快照尚未就绪，等待首次采集…', true); return null; }
+    hideBanner();
+    return await r.json();
+  } catch (e) {
+    showBanner('获取数据失败：' + e.message, true);
+    return null;
+  }
+}
+
+async function pollTick() {
+  const data = await fetchData();
+  if (!data) return;
+  refreshIntervalMs = data.refresh_interval_ms || refreshIntervalMs;
+  document.getElementById('intervalDisplay').textContent = (refreshIntervalMs / 1000) + 's';
+  const ts = data.timestamp ? new Date(data.timestamp) : null;
+  document.getElementById('updateTime').textContent = ts ? ts.toLocaleTimeString('zh-CN') : '--';
+
+  // Update buffers BEFORE building sections so buildCard sees current data
+  // when deciding badge state (采集中 vs N 条).
+  updateBuffers(data);
+
+  if (Object.keys(chartDefs).length === 0 && data.charts) {
+    buildSections(data.charts);
+  } else if (data.charts) {
+    // Rebuild if chart IDs changed OR any chart's series went from empty to
+    // non-empty (or vice versa). Without this, a chart that was compact on
+    // first poll (e.g. IOPS needs prev snapshot) would never get a canvas.
+    const oldKeys = Object.keys(chartDefs).sort().join(',');
+    const newKeys = data.charts.map(c => c.id).sort().join(',');
+    let needRebuild = oldKeys !== newKeys;
+    if (!needRebuild) {
+      for (const c of data.charts) {
+        const old = chartDefs[c.id];
+        const oldHas = old && (old.series || []).length > 0;
+        const newHas = (c.series || []).length > 0;
+        if (!oldHas && newHas) { needRebuild = true; break; }
+      }
+    }
+    if (needRebuild) { buildSections(data.charts); }
+    else { data.charts.forEach(c => { chartDefs[c.id] = c; }); }
+  }
+  renderAllCharts();
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollTick, refreshIntervalMs);
+  pollTick();
+}
+
+async function manualRefresh() {
+  try { await fetch('/api/refresh', { method: 'POST' }); } catch (e) { /* ignore */ }
+  setTimeout(pollTick, 400);
+}
+
+// ---- init ----
+document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+(async function init() {
+  await pollTick();
+  startPolling();
+})();

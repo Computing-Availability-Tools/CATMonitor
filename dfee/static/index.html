@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CATMonitor 能效监控</title>
+  <link rel="stylesheet" href="/dfee/static/dfee.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">CATMonitor</a>
+      <span class="subtitle">能效监控</span>
+    </div>
+    <div class="controls">
+      <span class="info-label">更新 <b id="updateTime">--</b></span>
+      <span class="info-label">间隔 <b id="intervalDisplay">--</b></span>
+      <button id="refreshBtn" class="btn btn-primary">立即刷新</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <main id="sections"></main>
+
+  <footer class="foot">CATMonitor 能效监控 · 14 张实时图表 · 数据来自 snapshot.json</footer>
+
+  <script src="/dfee/static/dfee.js"></script>
+</body>
+</html>

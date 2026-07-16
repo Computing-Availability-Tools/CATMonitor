@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/dfee"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
 
@@ -33,6 +34,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/collectors", s.handleCollectors)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/refresh", s.handleRefresh)
+	dfee.Register(mux, s.cfg.Storage.SnapshotPath)
 	return mux
 }
 
