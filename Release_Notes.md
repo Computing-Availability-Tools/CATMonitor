@@ -4,6 +4,34 @@
 
 ---
 
+## v0.3.0
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.0 |
+| 发布时间 | 2026-07-17 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/jhon (1bae347) → main |
+
+### 变更摘要
+
+- **健康度模块抽取**：`internal/health` → `features/health`，重构为按部件评估器（cpu/memory/disk/gpu/npu），`Evaluate` 用局部 scheme 不改写 receiver；规则对齐 indi_list High/Medium，新增 CPU MCE、内存 saturation/fragmentation、硬盘 smart_status、GPU utilization、NPU utilization/ECC/error_code，温度取子温度最差值
+- **指标采集目录系统**：新增 `internal/metrics`（MetricSpec/Catalog/Filter）+ `configs/metrics.yaml` 默认目录（6 部件，High/Medium+静态身份默认采、Low 诊断默认不采）；模块自有 `metrics.yaml` 按 name 覆盖合并；scheduler 经 `SetFilter` DI 注入。注：interval 本期仅记录、不接 ticker
+- **特性层**：新增 `features/` 承载上层模块；`web/` → `features/web/`（新增 `os_info` 采集，specsGroup 无 primary 数值型指标回退显示 value+unit，概览卡隐藏无数据部件）
+- **目录与脚本**：`scripts/gen_metrics_catalog.py` 生成脚本、`scripts/install.sh` 部署 metrics.yaml
+- **文档**：README/SPEC/DESIGN 同步结构树与引用，SPEC 精简（详细设计迁入 DESIGN），Web_SPEC/HEALTH_SPEC 路径更新
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.0`；指标总数不变（152）
+- **测试**：215 用例全过（较 v0.2.2 的 176 +39），`go vet` 零警告，Linux/Windows 双平台编译通过
+
+### 已知限制
+
+- DCMI CGo 未真机验证（需 NPU 服务器 `go build -tags dcmi`）；DCMI 原始单位待实测
+- interval 已记录但未接 scheduler ticker（采集仍 per-collector）
+- 继承 v0.2.0/v0.2.1/v0.2.2 已知限制：NPU device 并行未在真多卡环境验证、Windows 来源层迁移延后、`-c` 短选项 bug
+
+---
+
 ## v0.2.2
 
 | 项目 | 说明 |

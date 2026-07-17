@@ -31,8 +31,10 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 4. **可测试**：内置测试框架，每增加一个指标即验证，每阶段输出测试报告
 5. **跨平台**：通过 Go 构建标签（build tags）隔离平台代码，Linux 和 Windows 共享采集器核心逻辑，仅数据采集层分离
 6. **来源层抽象**（v0.2.0 引入，v0.2.2 扩展至全 6 采集器）：数据获取与解析集中在 `internal/source/`（14 个包），采集器不再直接 `os.ReadFile`/`exec`；来源返回 parsed struct，单例 + 可注入 fetcher，部分来源（ipmi/dmesg/smartctl/hccn_tool）带缓存 + 失败缓存，避免无硬件时反复 exec
-7. **Web 可视化**（v0.2.1）：独立 `web/` 模块提供 Web 仪表盘，与采集守护进程/CLI 解耦，零新依赖；新增部件/指标时前端尽量自动出现，最多在一处加一行
+7. **Web 可视化**（v0.2.1）：独立 `features/web` 模块提供 Web 仪表盘，与采集守护进程/CLI 解耦，零新依赖；新增部件/指标时前端尽量自动出现，最多在一处加一行
 8. **NPU 指标扩展与 device 并行**（v0.2.2）：NPU 指标 5→74，采集器层 device 并行（每块 NPU 一个 goroutine，单卡失败不影响其他卡）；DCMI 指标通过 CGo 绑定 `libdcmi.so`（`//go:build cgo && linux && dcmi`，`-tags dcmi` 启用，默认构建排除并优雅降级）；GPU 迁移至 `nvidia_smi` 来源包，全部 6 个采集器接入来源层
+9. **指标采集目录**（v0.3.0）：`internal/metrics` 提供指标目录（MetricSpec/Catalog/Filter），`configs/metrics.yaml` 为默认目录，模块可用自有 `metrics.yaml` 按 name 覆盖合并；High/Medium + 静态身份默认采、Low 诊断默认不采，scheduler 经 Filter 决定是否采集（interval 本期仅记录、不接 ticker）
+10. **特性层抽取**（v0.3.0）：`features/` 承载上层模块——`features/health`（健康度评估，消费 `collector.Metric`，按部件评估器 + 局部 scheme，规则对齐 indi_list High/Medium）、`features/web`（Web 仪表盘由 `web/` 迁入）
 
 ---
 
@@ -48,50 +50,11 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 > 判定逻辑：检测系统中是否存在 GPU/NPU 设备（nvidia-smi / npu-smi 是否可用），有则使用加速卡方案，无则使用 CPU-only 方案。4卡与8卡暂使用同一权重，后续可差异化。
 
-### 2.2 扣分规则（初版，后续可调整）
+### 2.2 扣分规则
 
-**CPU（满额分随场景而定）**
+各部件按 High/Medium 指标设定扣分阈值，触发即按满额分百分比扣分。规则覆盖：CPU（使用率/温度/Load Average/MCE）、内存（使用率/CE/UCE/Swap/饱和度/碎片化）、硬盘（使用率/SMART/I/O Error/I/O Wait）、GPU/NPU（使用率/温度/显存/ECC/功耗）。多卡场景默认取最差卡扣分。
 
-| 触发条件 | 扣分 |
-|----------|------|
-| 使用率 > 90% 持续 | -20% 满额分 |
-| 使用率 > 80% 持续 | -10% 满额分 |
-| 温度 > 85°C | -30% 满额分 |
-| 温度 > 75°C | -15% 满额分 |
-| Load Average (1min) > CPU核心数 × 2 | -10% 满额分 |
-
-**内存（满额分随场景而定）**
-
-| 触发条件 | 扣分 |
-|----------|------|
-| 使用率 > 90% | -30% 满额分 |
-| 使用率 > 80% | -15% 满额分 |
-| 每个 CE 错误（可纠正错误） | -2 分 |
-| 每个 UCE 错误（不可纠正错误） | -10 分 |
-| Swap 使用率 > 50% | -10% 满额分 |
-
-**硬盘（满额分随场景而定）**
-
-| 触发条件 | 扣分 |
-|----------|------|
-| 分区使用率 > 90% | -40% 满额分 |
-| 分区使用率 > 80% | -20% 满额分 |
-| SMART 状态异常 | -30% 满额分 |
-| I/O Error 计数 > 0 | -20% 满额分 |
-| I/O Wait > 20% | -10% 满额分 |
-
-**GPU/NPU（满额 60 分）**
-
-| 触发条件 | 扣分 |
-|----------|------|
-| 使用率 > 95% 持续 | -10% 满额分 |
-| 温度 > 90°C | -30% 满额分 |
-| 温度 > 80°C | -15% 满额分 |
-| 显存使用率 > 95% | -10% 满额分 |
-| ECC 错误（不可纠正） > 0 | -20% 满额分 |
-| 功耗 > 额定 TDP 的 110% | -15% 满额分 |
-
-> 多卡场景：取所有卡的平均扣分或最差卡扣分（配置项，默认取最差卡）。
+> 规则与阈值详见 [`features/health/HEALTH_SPEC.md`](features/health/HEALTH_SPEC.md)；健康度模块设计与按部件评估器见 [DESIGN.md §3](DESIGN.md)。
 
 ### 2.3 健康等级
 
@@ -271,21 +234,14 @@ GPU 采集通过 `nvidia_smi` 来源包调用 `nvidia-smi`，NPU 通过 `dcmi`(C
 
 ### 7.1 来源层外部命令（Linux）
 
-来源层 `internal/source/` 通过 `os/exec` 调用以下系统命令（无硬件/未安装时返回空，优雅降级，失败结果同样缓存以避免反复 exec）：
+来源层 `internal/source/` 通过 `os/exec` 调用系统命令（无硬件/未安装时返回空，优雅降级，失败结果同样缓存以避免反复 exec）。各来源包的外部命令、用途与缓存策略详见 [DESIGN.md §1.6 来源层设计](DESIGN.md)。
 
-| 来源包 | 外部命令 | 用途 | 缓存策略 |
-|--------|---------|------|---------|
-| ipmi | `ipmitool` (sdr/dcmi) | 温度/功率 | 30s + 失败缓存 + 5s 超时 |
-| lscpu | `lscpu` | CPU 拓扑 | 常驻 (sync.Once) |
-| mce | `mcelog` / `dmesg` | MCE 错误 | 无 |
-| dmesg | `dmesg` | OOM / I/O 错误 | 30s + 失败缓存 |
-| dmidecode | `dmidecode --type 17` | DIMM 模块信息 | 常驻 (sync.Once) |
-| smartctl | `smartctl -H` | SMART 健康 | per-dev 60s + 失败缓存 |
-| nvidia_smi | `nvidia-smi` | GPU 9 字段批量查询 | 无缓存（指标需新鲜） |
-| npu_smi | `npu-smi info -t` | 通信拓扑 / HCCS 带宽 | Topo 常驻 + 5s 超时 |
-| hccn_tool | `hccn_tool -i -<opt> -g` | 网口/PCIe 带宽、RoCE 速度/链路 | per-dev:opt 30s + 失败缓存 |
-| dcmi | libdcmi.so (CGo，`-tags dcmi`) | NPU 74 指标主体（温度/功耗/利用率/ECC/LLC…） | 无缓存（进程内 CGo 调用） |
-| proc / sys / statfs | （纯文件读取/系统调用，无外部命令） | /proc、/sys、statfs(2) | 无缓存 |
+| 来源包 | 外部命令 | 缓存 |
+|--------|---------|------|
+| ipmi / lscpu / mce / dmesg / dmidecode / smartctl | ipmitool / lscpu / mcelog / dmesg / dmidecode / smartctl | 常驻或 TTL + 失败缓存 |
+| nvidia_smi / npu_smi / hccn_tool | nvidia-smi / npu-smi -t / hccn_tool | 无缓存 或 Topo 常驻 / per-dev:opt TTL |
+| dcmi | libdcmi.so (CGo，`-tags dcmi`) | 无缓存（进程内 CGo） |
+| proc / sys / statfs | 纯文件读取/系统调用，无外部命令 | 无缓存 |
 
 ---
 
@@ -302,96 +258,24 @@ GPU 采集通过 `nvidia_smi` 来源包调用 `nvidia-smi`，NPU 通过 `dcmi`(C
 
 ---
 
-## 9. Web 仪表盘规格（v0.2.1 新增）
+## 9. Web 仪表盘规格
 
-> 详细设计与规格见 [Web_SPEC.md](Web_SPEC.md)。本节列出关键需求与约束。
+> 详细设计与规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)，架构与数据流见 [DESIGN.md §6](DESIGN.md)。本节仅列关键需求与约束。
 
 ### 9.1 概述
 
-提供独立 Web 仪表盘二进制 `catmonitor-web`，可视化单台服务器的健康度与各部件采集指标。设计原则：
+提供独立 Web 仪表盘二进制 `catmonitor-web`（`features/web`），可视化单台服务器的健康度与各部件采集指标。设计原则：
 
-1. **解耦**：Web 服务与现有采集守护进程/CLI 完全解耦，不修改主项目任何文件；仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
-2. **多页面**：概览页（整体健康度 + 各部件关键指标）+ 各部件详情页（详细指标 + 趋势）。
-3. **可扩展**：新增部件类型/采集指标时，尽可能自动出现，零代码或仅需一处一行的新增。
+1. **解耦**：Web 服务与采集守护进程/CLI 完全解耦，不修改主项目任何文件；仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+2. **多页面**：概览页（整体健康度 + 各部件关键指标 + 设备规格面板）+ 各部件详情页（详细指标 + 趋势）。
+3. **可扩展**：新增部件类型/采集指标时尽可能自动出现，零代码或仅需一处一行的新增。
 4. **极简依赖**：Go 标准库 + 已有 `gopkg.in/yaml.v3`，前端原生 HTML/CSS/JS，无构建步骤，零新依赖。
 
-### 9.2 技术栈
+### 9.2 关键约束
 
-| 项目 | 选型 |
-|------|------|
-| 后端语言 | Go（沿用主项目 go.mod，不新增 go.mod） |
-| HTTP | Go 标准库 `net/http` |
-| 配置 | `gopkg.in/yaml.v3`（已有依赖，无新增） |
-| 前端 | 原生 HTML5 + CSS + 原生 JS（ES2015+），无框架、无构建步骤 |
-| 前端打包 | `//go:embed static` 内嵌进二进制，单文件部署 |
-| 图表 | 手写内联 SVG sparkline，无图表库 |
-| 进程托管 | systemd 临时 unit（可选），支持信号优雅退出 |
-
-### 9.3 解耦边界
-
-单一二进制内含两个角色，以 `web/data/snapshot.json` 为解耦边界：
-
-- **采集 goroutine**（唯一写者）：定时遍历注册表 → `Collect()` → `health.Evaluate()` → 原子写 `snapshot.json`（写临时文件 + `os.Rename`，读者永不会读到半截文件）。
-- **HTTP server**（只读）：静态页 + REST API，读取 `snapshot.json` 返回，**绝不直接调用采集器**。
-
-### 9.4 配置
-
-`web/config.yaml`：
-
-```yaml
-server:
-  addr: ":9527"                # 监听地址（端口被占用时自动 +1 递增直到空闲）
-collector:
-  refresh_interval: 5s         # 采集周期（也作为前端默认轮询间隔）
-  history_points: 60           # 环形历史保留的采样点数
-  # enabled_components: []     # 空 = 采集全部已注册部件
-storage:
-  snapshot_path: web/data/snapshot.json
-  runtime_path:  web/data/runtime.json
-```
-
-配置加载优先级：默认值 → YAML 覆盖（文件不存在静默用默认）→ `runtime.json` 运行时覆盖（界面调整持久化，重启保留）→ `-config` flag。
-
-### 9.5 端口占用自动回退
-
-启动时以 `net.Listen` 探测 `server.addr`，若返回 `EADDRINUSE` 则端口 +1 重试（`:9527`→`:9528`→`:9529`…）直至可用，实际绑定地址回写配置并打印日志。非 `EADDRINUSE` 错误（如权限不足）直接失败退出。跨平台有效（`syscall.EADDRINUSE` 在 Linux/Windows 均定义）。
-
-### 9.6 静态设备规格
-
-静态规格是设备的**身份信息**（型号/拓扑/序列号/容量），非时序数据，采集一次即可。Web 侧用两条互补路径收集，合并写入每个快照的 `specs` 字段：
-
-1. **启动期一次性硬件身份**（`hwinfo.go`，非注册采集器）：`device_model`（dmidecode SMBIOS type 1）、`gpu_info`（nvidia-smi）、`npu_info`（npu-smi）、`disk_info`（/sys/block + smartctl 富化）、`net_info`（/sys/class/net）。外部命令缺失则降级（不报错）。
-2. **CPU/内存静态指标 stash**（`collector.go` `filterStatic`）：CPU/内存采集器首周期产出一次静态指标（型号/拓扑/频率/缓存/DIMM），Web 侧首次出现即缓存到 `staticStash`，之后每周期重新注入快照，避免首周期后规格消失。
-
-### 9.7 REST API 规范
-
-| 方法 | 路径 | 说明 | 成功码 | 失败码 |
-|------|------|------|:------:|:------:|
-| GET | `/` | 返回 `index.html`（SPA 外壳） | 200 | 500 |
-| GET | `/static/{file}` | 静态资源（css/js） | 200 | 404 |
-| GET | `/api/snapshot` | 读取 `snapshot.json` 返回 | 200 | 503 |
-| GET | `/api/collectors` | 注册表元数据列表（驱动导航） | 200 | — |
-| GET | `/api/config` | 当前配置 | 200 | — |
-| POST | `/api/config` | 更新刷新间隔（热生效 + 持久化） | 200 | 400 / 405 |
-| POST | `/api/refresh` | 请求立即采集 | 200 | 405 |
-
-- `POST /api/config` 请求体 `{"refresh_interval_ms": 8000}`，校验 `< 1000` → 400；JSON 非法 → 400；非 GET/POST → 405。成功后热生效 + 原子写 `runtime.json`。
-- 快照未就绪（首次采集前）返回 503。
-
-### 9.8 扩展性需求
-
-| 扩展需求 | 改动位置 | 自动部分 |
-|----------|----------|----------|
-| 新部件采集器 | `web/main.go`（blank import） | 导航/概览卡/详情页 |
-| 部件显示名/关键指标 | `web/static/app.js` MANIFEST | — |
-| 新趋势 sparkline | `web/collector.go` trackedSeries | 详情页趋势面板 |
-| 新静态身份指标（采集器侧） | 加入 `staticMetricNames` 即被 stash 进 `specs` | specs modal 自动渲染 |
-
-> 兼容性保证：`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端；未知部件/指标/序列均有通用回退，不会因未登记而崩溃或消失。
-
-### 9.9 Web 模块约束
-
-- **不改动主项目任何现有文件**：与 `cmd/catmonitor`、`internal/collectors`、`internal/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦。
-- **不应提交**：`web/data/*`（运行时生成：`snapshot.json`、`runtime.json`），已加入根 `.gitignore`。
-- **构建产物**：`web/bin/` 已被根 `.gitignore` 的 `bin/` 覆盖，自动忽略。
-- **测试**：`go test ./web/` 覆盖快照原子读写、历史环形缓冲、静态规格 stash、硬件身份采集、HTTP API 路由与端口回退。
+- **解耦边界**：以 `features/web/data/snapshot.json` 为读写边界——采集 goroutine 为唯一写者（原子写），HTTP 层只读快照，**绝不直接调用采集器**。
+- **端口占用自动回退**：`EADDRINUSE` 时端口 +1 重试（`:9527`→`:9528`…），跨平台有效。
+- **静态设备规格**：启动期一次性采集硬件身份（`hwinfo.go`）+ CPU/内存首周期静态指标 stash，合并写入快照 `specs` 字段。
+- **REST API**：`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`（详见 Web_SPEC）。
+- **不应提交**：`features/web/data/*`、`features/web/bin/`（运行时/构建产物，已 git 忽略）。
+- **测试**：`go test ./features/web/` 覆盖快照原子读写、历史环形缓冲、静态规格 stash、硬件身份采集、HTTP API 与端口回退。

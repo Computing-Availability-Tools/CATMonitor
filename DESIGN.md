@@ -11,56 +11,51 @@
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              cmd/catmonitor        web/ (v0.2.1)       │
-│              (守护进程入口)      (catmonitor-web 仪表盘)│
+│   cmd/catmonitor            features/web            │
+│   (守护进程入口)            (catmonitor-web 仪表盘)  │
 ├─────────────────────────────────────────────────────┤
-│  internal/config        internal/storage              │
-│  internal/platform       (JSON文件写入)               │
-│  (配置管理 + 平台适配)                                 │
+│  features/ (特性层：基于采集基础能力构建的上层模块)    │
+│  ┌──────────────────────┐  ┌──────────────────────┐ │
+│  │ features/health      │  │ features/web         │ │
+│  │ 健康度评估(消费       │  │ Web 仪表盘(独立二进制)│ │
+│  │  collector.Metric,    │  │ snapshot.json 解耦    │ │
+│  │  按部件评估器+scheme) │  │ blank-import 采集器   │ │
+│  └──────────────────────┘  └──────────────────────┘ │
+├─────────────────────────────────────────────────────┤
+│  internal/config   internal/metrics   internal/storage│
+│  internal/platform  (指标采集目录: 默认+模块覆盖+Filter)│
+│                    (配置管理 + 平台适配 + 数据写入)     │
 ├─────────────────────────────────────────────────────┤
 │            internal/collector (采集核心)               │
 │     ┌──────────┐  ┌──────────┐  ┌──────────────┐    │
 │     │ Collector │  │ Registry │  │  Scheduler   │    │
-│     │ Interface │  │ (注册表)  │  │  (调度引擎)  │    │
-│     └──────────┘  └──────────┘  └──────────────┘    │
-├─────────────────────────────────────────────────────┤
-│              internal/health (健康度模块)              │
-│     ┌──────────┐  ┌──────────┐  ┌──────────────┐    │
-│     │ Evaluator │  │  Rules   │  │   Scorer    │    │
-│     │ (评估器)   │  │ (规则表)  │  │  (计分器)    │    │
+│     │ Interface │  │ (注册表)  │  │  (调度+Filter)│    │
 │     └──────────┘  └──────────┘  └──────────────┘    │
 ├─────────────────────────────────────────────────────┤
 │            internal/collectors (采集器实现)           │
 │   ┌─────┬──────────┬──────┬─────┬─────┬──────────┐  │
 │   │ CPU │  Memory  │ Disk │ GPU │ NPU │  Network │  │
-│   │ ┌───┴───┐ ┌───┴──┐ ┌┴───┐ │     │     │ ┌───┬──┐│  │
-│   │ │Linux │ │Linux │ │Linux│ │     │     │ │Linux│Win││  │
-│   │ │/proc │ │/proc │ │Statfs│ │     │     │ │/proc│PS ││  │
-│   │ ├──────┤ ├──────┤ ├─────┤ │     │     │ │/net │API││  │
-│   │ │ Win  │ │ Win  │ │ Win │ │     │     │ └───┴──┘│  │
-│   │ │k32.dll│ │k32.dll│ │k32.dll│    │     │         │  │
-│   │ └──────┘ └──────┘ └─────┘ │     │     │         │  │
-│   └───────────────────────────┴─────┴─────┴─────────┘  │
+│   │ Linux/Win 分离  │Linux/Win│Linux/Win│双平台│Linux专有│  │
+│   └───────────────────┴─────┴─────┴────────────┘  │
 ├─────────────────────────────────────────────────────┤
-│         internal/source (来源层 v0.2.0 引入, v0.2.2 扩展) │
-│  ┌─────┬──────┬──────┬──────┬──────┬──────┬──────┐   │
-│  │proc │ sys  │ ipmi │lscpu │ mce  │dmesg │ +4新 │   │
-│  │     │      │(缓存)│(常驻)│      │(缓存)│dcmi等│   │
-│  └──┬──┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──────┘   │
-│     │     │      │      │      │      │              │
-│  来源层：parsed struct + 单例 + SetRoot/可注入 fetcher │
-│  collector 调用来源拿数据，不再直接 os.ReadFile/exec     │
+│         internal/source (来源层, 14 包)              │
+│  proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/     │
+│  smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi       │
+│  parsed struct + 单例 + SetRoot/可注入 fetcher       │
+│  collector 调用来源拿数据，不再直接 os.ReadFile/exec   │
 ├─────────────────────────────────────────────────────┤
 │         Linux 系统接口 (procfs/sysfs/syscall/exec)    │
 │         Windows 系统 API (kernel32/iphlpapi/PS)        │
 └─────────────────────────────────────────────────────┘
 ```
 
-> v0.2.0 引入来源层（`internal/source/`）后，Linux 采集器通过来源包间接访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等系统接口；Windows 保留直接 syscall 实现（来源层迁移延后）。来源返回 parsed struct，带缓存（ipmi/dmesg/smartctl）与可注入 fetcher，便于单元测试 mock。
+> v0.2.0 引入来源层（`internal/source/`）后，Linux 采集器通过来源包间接访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等系统接口；Windows 保留直接 syscall 实现（来源层迁移延后）。来源返回 parsed struct，带缓存（ipmi/dmesg/smartctl/hccn_tool）与可注入 fetcher，便于单元测试 mock。
 >
-> v0.2.1 新增 `web/` 模块（独立二进制 `catmonitor-web`），与主项目同一 Go module，不新增 go.mod、不改主项目任何文件。Web 复用采集器注册表与健康度模块（blank import），以 `web/data/snapshot.json` 为读写解耦边界：采集 goroutine 是唯一写者，HTTP 层只读快照文件。
+> v0.2.1 新增 `web/` 模块（独立二进制 `catmonitor-web`），与主项目同一 Go module，不新增 go.mod、不改主项目任何文件。Web 复用采集器注册表与健康度模块（blank import），以 `snapshot.json` 为读写解耦边界：采集 goroutine 是唯一写者，HTTP 层只读快照文件。
 >
 > v0.2.2 来源层扩展至 14 包（新增 `dcmi`/`npu_smi`/`hccn_tool`/`nvidia_smi`），全部 6 个采集器接入来源层；NPU 指标 5→74 并在采集器层 device 并行采集（每块 NPU 一个 goroutine，单卡失败不影响其他卡）；DCMI 指标通过 CGo（`//go:build cgo && linux && dcmi`，`-tags dcmi`）绑定 `libdcmi.so`，默认构建排除并优雅降级；GPU 从内联 exec 迁移至 `nvidia_smi` 来源包（最后一个接入来源层的 collector）。
+>
+> v0.3.0 引入 **`features/` 特性层** + **`internal/metrics` 指标采集目录**：`web/`、`internal/health` 统一迁入 `features/`（`features/web`、`features/health`），health 重构为按部件评估器（消费 `collector.Metric`，`Evaluate` 用局部 scheme 不改写 receiver，规则对齐 indi_list High/Medium）；`internal/metrics` 提供 MetricSpec/Catalog/Filter，`configs/metrics.yaml` 为默认目录、模块自有 `metrics.yaml` 按 name 覆盖合并，scheduler 经 Filter 决定是否采集。
 
 ### 1.2 跨平台架构设计
 
@@ -204,37 +199,43 @@ CATMonitor/
 │   │   ├── npu_smi/                 # npu-smi -t topo/hccs-bw（v0.2.2，服务 npu）
 │   │   ├── hccn_tool/               # hccn_tool 带宽/速度/链路（v0.2.2，服务 npu）
 │   │   └── nvidia_smi/              # nvidia-smi 9 字段解析（v0.2.2，服务 gpu）
-│   ├── health/                      # 健康度评估模块（独立，纯逻辑跨平台）
-│   │   ├── health.go                # HealthEvaluator + Evaluate() 入口
-│   │   ├── rules.go                 # 评分规则定义（权重、扣分项）
-│   │   ├── scorer.go                # 计分器实现
-│   │   └── health_test.go
+│   ├── metrics/                     # 指标采集目录（v0.3.0 新增）：MetricSpec/Catalog/Init/LoadModuleOverride/Filter
+│   │   └── metrics.go
 │   ├── config/                      # 配置管理
 │   │   └── config.go                # 配置结构体 + 加载逻辑
 │   └── storage/                     # 数据存储
 │       └── storage.go               # JSON 文件写入器
-├── web/                             # Web 仪表盘（v0.2.1 新增，独立二进制）
-│   ├── main.go                      # 入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
-│   ├── static.go                    # //go:embed static，内嵌前端资源
-│   ├── config.go                    # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
-│   ├── collector.go                 # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
-│   ├── snapshot.go                  # Snapshot 结构（含 Specs 字段）+ 原子读写
-│   ├── hwinfo.go                    # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info）
-│   ├── server.go                     # HTTP 路由与处理函数
-│   ├── config.yaml                   # 默认配置
-│   ├── static/                       # 前端资源（index.html + style.css + app.js）
-│   └── data/                         # 运行时数据（snapshot.json / runtime.json，git 忽略）
+├── features/                        # 特性层（v0.3.0 新增）：基于采集基础能力构建的上层模块
+│   ├── health/                      #   健康度评估（消费 collector.Metric，按部件评估器）
+│   │   ├── health.go                #     Evaluate() 入口 + 局部 scheme（不改写 receiver）
+│   │   ├── scheme.go                #     权重方案（CPU-only / 加速卡）
+│   │   ├── cpu.go / memory.go / disk.go / gpu.go / npu.go  # 按部件评估器 + 扣分规则
+│   │   ├── util.go                   #     公共工具（取最差子温度等）
+│   │   ├── metrics.yaml             #     health 自有指标目录（启动时优先读取）
+│   │   └── HEALTH_SPEC.md           #     健康度规则规格
+│   └── web/                         #   Web 仪表盘（v0.2.1 新增，v0.3.0 由 web/ 迁入 features/）
+│       ├── main.go                  #     入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
+│       ├── static.go                #     //go:embed static，内嵌前端资源
+│       ├── config.go                #     配置结构 + YAML 加载 + runtime.json 运行时覆盖
+│       ├── collector.go             #     DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
+│       ├── snapshot.go              #     Snapshot 结构（含 Specs 字段）+ 原子读写
+│       ├── hwinfo.go                #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info）
+│       ├── server.go                #     HTTP 路由与处理函数
+│       ├── config.yaml              #     默认配置
+│       ├── metrics.yaml             #     web 自有指标目录（启动时优先读取）
+│       ├── static/                  #     前端资源（index.html + style.css + app.js）
+│       └── data/                    #     运行时数据（snapshot.json / runtime.json，git 忽略）
 ├── configs/
-│   └── catmonitor.yaml              # 默认配置文件
+│   ├── catmonitor.yaml              # 默认配置文件
+│   └── metrics.yaml                 # 默认指标采集目录（6 部件，v0.3.0 新增）
 ├── docs/
-│   ├── CATMonitor_indi_list.md      # 指标清单文档
-│   └── test_report.md               # 测试报告
+│   └── CATMonitor_indi_list.md      # 指标清单文档
 ├── tests/
 │   ├── framework.go                 # 测试框架
-│   ├── integration_test.go          # 集成测试
-│   └── testdata/                    # 测试数据（/proc、/sys 模拟文件）
+│   └── testdata/                    # 测试数据（/proc、/sys、npu-smi/hccn-tool 输出等模拟文件）
 ├── scripts/
-│   └── install.sh                   # 安装为 systemd 服务
+│   ├── install.sh                   # 安装为 systemd 服务（部署 metrics.yaml）
+│   └── gen_metrics_catalog.py       # 指标目录生成脚本（v0.3.0 新增）
 ├── go.mod
 ├── go.sum
 └── Makefile
@@ -330,6 +331,35 @@ type Source interface {
 | network | proc, sys | throughput, packet_count, error_count, interface_status, connection_count |
 | gpu | nvidia_smi | utilization, memory_usage, temperature, power_draw, fan_speed, ecc_errors, clock_frequency |
 | npu | dcmi, npu_smi, hccn_tool | 74 指标：utilization/memory/temperature/power/health + 电压/风扇/13路温度/频率/利用率/HBM/ECC(delta)/LLC/带宽网络 |
+
+### 1.7 指标采集目录系统（v0.3.0 新增）
+
+为统一管控"采哪些指标、按什么优先级、默认是否采集"，引入 `internal/metrics` 指标采集目录。
+
+#### 设计要点
+
+1. **MetricSpec**：每个可采指标携带 `name/cn_name/priority(High|Medium|Low)/unit/static` 元数据；`static=true` 为一次性身份规格，默认采集。
+2. **Catalog**：解析后的选择状态，按 `component → name → MetricSpec` 索引；`Init(paths...)` 从候选路径加载默认目录（env `CATMONITOR_METRICS` → 配置目录 → `configs/metrics.yaml` 开发回退），无文件则空目录（默认放行全部）。
+3. **模块覆盖**：模块自有 `metrics.yaml`（如 `features/health/metrics.yaml`、`features/web/metrics.yaml`）经 `LoadModuleOverride` 按 `name` 合并覆盖默认目录（模块值优先，缺省字段保留默认）。
+4. **Filter（选择策略）**：`priority ∈ {High,Medium} OR static==true` 默认采集；Low 诊断指标默认不采。**目录中缺失的指标默认放行**（default-allow），避免目录漂移静默丢数据。模块覆盖可通过改写 priority 单独 opt-in/out。
+5. **DI 注入**：`scheduler.SetFilter(catalog.Filter)` 由 `cmd/catmonitor` 启动时装配；`interval` 本期仅记录、不接 ticker（采集仍 per-collector 既有节拍）。
+
+#### 目录文件（YAML）
+
+```yaml
+components:
+  - component: cpu
+    interval: 3s            # 组件级 interval（记录，本期不接 ticker）
+    metrics:
+      - { name: usage, cn_name: CPU使用率, priority: High, unit: "%", static: false }
+      - { name: model_info, cn_name: CPU型号信息, priority: Low, unit: "-", static: true }
+  # ... 6 部件
+```
+
+#### 生成与部署
+
+- `scripts/gen_metrics_catalog.py`：从采集器/指标清单生成默认 `configs/metrics.yaml`。
+- `scripts/install.sh`：部署 `metrics.yaml` 到 `/etc/catmonitor/`。
 
 ---
 
@@ -503,37 +533,46 @@ Collect() {
 
 ## 3. 健康度评估模块设计
 
+> v0.3.0 健康度模块从 `internal/health` 抽取至特性层 `features/health`：消费 `collector.Metric`，不做底层采集；规则对齐 `indi_list` 的 High/Medium 指标。规则与扣分阈值详见 [`features/health/HEALTH_SPEC.md`](features/health/HEALTH_SPEC.md)。
+
 ### 3.1 设计原则
 
-- **独立模块**：`internal/health` 包，不依赖任何采集器实现
-- **规则可配置**：评分规则集中在 `rules.go`，修改规则不影响采集逻辑
-- **权重自适应**：根据服务器是否含 GPU/NPU 自动选择权重方案
+- **特性层模块**：`features/health` 包，仅消费 `collector.Metric`，不依赖任何采集器实现
+- **按部件评估器**：每个部件一个评估器文件（cpu/memory/disk/gpu/npu），规则就近定义，修改规则不影响采集逻辑
+- **局部 scheme**：`Evaluate` 使用局部权重方案、不改写 receiver；权重自适应——根据服务器是否含 GPU/NPU 自动选择
+- **规则对齐指标清单**：扣分触发项对应 High/Medium 指标（CPU MCE、内存 saturation/fragmentation、硬盘 smart_status、GPU utilization、NPU utilization/ECC/error_code 等；温度取子温度最差值）
 
 ### 3.2 模块结构
 
 ```
-internal/health/
-├── health.go          # HealthEvaluator 接口定义 + Evaluate() 入口
-├── rules.go           # 评分规则定义（权重方案、扣分阈值）
-├── scorer.go          # 计分器实现（遍历指标 → 匹配规则 → 计算扣分 → 输出总分）
-└── health_test.go     # 表驱动测试
+features/health/
+├── health.go          # Evaluate() 入口：分组 metrics → 选 scheme → 按部件评估 → 汇总
+├── scheme.go          # 权重方案（CPUOnlyScheme / AcceleratedScheme）
+├── cpu.go             # CPU 评估器 + 扣分规则
+├── memory.go          # Memory 评估器（含 saturation/fragmentation）
+├── disk.go            # Disk 评估器（含 smart_status）
+├── gpu.go             # GPU 评估器（含 utilization）
+├── npu.go             # NPU 评估器（含 utilization/ECC/error_code）
+├── util.go            # 公共工具（取最差子温度等）
+├── metrics.yaml       # health 自有指标目录（启动时优先读取覆盖默认）
+├── HEALTH_SPEC.md     # 规则与扣分阈值规格
+└── *_test.go          # 表驱动测试
 ```
 
 **工作流程**：
-1. 接收最近一轮所有采集器输出的 `[]Metric`
-2. 根据是否存在 GPU/NPU 指标自动选择权重方案
-3. 遍历各部件指标，匹配扣分规则，计算各部件扣分
-4. 多卡场景取最差卡扣分（可配置为平均扣分）
-5. 各部件满额分减去扣分得部件得分，汇总为总分
-6. 按总分映射健康等级
-7. 输出 `HealthScore` 结构体（含总分、等级、各部件明细、扣分详情）
+1. 接收最近一轮所有采集器输出的 `[]Metric`，按 component 分组
+2. 根据是否存在 GPU/NPU 指标自动选择权重方案（局部 scheme）
+3. 逐部件调用评估器，匹配扣分规则，计算各部件扣分（多卡取最差卡）
+4. 各部件满额分减去扣分得部件得分，汇总为总分
+5. 按总分映射健康等级（Excellent/Good/Warning/Critical）
+6. 输出 `HealthScore` 结构体（含总分、等级、各部件明细、扣分详情）
 
 ### 3.3 权重自适应判定逻辑
 
-`Evaluate()` 方法在分组 metrics 后自动检测：
-- 如果存在 GPU 指标（`byComponent["gpu"]` 非空），切换到 `Accelerated8CardScheme`（CPU:10, Mem:20, Disk:10, GPU:60）
+`Evaluate()` 在分组 metrics 后自动检测：
+- 如果存在 GPU 指标（`byComponent["gpu"]` 非空），切换到加速卡方案（CPU:10, Mem:20, Disk:10, GPU/NPU:60）
 - 如果存在 NPU 指标，同上
-- 否则使用默认 `CPUOnlyScheme`（CPU:30, Mem:40, Disk:30）
+- 否则使用默认 CPU-only 方案（CPU:30, Mem:40, Disk:30）
 
 > 判定逻辑基于实际采集到的指标，而非 `nvidia-smi` / `npu-smi` 是否可用。这样在无硬件或有硬件但采集失败时都能正确选择方案。
 
@@ -806,26 +845,27 @@ WantedBy=multi-user.target
 
 ---
 
-## 6. Web 仪表盘设计（v0.2.1 新增）
+## 6. Web 仪表盘设计
 
-> 详细规格见 [Web_SPEC.md](Web_SPEC.md)。本节描述架构、数据流与扩展机制。
+> 详细规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)。本节描述架构、数据流与扩展机制。v0.3.0 由 `web/` 迁入 `features/web/`。
 
 ### 6.1 模块定位与解耦
 
-`web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**不新增 go.mod、不改主项目任何文件**。与 `cmd/catmonitor`、`internal/collectors`、`internal/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**不新增 go.mod、不改主项目任何文件**。与 `cmd/catmonitor`、`internal/collectors`、`features/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
 
 ### 6.2 目录结构
 
 ```
-web/
+features/web/
 ├── main.go            # 入口：blank-import 采集器 + 起采集 goroutine + HTTP server + 信号处理 + 端口回退
 ├── static.go          # //go:embed static，内嵌前端资源
 ├── config.go          # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
 ├── collector.go       # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
 ├── snapshot.go        # Snapshot 结构（含 Specs 字段）+ 原子读写
-├── hwinfo.go          # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info），非注册采集器
+├── hwinfo.go          # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info），非注册采集器
 ├── server.go          # HTTP 路由与处理函数
 ├── config.yaml        # 默认配置
+├── metrics.yaml       # web 自有指标目录（启动时优先读取覆盖默认）
 ├── static/
 │   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
 │   ├── style.css       # 浅色卡片式主题
@@ -859,7 +899,7 @@ web/
 | `timestamp` | time | 本次快照生成时间 |
 | `refresh_interval_ms` | int | 当前生效的采集周期（毫秒），供前端轮询对齐 |
 | `history_points` | int | 历史环形缓冲容量 |
-| `health` | `health.HealthScore` | 健康度结果（直接复用 `internal/health` 序列化） |
+| `health` | `health.HealthScore` | 健康度结果（直接复用 `features/health` 序列化） |
 | `metrics` | `[]collector.Metric` | 本次采集的全部指标（复用 `internal/collector.Metric`） |
 | `history` | `map[string][]float64` | 趋势序列，key 形如 `<component>_<suffix>`，供详情页按部件前缀过滤 |
 | `specs` | `[]collector.Metric` | 静态设备规格（一次性身份信息），`omitempty`：无任何静态指标时不出现 |
@@ -905,10 +945,10 @@ web/
 
 | 扩展需求 | 改动位置 | 自动部分 |
 |----------|----------|----------|
-| 新部件采集器 | `web/main.go`（blank import） | 导航/概览卡/详情页 |
-| 部件显示名/关键指标 | `web/static/app.js` MANIFEST | — |
-| 新趋势 sparkline | `web/collector.go` trackedSeries 加一行 | 详情页趋势面板 |
-| 趋势显示名 | `web/static/app.js` SERIES_LABELS | — |
+| 新部件采集器 | `features/web/main.go`（blank import） | 导航/概览卡/详情页 |
+| 部件显示名/关键指标 | `features/web/static/app.js` MANIFEST | — |
+| 新趋势 sparkline | `features/web/collector.go` trackedSeries 加一行 | 详情页趋势面板 |
+| 趋势显示名 | `features/web/static/app.js` SERIES_LABELS | — |
 | 新静态身份指标（采集器侧） | 加入 `staticMetricNames` 即被 stash 进 `specs` | specs modal 自动渲染 |
 
 > **结论：一行 blank import 即可让新部件完整可用**；后续按需在 MANIFEST/trackedSeries 美化。`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端。
