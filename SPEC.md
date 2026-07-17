@@ -35,6 +35,9 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 8. **NPU 指标扩展与 device 并行**（v0.2.2）：NPU 指标 5→74，采集器层 device 并行（每块 NPU 一个 goroutine，单卡失败不影响其他卡）；DCMI 指标通过 CGo 绑定 `libdcmi.so`（`//go:build cgo && linux && dcmi`，`-tags dcmi` 启用，默认构建排除并优雅降级）；GPU 迁移至 `nvidia_smi` 来源包，全部 6 个采集器接入来源层
 9. **指标采集目录**（v0.3.0）：`internal/metrics` 提供指标目录（MetricSpec/Catalog/Filter），`configs/metrics.yaml` 为默认目录，模块可用自有 `metrics.yaml` 按 name 覆盖合并；High/Medium + 静态身份默认采、Low 诊断默认不采，scheduler 经 Filter 决定是否采集（interval 本期仅记录、不接 ticker）
 10. **特性层抽取**（v0.3.0）：`features/` 承载上层模块——`features/health`（健康度评估，消费 `collector.Metric`，按部件评估器 + 局部 scheme，规则对齐 indi_list High/Medium）、`features/web`（Web 仪表盘由 `web/` 迁入）
+11. **Chassis 机箱环境采集**（v0.3.1）：新增第 7 个采集器 `internal/collectors/chassis`（5 指标：整机功耗 / 进出风口温度 / 风扇转速 / 风扇功率，来自 ipmitool SDR），与 CPU/Memory 共享 SDR 缓存
+12. **能效监控模块**（v0.3.1）：新增 `features/dfee` 能效监控模块（25 张实时图表 + CPU 利用率推导 + 网络差值），从 159 项指标中过滤 74 项能效指标，独立 SPA 路由 `/dfee/`，不修改现有 web 业务代码
+13. **Disk 读/写耗时**（v0.3.1）：Disk 采集器新增 `read_latency`/`write_latency` 指标（/proc/diskstats field 7/11，ms/s），Disk 指标 7→9
 
 ---
 
@@ -81,17 +84,18 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 ### 3.2 各部件指标概要
 
-> v0.2.0 通过来源层（`internal/source/`）扩展，CPU 7→40、Memory 6→19，disk/network 迁移到来源层（指标集不变）。v0.2.2 NPU 指标 5→74（device 并行 + DCMI CGo），GPU 迁移至来源层。完整清单见 [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md)。
+> v0.2.0 通过来源层（`internal/source/`）扩展，CPU 7→40、Memory 6→19，disk/network 迁移到来源层（指标集不变）。v0.2.2 NPU 指标 5→74（device 并行 + DCMI CGo），GPU 迁移至来源层。v0.3.1 新增 Chassis 部件（5 指标）+ Disk read/write_latency（2 指标）。完整清单见 [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md)。
 
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
 | CPU | 40 | 4 | 12 | 24 |
 | Memory | 19 | 4 | 7 | 8 |
-| Disk | 7 | 1 | 3 | 3 |
+| Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
 | NPU | 74 | 9 | 43 | 22 |
 | Network | 5 | 1 | 3 | 1 |
-| **合计** | **152** | **22** | **71** | **59** |
+| Chassis | 5 | 2 | 3 | 0 |
+| **合计** | **159** | **24** | **76** | **59** |
 
 ### 3.3 每个指标必须包含的属性
 
@@ -260,7 +264,7 @@ GPU 采集通过 `nvidia_smi` 来源包调用 `nvidia-smi`，NPU 通过 `dcmi`(C
 
 ## 9. Web 仪表盘规格
 
-> 详细设计与规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)，架构与数据流见 [DESIGN.md §6](DESIGN.md)。本节仅列关键需求与约束。
+> 详细设计与规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)，架构与数据流见 [DESIGN.md §6](DESIGN.md)。能效监控模块详见 [`features/dfee/dfee_SPEC.md`](features/dfee/dfee_SPEC.md)。本节仅列关键需求与约束。
 
 ### 9.1 概述
 

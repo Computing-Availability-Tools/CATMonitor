@@ -15,12 +15,12 @@
 │   (守护进程入口)            (catmonitor-web 仪表盘)  │
 ├─────────────────────────────────────────────────────┤
 │  features/ (特性层：基于采集基础能力构建的上层模块)    │
-│  ┌──────────────────────┐  ┌──────────────────────┐ │
-│  │ features/health      │  │ features/web         │ │
-│  │ 健康度评估(消费       │  │ Web 仪表盘(独立二进制)│ │
-│  │  collector.Metric,    │  │ snapshot.json 解耦    │ │
-│  │  按部件评估器+scheme) │  │ blank-import 采集器   │ │
-│  └──────────────────────┘  └──────────────────────┘ │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐ │
+│  │ features/health      │  │ features/web         │  │ features/dfee │ │
+│  │ 健康度评估(消费       │  │ Web 仪表盘(独立二进制)│  │ 能效监控(25图) │ │
+│  │  collector.Metric,    │  │ snapshot.json 解耦    │  │ /dfee/ 路由   │ │
+│  │  按部件评估器+scheme) │  │ blank-import 采集器   │  │ 74项过滤+推导 │ │
+│  └──────────────────────┘  └──────────────────────┘  └──────────────┘ │
 ├─────────────────────────────────────────────────────┤
 │  internal/config   internal/metrics   internal/storage│
 │  internal/platform  (指标采集目录: 默认+模块覆盖+Filter)│
@@ -33,10 +33,10 @@
 │     └──────────┘  └──────────┘  └──────────────┘    │
 ├─────────────────────────────────────────────────────┤
 │            internal/collectors (采集器实现)           │
-│   ┌─────┬──────────┬──────┬─────┬─────┬──────────┐  │
-│   │ CPU │  Memory  │ Disk │ GPU │ NPU │  Network │  │
-│   │ Linux/Win 分离  │Linux/Win│Linux/Win│双平台│Linux专有│  │
-│   └───────────────────┴─────┴─────┴────────────┘  │
+│   ┌─────┬──────────┬──────┬─────┬─────┬──────────┬───────┐  │
+│   │ CPU │  Memory  │ Disk │ GPU │ NPU │  Network │Chassis│  │
+│   │ Linux/Win 分离  │Linux/Win│Linux/Win│双平台│Linux专有│Linux专│  │
+│   └───────────────────┴─────┴─────┴────────────┴───────┘  │
 ├─────────────────────────────────────────────────────┤
 │         internal/source (来源层, 14 包)              │
 │  proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/     │
@@ -56,6 +56,8 @@
 > v0.2.2 来源层扩展至 14 包（新增 `dcmi`/`npu_smi`/`hccn_tool`/`nvidia_smi`），全部 6 个采集器接入来源层；NPU 指标 5→74 并在采集器层 device 并行采集（每块 NPU 一个 goroutine，单卡失败不影响其他卡）；DCMI 指标通过 CGo（`//go:build cgo && linux && dcmi`，`-tags dcmi`）绑定 `libdcmi.so`，默认构建排除并优雅降级；GPU 从内联 exec 迁移至 `nvidia_smi` 来源包（最后一个接入来源层的 collector）。
 >
 > v0.3.0 引入 **`features/` 特性层** + **`internal/metrics` 指标采集目录**：`web/`、`internal/health` 统一迁入 `features/`（`features/web`、`features/health`），health 重构为按部件评估器（消费 `collector.Metric`，`Evaluate` 用局部 scheme 不改写 receiver，规则对齐 indi_list High/Medium）；`internal/metrics` 提供 MetricSpec/Catalog/Filter，`configs/metrics.yaml` 为默认目录、模块自有 `metrics.yaml` 按 name 覆盖合并，scheduler 经 Filter 决定是否采集。
+>
+> v0.3.1 新增第 7 个采集器 `internal/collectors/chassis`（5 指标：整机功耗 / 进出风口温度 / 风扇转速 / 风扇功率，来自 ipmitool SDR，与 CPU/Memory 共享 30s SDR 缓存）；Disk 采集器新增 `read_latency`/`write_latency`（/proc/diskstats field 7/11，ms/s）；新增 `features/dfee` 能效监控模块（25 张实时图表 + CPU 8 jiffies→7 利用率推导 + 网络差值，从 159 项指标中过滤 74 项能效指标，独立 SPA 路由 `/dfee/`）。指标总数 152→159，部件 6→7。
 
 ### 1.2 跨平台架构设计
 
@@ -184,6 +186,10 @@ CATMonitor/
 │   │       ├── network_linux.go     # Linux: 通过来源层(proc/sys)
 │   │       ├── network_windows.go   # Windows: Get-NetAdapterStatistics (PowerShell)
 │   │       └── network_test.go      # 测试 (//go:build linux)
+│   │   ├── chassis/                 # Chassis 机箱环境采集器（v0.3.1 新增）
+│   │   │   ├── chassis.go           # 5 指标：power/inlet_temp/outlet_temp/fan_speed/fan_power (ipmitool SDR)
+│   │   │   └── chassis_test.go      # 测试 (//go:build linux)
+│   │   └── ...（其余 collector 子目录同上）
 │   ├── source/                      # 来源层：数据获取与解析抽象（14 包，v0.2.0 引入，v0.2.2 扩展）
 │   │   ├── source.go                # 通用 Source 接口 {Name(); Available()}
 │   │   ├── proc/                    # /proc 全量解析（11 个 typed 方法）
@@ -220,11 +226,21 @@ CATMonitor/
 │       ├── collector.go             #     DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
 │       ├── snapshot.go              #     Snapshot 结构（含 Specs 字段）+ 原子读写
 │       ├── hwinfo.go                #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info）
-│       ├── server.go                #     HTTP 路由与处理函数
+│       ├── server.go                #     HTTP 路由与处理函数（含 dfee.Register，v0.3.1）
 │       ├── config.yaml              #     默认配置
 │       ├── metrics.yaml             #     web 自有指标目录（启动时优先读取）
-│       ├── static/                  #     前端资源（index.html + style.css + app.js）
+│       ├── static/                  #     前端资源（index.html + style.css + app.js，含能效分析导航入口）
 │       └── data/                    #     运行时数据（snapshot.json / runtime.json，git 忽略）
+│   └── dfee/                         #   能效监控模块（v0.3.1 新增，25 张实时图表 + CPU 利用率推导）
+│       ├── dfee_SPEC.md             #     能效模块设计规格
+│       ├── energy_efficiency_metrics.md #  74 项能效指标清单
+│       ├── filter.go                #     能效指标过滤 + 分组
+│       ├── cpu_derive.go            #     CPU 8 jiffies → 7 利用率推导
+│       ├── net_derive.go            #     网络差值计算
+│       ├── handler.go               #     HTTP handler + 静态文件服务
+│       ├── embed.go                 #     //go:embed static
+│       ├── metrics.yaml             #     dfee 指标目录覆盖（CPU Low → Medium）
+│       └── static/                  #     前端（dfee.js + dfee.css + index.html）
 ├── configs/
 │   ├── catmonitor.yaml              # 默认配置文件
 │   └── metrics.yaml                 # 默认指标采集目录（6 部件，v0.3.0 新增）
@@ -331,6 +347,7 @@ type Source interface {
 | network | proc, sys | throughput, packet_count, error_count, interface_status, connection_count |
 | gpu | nvidia_smi | utilization, memory_usage, temperature, power_draw, fan_speed, ecc_errors, clock_frequency |
 | npu | dcmi, npu_smi, hccn_tool | 74 指标：utilization/memory/temperature/power/health + 电压/风扇/13路温度/频率/利用率/HBM/ECC(delta)/LLC/带宽网络 |
+| chassis | ipmi | power, inlet_temp, outlet_temp, fan_speed, fan_power（与 CPU/Memory 共享 SDR 缓存） |
 
 ### 1.7 指标采集目录系统（v0.3.0 新增）
 
@@ -422,10 +439,12 @@ components:
 1. **space_usage**：读取 `/proc/mounts` 获取挂载点列表，过滤虚拟文件系统（proc/sysfs/devtmpfs/tmpfs/overlay 等），对每个挂载点调用 `statfs()` 获取总块数、空闲块数、块大小，计算使用率。同时输出 total/used/available 明细值（MB）。
 2. **iops**：读取 `/proc/diskstats`，取第4字段（reads completed）和第8字段（writes completed），差值除以间隔得出每秒 IOPS。只采集主块设备（sda/nvme0n1 等），排除分区。
 3. **throughput**：读取 `/proc/diskstats`，取第6字段（sectors read）和第10字段（sectors written），`扇区数 × 512B` 差值除以间隔得出 MB/s。
-4. **io_wait**：读取 `/proc/stat` 中 `cpu` 行第5字段（iowait），与总 CPU 时间差值计算占比。
-5. **smart_status**：对每个块设备执行 `smartctl -H /dev/sdX`，解析输出中的 `PASSED`/`FAILED`。
-6. **smart_temperature**：执行 `smartctl -A /dev/sdX`，解析 SMART 属性表中的 `Temperature_Celsius`。
-7. **io_errors**：读取 `/proc/diskstats` 错误字段 + 搜索 `dmesg` 中 I/O error 关键词。
+4. **read_latency**（v0.3.1 新增）：读取 `/proc/diskstats` 第7字段（time spent reading, ms），两次采集差值除以间隔得出每秒读耗时（ms/s）。
+5. **write_latency**（v0.3.1 新增）：读取 `/proc/diskstats` 第11字段（time spent writing, ms），差值除以间隔得出每秒写耗时（ms/s）。
+6. **io_wait**：读取 `/proc/stat` 中 `cpu` 行第5字段（iowait），与总 CPU 时间差值计算占比。
+7. **smart_status**：对每个块设备执行 `smartctl -H /dev/sdX`，解析输出中的 `PASSED`/`FAILED`。
+8. **smart_temperature**：执行 `smartctl -A /dev/sdX`，解析 SMART 属性表中的 `Temperature_Celsius`。
+9. **io_errors**：读取 `/proc/diskstats` 错误字段 + 搜索 `dmesg` 中 I/O error 关键词。
 
 **设备过滤规则**：排除虚拟设备（loop/ram/dm-/md 等），只采集物理块设备。设备名匹配正则 `^(sd|nvme|vd|xvd|hba)[a-z]+[0-9]*n[0-9]+$`。
 
@@ -528,6 +547,26 @@ Collect() {
 5. **connection_count**：解析 `/proc/net/tcp` 和 `/proc/net/tcp6`，按状态码统计连接数。状态码：`01`=ESTABLISHED, `06`=TIME_WAIT, `0A`=LISTEN 等。
 
 **接口过滤**：过滤 `lo` 回环接口。`docker0`/`br-*` 等虚拟网桥默认不采集，可通过配置开启。
+
+### 2.7 Chassis 采集器（v0.3.1 新增）
+
+| 项目 | 说明 |
+|------|------|
+| 包路径 | `internal/collectors/chassis` |
+| 数据来源 | `ipmitool sdr`（经 `internal/source/ipmi` 来源包，与 CPU/Memory 共享 30s SDR 缓存 + 失败缓存） |
+| 外部依赖 | `ipmitool` + BMC 访问权限 |
+| 采集方式 | 遍历 SDR 传感器列表，按名称关键词匹配分类（inlet/outlet/fan/power），无 BMC 时优雅降级返回空 |
+| 平台分离 | Linux 专有（依赖 ipmitool + BMC），Windows 无 BMC 不采集 |
+| 指标数 | 5（High 2 / Medium 3 / Low 0） |
+
+**采集逻辑**：
+1. **power**（High）：整机功耗（W），匹配 SDR 名称 `"power"` 或不含 CPU/MEM/NPU/FAN 的 power 传感器。
+2. **inlet_temp**（High）：进风口温度（°C），匹配名称含 `"inlet"` + `"temp"`。
+3. **outlet_temp**（Medium）：出风口温度（°C），匹配名称含 `"outlet"` + `"temp"`。
+4. **fan_speed**（Medium）：风扇转速（RPM），匹配名称含 `"fan"` + `"speed"`，Labels 含 `fan` 编号 + `direction`（F/R）。
+5. **fan_power**（Medium）：风扇功率（W），匹配名称含 `"fan"` + `"power"`，Labels 含 `fan` 编号。
+
+> **设计要点**：Chassis 是第一个不绑定具体硬件部件（CPU/Memory/Disk/GPU/NPU/Network）的采集器，覆盖 BMC 管理的机箱级环境传感器。与 CPU/Memory 共用同一份 SDR 缓存（ipmi 来源包 30s TTL），无额外 exec 开销。`power` 匹配排除 CPU/MEM/NPU/FAN 的功率传感器，避免误匹配。
 
 ---
 
@@ -937,8 +976,8 @@ features/web/
 
 ### 6.8 HTTP API 与前端设计
 
-- **路由**（`server.go`）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`。详见 SPEC §9.7。
-- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline）+ 全部指标表。
+- **路由**（`server.go`）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`、`/dfee/`（能效监控，见 §7）。详见 SPEC §9.7。
+- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline）+ 全部指标表。导航栏含「能效分析」入口（v0.3.1，跳转 `/dfee/`）。
 - **显示 manifest**（`app.js`）：`MANIFEST`（部件显示名/关键指标）、`SERIES_LABELS`（序列显示名）、`NAV_ORDER`（导航排序）、`SPEC_DEFS`/`LABEL_NAMES`（规格面板）。未登记部件/指标/序列均有通用回退，不会崩溃。
 
 ### 6.9 扩展机制
@@ -959,3 +998,76 @@ features/web/
 2. **轮询而非推送**：前端 `setInterval` 轮询 `/api/snapshot`；如需实时推送，预留 WebSocket/SSE（`snapshot.json` 解耦边界可直接复用）。
 3. **无持久化历史存储**：历史仅存内存环形缓冲（重启清空），未落盘；如需长期趋势，预留 JSONL 落盘。
 4. **指标展示优先级**：当前 metric 不携带优先级字段，概览关键指标靠 MANIFEST 人工指定；未来若主项目 Metric 增加优先级可改为自动选取。
+
+---
+
+## 7. 能效监控模块设计（features/dfee，v0.3.1 新增）
+
+> 详细规格见 [`features/dfee/dfee_SPEC.md`](features/dfee/dfee_SPEC.md)。本节描述架构、数据流与扩展机制。
+
+### 7.1 模块定位与解耦
+
+`features/dfee/` 是与 `features/web` 同级的独立 Go package，**不修改现有 web 业务代码**（唯一改动：`features/web/server.go` 加 1 行 `dfee.Register(mux, ...)` 路由注册 + `features/web/main.go` 加 dfee metrics override 加载 + `features/web/static/app.js` 加 1 个导航入口）。dfee 从 `snapshot.json` 过滤能效指标，独立渲染 25 张实时图表。
+
+### 7.2 目录结构
+
+```
+features/dfee/
+├── dfee_SPEC.md               # 设计规格文档
+├── energy_efficiency_metrics.md # 74 项能效指标清单
+├── filter.go                  # 能效指标过滤集 + filterEfficiency() + 分组定义
+├── cpu_derive.go              # CPU 8 jiffies → 7 利用率推导（有状态）
+├── net_derive.go              # 网络差值计算
+├── handler.go                 # HTTP handler：组装 /api/dfee 响应 + 静态文件
+├── embed.go                   # //go:embed static
+├── metrics.yaml               # dfee 指标目录覆盖（CPU 8 个 Low → Medium）
+├── static/
+│   ├── index.html             # 能效监控 SPA 页面
+│   ├── dfee.js                # 25 张实时图表渲染 + 轮询
+│   └── dfee.css               # 样式
+└── *_test.go                  # 过滤/推导/HTTP 测试
+```
+
+### 7.3 数据流与解耦边界
+
+```
+采集层 (7 collectors, 不变)
+  → DataCollector.collectOnce() (不变)
+  → snapshot.json (不变, 159 指标)
+        │
+        ├──────────────────────────────────────────┐
+        ↓                                          ↓
+  GET /api/snapshot (现有, 不变)          GET /api/dfee (dfee 新增)
+  → 全量 159 指标                        → 过滤 74 能效指标
+  → 前端 SPA 概览/详情页                   → CPU 8 jiffies → 7 利用率推导
+                                         → 按小节分组 → 25 张图表数据
+                                         → 前端 Canvas 实时折线图
+```
+
+**解耦边界**：dfee 只读 `snapshot.json`（与 web HTTP 层同一数据源），**绝不直接调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。
+
+### 7.4 74 项能效指标来源
+
+| 来源部件 | 指标数 | 典型指标 |
+|----------|--------|----------|
+| NPU | 46 | 频率(7)/利用率(12)/温度(13)/电压(5)/ECC(8)/带宽网络(9)/HBM(2) |
+| CPU | 10 | 利用率推导(7) + 时间原始(8→推导消耗) + 温度/power/MCE |
+| Memory | 7 | usage/swap/saturation/fragmentation/power/ecc |
+| Disk | 4 | space_usage/iops/throughput/io_wait + read/write_latency |
+| Network | 2 | throughput/packet_count |
+| Chassis | 5 | power/inlet_temp/outlet_temp/fan_speed/fan_power |
+
+> 完整清单见 `features/dfee/energy_efficiency_metrics.md`。
+
+### 7.5 指标目录覆盖
+
+dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml` 将它们覆盖为 Medium，由 `features/web/main.go` 启动时经 `metrics.LoadModuleOverride` 加载，使它们通过 Filter 进入 snapshot.json。同时覆盖若干 NPU Low 指标（acg_count/ntc*_temp/aicore_rated_freq/v*_util/llc_*）为 Medium 以供能效图表展示。
+
+### 7.6 扩展机制
+
+| 扩展需求 | 改动位置 |
+|----------|----------|
+| 新增能效指标图表 | `features/dfee/filter.go` 分组定义加条目 + `dfee.js` 加图表 |
+| 新增 CPU 推导指标 | `features/dfee/cpu_derive.go` 加推导逻辑 |
+| 新增能效指标来源 | （采集器侧新增指标 + `features/dfee/metrics.yaml` 覆盖优先级） |
+| 导航入口 | `features/web/static/app.js` renderNav（已有） |

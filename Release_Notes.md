@@ -4,6 +4,37 @@
 
 ---
 
+## v0.3.1
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.1 |
+| 发布时间 | 2026-07-17 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (9868b80) → main (fast-forward) |
+
+### 变更摘要
+
+- **Chassis 机箱环境采集器**：新增第 7 个采集器 `internal/collectors/chassis`（5 指标：整机功耗 / 进出风口温度 / 风扇转速 / 风扇功率，来自 ipmitool SDR，与 CPU/Memory 共享 30s SDR 缓存，Linux 专有）
+- **Disk 读/写耗时**：Disk 采集器新增 `read_latency`/`write_latency` 指标（/proc/diskstats field 7/11，ms/s）；`internal/source/proc` DiskStat 加 ReadTime/WriteTime 字段。Disk 指标 7→9
+- **dfee 能效监控模块**：新增 `features/dfee` 能效监控模块（25 张实时图表 + CPU 8 jiffies→7 利用率推导 + 网络差值），从 159 项指标中过滤 74 项能效指标，独立 SPA 路由 `/dfee/`；`features/web/server.go` 加 dfee.Register 路由注册，`features/web/static/app.js` 加导航入口
+- **dfee metrics 覆盖**：`features/dfee/metrics.yaml` 将 8 个 CPU Low 时间指标 + 14 个 NPU Low 指标覆盖为 Medium，使它们通过 metrics.Filter 进入 snapshot.json 供 dfee 推导/展示
+- **DCMI 库路径修正**：`internal/source/dcmi/dcmi_cgo.go` 明确 `#cgo CFLAGS`/`LDFLAGS` 指向 `/usr/local/Ascend/driver/`
+- **配置扩展**：`internal/config/config.go` + `configs/catmonitor.yaml` 加 chassis 采集器配置项
+- **文档**：README/SPEC/DESIGN/indi_list 同步新增 Chassis/dfee/Disk latency，版本号升至 v0.3.1
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.1`；指标总数 152→159（+5 Chassis +2 Disk latency），部件 6→7
+- **测试**：241 用例全过（较 v0.3.0 的 215 +26），`go vet` 零警告，Linux/Windows 双平台编译通过
+
+### 已知限制
+
+- DCMI CGo 未真机验证（需 NPU 服务器 `go build -tags dcmi`）；DCMI 原始单位待实测
+- Chassis/Disk latency 未加入 configs/metrics.yaml 默认目录（靠 default-allow 规则采集）
+- GPU/NPU/Chassis 无真机验证（测试由 mock 驱动）
+- 继承 v0.3.0 已知限制：interval 未接 scheduler ticker、Windows 来源层迁移延后、`-c` 短选项 bug
+
+---
+
 ## v0.3.0
 
 | 项目 | 说明 |
