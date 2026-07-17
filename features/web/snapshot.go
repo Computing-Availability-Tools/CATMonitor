@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/health"
 )
 
 // Snapshot is the single cached view written by the collector goroutine and

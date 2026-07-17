@@ -1,0 +1,799 @@
+components:
+  - component: cpu
+    interval: 3s
+    metrics:
+      - name: usage
+        cn_name: "CPU使用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: load_average
+        cn_name: "系统负载"
+        priority: High
+        unit: "-"
+        static: false
+      - name: temperature
+        cn_name: "CPU温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: frequency
+        cn_name: "CPU频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: context_switches
+        cn_name: "上下文切换次数"
+        priority: Low
+        unit: "次/s"
+        static: false
+      - name: process_count
+        cn_name: "运行进程数"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: model_info
+        cn_name: "CPU型号信息"
+        priority: Low
+        unit: "-"
+        static: true
+      - name: user_time
+        cn_name: "用户态运行时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: nice_time
+        cn_name: "低优先级用户进程时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: system_time
+        cn_name: "内核态运行时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: idle_time
+        cn_name: "空闲时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: iowait_time
+        cn_name: "等待IO时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: irq_time
+        cn_name: "硬中断处理时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: softirq_time
+        cn_name: "软中断处理时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: steal_time
+        cn_name: "被窃取时间"
+        priority: Low
+        unit: "jiffies"
+        static: false
+      - name: user_util
+        cn_name: "用户态平均利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: system_util
+        cn_name: "内核态平均利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: idle_util
+        cn_name: "空闲状态占用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: iowait_util
+        cn_name: "IO等待状态占用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: numa_node_num
+        cn_name: "NUMA节点数量"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: online_core_num
+        cn_name: "核在线数量"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: offline_core_num
+        cn_name: "核离线数量"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: isolated_core_num
+        cn_name: "核隔离数量"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mem_temperature
+        cn_name: "CPU内存区域温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: core_num
+        cn_name: "CPU核数量"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: die_core_num
+        cn_name: "单个die核数量"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: numa_core_num
+        cn_name: "NUMA核数量"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: cpu_num
+        cn_name: "CPU个数"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: avg_freq
+        cn_name: "CPU平均频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: min_freq
+        cn_name: "CPU最小频率"
+        priority: Low
+        unit: "MHz"
+        static: true
+      - name: max_freq
+        cn_name: "CPU最大频率"
+        priority: Low
+        unit: "MHz"
+        static: true
+      - name: cpu_ce_errors
+        cn_name: "CPU CE错误数量"
+        priority: High
+        unit: "次"
+        static: false
+      - name: cpu_uce_errors
+        cn_name: "CPU UCE错误数量"
+        priority: High
+        unit: "次"
+        static: false
+      - name: power
+        cn_name: "CPU功率"
+        priority: Medium
+        unit: "W"
+        static: false
+      - name: l1d_cache_size
+        cn_name: "L1d缓存大小"
+        priority: Low
+        unit: "KB"
+        static: true
+      - name: l1i_cache_size
+        cn_name: "L1i缓存大小"
+        priority: Low
+        unit: "KB"
+        static: true
+      - name: l2_cache_size
+        cn_name: "L2缓存大小"
+        priority: Low
+        unit: "KB"
+        static: true
+      - name: l3_cache_size
+        cn_name: "L3缓存大小"
+        priority: Low
+        unit: "KB"
+        static: true
+      - name: numa_order_num
+        cn_name: "NUMA节点buddy order数量"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: numa_info
+        cn_name: "NUMA节点内存碎片信息"
+        priority: Low
+        unit: "order"
+        static: false
+  - component: memory
+    interval: 3s
+    metrics:
+      - name: usage
+        cn_name: "内存使用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: swap_usage
+        cn_name: "Swap使用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: swap_detail
+        cn_name: "Swap原始值"
+        priority: Medium
+        unit: "MB"
+        static: false
+      - name: swap_in
+        cn_name: "换入次数"
+        priority: Medium
+        unit: "次/s"
+        static: false
+      - name: swap_out
+        cn_name: "换出次数"
+        priority: Medium
+        unit: "次/s"
+        static: false
+      - name: saturation
+        cn_name: "内存饱和度"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: fragmentation
+        cn_name: "内存碎片化程度"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: ecc_ce_errors
+        cn_name: "CE可纠正错误数"
+        priority: High
+        unit: "次"
+        static: false
+      - name: ecc_uce_errors
+        cn_name: "UCE不可纠正错误数"
+        priority: High
+        unit: "次"
+        static: false
+      - name: oom_count
+        cn_name: "OOM触发次数"
+        priority: Medium
+        unit: "次"
+        static: false
+      - name: page_faults
+        cn_name: "缺页错误次数"
+        priority: Low
+        unit: "次/s"
+        static: false
+      - name: isolated_pages
+        cn_name: "隔离页总数"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: isolated_anon_pages
+        cn_name: "隔离匿名页数"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: isolated_file_pages
+        cn_name: "隔离文件页数"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: free_pages
+        cn_name: "空闲页数"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: module_num
+        cn_name: "内存条数量"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: module_size
+        cn_name: "内存条大小"
+        priority: Low
+        unit: "MB"
+        static: true
+      - name: module_info
+        cn_name: "内存条静态信息"
+        priority: Low
+        unit: "-"
+        static: true
+      - name: power
+        cn_name: "内存功率"
+        priority: Medium
+        unit: "W"
+        static: false
+      - name: usage_detail
+        cn_name: "内存明细"
+        priority: Medium
+        unit: ""
+        static: false
+  - component: disk
+    interval: 5s
+    metrics:
+      - name: space_usage
+        cn_name: "磁盘空间使用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: iops
+        cn_name: "读写IOPS"
+        priority: Medium
+        unit: "次/s"
+        static: false
+      - name: throughput
+        cn_name: "读写吞吐量"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+      - name: io_wait
+        cn_name: "I/O等待占比"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: smart_status
+        cn_name: "SMART健康状态"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: smart_temperature
+        cn_name: "硬盘温度"
+        priority: Low
+        unit: "°C"
+        static: false
+      - name: io_errors
+        cn_name: "I/O错误计数"
+        priority: Low
+        unit: "次"
+        static: false
+      - name: space_detail
+        cn_name: "空间明细"
+        priority: Medium
+        unit: ""
+        static: false
+  - component: gpu
+    interval: 3s
+    metrics:
+      - name: utilization
+        cn_name: "GPU使用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: memory_usage
+        cn_name: "显存使用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: temperature
+        cn_name: "GPU温度"
+        priority: High
+        unit: "°C"
+        static: false
+      - name: power_draw
+        cn_name: "GPU功耗"
+        priority: Medium
+        unit: "W"
+        static: false
+      - name: fan_speed
+        cn_name: "风扇转速"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: ecc_errors
+        cn_name: "ECC错误数"
+        priority: Medium
+        unit: "次"
+        static: false
+      - name: clock_frequency
+        cn_name: "时钟频率"
+        priority: Low
+        unit: "MHz"
+        static: false
+  - component: npu
+    interval: 3s
+    metrics:
+      - name: utilization
+        cn_name: "NPU使用率(AICore)"
+        priority: High
+        unit: "%"
+        static: false
+      - name: memory_usage
+        cn_name: "NPU显存使用率(HBM)"
+        priority: High
+        unit: "%"
+        static: false
+      - name: temperature
+        cn_name: "NPU温度"
+        priority: High
+        unit: "°C"
+        static: false
+      - name: power_draw
+        cn_name: "NPU功耗"
+        priority: Medium
+        unit: "W"
+        static: false
+      - name: health_status
+        cn_name: "NPU健康状态"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: npu_num
+        cn_name: "NPU设备数量"
+        priority: Low
+        unit: "个"
+        static: true
+      - name: chip_type
+        cn_name: "NPU芯片类型"
+        priority: Low
+        unit: "-"
+        static: true
+      - name: driver_version
+        cn_name: "NPU驱动版本"
+        priority: Low
+        unit: "-"
+        static: true
+      - name: driver_health
+        cn_name: "NPU驱动健康状态"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: error_code
+        cn_name: "NPU错误码"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: process_info
+        cn_name: "NPU进程PID信息"
+        priority: Low
+        unit: "-"
+        static: false
+      - name: process_total
+        cn_name: "NPU进程总数量"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: comm_topo
+        cn_name: "NPU通信拓扑"
+        priority: Low
+        unit: "-"
+        static: true
+      - name: voltage
+        cn_name: "NPU电压"
+        priority: Medium
+        unit: "V"
+        static: false
+      - name: aicore_voltage
+        cn_name: "NPU AICore电压"
+        priority: Medium
+        unit: "V"
+        static: false
+      - name: hybrid_voltage
+        cn_name: "NPU Hybrid电压"
+        priority: Medium
+        unit: "V"
+        static: false
+      - name: cpu_voltage
+        cn_name: "NPU CPU电压"
+        priority: Medium
+        unit: "V"
+        static: false
+      - name: ddr_voltage
+        cn_name: "NPU DDR电压"
+        priority: Medium
+        unit: "V"
+        static: false
+      - name: acg_count
+        cn_name: "NPU ACG调频计数"
+        priority: Low
+        unit: "次"
+        static: false
+      - name: fan_speed
+        cn_name: "NPU风扇转速"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: hbm_temp
+        cn_name: "NPU HBM温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: cluster_temp
+        cn_name: "NPU Cluster温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: peri_temp
+        cn_name: "NPU Peri温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: aicore0_temp
+        cn_name: "NPU AICORE0温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: aicore1_temp
+        cn_name: "NPU AICORE1温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: ntc1_temp
+        cn_name: "NPU热敏电阻1温度"
+        priority: Low
+        unit: "°C"
+        static: false
+      - name: ntc2_temp
+        cn_name: "NPU热敏电阻2温度"
+        priority: Low
+        unit: "°C"
+        static: false
+      - name: ntc3_temp
+        cn_name: "NPU热敏电阻3温度"
+        priority: Low
+        unit: "°C"
+        static: false
+      - name: ntc4_temp
+        cn_name: "NPU热敏电阻4温度"
+        priority: Low
+        unit: "°C"
+        static: false
+      - name: soc_max_temp
+        cn_name: "NPU SOC最高温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: fp_max_temp
+        cn_name: "NPU光模块最高温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: ndie_temp
+        cn_name: "NPU NDie温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: hbm_max_temp
+        cn_name: "NPU HBM最高温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: aicpu_freq
+        cn_name: "NPU AICPU频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: aicore_rated_freq
+        cn_name: "NPU AICore额定频率"
+        priority: Low
+        unit: "MHz"
+        static: true
+      - name: aicore_freq
+        cn_name: "NPU AICore频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: ctrlcpu_freq
+        cn_name: "NPU CTRLCPU频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: vector_core_freq
+        cn_name: "NPU Vector Core频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: hbm_freq
+        cn_name: "NPU HBM频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: ddr_freq
+        cn_name: "NPU DDR频率"
+        priority: Medium
+        unit: "MHz"
+        static: false
+      - name: npu_util
+        cn_name: "NPU整体利用率"
+        priority: High
+        unit: "%"
+        static: false
+      - name: aicpu_util
+        cn_name: "NPU AICPU利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: ctrlcpu_util
+        cn_name: "NPU CTRLCPU利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: vector_core_util
+        cn_name: "NPU Vector Core利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: hbm_bandwidth_util
+        cn_name: "NPU HBM带宽利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: ddr_util
+        cn_name: "NPU DDR利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: ddr_bandwidth_util
+        cn_name: "NPU DDR带宽利用率"
+        priority: Medium
+        unit: "%"
+        static: false
+      - name: vdec_util
+        cn_name: "NPU VDEC利用率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: vpc_util
+        cn_name: "NPU VPC利用率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: venc_util
+        cn_name: "NPU VENC利用率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: jpege_util
+        cn_name: "NPU JPEGE利用率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: jpegd_util
+        cn_name: "NPU JPEGD利用率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: hbm_total_memory
+        cn_name: "NPU HBM总容量"
+        priority: Low
+        unit: "MB"
+        static: true
+      - name: hbm_used_memory
+        cn_name: "NPU HBM已用容量"
+        priority: High
+        unit: "MB"
+        static: false
+      - name: hbm_single_ecc
+        cn_name: "NPU HBM单bit错误"
+        priority: High
+        unit: "次"
+        static: false
+      - name: hbm_double_ecc
+        cn_name: "NPU HBM多bit错误"
+        priority: High
+        unit: "次"
+        static: false
+      - name: hbm_single_ecc_isolated
+        cn_name: "NPU HBM单bit隔离页数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: hbm_double_ecc_isolated
+        cn_name: "NPU HBM多bit隔离页数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: ddr_single_ecc
+        cn_name: "NPU DDR单bit错误"
+        priority: High
+        unit: "次"
+        static: false
+      - name: ddr_double_ecc
+        cn_name: "NPU DDR多bit错误"
+        priority: High
+        unit: "次"
+        static: false
+      - name: ddr_single_ecc_isolated
+        cn_name: "NPU DDR单bit隔离页数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: ddr_double_ecc_isolated
+        cn_name: "NPU DDR多bit隔离页数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: llc_write_hit_rate
+        cn_name: "NPU LLC写命中率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: llc_read_hit_rate
+        cn_name: "NPU LLC读命中率"
+        priority: Low
+        unit: "%"
+        static: false
+      - name: llc_throughput
+        cn_name: "NPU LLC吞吐量"
+        priority: Low
+        unit: "MB/s"
+        static: false
+      - name: net_tx_bandwidth
+        cn_name: "NPU网口发送带宽"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+      - name: net_rx_bandwidth
+        cn_name: "NPU网口接收带宽"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+      - name: roce_link_status
+        cn_name: "NPU RoCE连接状态"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: roce_speed_status
+        cn_name: "NPU RoCE连接速度"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: roce_link_health
+        cn_name: "NPU RoCE Link状态"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: pcie_tx_bandwidth
+        cn_name: "NPU PCIe发送带宽"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+      - name: pcie_rx_bandwidth
+        cn_name: "NPU PCIe接收带宽"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+      - name: hccs_tx_bandwidth
+        cn_name: "NPU HCCS发送带宽"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+      - name: hccs_rx_bandwidth
+        cn_name: "NPU HCCS接收带宽"
+        priority: Medium
+        unit: "MB/s"
+        static: false
+  - component: network
+    interval: 3s
+    metrics:
+      - name: throughput
+        cn_name: "网络吞吐量"
+        priority: High
+        unit: "bytes/s"
+        static: false
+      - name: packet_count
+        cn_name: "包收发数"
+        priority: Medium
+        unit: "个/s"
+        static: false
+      - name: error_count
+        cn_name: "错误包计数"
+        priority: Medium
+        unit: "次"
+        static: false
+      - name: interface_status
+        cn_name: "网卡接口状态"
+        priority: Medium
+        unit: "-"
+        static: false
+      - name: connection_count
+        cn_name: "网络连接数"
+        priority: Low
+        unit: "个"
+        static: false
+      - name: rx_bytes_total
+        cn_name: "接收字节"
+        priority: Medium
+        unit: "B"
+        static: false
+      - name: tx_bytes_total
+        cn_name: "发送字节"
+        priority: Medium
+        unit: "B"
+        static: false

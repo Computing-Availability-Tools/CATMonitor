@@ -51,7 +51,7 @@ const METRIC_NAMES = {
   module_size: '内存条容量', module_info: '内存条信息', module_num: '内存条数',
   ecc_ce_errors: 'ECC CE 错误', ecc_uce_errors: 'ECC UCE 错误',
   // Hardware identity (system collector, one-shot).
-  device_model: '设备型号', gpu_info: 'GPU 信息', npu_info: 'NPU 信息',
+  device_model: '设备型号', os_info: 'OS 信息', gpu_info: 'GPU 信息', npu_info: 'NPU 信息',
   disk_info: '磁盘信息', net_info: '网卡信息',
 };
 
@@ -63,6 +63,7 @@ const LABEL_NAMES = {
   mac: 'MAC', mtu: 'MTU', speed: '速率', driver: '驱动',
   locator: '插槽', type: '类型',
   model_name: '型号', cache_size: '缓存', core: '核心', node: '节点', die: 'Die',
+  pretty_name: 'OS', version_id: '版本号', kernel: '内核',
 };
 
 // Maps a static spec metric name to (display type, the label key that holds
@@ -70,6 +71,7 @@ const LABEL_NAMES = {
 // overview card spec summary.
 const SPEC_DEFS = {
   device_model: { type: '设备', primary: 'product_name' },
+  os_info:      { type: 'OS', primary: 'pretty_name' },
   model_info:   { type: 'CPU', primary: 'model_name' },
   gpu_info:     { type: 'GPU', primary: 'name' },
   npu_info:     { type: 'NPU', primary: 'name' },
@@ -356,6 +358,9 @@ function renderSpecs(snap) {
   const dev = specVal(specs, 'device_model');
   if (dev) add('设备', [dev.labels.manufacturer, dev.labels.product_name].filter(x => x).join(' '));
 
+  const osi = specVal(specs, 'os_info');
+  if (osi) add('OS', (osi.labels || {}).pretty_name || '');
+
   const mi = specVal(specs, 'model_info');
   if (mi) add('CPU', (mi.labels || {}).model_name || '');
 
@@ -433,7 +438,7 @@ function openSpecsModal(snap) {
 // (类型 / 标识 / 明细). Synthetic entries (mem_total) get a friendly type.
 function specsGroup(comp, arr) {
   const sec = el('div', 'specs-group');
-  const title = comp === 'system' ? '设备' : compTitle(comp);
+  const title = comp === 'system' ? '系统' : compTitle(comp);
   sec.appendChild(elText('div', 'specs-group-title', title + ' (' + arr.length + ')'));
   const tbl = document.createElement('table');
   tbl.className = 'table';
@@ -442,7 +447,17 @@ function specsGroup(comp, arr) {
   for (const m of arr) {
     const def = SPEC_DEFS[m.name] || { type: (METRIC_NAMES[m.name] || m.name), primary: '' };
     const lb = m.labels || {};
-    const primary = def.primary ? (lb[def.primary] || '') : (m.synthetic ? fmtMB(m.value) : '');
+    // Identity specs carry their main value in a label (def.primary); synthetic
+    // memory total uses fmtMB. Numeric static specs (cpu_num/core_num/numa/cache
+    // sizes/frequencies) carry their value in m.value — fall back to value+unit.
+    let primary;
+    if (def.primary) {
+      primary = lb[def.primary] || '';
+    } else if (m.synthetic) {
+      primary = fmtMB(m.value);
+    } else {
+      primary = (m.value !== undefined && m.value !== null) ? (m.value + (m.unit ? ' ' + m.unit : '')) : '';
+    }
     const rest = [];
     for (const k in lb) {
       if (k === def.primary) continue;
@@ -506,7 +521,11 @@ function renderOverview(snap) {
   page.appendChild(title);
 
   const grid = el('div', 'grid');
-  for (const c of comps) grid.appendChild(summaryCard(c.component, snap));
+  for (const c of comps) {
+    const card = summaryCard(c.component, snap);
+    if (card) grid.appendChild(card);
+  }
+  if (!grid.children.length) grid.appendChild(elText('div', 'empty', '无可用部件数据'));
   page.appendChild(grid);
 }
 
@@ -514,6 +533,9 @@ function summaryCard(compKey, snap) {
   const m = MANIFEST[compKey] || {};
   const compHealth = (snap.health && snap.health.components) ? snap.health.components[compKey] : null;
   const metrics = metricsFor(snap, compKey);
+  // Hide cards that have neither metrics nor a health score (e.g. no GPU/NPU
+  // hardware present); they carry no information for the overview grid.
+  if (metrics.length === 0 && !compHealth) return null;
   const st = statusOf(compHealth ? compHealth.score : 0, compHealth ? compHealth.max : 0);
 
   const card = el('div', 'card');
@@ -526,7 +548,8 @@ function summaryCard(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    sc.innerHTML = '<span class="badge na">无数据</span>';
+    // Collected but not part of health evaluation (e.g. network).
+    sc.innerHTML = '<span class="badge na">不评估</span>';
   }
   head.appendChild(t); head.appendChild(sc);
   card.appendChild(head);
@@ -581,7 +604,8 @@ function renderDetail(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    sc.innerHTML = '<span class="badge na">无数据</span>';
+    // Collected but not part of health evaluation (e.g. network).
+    sc.innerHTML = '<span class="badge na">不评估</span>';
   }
   head.appendChild(sc);
   page.appendChild(head);

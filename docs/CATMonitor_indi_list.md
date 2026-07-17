@@ -3,9 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.2.2 ｜ **更新日期**: 2026-07-15 ｜ **指标总数**: 152（High 22 / Medium 71 / Low 59）
+> **版本**: v0.3.0 ｜ **更新日期**: 2026-07-17 ｜ **指标总数**: 152（High 22 / Medium 71 / Low 59）
 > **来源层**: 全部 6 个采集器（cpu/memory/disk/network/gpu/npu）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
-> 完整测试报告见 [test_report.md](test_report.md)（176 用例通过，覆盖率 30.9%~97.0%）。
+> **指标采集目录**（v0.3.0）：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。
+> 完整测试报告见 [test_report.md](../test_report.md)（215 用例通过，覆盖率 30.9%~97.0%）。
 
 ---
 

@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/health"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
 )
 
 // DataCollector periodically collects metrics via the registered CATMonitor
@@ -33,8 +34,8 @@ type DataCollector struct {
 	// GPU/NPU/disk/NIC info) collected ONCE at web startup by collectHWSpecs
 	// (see hwinfo.go). These are not periodic metrics, so they live here rather
 	// than in the collector registry. Guarded by hwMu.
-	hwMu     sync.Mutex
-	hwSpecs  []collector.Metric
+	hwMu    sync.Mutex
+	hwSpecs []collector.Metric
 }
 
 func NewDataCollector(cfg *Config, logger *slog.Logger) *DataCollector {
@@ -139,13 +140,15 @@ func (dc *DataCollector) collectOnce() {
 		if !dc.isEnabled(c.Name()) {
 			continue
 		}
-		metrics, err := c.Collect()
+		collected, err := c.Collect()
 		if err != nil {
 			dc.logger.Warn("collect failed", "collector", c.Name(), "error", err)
 			continue
 		}
-		allMetrics = append(allMetrics, metrics...)
+		allMetrics = append(allMetrics, collected...)
 	}
+
+	allMetrics = metrics.Filter(allMetrics)
 
 	// Capture one-shot static specs on first sight, then keep them so every
 	// snapshot exposes stable device info even after the collectors suppress
@@ -247,21 +250,21 @@ var trackedSeries = []seriesSpec{
 	// v0.2.0 source-layer metrics. Hardware-dependent: a series only appears
 	// once its source produces a value (e.g. ipmi/mce/dmidecode absent => no
 	// data, never an error). Mode 1 = max across devices/sockets/zones.
-	{component: "cpu", name: "temperature", key: "cpu_temperature", mode: 1},       // ipmi SDR CPU temp
-	{component: "cpu", name: "power", key: "cpu_power", mode: 1},                  // ipmi SDR CPU pwr
-	{component: "cpu", name: "avg_freq", key: "cpu_avg_freq", mode: 0},            // /sys cpufreq avg
-	{component: "cpu", name: "context_switches", key: "cpu_context_switches", mode: 0}, // /proc/stat delta
-	{component: "cpu", name: "cpu_ce_errors", key: "cpu_ce_errors", mode: 1},      // mce CE delta per socket
+	{component: "cpu", name: "temperature", key: "cpu_temperature", mode: 1},                                              // ipmi SDR CPU temp
+	{component: "cpu", name: "power", key: "cpu_power", mode: 1},                                                          // ipmi SDR CPU pwr
+	{component: "cpu", name: "avg_freq", key: "cpu_avg_freq", mode: 0},                                                    // /sys cpufreq avg
+	{component: "cpu", name: "context_switches", key: "cpu_context_switches", mode: 0},                                    // /proc/stat delta
+	{component: "cpu", name: "cpu_ce_errors", key: "cpu_ce_errors", mode: 1},                                              // mce CE delta per socket
 	{component: "memory", name: "saturation", labelKey: "interval", labelVal: "avg10", key: "memory_saturation", mode: 0}, // PSI avg10
-	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1}, // /proc/buddyinfo per zone max
-	{component: "memory", name: "swap_in", key: "memory_swap_in", mode: 0},        // /proc/vmstat pswpin delta
-	{component: "memory", name: "power", key: "memory_power", mode: 1},            // ipmi SDR MEM pwr
-	{component: "disk", name: "io_wait", key: "disk_io_wait", mode: 0},            // /proc/stat iowait share
-	{component: "disk", name: "iops", key: "disk_iops", mode: 1},                  // /proc/diskstats max read+write
-	{component: "disk", name: "throughput", key: "disk_throughput", mode: 1},      // /proc/diskstats max MB/s
-	{component: "network", name: "throughput", key: "network_throughput", mode: 1}, // /proc/net/dev max bytes/s
-	{component: "network", name: "packet_count", key: "network_packet_count", mode: 1}, // /proc/net/dev max pps
-	{component: "network", name: "error_count", key: "network_error_count", mode: 1}, // /proc/net/dev max err/drop
+	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1},                                    // /proc/buddyinfo per zone max
+	{component: "memory", name: "swap_in", key: "memory_swap_in", mode: 0},                                                // /proc/vmstat pswpin delta
+	{component: "memory", name: "power", key: "memory_power", mode: 1},                                                    // ipmi SDR MEM pwr
+	{component: "disk", name: "io_wait", key: "disk_io_wait", mode: 0},                                                    // /proc/stat iowait share
+	{component: "disk", name: "iops", key: "disk_iops", mode: 1},                                                          // /proc/diskstats max read+write
+	{component: "disk", name: "throughput", key: "disk_throughput", mode: 1},                                              // /proc/diskstats max MB/s
+	{component: "network", name: "throughput", key: "network_throughput", mode: 1},                                        // /proc/net/dev max bytes/s
+	{component: "network", name: "packet_count", key: "network_packet_count", mode: 1},                                    // /proc/net/dev max pps
+	{component: "network", name: "error_count", key: "network_error_count", mode: 1},                                      // /proc/net/dev max err/drop
 }
 
 // updateHistory appends one point per tracked series (max across devices where

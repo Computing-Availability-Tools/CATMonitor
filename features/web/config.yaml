@@ -7,5 +7,5 @@ collector:
   # enabled_components: []   # empty = all (cpu, memory, disk, gpu, npu, network)
 
 storage:
-  snapshot_path: web/data/snapshot.json
-  runtime_path: web/data/runtime.json
+  snapshot_path: features/web/data/snapshot.json
+  runtime_path: features/web/data/runtime.json

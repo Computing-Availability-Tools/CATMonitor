@@ -18,6 +18,11 @@ if [ ! -f ${CONFIG_DIR}/catmonitor.yaml ]; then
     cp configs/catmonitor.yaml ${CONFIG_DIR}/catmonitor.yaml
     echo "Config installed to ${CONFIG_DIR}/catmonitor.yaml"
 fi
+# Metrics catalog (default selection: High/Medium + static identity).
+if [ ! -f ${CONFIG_DIR}/metrics.yaml ]; then
+    cp configs/metrics.yaml ${CONFIG_DIR}/metrics.yaml
+    echo "Metrics catalog installed to ${CONFIG_DIR}/metrics.yaml"
+fi
 
 # Create data directory
 mkdir -p ${DATA_DIR}

@@ -8,14 +8,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/health"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/storage"
 
@@ -28,7 +30,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 )
 
-const version = "0.2.2"
+const version = "0.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -80,6 +82,18 @@ func loadConfig() *config.Config {
 	fs.String("output", "", "Output format: json|table")
 	fs.Parse(os.Args[2:])
 
+	// Load the metric catalog: env CATMONITOR_METRICS (a file) > a metrics.yaml
+	// next to the catmonitor config > dev fallback configs/metrics.yaml.
+	metricsPaths := []string{
+		os.Getenv("CATMONITOR_METRICS"),
+		filepath.Join(filepath.Dir(*configPath), "metrics.yaml"),
+		"configs/metrics.yaml",
+	}
+	if err := metrics.Init(metricsPaths...); err != nil {
+		slog.Error("metrics catalog init failed", "error", err)
+		os.Exit(1)
+	}
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("failed to load config, using defaults", "error", err)
@@ -115,6 +129,7 @@ func runDaemon() {
 	}
 
 	scheduler := collector.NewScheduler(collector.DefaultRegistry, store, logger)
+	scheduler.SetFilter(metrics.Filter)
 
 	// Set up health evaluator
 	var healthEval *health.Evaluator
@@ -158,14 +173,15 @@ func runHealthCheck(scheduler *collector.Scheduler, eval *health.Evaluator, stor
 	// Collect all metrics
 	var allMetrics []collector.Metric
 	for _, c := range collector.DefaultRegistry.All() {
-		metrics, err := c.Collect()
+		collected, err := c.Collect()
 		if err != nil {
 			logger.Error("collection failed", "collector", c.Name(), "error", err)
 			continue
 		}
-		allMetrics = append(allMetrics, metrics...)
+		allMetrics = append(allMetrics, collected...)
 	}
 
+	allMetrics = metrics.Filter(allMetrics)
 	score := eval.Evaluate(allMetrics)
 	logger.Info("health check", "score", score.Score, "grade", score.Grade)
 }
@@ -179,12 +195,14 @@ func runCollect() {
 		if !isCollectorEnabled(cfg, c.Name()) {
 			continue
 		}
-		metrics, err := c.Collect()
+		collected, err := c.Collect()
 		if err != nil {
 			continue
 		}
-		allMetrics = append(allMetrics, metrics...)
+		allMetrics = append(allMetrics, collected...)
 	}
+
+	allMetrics = metrics.Filter(allMetrics)
 
 	if output == "table" {
 		printMetricsTable(allMetrics)
@@ -195,6 +213,11 @@ func runCollect() {
 
 func runHealth() {
 	cfg := loadConfig()
+	// Health module reads its own metrics.yaml first (merged over the default).
+	if err := metrics.LoadModuleOverride("features/health/metrics.yaml"); err != nil {
+		slog.Error("health metrics override failed", "error", err)
+		os.Exit(1)
+	}
 	output := "table"
 	for i, arg := range os.Args {
 		if (arg == "-o" || arg == "--output") && i+1 < len(os.Args) {
@@ -208,12 +231,14 @@ func runHealth() {
 		if !isCollectorEnabled(cfg, c.Name()) {
 			continue
 		}
-		metrics, err := c.Collect()
+		collected, err := c.Collect()
 		if err != nil {
 			continue
 		}
-		allMetrics = append(allMetrics, metrics...)
+		allMetrics = append(allMetrics, collected...)
 	}
+
+	allMetrics = metrics.Filter(allMetrics)
 
 	scheme := health.GetScheme(cfg.Health.WeightScheme)
 	eval := health.NewEvaluator(scheme)

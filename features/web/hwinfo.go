@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -29,8 +31,8 @@ func collectHWSpecs() []collector.Metric {
 // hwCollector wraps the source-layer calls + nvidia-smi/npu-smi exec that
 // produce static identity metrics. Not a collector.Collector; not registered.
 type hwCollector struct {
-	smiPath    string // nvidia-smi
-	npuSmiPath string // npu-smi
+	smiPath     string // nvidia-smi
+	npuSmiPath  string // npu-smi
 	nvidiaAvail bool
 	nvidiaMock  string
 	npuAvail    bool
@@ -54,6 +56,9 @@ func (c *hwCollector) collect() []collector.Metric {
 	if m := c.deviceModel(now); m != nil {
 		metrics = append(metrics, *m)
 	}
+	if m := c.osInfo(now); m != nil {
+		metrics = append(metrics, *m)
+	}
 	metrics = append(metrics, c.gpuInfo(now)...)
 	metrics = append(metrics, c.npuInfo(now)...)
 	metrics = append(metrics, c.diskInfo(now)...)
@@ -75,6 +80,52 @@ func (c *hwCollector) deviceModel(now time.Time) *collector.Metric {
 			"version":       si.Version,
 			"serial_number": si.Serial,
 		},
+		Timestamp: now,
+	}
+}
+
+// osInfo emits the operating system identity (PRETTY_NAME, version, kernel).
+// Linux reads /etc/os-release + `uname -r`; Windows runs `cmd /c ver`.
+func (c *hwCollector) osInfo(now time.Time) *collector.Metric {
+	labels := map[string]string{}
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "ver").Output(); err == nil {
+			if s := strings.TrimSpace(strings.Trim(string(out), "\r\n ")); s != "" {
+				labels["pretty_name"] = s
+			}
+		}
+	} else {
+		if data, err := os.ReadFile("/etc/os-release"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				k, v, ok := strings.Cut(line, "=")
+				if !ok {
+					continue
+				}
+				v = strings.Trim(v, "\"'")
+				switch k {
+				case "PRETTY_NAME":
+					labels["pretty_name"] = v
+				case "VERSION_ID":
+					labels["version_id"] = v
+				}
+			}
+		}
+		if out, err := exec.Command("uname", "-r").Output(); err == nil {
+			if k := strings.TrimSpace(string(out)); k != "" {
+				labels["kernel"] = k
+			}
+		}
+	}
+	if len(labels) == 0 {
+		return nil
+	}
+	return &collector.Metric{
+		Component: "system", Name: "os_info", Value: 1, Unit: "",
+		Labels:    labels,
 		Timestamp: now,
 	}
 }
@@ -192,7 +243,7 @@ func (c *hwCollector) diskInfo(now time.Time) []collector.Metric {
 		}
 		metrics = append(metrics, collector.Metric{
 			Component: "disk", Name: "disk_info",
-			Value:     roundFloat(float64(bd.SizeBytes)/1e9, 1), Unit: "GB",
+			Value: roundFloat(float64(bd.SizeBytes)/1e9, 1), Unit: "GB",
 			Labels:    labels,
 			Timestamp: now,
 		})

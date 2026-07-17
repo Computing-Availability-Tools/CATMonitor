@@ -2,7 +2,7 @@
 
 > **文档定位**：本文档是 CATMonitor Web 仪表盘的**唯一设计与规格文档**，描述当前实现的真实状态，并明确为未来"新增部件 / 新增采集指标"预留的扩展点。后续开发以本文档为准。
 >
-> **对应代码**：`web/` 目录（与主项目同一 Go module，不新增 go.mod）。
+> **对应代码**：`features/web/` 目录（与主项目同一 Go module，不新增 go.mod）。
 > **不改动主项目任何现有文件**：与 `cmd/catmonitor`、`internal/collectors`、`internal/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
 
 ---
@@ -20,24 +20,28 @@
 
 ### 1.2 架构总览
 
-单一 Go 二进制 `catmonitor-web`，内含两个角色，以 `web/data/snapshot.json` 为解耦边界：
+单一 Go 二进制 `catmonitor-web`，内含两个角色，以 `features/web/data/snapshot.json` 为解耦边界：
 
 ```
 ┌──────────────────── catmonitor-web (单二进制) ────────────────────┐
 │                                                                    │
 │  采集 goroutine (DataCollector)          HTTP server (net/http)     │
 │    定时: 遍历注册表 → Collect()            静态页 + REST API          │
-│         → health.Evaluate()                  读取 snapshot.json      │
-│         → 原子写 snapshot.json                  ↑                   │
-│                  │写                              │读（不调采集器）     │
+│         → metrics.Filter(目录筛选)           读取 snapshot.json      │
+│         → health.Evaluate()                      ↑                   │
+│         → 原子写 snapshot.json           │读（不调采集器）            │
+│                  │写                              │                  │
 │                  └──────── snapshot.json ────────┘                  │
+│  启动期: collectHWSpecs() 一次性硬件身份 → SetHWSpecs                 │
 │                                  ↑热更新间隔                          │
 └────────────────────────────────────────────────────────────────────┘
-                  ↑ fetch /api/snapshot (setInterval)
-            浏览器（SPA：概览 + 各部件详情页）
+                   ↑ fetch /api/snapshot (setInterval)
+             浏览器（SPA：概览 + 各部件详情页）
 ```
 
 **解耦边界**：HTTP 层**只读** `snapshot.json`，**绝不直接调用采集器**；采集 goroutine 是 `snapshot.json` 的**唯一写者**（写临时文件 + `os.Rename` 原子写，读者永不会读到半截文件）。
+
+**指标筛选**：采集结果在写盘前先经 `metrics.Filter`（按 `internal/metrics` 目录筛选：默认仅保留 High/Medium 优先级与 static 身份指标，Low 诊断指标默认丢弃；目录缺失时 default-allow 全放行）。Web 模块通过 `metrics.Init(configs/metrics.yaml)` + `metrics.LoadModuleOverride(features/web/metrics.yaml)` 加载目录，可覆盖默认优先级。
 
 ### 1.3 技术栈
 
@@ -56,15 +60,16 @@
 ## 2. 目录结构
 
 ```
-web/
-├── main.go            # 入口：blank-import 采集器 + 起采集 goroutine + HTTP server + 信号处理
+features/web/
+├── main.go            # 入口：blank-import 采集器 + metrics.Init/LoadModuleOverride + 起采集 goroutine + HTTP server + 信号处理
 ├── static.go          # //go:embed static，内嵌前端资源
 ├── config.go          # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
-├── collector.go       # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
+├── collector.go       # DataCollector：定时采集 → metrics.Filter → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
 ├── snapshot.go        # Snapshot 结构（含 Specs 字段）+ 原子读写
-├── hwinfo.go          # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info），非注册采集器
+├── hwinfo.go          # 一次性硬件身份采集（device_model/os_info/gpu_info/npu_info/disk_info/net_info），非注册采集器
 ├── server.go          # HTTP 路由与处理函数
 ├── config.yaml        # 默认配置
+├── metrics.yaml       # Web 模块指标目录覆盖（覆盖 configs/metrics.yaml 默认值，由 main.go 加载）
 ├── static/
 │   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
 │   ├── style.css       # 浅色卡片式主题
@@ -74,13 +79,13 @@ web/
     └── runtime.json   # 界面调整的刷新间隔持久化
 ```
 
-> `web/data/` 由程序运行时创建（`os.MkdirAll`），无需预先存在；git 不跟踪空目录，运行时文件应被 gitignore（见 §10）。
+> `features/web/data/` 由程序运行时创建（`os.MkdirAll`），无需预先存在；`data/` 与 `.runtime-*.tmp` 临时文件均已加入根 `.gitignore`（见 §10）。
 
 ---
 
 ## 3. 配置设计
 
-### 3.1 配置文件 `web/config.yaml`
+### 3.1 配置文件 `features/web/config.yaml`
 
 ```yaml
 server:
@@ -90,16 +95,16 @@ collector:
   history_points: 60           # 环形历史保留的采样点数
   # enabled_components: []     # 空 = 采集全部已注册部件；指定则只采集列出的部件
 storage:
-  snapshot_path: web/data/snapshot.json   # 快照文件
-  runtime_path:  web/data/runtime.json   # 运行时覆盖持久化
+  snapshot_path: features/web/data/snapshot.json   # 快照文件
+  runtime_path:  features/web/data/runtime.json   # 运行时覆盖持久化
 ```
 
 ### 3.2 配置加载优先级（`config.go`）
 
-1. `DefaultConfig()` 提供默认值（addr `:9527`，5s，60 点，全部件启用，相对路径 `web/data/...`）。
+1. `DefaultConfig()` 提供默认值（addr `:9527`，5s，60 点，全部件启用，相对路径 `features/web/data/...`）。
 2. 若配置文件存在，YAML 覆盖默认值；**文件不存在则静默用默认值**（与主项目 `internal/config` 行为一致，不报错）。
 3. 若 `runtime.json` 存在，其 `refresh_interval_ms` 再覆盖采集周期（界面调整持久化，重启后保留）。
-4. 配置文件路径由 `-config` 命令行 flag 指定，默认 `web/config.yaml`。
+4. 配置文件路径由 `-config` 命令行 flag 指定，默认 `features/web/config.yaml`。
 
 > 端口占用回退：启动时 `net.Listen` 探测 `server.addr`，若返回 `EADDRINUSE`（端口被占用）则端口 +1 重试（`:9527`→`:9528`→`:9529`…），直至获取可用端口，实际绑定地址回写 `cfg.Server.Addr` 并打印 warn 日志。非 `EADDRINUSE` 错误（如权限不足）直接失败退出。详见 §8.5。
 
@@ -173,7 +178,7 @@ storage:
 
 - 持有配置、`slog.Logger`、环形历史 `map[string][]float64`、当前间隔、reload/collectNow 通道。
 - `Run(ctx)`：立即采集一次，进入 `select` 循环：定时器到期 → 采集；`reload` 通道 → 重置定时器（间隔热更新）；`collectNow` 通道 → 立即采集（供 `/api/refresh`）；`ctx.Done` → 退出。
-- `collectOnce()`：遍历 `collector.DefaultRegistry.All()`，对启用的采集器调 `Collect()` → `health.NewEvaluator(health.GetScheme("auto")).Evaluate(allMetrics)` → 组装 `Snapshot`（含 `updateHistory` 结果）→ `WriteAtomic`。
+- `collectOnce()`：遍历 `collector.DefaultRegistry.All()`，对启用的采集器调 `Collect()` → `metrics.Filter(allMetrics)`（按指标目录筛选：默认丢 Low 诊断指标，保留 High/Medium + static 身份）→ 提取 `staticStash`（CPU/内存一次性指标）→ 合并 `hwSpecs` → `health.NewEvaluator(health.GetScheme("auto")).Evaluate(filteredMetrics)` → 组装 `Snapshot`（含 `updateHistory` 结果）→ `WriteAtomic`。
 - `SetInterval(d)`：更新内存间隔 + 非阻塞通知 reload 通道。
 - `CollectNow()`：非阻塞通知 collectNow 通道（**串行**触发，避免与主循环并发写历史）。
 
@@ -211,9 +216,26 @@ type seriesSpec struct {
 | `npu_utilization` | npu | utilization | — | first | NPU 使用率 |
 | `npu_memory_usage` | npu | memory_usage | — | first | NPU 显存使用率 |
 | `npu_temperature` | npu | temperature | — | first | NPU 温度 |
+| `cpu_temperature` | cpu | temperature | — | max | CPU 温度（ipmi SDR，跨 socket 取最大） |
+| `cpu_power` | cpu | power | — | max | CPU 功耗（ipmi SDR，跨 socket 取最大） |
+| `cpu_avg_freq` | cpu | avg_freq | — | first | CPU 平均频率（/sys cpufreq） |
+| `cpu_context_switches` | cpu | context_switches | — | first | 上下文切换（/proc/stat delta） |
+| `cpu_ce_errors` | cpu | cpu_ce_errors | — | max | CPU CE 错误（mce delta，跨 socket 取最大） |
+| `memory_saturation` | memory | saturation | interval=avg10 | first | 内存压力（PSI avg10） |
+| `memory_fragmentation` | memory | fragmentation | — | max | 内存碎片化（/proc/buddyinfo 跨 zone 取最大） |
+| `memory_swap_in` | memory | swap_in | — | first | Swap 入页（/proc/vmstat pswpin delta） |
+| `memory_power` | memory | power | — | max | 内存功耗（ipmi SDR MEM，跨 sensor 取最大） |
+| `disk_io_wait` | disk | io_wait | — | first | I/O Wait 占比（/proc/stat） |
+| `disk_iops` | disk | iops | — | max | 磁盘 IOPS（/proc/diskstats 跨设备方向取最大） |
+| `disk_throughput` | disk | throughput | — | max | 磁盘吞吐（/proc/diskstats 跨设备方向取最大） |
+| `network_throughput` | network | throughput | — | max | 网络吞吐（/proc/net/dev 跨接口方向取最大） |
+| `network_packet_count` | network | packet_count | — | max | 网络包速率（/proc/net/dev 跨接口方向取最大） |
+| `network_error_count` | network | error_count | — | max | 网络错误/丢包（/proc/net/dev 跨接口类型取最大） |
 
 环形缓冲：每个 key 保留最近 `history_points` 个点，超出则丢弃最旧。`updateHistory` 返回历史的拷贝写入快照。
 
+> **硬件依赖**：v0.2.0 源指标（temperature/power/saturation/fragmentation/swap_in/iops/throughput/io_wait/context_switches/ce_errors 等）依赖 ipmi/mce/dmidecode/PSI//proc 等；工具或文件缺失时该系列不产出（不报错、不零填充），仅当源产生值时历史才出现。
+>
 > **新增趋势的规则**：在 `trackedSeries` 末尾加一行 spec，key 遵循 `<component>_<suffix>` 命名，前端详情页会自动渲染该 sparkline。无需改前端。
 
 ### 5.4 静态设备规格（`hwinfo.go` + `collector.go` 的 `staticStash`）
@@ -227,12 +249,13 @@ type seriesSpec struct {
 | metric name | component | 来源 | 说明 |
 |-------------|-----------|------|------|
 | `device_model` | system | `dmidecode` SMBIOS type 1 | 厂商/产品名/版本/序列号 |
+| `os_info` | system | `/etc/os-release` + `uname -r`（Linux）；`cmd /c ver`（Windows） | OS PrettyName/版本号/内核 |
 | `gpu_info` | gpu | `nvidia-smi --query-gpu=index,name,uuid,driver_version` | 每卡一条 |
 | `npu_info` | npu | `npu-smi info` | 每卡一条（id/name/bus_id） |
 | `disk_info` | disk | `/sys/block` + `smartctl`（可选富化 serial/firmware/interface） | 每真实块设备一条，value=容量 GB |
 | `net_info` | network | `/sys/class/net`（跳过 lo） | 每接口一条（mac/mtu/speed/driver） |
 
-> 可用性：`nvidia-smi`/`npu-smi` 不在 PATH 则对应项跳过（不报错）；`dmidecode`/`smartctl` 缺失则降级（device_model 不产出 / disk_info 缺少 serial 等富化字段）。`/sys` 始终可用。
+> 可用性：`nvidia-smi`/`npu-smi` 不在 PATH 则对应项跳过（不报错）；`dmidecode`/`smartctl` 缺失则降级（device_model 不产出 / disk_info 缺少 serial 等富化字段）；`/etc/os-release` 缺失则 `os_info` 不产出（如最小容器）。`/sys` 始终可用。
 
 #### 5.4.2 CPU/内存静态指标 stash（`collector.go` `filterStatic`）
 
@@ -277,7 +300,7 @@ module_info, module_size, module_num
   {"name":"disk","component":"disk","priority":"High","interval":"5s","enabled":true}
 ]
 ```
-> 顺序为注册表内排序（按 name）。**新增采集器**（在 `main.go` 加 blank import）自动出现在此列表与前端导航。
+> 顺序为注册表内排序（按 name）。**新增采集器**（在 `main.go` 加 blank import）自动出现在此列表与前端导航。`system` **不在**此列表——它只是 `hwinfo.go` 产出的静态身份指标的归属部件，非注册采集器，因此不出现在导航/概览卡（前端 `orderedComponents` 显式过滤 `component === 'system'`）。
 
 **GET /api/snapshot** → 见 §4.1。快照未就绪（首次采集前）返回 503 `{"error":"snapshot not ready"}`，带 `Cache-Control: no-cache`。
 
@@ -322,8 +345,20 @@ module_info, module_size, module_num
 ```js
 const MANIFEST = {
   cpu: { title:'CPU', headline:'cpu_usage', headlineLabel:'CPU 使用率 (%)',
-         key:[ {name:'usage',prefer:{core:'total'}}, 'load_average', 'temperature', 'model_info' ] },
-  // memory / disk / gpu / npu / network ...
+         key:[ {name:'usage',prefer:{core:'total'}}, 'load_average', 'avg_freq',
+                'temperature', 'power', 'cpu_ce_errors', 'model_info' ] },
+  memory: { title:'内存', headline:'memory_usage', headlineLabel:'内存使用率 (%)',
+            key:[ 'usage', 'swap_usage', 'saturation', 'fragmentation',
+                   'module_num', 'ecc_ce_errors', 'oom_count', 'page_faults' ] },
+  disk: { title:'磁盘', headline:'disk_space_usage', headlineLabel:'磁盘使用率 (%)',
+          key:[ 'space_usage', 'throughput', 'iops', 'io_wait',
+                 'io_errors', 'smart_status' ] },
+  gpu: { title:'GPU', headline:'gpu_utilization', headlineLabel:'GPU 使用率 (%)',
+         key:[ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
+  npu: { title:'NPU', headline:'npu_utilization', headlineLabel:'NPU 使用率 (%)',
+         key:[ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
+  network: { title:'网络', headline:null,
+             key:[ 'throughput', 'packet_count', 'error_count', 'connection_count' ] },
 };
 ```
 
@@ -333,11 +368,11 @@ const MANIFEST = {
 
 ### 7.5 其他前端常量
 
-- `METRIC_NAMES`：指标名 → 中文显示名映射（未命中则用原始名）。含静态身份（`device_model`/`gpu_info`/`npu_info`/`disk_info`/`net_info`/`module_info` 等）。
-- `SERIES_LABELS`：历史序列 key → 显示名（未命中则用 `key` 去前缀 + 下划线转空格）。
+- `METRIC_NAMES`：指标名 → 中文显示名映射（未命中则用原始名）。涵盖核心指标、v0.2.0 源层指标（user_time/system_time/avg_freq/numa_*/cache_*、swap_in/saturation/fragmentation/ecc_*/oom_count/page_faults/isolated_* 等）、以及静态身份（`device_model`/`os_info`/`gpu_info`/`npu_info`/`disk_info`/`net_info`/`module_info` 等）。
+- `SERIES_LABELS`：历史序列 key → 显示名（未命中则用 `key` 去前缀 + 下划线转空格）。覆盖全部 26 条 trackedSeries。
 - `NAV_ORDER`：导航排序（`['cpu','memory','disk','gpu','npu','network']`，未知部件排末尾按字母序）。
-- `SPEC_DEFS`：静态 spec 指标名 → `{type, primary}`（类型显示名 + 持有主标识的 label key），驱动 specs 面板/modal 的"类型/标识"列。覆盖 `device_model`/`model_info`/`gpu_info`/`npu_info`/`disk_info`/`net_info`/`module_info`。
-- `LABEL_NAMES`：label key → 中文显示名（如 `manufacturer`→厂商、`product_name`→型号、`serial`→序列号、`mac`→MAC 等），用于 specs modal 的"明细"列。
+- `SPEC_DEFS`：静态 spec 指标名 → `{type, primary}`（类型显示名 + 持有主标识的 label key），驱动 specs 面板/modal 的"类型/标识"列。覆盖 `device_model`/`os_info`/`model_info`/`gpu_info`/`npu_info`/`disk_info`/`net_info`/`module_info`。
+- `LABEL_NAMES`：label key → 中文显示名（如 `manufacturer`→厂商、`product_name`→型号、`serial`→序列号、`mac`→MAC、`pretty_name`→OS、`kernel`→内核 等），用于 specs modal 的"明细"列。
 
 ### 7.6 状态色映射
 
@@ -350,24 +385,25 @@ const MANIFEST = {
 ### 8.1 构建
 
 ```bash
-go build -o web/bin/catmonitor-web ./web     # web/bin/ 已被根 .gitignore 的 bin/ 覆盖
+go build -o features/web/bin/catmonitor-web ./features/web
+     # features/web/bin/ 已被根 .gitignore 的 bin/ 覆盖
 ```
-Windows：`GOOS=windows go build -o web/bin/catmonitor-web.exe ./web`（无 CGo，纯 syscall）。
+Windows：`GOOS=windows go build -o features/web/bin/catmonitor-web.exe ./features/web`（无 CGo，纯 syscall）。
 
 ### 8.2 运行
 
 ```bash
-./web/bin/catmonitor-web -config web/config.yaml    # 默认监听 :9527，被占用则自动递增
+./features/web/bin/catmonitor-web -config features/web/config.yaml    # 默认监听 :9527，被占用则自动递增
 # 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting" addr=...）
 ```
-工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `web/data/...`）；或改用绝对路径配置。
+工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `features/web/data/...`）；或改用绝对路径配置。
 
 ### 8.3 systemd 常驻（推荐）
 
 ```bash
 systemd-run --unit=catmonitor-web \
   --working-directory=<repo-root> \
-  <repo-root>/web/bin/catmonitor-web -config <repo-root>/web/config.yaml
+  <repo-root>/features/web/bin/catmonitor-web -config <repo-root>/features/web/config.yaml
 
 systemctl status catmonitor-web
 journalctl -u catmonitor-web -f
@@ -402,7 +438,7 @@ systemctl stop catmonitor-web
 
 | 步骤 | 是否必须 | 效果 |
 |------|:--------:|------|
-| 在 `web/main.go` 加 blank import `_ ".../internal/collectors/fpga"` | 必须 | 采集器被注册，`/api/collectors` 自动含 fpga |
+| 在 `features/web/main.go` 加 blank import `_ ".../internal/collectors/fpga"` | 必须 | 采集器被注册，`/api/collectors` 自动含 fpga |
 | 前端导航 | **自动** | 出现 FPGA 导航项与概览芯片 |
 | 概览卡片 | **自动** | 出现 FPGA 概览卡（通用：取前 4 条指标，无头条 sparkline） |
 | 详情页 `#/fpga` | **自动** | 列出 fpga 全部指标；若有 `<component>_*` 历史序列则渲染趋势 |
@@ -423,7 +459,7 @@ systemctl stop catmonitor-web
 
 ### 9.3 场景 C：新增一条趋势序列
 
-在 `web/collector.go` 的 `trackedSeries` 末尾加一行：
+在 `features/web/collector.go` 的 `trackedSeries` 末尾加一行：
 ```go
 {component: "fpga", name: "temperature", key: "fpga_temperature", mode: 0},
 ```
@@ -439,16 +475,17 @@ systemctl stop catmonitor-web
 
 | 扩展需求 | 改动位置 | 自动部分 |
 |----------|----------|----------|
-| 新部件采集器 | `web/main.go`（blank import） | 导航/概览卡/详情页 |
-| 部件显示名/关键指标 | `web/static/app.js` MANIFEST | — |
+| 新部件采集器 | `features/web/main.go`（blank import） | 导航/概览卡/详情页 |
+| 部件显示名/关键指标 | `features/web/static/app.js` MANIFEST | — |
 | 新指标展示 | （采集器侧，无需改 web） | 详情页全部指标表 |
-| 概览卡纳入新指标 | `web/static/app.js` MANIFEST.key | — |
-| 新趋势 sparkline | `web/collector.go` trackedSeries | 详情页趋势面板 |
-| 趋势显示名 | `web/static/app.js` SERIES_LABELS | — |
+| 概览卡纳入新指标 | `features/web/static/app.js` MANIFEST.key | — |
+| 新趋势 sparkline | `features/web/collector.go` trackedSeries | 详情页趋势面板 |
+| 趋势显示名 | `features/web/static/app.js` SERIES_LABELS | — |
+| 指标默认采集与否 | `features/web/metrics.yaml`（覆盖优先级/static） | collectOnce 经 metrics.Filter 自动应用 |
 | 新静态身份指标（采集器侧） | 加入 `staticMetricNames`（`collector.go`）即被 stash 进 `specs` | specs modal 通用表自动渲染 |
 | 新静态身份指标（web 侧 hwinfo） | `hwinfo.go` 加采集方法 + `SPEC_DEFS`/`LABEL_NAMES` 加显示名 | specs modal 按 component 分组自动出现 |
-| 导航排序 | `web/static/app.js` NAV_ORDER | 未知部件自动排末尾 |
-| 历史深度 | `web/config.yaml` history_points | — |
+| 导航排序 | `features/web/static/app.js` NAV_ORDER | 未知部件自动排末尾 |
+| 历史深度 | `features/web/config.yaml` history_points | — |
 
 ### 9.6 兼容性保证
 
@@ -459,9 +496,9 @@ systemctl stop catmonitor-web
 
 ## 10. Git 与运行时文件
 
-- **应提交**：`web/` 下所有源码与静态资源（见上传清单）。
-- **不应提交**：`web/data/*`（运行时生成：`snapshot.json`、`runtime.json`）。建议在根 `.gitignore` 加一行 `web/data/`（当前未加，因遵守"不改现有文件"约束；提交前请自行添加）。
-- **构建产物**：`web/bin/` 已被根 `.gitignore` 的 `bin/` 覆盖，自动忽略。
+- **应提交**：`features/web/` 下所有源码与静态资源（含 `config.yaml`、`metrics.yaml`、`static/`）。
+- **不应提交**：`features/web/data/*`（运行时生成：`snapshot.json`、`runtime.json`）与 `features/web/.runtime-*.tmp`（原子写残留临时文件）。根 `.gitignore` 已含 `features/web/data/` 与 `features/web/.runtime-*.tmp` 两条。
+- **构建产物**：`features/web/bin/` 已被根 `.gitignore` 的 `bin/` 覆盖，自动忽略。
 
 ---
 
@@ -478,15 +515,15 @@ systemctl stop catmonitor-web
 - 立即刷新：`POST /api/refresh` ok + snapshot 热刷新。
 - 趋势增长：连续刷新后历史点数递增。
 
-单元测试（`web/*_test.go`，`go test ./web/`）覆盖：
+单元测试（`features/web/*_test.go`，`go test ./features/web/`）覆盖：
 
 - 快照：`TestSnapshotRoundTrip`（原子读写）、`TestCollectOnceSmoke`（端到端采集→写盘）。
-- 历史：`TestTrackedSeriesInvariants`、`TestUpdateHistoryRingBuffer`、`TestUpdateHistoryV02Metrics`、`TestUpdateHistoryMissingMetric`。
+- 历史：`TestTrackedSeriesInvariants`（key 前缀契约 + v0.2.0 序列存在性守护）、`TestUpdateHistoryRingBuffer`、`TestUpdateHistoryV02Metrics`（覆盖全部 26 条序列的 mode/label 过滤规则）、`TestUpdateHistoryMissingMetric`。
 - 静态规格 stash：`TestFilterStatic`（`staticMetricNames` 过滤）、`TestStashStaticsPersistsAcrossCycles`（首周期后静态指标持续存活于 `specs`）。
-- 硬件身份采集（`hwinfo.go`）：`TestHWGpuInfo`、`TestHWNpuInfo`、`TestHWDeviceModel`、`TestHWNetInfo`、`TestHWDiskInfo`（各 mock 注入）、`TestCollectHWSpecsSmoke`（整体冒烟）、`TestParseNPUStatic`（npu-smi 解析）。
-- HTTP：`TestHTTPAPISmoke`（路由 + 端口回退 + snapshot 结构）。
+- 硬件身份采集（`hwinfo.go`）：`TestHWGpuInfo`、`TestHWNpuInfo`、`TestHWDeviceModel`、`TestHWOSInfo`、`TestHWNetInfo`、`TestHWDiskInfo`（各 mock 注入）、`TestCollectHWSpecsSmoke`（整体冒烟，仅接受 6 个已知身份指标名）、`TestParseNPUStatic`（npu-smi 解析）。
+- HTTP：`TestHTTPAPISmoke`（路由 + 端口回退 + snapshot 结构 + 6 采集器 + `system` 不在列表 + v0.2.0 序列在 `app.js` 内嵌）。
 
-运行：`make` 无 web 目标（不新增，避免改根 Makefile），直接 `go test ./web/`。
+运行：`make` 无 web 目标（不新增，避免改根 Makefile），直接 `go test ./features/web/`。Linux-only 测试（`collect_once_linux_test.go`、`http_linux_test.go`）用 `//go:build linux` 守护，因依赖 `/proc`、`/sys` 与真实采集器。
 
 ---
 
@@ -509,6 +546,7 @@ systemctl stop catmonitor-web
 | 解耦边界 | snapshot.json 文件 | HTTP 层只读文件，不调采集器；采集器唯一写者，原子写 |
 | 多页面 | SPA + hash 路由 | 单文件部署、无后端路由、无构建步骤 |
 | 扩展驱动 | `/api/collectors`（注册表）+ `trackedSeries`（趋势）+ `MANIFEST`（显示提示） | 新部件/指标自动出现，显示美化集中可选 |
+| 指标目录 | `metrics.Init(configs/metrics.yaml)` + `metrics.LoadModuleOverride(features/web/metrics.yaml)`，`collectOnce` 调 `metrics.Filter` | 复用主项目 `internal/metrics` 目录筛选机制：默认丢 Low 诊断指标、保留 High/Medium + static 身份；Web 模块可通过自身 `metrics.yaml` 覆盖优先级，无需改采集器代码 |
 | 静态规格 | 双路径：`hwinfo.go` 启动期一次性采跨部件身份 + `staticStash` 缓存 CPU/内存一次性指标 | 身份信息非时序，跑一次即可；stash 保证首周期后不丢失；不污染定时循环与注册表 |
 | 端口 | 9527（占用时自动 +1 递增） | 用户指定默认 9527；端口被占用自动探测下一可用端口，保证可拉起（见 §8.5） |
 | 前端打包 | `//go:embed` | 单二进制可移植，离线可用 |
@@ -516,4 +554,4 @@ systemctl stop catmonitor-web
 
 ---
 
-*文档版本：v1.2 · 对应代码状态：web/ 多页可扩展版（端口 9527 占用自动递增；静态规格双路径采集）*
+*文档版本：v1.3 · 对应代码状态：features/web/ 多页可扩展版 + 指标目录筛选 + v0.2.0 源层指标趋势（端口 9527 占用自动递增；静态规格双路径采集：含 os_info）*

@@ -15,6 +15,7 @@ type Scheduler struct {
 	logger     *slog.Logger
 	wg         sync.WaitGroup
 	cancel     context.CancelFunc
+	filter     func([]Metric) []Metric // optional metric-selection filter (DI to avoid import cycle)
 }
 
 // Storage is the interface for persisting collected metrics.
@@ -29,6 +30,13 @@ func NewScheduler(reg *Registry, storage Storage, logger *slog.Logger) *Schedule
 		storage:  storage,
 		logger:   logger,
 	}
+}
+
+// SetFilter installs a metric-selection filter applied to every batch before it
+// is stored. The filter is provided by the caller (e.g. metrics.Filter) so this
+// package need not import the metrics package (avoids an import cycle).
+func (s *Scheduler) SetFilter(f func([]Metric) []Metric) {
+	s.filter = f
 }
 
 // CollectorConfig holds per-collector configuration overrides.
@@ -95,6 +103,9 @@ func (s *Scheduler) collectAndStore(c Collector) {
 	if err != nil {
 		s.logger.Error("collection failed", "collector", c.Name(), "error", err)
 		return
+	}
+	if s.filter != nil {
+		metrics = s.filter(metrics)
 	}
 	if len(metrics) == 0 {
 		return

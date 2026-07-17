@@ -9,8 +9,8 @@ catmonitor
 *.out
 .idea/
 .vscode/
-web/data/
-web/.runtime-*.tmp
+features/web/data/
+features/web/.runtime-*.tmp
 
 # AGENTS.md is local-only, do not sync to remote
 AGENTS.md
