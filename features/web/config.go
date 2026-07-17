@@ -39,8 +39,8 @@ func DefaultConfig() *Config {
 			HistoryPoints:   60,
 		},
 		Storage: StorageCfg{
-			SnapshotPath: "web/data/snapshot.json",
-			RuntimePath:  "web/data/runtime.json",
+			SnapshotPath: "features/web/data/snapshot.json",
+			RuntimePath:  "features/web/data/runtime.json",
 		},
 	}
 }

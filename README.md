@@ -111,25 +111,25 @@ catmonitor status
 
 ## Web 仪表盘（v0.2.1 新增）
 
-CATMonitor 提供独立的 Web 仪表盘二进制 `catmonitor-web`，可视化单台服务器的健康度与各部件采集指标。Web 服务与采集守护进程/CLI 完全解耦，通过 `web/data/snapshot.json` 文件作为读写解耦边界，不修改主项目任何文件。
+CATMonitor 提供独立的 Web 仪表盘二进制 `catmonitor-web`，可视化单台服务器的健康度与各部件采集指标。Web 服务与采集守护进程/CLI 完全解耦，通过 `features/web/data/snapshot.json` 文件作为读写解耦边界，不修改主项目任何文件。
 
 ### 构建
 
 ```bash
 # 构建 Web 仪表盘二进制
-go build -o web/bin/catmonitor-web ./web
-# Windows: GOOS=windows go build -o web/bin/catmonitor-web.exe ./web
+go build -o features/web/bin/catmonitor-web ./features/web
+# Windows: GOOS=windows go build -o features/web/bin/catmonitor-web.exe ./features/web
 ```
 
 ### 运行
 
 ```bash
 # 启动 Web 仪表盘（默认监听 :9527，被占用时自动 +1 递增）
-./web/bin/catmonitor-web -config web/config.yaml
+./features/web/bin/catmonitor-web -config features/web/config.yaml
 # 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting" addr=...）
 ```
 
-> 工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `web/data/...`）。
+> 工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `features/web/data/...`）。
 
 ### 功能页面
 
@@ -148,7 +148,7 @@ go build -o web/bin/catmonitor-web ./web
 
 ### 扩展性
 
-新增部件采集器只需在 `web/main.go` 加一行 blank import `_ ".../internal/collectors/xxx"`，导航/概览卡/详情页自动出现；新增趋势 sparkline 在 `web/collector.go` 的 `trackedSeries` 加一行 spec。详见 [Web_SPEC.md](Web_SPEC.md)。
+新增部件采集器只需在 `features/web/main.go` 加一行 blank import `_ ".../internal/collectors/xxx"`，导航/概览卡/详情页自动出现；新增趋势 sparkline 在 `features/web/collector.go` 的 `trackedSeries` 加一行 spec。详见 [Web_SPEC.md](features/web/Web_SPEC.md)。
 
 ## 命令一览
 
@@ -255,6 +255,7 @@ CATMonitor/
 │   │   ├── gpu/             #   gpu.go (经 nvidia_smi 来源包采集, 双平台通用)
 │   │   ├── npu/             #   npu.go + npu_linux.go(74 指标 device 并行) + npu_other.go(!linux no-op)
 │   │   └── network/         #   network.go + network_linux.go + network_windows.go
+│   ├── metrics/             # 指标采集目录：默认目录 + 模块覆盖(merge) + Filter（默认目录见 configs/metrics.yaml）
 │   ├── source/              # 来源层：数据获取与解析抽象（14 包，v0.2.0 引入，v0.2.2 扩展至全 6 采集器）
 │   │   ├── source.go        #   通用 Source 接口
 │   │   ├── proc/            #   /proc 全量解析
@@ -270,21 +271,24 @@ CATMonitor/
 │   │   ├── npu_smi/         #   npu-smi -t 拓扑/带宽（v0.2.2 新增，服务 npu）
 │   │   ├── hccn_tool/       #   hccn_tool 带宽/速度/链路（v0.2.2 新增，服务 npu）
 │   │   └── nvidia_smi/      #   nvidia-smi 解析（v0.2.2 新增，服务 gpu）
-│   ├── health/              # 健康度评估模块（独立）
 │   ├── platform/            # 平台抽象层（路径默认值）
 │   ├── config/              # 配置管理
 │   └── storage/             # 数据存储（JSONL）
-├── web/                      # Web 仪表盘（v0.2.1 新增）
-│   ├── main.go              # 入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
-│   ├── collector.go         # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 静态规格 stash
-│   ├── snapshot.go          # Snapshot 结构 + 原子读写
-│   ├── hwinfo.go            # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info）
-│   ├── server.go            # HTTP 路由与处理函数
-│   ├── config.go            # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
-│   ├── config.yaml          # 默认配置
-│   ├── static/              # 前端资源（//go:embed 内嵌）
-│   └── data/                # 运行时数据（snapshot.json / runtime.json，git 忽略）
-├── configs/                 # 默认配置
+├── features/                # 特性层：基于采集基础能力构建的上层模块（health/web 等）
+│   ├── health/              #   健康度评估模块（消费 collector.Metric，不做底层采集）
+│   │   └── metrics.yaml     #     health 自己的指标目录（启动 health 时优先读取）
+│   └── web/                 #   Web 仪表盘（v0.2.1 新增，独立二进制）
+│       ├── main.go          #     入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
+│       ├── collector.go     #     DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 静态规格 stash
+│       ├── snapshot.go      #     Snapshot 结构 + 原子读写
+│       ├── hwinfo.go        #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info）
+│       ├── server.go        #     HTTP 路由与处理函数
+│       ├── config.go        #     配置结构 + YAML 加载 + runtime.json 运行时覆盖
+│       ├── config.yaml      #     默认配置
+│       ├── metrics.yaml     #     web 自己的指标目录（启动 web 时优先读取）
+│       ├── static/          #     前端资源（//go:embed 内嵌）
+│       └── data/            #     运行时数据（snapshot.json / runtime.json，git 忽略）
+├── configs/                 # 默认配置（catmonitor.yaml + metrics.yaml 合并指标目录）
 ├── docs/                    # 文档
 ├── tests/                   # 测试框架与数据
 └── scripts/                 # 安装脚本

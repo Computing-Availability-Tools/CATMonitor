@@ -42,48 +42,52 @@ func NewEvaluator(scheme WeightScheme) *Evaluator {
 func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 	byComponent := groupByComponent(metrics)
 
-	// Auto-detect server type: if GPU or NPU metrics are present, use accelerated scheme
+	// Auto-detect server type into a local scheme copy so Evaluate stays pure
+	// and idempotent: the daemon reuses one Evaluator across cycles, and
+	// mutating e.scheme would leave a stale accelerated scheme after the first
+	// detection even on later cpu-only batches.
+	scheme := e.scheme
 	if _, hasGPU := byComponent["gpu"]; hasGPU {
-		e.scheme = Accelerated8CardScheme
+		scheme = Accelerated8CardScheme
 	} else if _, hasNPU := byComponent["npu"]; hasNPU {
-		e.scheme = Accelerated8CardScheme
+		scheme = Accelerated8CardScheme
 	}
 
 	components := make(map[string]ComponentScore)
 	totalScore := 0
 
 	if cpuMetrics, ok := byComponent["cpu"]; ok {
-		score := evaluateCPU(cpuMetrics, e.scheme.CPU)
+		score := evaluateCPU(cpuMetrics, scheme.CPU)
 		components["cpu"] = score
 		totalScore += score.Score
 	}
 
 	if memMetrics, ok := byComponent["memory"]; ok {
-		score := evaluateMemory(memMetrics, e.scheme.Memory)
+		score := evaluateMemory(memMetrics, scheme.Memory)
 		components["memory"] = score
 		totalScore += score.Score
 	}
 
 	if diskMetrics, ok := byComponent["disk"]; ok {
-		score := evaluateDisk(diskMetrics, e.scheme.Disk)
+		score := evaluateDisk(diskMetrics, scheme.Disk)
 		components["disk"] = score
 		totalScore += score.Score
 	}
 
 	if gpuMetrics, ok := byComponent["gpu"]; ok {
-		score := evaluateGPU(gpuMetrics, e.scheme.GPU)
+		score := evaluateGPU(gpuMetrics, scheme.GPU)
 		components["gpu"] = score
 		totalScore += score.Score
 	}
 
 	if npuMetrics, ok := byComponent["npu"]; ok {
-		score := evaluateNPU(npuMetrics, e.scheme.GPU)
+		score := evaluateNPU(npuMetrics, scheme.GPU)
 		components["npu"] = score
 		totalScore += score.Score
 	}
 
 	serverType := "cpu_only"
-	if e.scheme.GPU > 0 {
+	if scheme.GPU > 0 {
 		if _, hasGPU := byComponent["gpu"]; hasGPU {
 			serverType = "accelerated"
 		} else if _, hasNPU := byComponent["npu"]; hasNPU {

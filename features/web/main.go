@@ -25,15 +25,27 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/memory"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/network"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
+
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
 )
 
 func main() {
-	configPath := flag.String("config", "web/config.yaml", "config file path")
+	configPath := flag.String("config", "features/web/config.yaml", "config file path")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
+
+	if err := metrics.Init("configs/metrics.yaml"); err != nil {
+		logger.Error("metrics catalog init failed", "error", err)
+		os.Exit(1)
+	}
+	// Web module reads its own metrics.yaml first (merged over the default).
+	if err := metrics.LoadModuleOverride("features/web/metrics.yaml"); err != nil {
+		logger.Error("web metrics override failed", "error", err)
+		os.Exit(1)
+	}
 
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {

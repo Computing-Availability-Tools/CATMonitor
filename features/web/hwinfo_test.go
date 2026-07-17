@@ -12,8 +12,8 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
 
-// testdata lives one level up from web/ (at repo root /tests/testdata).
-const hwTestdataSys = "../tests/testdata/sys"
+// testdata lives two levels up from features/web/ (at repo root /tests/testdata).
+const hwTestdataSys = "../../tests/testdata/sys"
 
 func readHWMock(t *testing.T, path string) string {
 	t.Helper()
@@ -27,7 +27,7 @@ func readHWMock(t *testing.T, path string) string {
 func newTestHW() *hwCollector { return newHWCollector() }
 
 func TestParseNPUStatic(t *testing.T) {
-	out := readHWMock(t, "../tests/testdata/npu-smi-output.txt")
+	out := readHWMock(t, "../../tests/testdata/npu-smi-output.txt")
 	var data []string
 	for _, l := range strings.Split(out, "\n") {
 		if isNPUDataLine(l) {
@@ -60,7 +60,7 @@ func TestHWGpuInfo(t *testing.T) {
 
 func TestHWNpuInfo(t *testing.T) {
 	c := newTestHW()
-	c.setNpuMock(readHWMock(t, "../tests/testdata/npu-smi-output.txt"))
+	c.setNpuMock(readHWMock(t, "../../tests/testdata/npu-smi-output.txt"))
 	m := c.npuInfo(time.Now())
 	if len(m) != 2 {
 		t.Fatalf("expected 2 npu_info, got %d", len(m))
@@ -74,7 +74,7 @@ func TestHWNpuInfo(t *testing.T) {
 }
 
 func TestHWDeviceModel(t *testing.T) {
-	dmidecode.SetSystemMock(readHWMock(t, "../tests/testdata/dmidecode-type1.txt"))
+	dmidecode.SetSystemMock(readHWMock(t, "../../tests/testdata/dmidecode-type1.txt"))
 	c := newTestHW()
 	m := c.deviceModel(time.Now())
 	if m == nil {
@@ -107,7 +107,7 @@ func TestHWDiskInfo(t *testing.T) {
 	sys.SetRoot(hwTestdataSys)
 	defer sys.SetRoot("/sys")
 	smartctl.SetInfoFetcher(func(dev string) (string, error) {
-		return readHWMock(t, "../tests/testdata/smartctl-info-output.txt"), nil
+		return readHWMock(t, "../../tests/testdata/smartctl-info-output.txt"), nil
 	})
 	defer smartctl.ResetFetcher()
 	c := newTestHW()
@@ -135,17 +135,36 @@ func TestHWDiskInfo(t *testing.T) {
 }
 
 // TestCollectHWSpecsSmoke runs the real entry point on this host. It must not
-// panic and must only emit the 5 known identity metric names (or none when the
+// panic and must only emit the 6 known identity metric names (or none when the
 // hardware/tools are absent).
 func TestCollectHWSpecsSmoke(t *testing.T) {
 	m := collectHWSpecs()
 	known := map[string]bool{
-		"device_model": true, "gpu_info": true, "npu_info": true,
+		"device_model": true, "os_info": true, "gpu_info": true, "npu_info": true,
 		"disk_info": true, "net_info": true,
 	}
 	for _, mm := range m {
 		if !known[mm.Name] {
 			t.Errorf("unexpected metric %q from collectHWSpecs", mm.Name)
+		}
+	}
+}
+
+// TestHWOSInfo verifies os_info is collected on Linux (PRETTY_NAME from
+// /etc/os-release, kernel from `uname -r`); skips gracefully when /etc/os-release
+// is absent (e.g. minimal containers).
+func TestHWOSInfo(t *testing.T) {
+	c := newHWCollector()
+	m := c.osInfo(time.Now())
+	if m == nil {
+		t.Skip("os_info unavailable (no /etc/os-release and uname absent)")
+	}
+	if m.Component != "system" || m.Name != "os_info" {
+		t.Fatalf("got component=%s name=%s, want system/os_info", m.Component, m.Name)
+	}
+	if lb := m.Labels; lb != nil {
+		if lb["pretty_name"] == "" {
+			t.Error("pretty_name label empty")
 		}
 	}
 }

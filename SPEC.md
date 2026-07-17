@@ -102,6 +102,8 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 | 60-74 | Warning | 存在风险，需检查 |
 | 0-59 | Critical | 严重问题，需立即处理 |
 
+> 健康度模块位于特性层 `features/health/`（消费 `collector.Metric`，不做底层采集）。扣分规则按 `indi_list` 的 High/Medium 指标设计，详见 [`features/health/HEALTH_SPEC.md`](features/health/HEALTH_SPEC.md)。
+
 ---
 
 ## 3. 指标采集需求

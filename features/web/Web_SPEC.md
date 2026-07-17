@@ -2,7 +2,7 @@
 
 > **文档定位**：本文档是 CATMonitor Web 仪表盘的**唯一设计与规格文档**，描述当前实现的真实状态，并明确为未来"新增部件 / 新增采集指标"预留的扩展点。后续开发以本文档为准。
 >
-> **对应代码**：`web/` 目录（与主项目同一 Go module，不新增 go.mod）。
+> **对应代码**：`features/web/` 目录（与主项目同一 Go module，不新增 go.mod）。
 > **不改动主项目任何现有文件**：与 `cmd/catmonitor`、`internal/collectors`、`internal/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
 
 ---
@@ -20,7 +20,7 @@
 
 ### 1.2 架构总览
 
-单一 Go 二进制 `catmonitor-web`，内含两个角色，以 `web/data/snapshot.json` 为解耦边界：
+单一 Go 二进制 `catmonitor-web`，内含两个角色，以 `features/web/data/snapshot.json` 为解耦边界：
 
 ```
 ┌──────────────────── catmonitor-web (单二进制) ────────────────────┐
@@ -56,7 +56,7 @@
 ## 2. 目录结构
 
 ```
-web/
+features/web/
 ├── main.go            # 入口：blank-import 采集器 + 起采集 goroutine + HTTP server + 信号处理
 ├── static.go          # //go:embed static，内嵌前端资源
 ├── config.go          # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
@@ -74,13 +74,13 @@ web/
     └── runtime.json   # 界面调整的刷新间隔持久化
 ```
 
-> `web/data/` 由程序运行时创建（`os.MkdirAll`），无需预先存在；git 不跟踪空目录，运行时文件应被 gitignore（见 §10）。
+> `features/web/data/` 由程序运行时创建（`os.MkdirAll`），无需预先存在；git 不跟踪空目录，运行时文件应被 gitignore（见 §10）。
 
 ---
 
 ## 3. 配置设计
 
-### 3.1 配置文件 `web/config.yaml`
+### 3.1 配置文件 `features/web/config.yaml`
 
 ```yaml
 server:
@@ -90,16 +90,16 @@ collector:
   history_points: 60           # 环形历史保留的采样点数
   # enabled_components: []     # 空 = 采集全部已注册部件；指定则只采集列出的部件
 storage:
-  snapshot_path: web/data/snapshot.json   # 快照文件
-  runtime_path:  web/data/runtime.json   # 运行时覆盖持久化
+  snapshot_path: features/web/data/snapshot.json   # 快照文件
+  runtime_path:  features/web/data/runtime.json   # 运行时覆盖持久化
 ```
 
 ### 3.2 配置加载优先级（`config.go`）
 
-1. `DefaultConfig()` 提供默认值（addr `:9527`，5s，60 点，全部件启用，相对路径 `web/data/...`）。
+1. `DefaultConfig()` 提供默认值（addr `:9527`，5s，60 点，全部件启用，相对路径 `features/web/data/...`）。
 2. 若配置文件存在，YAML 覆盖默认值；**文件不存在则静默用默认值**（与主项目 `internal/config` 行为一致，不报错）。
 3. 若 `runtime.json` 存在，其 `refresh_interval_ms` 再覆盖采集周期（界面调整持久化，重启后保留）。
-4. 配置文件路径由 `-config` 命令行 flag 指定，默认 `web/config.yaml`。
+4. 配置文件路径由 `-config` 命令行 flag 指定，默认 `features/web/config.yaml`。
 
 > 端口占用回退：启动时 `net.Listen` 探测 `server.addr`，若返回 `EADDRINUSE`（端口被占用）则端口 +1 重试（`:9527`→`:9528`→`:9529`…），直至获取可用端口，实际绑定地址回写 `cfg.Server.Addr` 并打印 warn 日志。非 `EADDRINUSE` 错误（如权限不足）直接失败退出。详见 §8.5。
 
@@ -350,24 +350,25 @@ const MANIFEST = {
 ### 8.1 构建
 
 ```bash
-go build -o web/bin/catmonitor-web ./web     # web/bin/ 已被根 .gitignore 的 bin/ 覆盖
+go build -o features/web/bin/catmonitor-web ./features/web
+     # features/web/bin/ 已被根 .gitignore 的 bin/ 覆盖
 ```
-Windows：`GOOS=windows go build -o web/bin/catmonitor-web.exe ./web`（无 CGo，纯 syscall）。
+Windows：`GOOS=windows go build -o features/web/bin/catmonitor-web.exe ./features/web`（无 CGo，纯 syscall）。
 
 ### 8.2 运行
 
 ```bash
-./web/bin/catmonitor-web -config web/config.yaml    # 默认监听 :9527，被占用则自动递增
+./features/web/bin/catmonitor-web -config features/web/config.yaml    # 默认监听 :9527，被占用则自动递增
 # 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting" addr=...）
 ```
-工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `web/data/...`）；或改用绝对路径配置。
+工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `features/web/data/...`）；或改用绝对路径配置。
 
 ### 8.3 systemd 常驻（推荐）
 
 ```bash
 systemd-run --unit=catmonitor-web \
   --working-directory=<repo-root> \
-  <repo-root>/web/bin/catmonitor-web -config <repo-root>/web/config.yaml
+  <repo-root>/features/web/bin/catmonitor-web -config <repo-root>/features/web/config.yaml
 
 systemctl status catmonitor-web
 journalctl -u catmonitor-web -f
@@ -402,7 +403,7 @@ systemctl stop catmonitor-web
 
 | 步骤 | 是否必须 | 效果 |
 |------|:--------:|------|
-| 在 `web/main.go` 加 blank import `_ ".../internal/collectors/fpga"` | 必须 | 采集器被注册，`/api/collectors` 自动含 fpga |
+| 在 `features/web/main.go` 加 blank import `_ ".../internal/collectors/fpga"` | 必须 | 采集器被注册，`/api/collectors` 自动含 fpga |
 | 前端导航 | **自动** | 出现 FPGA 导航项与概览芯片 |
 | 概览卡片 | **自动** | 出现 FPGA 概览卡（通用：取前 4 条指标，无头条 sparkline） |
 | 详情页 `#/fpga` | **自动** | 列出 fpga 全部指标；若有 `<component>_*` 历史序列则渲染趋势 |
@@ -423,7 +424,7 @@ systemctl stop catmonitor-web
 
 ### 9.3 场景 C：新增一条趋势序列
 
-在 `web/collector.go` 的 `trackedSeries` 末尾加一行：
+在 `features/web/collector.go` 的 `trackedSeries` 末尾加一行：
 ```go
 {component: "fpga", name: "temperature", key: "fpga_temperature", mode: 0},
 ```
@@ -439,16 +440,16 @@ systemctl stop catmonitor-web
 
 | 扩展需求 | 改动位置 | 自动部分 |
 |----------|----------|----------|
-| 新部件采集器 | `web/main.go`（blank import） | 导航/概览卡/详情页 |
-| 部件显示名/关键指标 | `web/static/app.js` MANIFEST | — |
+| 新部件采集器 | `features/web/main.go`（blank import） | 导航/概览卡/详情页 |
+| 部件显示名/关键指标 | `features/web/static/app.js` MANIFEST | — |
 | 新指标展示 | （采集器侧，无需改 web） | 详情页全部指标表 |
-| 概览卡纳入新指标 | `web/static/app.js` MANIFEST.key | — |
-| 新趋势 sparkline | `web/collector.go` trackedSeries | 详情页趋势面板 |
-| 趋势显示名 | `web/static/app.js` SERIES_LABELS | — |
+| 概览卡纳入新指标 | `features/web/static/app.js` MANIFEST.key | — |
+| 新趋势 sparkline | `features/web/collector.go` trackedSeries | 详情页趋势面板 |
+| 趋势显示名 | `features/web/static/app.js` SERIES_LABELS | — |
 | 新静态身份指标（采集器侧） | 加入 `staticMetricNames`（`collector.go`）即被 stash 进 `specs` | specs modal 通用表自动渲染 |
 | 新静态身份指标（web 侧 hwinfo） | `hwinfo.go` 加采集方法 + `SPEC_DEFS`/`LABEL_NAMES` 加显示名 | specs modal 按 component 分组自动出现 |
-| 导航排序 | `web/static/app.js` NAV_ORDER | 未知部件自动排末尾 |
-| 历史深度 | `web/config.yaml` history_points | — |
+| 导航排序 | `features/web/static/app.js` NAV_ORDER | 未知部件自动排末尾 |
+| 历史深度 | `features/web/config.yaml` history_points | — |
 
 ### 9.6 兼容性保证
 
@@ -459,9 +460,9 @@ systemctl stop catmonitor-web
 
 ## 10. Git 与运行时文件
 
-- **应提交**：`web/` 下所有源码与静态资源（见上传清单）。
-- **不应提交**：`web/data/*`（运行时生成：`snapshot.json`、`runtime.json`）。建议在根 `.gitignore` 加一行 `web/data/`（当前未加，因遵守"不改现有文件"约束；提交前请自行添加）。
-- **构建产物**：`web/bin/` 已被根 `.gitignore` 的 `bin/` 覆盖，自动忽略。
+- **应提交**：`features/web/` 下所有源码与静态资源（见上传清单）。
+- **不应提交**：`features/web/data/*`（运行时生成：`snapshot.json`、`runtime.json`）。建议在根 `.gitignore` 加一行 `features/web/data/`（当前未加，因遵守"不改现有文件"约束；提交前请自行添加）。
+- **构建产物**：`features/web/bin/` 已被根 `.gitignore` 的 `bin/` 覆盖，自动忽略。
 
 ---
 
@@ -478,7 +479,7 @@ systemctl stop catmonitor-web
 - 立即刷新：`POST /api/refresh` ok + snapshot 热刷新。
 - 趋势增长：连续刷新后历史点数递增。
 
-单元测试（`web/*_test.go`，`go test ./web/`）覆盖：
+单元测试（`features/web/*_test.go`，`go test ./features/web/`）覆盖：
 
 - 快照：`TestSnapshotRoundTrip`（原子读写）、`TestCollectOnceSmoke`（端到端采集→写盘）。
 - 历史：`TestTrackedSeriesInvariants`、`TestUpdateHistoryRingBuffer`、`TestUpdateHistoryV02Metrics`、`TestUpdateHistoryMissingMetric`。
@@ -486,7 +487,7 @@ systemctl stop catmonitor-web
 - 硬件身份采集（`hwinfo.go`）：`TestHWGpuInfo`、`TestHWNpuInfo`、`TestHWDeviceModel`、`TestHWNetInfo`、`TestHWDiskInfo`（各 mock 注入）、`TestCollectHWSpecsSmoke`（整体冒烟）、`TestParseNPUStatic`（npu-smi 解析）。
 - HTTP：`TestHTTPAPISmoke`（路由 + 端口回退 + snapshot 结构）。
 
-运行：`make` 无 web 目标（不新增，避免改根 Makefile），直接 `go test ./web/`。
+运行：`make` 无 web 目标（不新增，避免改根 Makefile），直接 `go test ./features/web/`。
 
 ---
 
@@ -516,4 +517,4 @@ systemctl stop catmonitor-web
 
 ---
 
-*文档版本：v1.2 · 对应代码状态：web/ 多页可扩展版（端口 9527 占用自动递增；静态规格双路径采集）*
+*文档版本：v1.2 · 对应代码状态：features/web/ 多页可扩展版（端口 9527 占用自动递增；静态规格双路径采集）*
