@@ -46,6 +46,11 @@ func main() {
 		logger.Error("web metrics override failed", "error", err)
 		os.Exit(1)
 	}
+	// dfee module needs the 8 raw CPU time metrics (Low in default catalog)
+	// for its utilization derivation; override them to Medium.
+	if err := metrics.LoadModuleOverride("features/dfee/metrics.yaml"); err != nil {
+		logger.Error("dfee metrics override failed", "error", err)
+	}
 
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {

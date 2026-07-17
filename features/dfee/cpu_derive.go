@@ -76,8 +76,8 @@ type derivedMetric struct {
 }
 
 // deriveCPUUtil computes 7 utilization percentages from the delta between
-// current and previous CPU time snapshots. Returns empty slice if prev is
-// invalid or total delta is zero.
+// current and previous CPU time snapshots. Returns nil when total delta is
+// zero (the handler caches the last non-nil result to avoid chart gaps).
 func deriveCPUUtil(prev, curr cpuTimeSnapshot) []derivedMetric {
 	if !prev.valid || !curr.valid {
 		return nil

@@ -1,0 +1,52 @@
+# dfee module override: metrics needed by dfee that are marked Low in the
+# default catalog and would be filtered out before snapshot.json is written.
+# This override raises them to Medium so they survive the filter.
+components:
+  - component: cpu
+    metrics:
+      - name: user_time
+        priority: Medium
+      - name: nice_time
+        priority: Medium
+      - name: system_time
+        priority: Medium
+      - name: idle_time
+        priority: Medium
+      - name: iowait_time
+        priority: Medium
+      - name: irq_time
+        priority: Medium
+      - name: softirq_time
+        priority: Medium
+      - name: steal_time
+        priority: Medium
+  - component: npu
+    metrics:
+      - name: acg_count
+        priority: Medium
+      - name: ntc1_temp
+        priority: Medium
+      - name: ntc2_temp
+        priority: Medium
+      - name: ntc3_temp
+        priority: Medium
+      - name: ntc4_temp
+        priority: Medium
+      - name: aicore_rated_freq
+        priority: Medium
+      - name: vdec_util
+        priority: Medium
+      - name: vpc_util
+        priority: Medium
+      - name: venc_util
+        priority: Medium
+      - name: jpege_util
+        priority: Medium
+      - name: jpegd_util
+        priority: Medium
+      - name: llc_write_hit_rate
+        priority: Medium
+      - name: llc_read_hit_rate
+        priority: Medium
+      - name: llc_throughput
+        priority: Medium

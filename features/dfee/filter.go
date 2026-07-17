@@ -145,42 +145,43 @@ type chartGroup struct {
 	metricNames []string
 	labelKey    string // optional: filter metrics by this label key
 	labelVal    string // optional: match this label value (only when labelKey != "")
+	priority    string // "high" / "medium" / "low" / "" (non-NPU)
 }
 
 // chartGroups defines the charts. Mixed-unit sub-sections are split into
 // separate charts by unit so every chart has a single Y-axis unit.
 var chartGroups = []chartGroup{
 	// NPU (9 charts, 46 metrics)
-	{"npu_frequency", "NPU 频率", "npu", []string{"aicpu_freq", "aicore_rated_freq", "aicore_freq", "ctrlcpu_freq", "vector_core_freq", "hbm_freq", "ddr_freq"}, "", ""},
-	{"npu_utilization", "NPU 利用率", "npu", []string{"utilization", "memory_usage", "npu_util", "aicpu_util", "ctrlcpu_util", "vector_core_util", "hbm_bandwidth_util", "ddr_util", "ddr_bandwidth_util", "vdec_util", "vpc_util", "venc_util", "jpege_util", "jpegd_util"}, "", ""},
-	{"npu_temperature", "NPU 温度", "npu", []string{"temperature", "hbm_temp", "cluster_temp", "peri_temp", "aicore0_temp", "aicore1_temp", "ntc1_temp", "ntc2_temp", "ntc3_temp", "ntc4_temp", "soc_max_temp", "fp_max_temp", "ndie_temp", "hbm_max_temp"}, "", ""},
-	{"npu_power", "NPU 功耗", "npu", []string{"power_draw"}, "", ""},
-	{"npu_voltage", "NPU 电压", "npu", []string{"voltage", "aicore_voltage", "hybrid_voltage", "cpu_voltage", "ddr_voltage"}, "", ""},
-	{"npu_acg", "NPU 调频计数", "npu", []string{"acg_count"}, "", ""},
-	{"npu_fan", "NPU 风扇", "npu", []string{"fan_speed"}, "", ""},
-	{"npu_llc_hit_rate", "NPU LLC 命中率", "npu", []string{"llc_write_hit_rate", "llc_read_hit_rate"}, "", ""},
-	{"npu_llc_throughput", "NPU LLC 吞吐量", "npu", []string{"llc_throughput"}, "", ""},
+	{"npu_frequency", "NPU 频率", "npu", []string{"aicpu_freq", "aicore_rated_freq", "aicore_freq", "ctrlcpu_freq", "vector_core_freq", "hbm_freq", "ddr_freq"}, "", "", "medium"},
+	{"npu_utilization", "NPU 利用率", "npu", []string{"utilization", "memory_usage", "npu_util", "aicpu_util", "ctrlcpu_util", "vector_core_util", "hbm_bandwidth_util", "ddr_util", "ddr_bandwidth_util", "vdec_util", "vpc_util", "venc_util", "jpege_util", "jpegd_util"}, "", "", "high"},
+	{"npu_temperature", "NPU 温度", "npu", []string{"temperature", "hbm_temp", "cluster_temp", "peri_temp", "aicore0_temp", "aicore1_temp", "ntc1_temp", "ntc2_temp", "ntc3_temp", "ntc4_temp", "soc_max_temp", "fp_max_temp", "ndie_temp", "hbm_max_temp"}, "", "", "high"},
+	{"npu_power", "NPU 功耗", "npu", []string{"power_draw"}, "", "", "high"},
+	{"npu_voltage", "NPU 电压", "npu", []string{"voltage", "aicore_voltage", "hybrid_voltage", "cpu_voltage", "ddr_voltage"}, "", "", "medium"},
+	{"npu_acg", "NPU 调频计数", "npu", []string{"acg_count"}, "", "", "low"},
+	{"npu_fan", "NPU 风扇", "npu", []string{"fan_speed"}, "", "", "low"},
+	{"npu_llc_hit_rate", "NPU LLC 命中率", "npu", []string{"llc_write_hit_rate", "llc_read_hit_rate"}, "", "", "medium"},
+	{"npu_llc_throughput", "NPU LLC 吞吐量", "npu", []string{"llc_throughput"}, "", "", "medium"},
 	// CPU (3 charts, 7 derived + 3 raw)
-	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", ""},
-	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", ""},
-	{"cpu_power", "CPU 功耗", "cpu", []string{"power"}, "", ""},
+	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", ""},
+	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", ""},
+	{"cpu_power", "CPU 功耗", "cpu", []string{"power"}, "", "", ""},
 	// Memory (2 charts, 7 metrics)
-	{"memory_pool", "内存池", "memory", []string{"usage_detail"}, "", ""},
-	{"memory_swap", "Swap", "memory", []string{"swap_detail"}, "", ""},
+	{"memory_pool", "内存池", "memory", []string{"usage_detail"}, "", "", ""},
+	{"memory_swap", "Swap", "memory", []string{"swap_detail"}, "", "", ""},
 	// Disk (6 charts, 4 metrics split by direction)
-	{"disk_throughput_read", "磁盘吞吐量(读)", "disk", []string{"throughput"}, "direction", "read"},
-	{"disk_throughput_write", "磁盘吞吐量(写)", "disk", []string{"throughput"}, "direction", "write"},
-	{"disk_iops_read", "IOPS(读)", "disk", []string{"iops"}, "direction", "read"},
-	{"disk_iops_write", "IOPS(写)", "disk", []string{"iops"}, "direction", "write"},
-	{"disk_read_latency", "磁盘读耗时", "disk", []string{"read_latency"}, "device", ""},
-	{"disk_write_latency", "磁盘写耗时", "disk", []string{"write_latency"}, "device", ""},
-	// Network (2 charts)
-	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "", ""},
-	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "", ""},
+	{"disk_throughput_read", "磁盘吞吐量(读)", "disk", []string{"throughput"}, "direction", "read", ""},
+	{"disk_throughput_write", "磁盘吞吐量(写)", "disk", []string{"throughput"}, "direction", "write", ""},
+	{"disk_iops_read", "IOPS(读)", "disk", []string{"iops"}, "direction", "read", ""},
+	{"disk_iops_write", "IOPS(写)", "disk", []string{"iops"}, "direction", "write", ""},
+	{"disk_read_latency", "磁盘读耗时", "disk", []string{"read_latency"}, "device", "", ""},
+	{"disk_write_latency", "磁盘写耗时", "disk", []string{"write_latency"}, "device", "", ""},
+	// Network (2 charts, labelKey=interface triggers simplified label)
+	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", ""},
+	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", ""},
 	// Chassis (3 charts, split by unit)
-	{"chassis_power", "机箱功耗", "chassis", []string{"power", "fan_power"}, "", ""},
-	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", ""},
-	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", ""},
+	{"chassis_power", "机箱功耗", "chassis", []string{"power", "fan_power"}, "", "", ""},
+	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", "", ""},
+	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", ""},
 }
 
 // ---- API response types ----
@@ -193,10 +194,11 @@ type seriesItem struct {
 }
 
 type chartData struct {
-	ID     string       `json:"id"`
-	Title  string       `json:"title"`
-	YUnit  string       `json:"y_unit"`
-	Series []seriesItem `json:"series"`
+	ID       string       `json:"id"`
+	Title    string       `json:"title"`
+	YUnit    string       `json:"y_unit"`
+	Priority string       `json:"priority,omitempty"`
+	Series   []seriesItem `json:"series"`
 }
 
 type EfficiencyResponse struct {
@@ -279,42 +281,42 @@ func seriesID(m collector.Metric) string {
 // back to the raw name.
 var metricDisplayNames = map[string]string{
 	// NPU frequency
-	"aicpu_freq": "AICPU频率", "aicore_rated_freq": "AICore额定频率",
-	"aicore_freq": "AICore频率", "ctrlcpu_freq": "CTRLCPU频率",
-	"vector_core_freq": "Vector Core频率", "hbm_freq": "HBM频率", "ddr_freq": "DDR频率",
+	"npu:aicpu_freq": "AICPU频率", "npu:aicore_rated_freq": "AICore额定频率",
+	"npu:aicore_freq": "AICore频率", "npu:ctrlcpu_freq": "CTRLCPU频率",
+	"npu:vector_core_freq": "Vector Core频率", "npu:hbm_freq": "HBM频率", "npu:ddr_freq": "DDR频率",
 	// NPU utilization
-	"utilization": "AICore利用率", "memory_usage": "HBM利用率",
-	"npu_util": "NPU利用率", "aicpu_util": "AICPU利用率",
-	"ctrlcpu_util": "CTRLCPU利用率", "vector_core_util": "Vector Core利用率",
-	"hbm_bandwidth_util": "HBM带宽利用率", "ddr_util": "DDR利用率",
-	"ddr_bandwidth_util": "DDR带宽利用率", "vdec_util": "VDEC利用率",
-	"vpc_util": "VPC利用率", "venc_util": "VENC利用率",
-	"jpege_util": "JPEGE利用率", "jpegd_util": "JPEGD利用率",
+	"npu:utilization": "AICore利用率", "npu:memory_usage": "HBM利用率",
+	"npu:npu_util": "NPU利用率", "npu:aicpu_util": "AICPU利用率",
+	"npu:ctrlcpu_util": "CTRLCPU利用率", "npu:vector_core_util": "Vector Core利用率",
+	"npu:hbm_bandwidth_util": "HBM带宽利用率", "npu:ddr_util": "DDR利用率",
+	"npu:ddr_bandwidth_util": "DDR带宽利用率", "npu:vdec_util": "VDEC利用率",
+	"npu:vpc_util": "VPC利用率", "npu:venc_util": "VENC利用率",
+	"npu:jpege_util": "JPEGE利用率", "npu:jpegd_util": "JPEGD利用率",
 	// NPU temperature
-	"temperature": "NPU温度", "hbm_temp": "HBM温度", "cluster_temp": "CLUSTER温度",
-	"peri_temp": "PERI温度", "aicore0_temp": "AICORE0温度", "aicore1_temp": "AICORE1温度",
-	"ntc1_temp": "热敏电阻1", "ntc2_temp": "热敏电阻2", "ntc3_temp": "热敏电阻3", "ntc4_temp": "热敏电阻4",
-	"soc_max_temp": "SOC最高温", "fp_max_temp": "光模块最高温", "ndie_temp": "NDIE温度", "hbm_max_temp": "HBM最高温",
+	"npu:temperature": "NPU温度", "npu:hbm_temp": "HBM温度", "npu:cluster_temp": "CLUSTER温度",
+	"npu:peri_temp": "PERI温度", "npu:aicore0_temp": "AICORE0温度", "npu:aicore1_temp": "AICORE1温度",
+	"npu:ntc1_temp": "热敏电阻1", "npu:ntc2_temp": "热敏电阻2", "npu:ntc3_temp": "热敏电阻3", "npu:ntc4_temp": "热敏电阻4",
+	"npu:soc_max_temp": "SOC最高温", "npu:fp_max_temp": "光模块最高温", "npu:ndie_temp": "NDIE温度", "npu:hbm_max_temp": "HBM最高温",
 	// NPU voltage & power
-	"power_draw": "NPU功耗", "voltage": "NPU电压", "aicore_voltage": "AICORE电压",
-	"hybrid_voltage": "HYBRID电压", "cpu_voltage": "CPU电压", "ddr_voltage": "DDR电压", "acg_count": "ACG调频计数",
+	"npu:power_draw": "NPU功耗", "npu:voltage": "NPU电压", "npu:aicore_voltage": "AICORE电压",
+	"npu:hybrid_voltage": "HYBRID电压", "npu:cpu_voltage": "CPU电压", "npu:ddr_voltage": "DDR电压", "npu:acg_count": "ACG调频计数",
 	// NPU fan
-	"fan_speed": "风扇转速",
+	"npu:fan_speed": "风扇转速",
 	// NPU LLC
-	"llc_write_hit_rate": "LLC写命中率", "llc_read_hit_rate": "LLC读命中率", "llc_throughput": "LLC吞吐量",
+	"npu:llc_write_hit_rate": "LLC写命中率", "npu:llc_read_hit_rate": "LLC读命中率", "npu:llc_throughput": "LLC吞吐量",
 	// CPU derived
-	"idle_util": "空闲利用率", "non_idle_util": "非空闲利用率", "user_util": "用户空间利用率",
-	"system_util": "系统进程利用率", "iowait_util": "IO等待", "irq_util": "中断", "steal_util": "虚拟机利用率",
+	"cpu:idle_util": "空闲", "cpu:non_idle_util": "非空闲", "cpu:user_util": "用户态",
+	"cpu:system_util": "内核态", "cpu:iowait_util": "IO等待", "cpu:irq_util": "中断", "cpu:steal_util": "Steal",
 	// CPU raw
-	"load_average": "平均负载", "power": "CPU功耗",
+	"cpu:load_average": "平均负载", "cpu:power": "CPU功耗",
 	// Memory
-	"usage_detail": "内存", "swap_detail": "Swap",
+	"memory:usage_detail": "内存", "memory:swap_detail": "Swap",
 	// Disk
-	"throughput": "吞吐量", "read_latency": "读耗时", "write_latency": "写耗时", "iops": "IOPS",
+	"disk:throughput": "吞吐量", "disk:read_latency": "读耗时", "disk:write_latency": "写耗时", "disk:iops": "IOPS",
 	// Network
-	"rx_bytes_total": "接收字节", "tx_bytes_total": "发送字节",
+	"network:rx_bytes_total": "接收字节", "network:tx_bytes_total": "发送字节",
 	// Chassis
-	"inlet_temp": "进风口温度", "outlet_temp": "出风口温度", "fan_power": "风扇功耗",
+	"chassis:power": "整机功耗", "chassis:inlet_temp": "进风口温度", "chassis:outlet_temp": "出风口温度", "chassis:fan_power": "风扇功耗",
 }
 
 // seriesLabel generates a human-readable label for a metric instance.
@@ -333,7 +335,7 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 		}
 	}
 
-	display := metricDisplayNames[m.Name]
+	display := metricDisplayNames[m.Component+":"+m.Name]
 	if display == "" {
 		display = m.Name
 	}
@@ -387,9 +389,10 @@ func groupForChart(metrics []collector.Metric, cg chartGroup) []seriesItem {
 			Unit:  m.Unit,
 		})
 	}
-	// Sort by ID for stable ordering across polls.
+	// Sort by ID using natural sort (numbers compared by value, not ASCII)
+	// so load_average:1m < load_average:5m < load_average:15m.
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].ID < items[j].ID
+		return naturalLess(items[i].ID, items[j].ID)
 	})
 	return items
 }
@@ -422,4 +425,46 @@ func formatValue(v float64) string {
 		return strconv.FormatInt(int64(v), 10)
 	}
 	return fmt.Sprintf("%.2f", v)
+}
+
+// naturalLess compares two strings using natural sort order: digit runs are
+// compared by numeric value rather than byte-by-byte. This ensures
+// "load_average:1m" < "load_average:5m" < "load_average:15m" instead of the
+// ASCII order "15m" < "1m" < "5m".
+func naturalLess(a, b string) bool {
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		ai, bi := a[i], b[j]
+		if isDigit(ai) && isDigit(bi) {
+			// Extract and compare numeric runs.
+			startI, startJ := i, j
+			for i < len(a) && isDigit(a[i]) {
+				i++
+			}
+			for j < len(b) && isDigit(b[j]) {
+				j++
+			}
+			numA := a[startI:i]
+			numB := b[startJ:j]
+			// Compare by length first (shorter number is smaller when
+			// no leading zeros), then by value.
+			if len(numA) != len(numB) {
+				return len(numA) < len(numB)
+			}
+			if numA != numB {
+				return numA < numB
+			}
+			continue
+		}
+		if ai != bi {
+			return ai < bi
+		}
+		i++
+		j++
+	}
+	return len(a) < len(b)
+}
+
+func isDigit(b byte) bool {
+	return b >= '0' && b <= '9'
 }

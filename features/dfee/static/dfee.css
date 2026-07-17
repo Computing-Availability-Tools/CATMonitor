@@ -87,6 +87,14 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   font-weight: 400;
   font-size: 12px;
 }
+.priority-filter { display: flex; gap: 4px; margin-left: auto; }
+.prio-btn {
+  padding: 2px 10px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--card); cursor: pointer; font-size: 12px;
+  color: var(--muted);
+}
+.prio-btn:hover { background: #f0f2f5; }
+.prio-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ---- chart grid ---- */
 .chart-grid {

@@ -18,7 +18,8 @@ type Handler struct {
 	mu           sync.Mutex
 	prevCPU      cpuTimeSnapshot
 	hasPrev      bool
-	prevNet      map[string]float64 // seriesID → previous cumulative bytes
+	lastDerived  []derivedMetric // cached last non-zero CPU utilization values
+	prevNet      map[string]float64
 	hasPrevNet   bool
 }
 
@@ -67,13 +68,23 @@ func (h *Handler) handleAPI(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	prev := h.prevCPU
 	hasPrev := h.hasPrev
+	cached := h.lastDerived
 	h.prevCPU = currCPU
 	h.hasPrev = hasCPU
 	h.mu.Unlock()
 
 	if hasCPU && hasPrev {
 		derived := deriveCPUUtil(prev, currCPU)
-		metrics = append(metrics, derivedToMetrics(derived, snap.Timestamp)...)
+		if derived != nil {
+			// Cache non-zero result for reuse when total delta = 0.
+			h.mu.Lock()
+			h.lastDerived = derived
+			h.mu.Unlock()
+			metrics = append(metrics, derivedToMetrics(derived, snap.Timestamp)...)
+		} else if cached != nil {
+			// total = 0: reuse last known values to avoid chart gaps.
+			metrics = append(metrics, derivedToMetrics(cached, snap.Timestamp)...)
+		}
 	}
 
 	// Step 5: derive network byte deltas (stateful — cumulative → per-interval).
@@ -94,10 +105,11 @@ func (h *Handler) handleAPI(w http.ResponseWriter, r *http.Request) {
 	for _, cg := range chartGroups {
 		items := groupForChart(metrics, cg)
 		charts = append(charts, chartData{
-			ID:     cg.id,
-			Title:  cg.title,
-			YUnit:  dominantUnit(items),
-			Series: items,
+			ID:       cg.id,
+			Title:    cg.title,
+			YUnit:    dominantUnit(items),
+			Priority: cg.priority,
+			Series:   items,
 		})
 	}
 

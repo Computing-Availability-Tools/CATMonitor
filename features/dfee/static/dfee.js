@@ -76,6 +76,7 @@ function buildSections(charts) {
   for (const sec of SECTIONS) {
     const secCharts = sec.ids.map(id => chartDefs[id]).filter(c => c);
     const available = secCharts.filter(c => (c.series || []).length > 0).length;
+    const hasPriority = secCharts.some(c => c.priority);
 
     const section = el('section', 'section');
     section.style.setProperty('--section-accent', sec.accent);
@@ -83,6 +84,18 @@ function buildSections(charts) {
     const head = el('div', 'section-head');
     head.appendChild(elText('span', '', sec.title));
     head.appendChild(elText('span', 'count', available + '/' + secCharts.length + ' 可用'));
+    if (hasPriority) {
+      const filter = el('div', 'priority-filter');
+      for (const [label, val] of [['全部',''], ['高','high'], ['中','medium'], ['低','low']]) {
+        const btn = el('button', 'prio-btn');
+        btn.textContent = label;
+        btn.dataset.priority = val;
+        if (val === '') btn.classList.add('active');
+        btn.onclick = () => togglePriority(grid, secCharts, val, btn, filter);
+        filter.appendChild(btn);
+      }
+      head.appendChild(filter);
+    }
     section.appendChild(head);
 
     const grid = el('div', 'chart-grid');
@@ -92,6 +105,40 @@ function buildSections(charts) {
     }
     section.appendChild(grid);
     container.appendChild(section);
+  }
+}
+
+function togglePriority(grid, secCharts, val, clickedBtn, filterContainer) {
+  const btns = filterContainer.querySelectorAll('.prio-btn');
+  if (val === '') {
+    // "全部" = show all, deactivate others
+    btns.forEach(b => b.classList.remove('active'));
+    clickedBtn.classList.add('active');
+    secCharts.forEach((c, i) => {
+      const card = grid.children[i];
+      if (card) card.style.display = '';
+    });
+  } else {
+    // Multi-select: toggle the clicked button
+    clickedBtn.classList.toggle('active');
+    // Deactivate "全部" if any specific button is active
+    const allBtn = filterContainer.querySelector('.prio-btn[data-priority=""]');
+    if (allBtn) allBtn.classList.remove('active');
+    // Collect active priorities
+    const active = [];
+    btns.forEach(b => { if (b.classList.contains('active') && b.dataset.priority) active.push(b.dataset.priority); });
+    // If nothing active, fall back to "全部"
+    if (active.length === 0) {
+      if (allBtn) allBtn.classList.add('active');
+      secCharts.forEach((c, i) => { const card = grid.children[i]; if (card) card.style.display = ''; });
+      return;
+    }
+    // Show/hide cards by priority
+    secCharts.forEach((c, i) => {
+      const card = grid.children[i];
+      if (!card) return;
+      card.style.display = active.includes(c.priority) ? '' : 'none';
+    });
   }
 }
 
