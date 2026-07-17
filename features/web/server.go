@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Computing-Availability-Tools/CATMonitor/dfee"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/dfee"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
 
