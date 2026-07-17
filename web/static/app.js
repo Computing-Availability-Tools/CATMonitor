@@ -305,6 +305,8 @@ function renderNav() {
     if (route === c.component) a.className = 'active';
     nav.appendChild(a);
   }
+  const aEff = el('a'); aEff.href = '/dfee/'; aEff.textContent = '能效分析';
+  nav.appendChild(aEff);
 }
 
 // specSummary returns a one-line identity string for a component's overview
