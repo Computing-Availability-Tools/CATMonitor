@@ -16,6 +16,7 @@ type Scheduler struct {
 	wg         sync.WaitGroup
 	cancel     context.CancelFunc
 	filter     func([]Metric) []Metric // optional metric-selection filter (DI to avoid import cycle)
+	onCollect  func([]Metric)          // optional tap: invoked with each filtered batch (DI; e.g. cpugov)
 }
 
 // Storage is the interface for persisting collected metrics.
@@ -37,6 +38,14 @@ func NewScheduler(reg *Registry, storage Storage, logger *slog.Logger) *Schedule
 // package need not import the metrics package (avoids an import cycle).
 func (s *Scheduler) SetFilter(f func([]Metric) []Metric) {
 	s.filter = f
+}
+
+// SetTap installs an optional read-only tap invoked with each filtered batch
+// after it is stored. The tap must be O(n) in batch size and never block
+// (called from collector goroutines). Used by feature modules that need the
+// latest metrics without re-running stateful Collect() (e.g. cpugov).
+func (s *Scheduler) SetTap(f func([]Metric)) {
+	s.onCollect = f
 }
 
 // CollectorConfig holds per-collector configuration overrides.
@@ -112,6 +121,9 @@ func (s *Scheduler) collectAndStore(c Collector) {
 	}
 	if err := s.storage.Write(metrics); err != nil {
 		s.logger.Error("storage write failed", "collector", c.Name(), "error", err)
+	}
+	if s.onCollect != nil {
+		s.onCollect(metrics)
 	}
 }
 

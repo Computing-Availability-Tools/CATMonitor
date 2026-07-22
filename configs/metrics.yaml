@@ -797,3 +797,41 @@ components:
         priority: Medium
         unit: "B"
         static: false
+  - component: energysave
+    interval: 3s
+    metrics:
+      - name: cpu_state
+        cn_name: "节能CPU态"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: cpu_idle_sample
+        cn_name: "CPU idle采样"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: npu_idle
+        cn_name: "NPU idle"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: downclock_active
+        cn_name: "降频生效"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: actuator_ok
+        cn_name: "执行器正常"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: target_freq_khz
+        cn_name: "目标频率"
+        priority: Low
+        unit: "kHz"
+        static: false
+      - name: current_freq_khz
+        cn_name: "当前频率"
+        priority: Low
+        unit: "kHz"
+        static: false

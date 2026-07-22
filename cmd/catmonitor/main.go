@@ -45,6 +45,8 @@ func main() {
 		runCollect()
 	case "health":
 		runHealth()
+	case "energysave":
+		runEnergysave()
 	case "list":
 		runList()
 	case "version":
@@ -64,6 +66,7 @@ Commands:
   daemon       Start daemon process (default)
   collect      Collect metrics once and print
   health       Run health check and print report
+  energysave   Print CPU/NPU idle status preview (read-only)
   list         List all registered collectors
   version      Show version information
 
@@ -143,6 +146,11 @@ func runDaemon() {
 
 	scheduler.Start(ctx, collectorCfgs)
 
+	// Energysave controller (cpugov): taps the scheduler for latest cpu/npu
+	// metrics and pins CPU frequencies when both are idle. No-op when the
+	// feature is disabled or cpufreq is unavailable.
+	startEnergysave(ctx, cfg, scheduler, store, logger)
+
 	// Health check goroutine
 	if healthEval != nil {
 		go func() {
@@ -166,6 +174,7 @@ func runDaemon() {
 	sig := <-sigCh
 	logger.Info("received signal, shutting down", "signal", sig)
 	cancel()
+	stopEnergysave()
 	scheduler.Stop()
 }
 
@@ -209,6 +218,12 @@ func runCollect() {
 	} else {
 		printMetricsJSON(allMetrics)
 	}
+}
+
+func runEnergysave() {
+	cfg := loadConfig()
+	logger := setupLogger()
+	runEnergysaveCLI(cfg, logger)
 }
 
 func runHealth() {
