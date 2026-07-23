@@ -151,16 +151,16 @@ type chartGroup struct {
 // chartGroups defines the charts. Mixed-unit sub-sections are split into
 // separate charts by unit so every chart has a single Y-axis unit.
 var chartGroups = []chartGroup{
-	// NPU (9 charts, 1 metric each, no priority)
-	{"npu_aicore_freq", "AICore频率", "npu", []string{"aicore_freq"}, "", "", ""},
-	{"npu_hbm_freq", "HBM频率", "npu", []string{"hbm_freq"}, "", "", ""},
-	{"npu_power_draw", "NPU功耗", "npu", []string{"power_draw"}, "", "", ""},
-	{"npu_voltage", "NPU电压", "npu", []string{"voltage"}, "", "", ""},
-	{"npu_npu_util", "NPU利用率", "npu", []string{"npu_util"}, "", "", ""},
-	{"npu_utilization", "AICore利用率", "npu", []string{"utilization"}, "", "", ""},
-	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "", "", ""},
-	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "", "", ""},
-	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "", "", ""},
+	// NPU (9 charts, 1 metric each, labelKey=npu_id triggers "NPU 0" label)
+	{"npu_aicore_freq", "AICore频率", "npu", []string{"aicore_freq"}, "npu_id", "", ""},
+	{"npu_hbm_freq", "HBM频率", "npu", []string{"hbm_freq"}, "npu_id", "", ""},
+	{"npu_power_draw", "NPU功耗", "npu", []string{"power_draw"}, "npu_id", "", ""},
+	{"npu_voltage", "NPU电压", "npu", []string{"voltage"}, "npu_id", "", ""},
+	{"npu_npu_util", "NPU利用率", "npu", []string{"npu_util"}, "npu_id", "", ""},
+	{"npu_utilization", "AICore利用率", "npu", []string{"utilization"}, "npu_id", "", ""},
+	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "npu_id", "", ""},
+	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", ""},
+	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
 	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", ""},
 	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", ""},
@@ -327,6 +327,9 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 	if cg.labelKey != "" {
 		for _, key := range []string{"npu_id", "interface", "device", "fan"} {
 			if v, ok := m.Labels[key]; ok {
+				if key == "npu_id" {
+					return "NPU " + v
+				}
 				return v
 			}
 		}
