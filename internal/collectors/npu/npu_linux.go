@@ -495,6 +495,20 @@ func (c *NPUCollector) collectDevice(devID int, now time.Time) []collector.Metri
 		)
 	}
 
+	// 5.75-6.19 hccn_tool statistics (45 metrics: MAC/ROCE/NIC packet counters)
+	if stats, err := hccn_tool.Default().Statistics(devID); err == nil {
+		for name, val := range stats {
+			unit := "个"
+			if strings.Contains(name, "_oct_") {
+				unit = "bytes"
+			}
+			metrics = append(metrics, collector.Metric{
+				Component: "npu", Name: name, Value: float64(val), Unit: unit,
+				Labels: label, Timestamp: now,
+			})
+		}
+	}
+
 	return metrics
 }
 

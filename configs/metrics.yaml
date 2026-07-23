@@ -759,6 +759,232 @@ components:
         priority: Medium
         unit: "MB/s"
         static: false
+      # hccn_tool statistics (45 metrics)
+      - name: mac_tx_mac_pause_num
+        cn_name: "MAC发送pause帧总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_mac_pause_num
+        cn_name: "MAC接收pause帧总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pkt_num
+        cn_name: "MAC发送PFC帧总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri0_pkt_num
+        cn_name: "MAC 0号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri1_pkt_num
+        cn_name: "MAC 1号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri2_pkt_num
+        cn_name: "MAC 2号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri3_pkt_num
+        cn_name: "MAC 3号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri4_pkt_num
+        cn_name: "MAC 4号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri5_pkt_num
+        cn_name: "MAC 5号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri6_pkt_num
+        cn_name: "MAC 6号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_pfc_pri7_pkt_num
+        cn_name: "MAC 7号队列发送PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pkt_num
+        cn_name: "MAC接收PFC帧总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri0_pkt_num
+        cn_name: "MAC 0号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri1_pkt_num
+        cn_name: "MAC 1号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri2_pkt_num
+        cn_name: "MAC 2号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri3_pkt_num
+        cn_name: "MAC 3号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri4_pkt_num
+        cn_name: "MAC 4号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri5_pkt_num
+        cn_name: "MAC 5号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri6_pkt_num
+        cn_name: "MAC 6号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_pfc_pri7_pkt_num
+        cn_name: "MAC 7号队列接收PFC帧数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_total_pkt_num
+        cn_name: "MAC发送总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_total_oct_num
+        cn_name: "MAC发送总报文字节数"
+        priority: Medium
+        unit: "bytes"
+        static: false
+      - name: mac_tx_bad_pkt_num
+        cn_name: "MAC发送坏包总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_tx_bad_oct_num
+        cn_name: "MAC发送坏包总字节数"
+        priority: Medium
+        unit: "bytes"
+        static: false
+      - name: mac_rx_total_pkt_num
+        cn_name: "MAC接收总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_total_oct_num
+        cn_name: "MAC接收总报文字节数"
+        priority: Medium
+        unit: "bytes"
+        static: false
+      - name: mac_rx_bad_pkt_num
+        cn_name: "MAC接收坏包总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_bad_oct_num
+        cn_name: "MAC接收坏包总字节数"
+        priority: Medium
+        unit: "bytes"
+        static: false
+      - name: roce_rx_rc_pkt_num
+        cn_name: "ROCE接收RC类型报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_rx_all_pkt_num
+        cn_name: "ROCE接收总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_rx_err_pkt_num
+        cn_name: "ROCE接收坏包总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_tx_rc_pkt_num
+        cn_name: "ROCE发送RC类型报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_tx_all_pkt_num
+        cn_name: "ROCE发送总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_tx_err_pkt_num
+        cn_name: "ROCE发送坏包总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_cqe_num
+        cn_name: "ROCE任务完成总元素个数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_rx_cnp_pkt_num
+        cn_name: "ROCE接收CNP类型报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_tx_cnp_pkt_num
+        cn_name: "ROCE发送CNP类型报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_unexpected_ack_num
+        cn_name: "ROCE接收非预期ACK报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_out_of_order_num
+        cn_name: "ROCE接收乱序或重复PSN报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_verification_err_num
+        cn_name: "ROCE接收校验错误报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_qp_status_err_num
+        cn_name: "ROCE接收QP状态异常报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: nic_tx_all_pkg_num
+        cn_name: "NIC发送总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: nic_tx_all_oct_num
+        cn_name: "NIC发送总报文字节数"
+        priority: Medium
+        unit: "bytes"
+        static: false
+      - name: nic_rx_all_pkg_num
+        cn_name: "NIC接收总报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: nic_rx_all_oct_num
+        cn_name: "NIC接收总报文字节数"
+        priority: Medium
+        unit: "bytes"
+        static: false
   - component: network
     interval: 3s
     metrics:

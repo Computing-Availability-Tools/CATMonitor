@@ -3,10 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.3.0 ｜ **更新日期**: 2026-07-17 ｜ **指标总数**: 152（High 22 / Medium 71 / Low 59）
-> **来源层**: 全部 6 个采集器（cpu/memory/disk/network/gpu/npu）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
-> **指标采集目录**（v0.3.0）：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。
-> 完整测试报告见 [test_report.md](../test_report.md)（215 用例通过，覆盖率 30.9%~97.0%）。
+> **版本**: v0.5.3 ｜ **更新日期**: 2026-07-21 ｜ **指标总数**: 204（High 24 / Medium 121 / Low 59）
+> **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层。
+> **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖。
+> **新增模块**：`features/dfee`（能效监控 25 张实时图表）+ `features/exporter`（Prometheus 导出 :9100/metrics）。
 
 ---
 
@@ -28,10 +28,10 @@
 | Memory | 19 | 4 | 7 | 8 |
 | Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
-| NPU | 74 | 9 | 43 | 22 |
+| NPU | 119 | 9 | 88 | 22 |
 | Network | 5 | 1 | 3 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **159** | **24** | **76** | **59** |
+| **合计** | **204** | **24** | **121** | **59** |
 
 ---
 
@@ -2116,6 +2116,51 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 72 | pcie_rx_bandwidth | NPU PCIe接收带宽 | Medium | MB/s |
 | 73 | hccs_tx_bandwidth | NPU HCCS发送带宽 | Medium | MB/s |
 | 74 | hccs_rx_bandwidth | NPU HCCS接收带宽 | Medium | MB/s |
+| 75 | mac_tx_mac_pause_num | MAC发送pause帧总报文数 | Medium | 个 |
+| 76 | mac_rx_mac_pause_num | MAC接收pause帧总报文数 | Medium | 个 |
+| 77 | mac_tx_pfc_pkt_num | MAC发送PFC帧总报文数 | Medium | 个 |
+| 78 | mac_tx_pfc_pri0_pkt_num | MAC 0号队列发送PFC帧数 | Medium | 个 |
+| 79 | mac_tx_pfc_pri1_pkt_num | MAC 1号队列发送PFC帧数 | Medium | 个 |
+| 80 | mac_tx_pfc_pri2_pkt_num | MAC 2号队列发送PFC帧数 | Medium | 个 |
+| 81 | mac_tx_pfc_pri3_pkt_num | MAC 3号队列发送PFC帧数 | Medium | 个 |
+| 82 | mac_tx_pfc_pri4_pkt_num | MAC 4号队列发送PFC帧数 | Medium | 个 |
+| 83 | mac_tx_pfc_pri5_pkt_num | MAC 5号队列发送PFC帧数 | Medium | 个 |
+| 84 | mac_tx_pfc_pri6_pkt_num | MAC 6号队列发送PFC帧数 | Medium | 个 |
+| 85 | mac_tx_pfc_pri7_pkt_num | MAC 7号队列发送PFC帧数 | Medium | 个 |
+| 86 | mac_rx_pfc_pkt_num | MAC接收PFC帧总报文数 | Medium | 个 |
+| 87 | mac_rx_pfc_pri0_pkt_num | MAC 0号队列接收PFC帧数 | Medium | 个 |
+| 88 | mac_rx_pfc_pri1_pkt_num | MAC 1号队列接收PFC帧数 | Medium | 个 |
+| 89 | mac_rx_pfc_pri2_pkt_num | MAC 2号队列接收PFC帧数 | Medium | 个 |
+| 90 | mac_rx_pfc_pri3_pkt_num | MAC 3号队列接收PFC帧数 | Medium | 个 |
+| 91 | mac_rx_pfc_pri4_pkt_num | MAC 4号队列接收PFC帧数 | Medium | 个 |
+| 92 | mac_rx_pfc_pri5_pkt_num | MAC 5号队列接收PFC帧数 | Medium | 个 |
+| 93 | mac_rx_pfc_pri6_pkt_num | MAC 6号队列接收PFC帧数 | Medium | 个 |
+| 94 | mac_rx_pfc_pri7_pkt_num | MAC 7号队列接收PFC帧数 | Medium | 个 |
+| 95 | mac_tx_total_pkt_num | MAC发送总报文数 | Medium | 个 |
+| 96 | mac_tx_total_oct_num | MAC发送总报文字节数 | Medium | bytes |
+| 97 | mac_tx_bad_pkt_num | MAC发送坏包总报文数 | Medium | 个 |
+| 98 | mac_tx_bad_oct_num | MAC发送坏包总字节数 | Medium | bytes |
+| 99 | mac_rx_total_pkt_num | MAC接收总报文数 | Medium | 个 |
+| 100 | mac_rx_total_oct_num | MAC接收总报文字节数 | Medium | bytes |
+| 101 | mac_rx_bad_pkt_num | MAC接收坏包总报文数 | Medium | 个 |
+| 102 | mac_rx_bad_oct_num | MAC接收坏包总字节数 | Medium | bytes |
+| 103 | roce_rx_rc_pkt_num | ROCE接收RC类型报文数 | Medium | 个 |
+| 104 | roce_rx_all_pkt_num | ROCE接收总报文数 | Medium | 个 |
+| 105 | roce_rx_err_pkt_num | ROCE接收坏包总报文数 | Medium | 个 |
+| 106 | roce_tx_rc_pkt_num | ROCE发送RC类型报文数 | Medium | 个 |
+| 107 | roce_tx_all_pkt_num | ROCE发送总报文数 | Medium | 个 |
+| 108 | roce_tx_err_pkt_num | ROCE发送坏包总报文数 | Medium | 个 |
+| 109 | roce_cqe_num | ROCE任务完成总元素个数 | Medium | 个 |
+| 110 | roce_rx_cnp_pkt_num | ROCE接收CNP类型报文数 | Medium | 个 |
+| 111 | roce_tx_cnp_pkt_num | ROCE发送CNP类型报文数 | Medium | 个 |
+| 112 | roce_unexpected_ack_num | ROCE接收非预期ACK报文数 | Medium | 个 |
+| 113 | roce_out_of_order_num | ROCE接收乱序或重复PSN报文数 | Medium | 个 |
+| 114 | roce_verification_err_num | ROCE接收校验错误报文数 | Medium | 个 |
+| 115 | roce_qp_status_err_num | ROCE接收QP状态异常报文数 | Medium | 个 |
+| 116 | nic_tx_all_pkg_num | NIC发送总报文数 | Medium | 个 |
+| 117 | nic_tx_all_oct_num | NIC发送总报文字节数 | Medium | bytes |
+| 118 | nic_rx_all_pkg_num | NIC接收总报文数 | Medium | 个 |
+| 119 | nic_rx_all_oct_num | NIC接收总报文字节数 | Medium | bytes |
 
 ### Network（5 个）
 
@@ -2145,7 +2190,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | Memory | 19 | 4 | 7 | 8 |
 | Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
-| NPU | 74 | 9 | 43 | 22 |
+| NPU | 119 | 9 | 88 | 22 |
 | Network | 5 | 1 | 3 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **159** | **24** | **76** | **59** |
+| **合计** | **204** | **24** | **121** | **59** |

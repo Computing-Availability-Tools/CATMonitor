@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	execTimeout   = 5 * time.Second
-	cacheTTL      = 30 * time.Second
+	execTimeout = 5 * time.Second
+	cacheTTL    = 30 * time.Second
 )
 
 // Bandwidth holds parsed bandwidth (MB/s) from `hccn_tool -i N -bandwidth -g`.
@@ -31,6 +31,7 @@ type Source interface {
 	Bandwidth(devID int) (*Bandwidth, error)
 	Speed(devID int) (string, error)
 	Link(devID int) (string, error)
+	Statistics(devID int) (map[string]uint64, error)
 	Available() bool
 }
 
@@ -120,6 +121,14 @@ func (s *defaultSource) Link(devID int) (string, error) {
 	return parseValue(out, "Link:"), nil
 }
 
+func (s *defaultSource) Statistics(devID int) (map[string]uint64, error) {
+	out, err := s.cached(devID, "-stat")
+	if err != nil {
+		return nil, err
+	}
+	return parseStatistics(out), nil
+}
+
 func parseBandwidth(out string) *Bandwidth {
 	bw := &Bandwidth{}
 	for _, line := range strings.Split(out, "\n") {
@@ -158,4 +167,35 @@ func parseFirstFloat(line string) float64 {
 		}
 	}
 	return 0
+}
+
+// parseStatistics parses the output of `hccn_tool -i N -stat -g` into a
+// map of metric_name → cumulative counter value. The output format is:
+//
+//	packet statistics:
+//	mac_tx_mac_pause_num:0
+//	mac_rx_mac_pause_num:0
+//	...
+//
+// The header line is skipped; remaining lines are split on the first ':'.
+func parseStatistics(out string) map[string]uint64 {
+	result := make(map[string]uint64)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "statistics:") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		v, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			continue
+		}
+		result[name] = v
+	}
+	return result
 }
