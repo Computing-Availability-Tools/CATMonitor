@@ -35,7 +35,7 @@ type Sensor struct {
 const defaultCacheTTL = 30 * time.Second
 
 // execTimeout caps how long a single ipmitool invocation may take.
-const execTimeout = 5 * time.Second
+const execTimeout = 30 * time.Second
 
 // Source is the typed interface for the ipmi data source.
 type Source interface {
