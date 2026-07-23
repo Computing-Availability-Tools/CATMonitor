@@ -6,7 +6,7 @@ const PALETTE = [
 ];
 
 const SECTIONS = [
-  { title: 'NPU', accent: '#2563eb', ids: ['npu_frequency', 'npu_utilization', 'npu_temperature', 'npu_power', 'npu_voltage', 'npu_acg', 'npu_fan', 'npu_llc_hit_rate', 'npu_llc_throughput'] },
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_hbm_bandwidth_util', 'npu_memory_usage'] },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2 },

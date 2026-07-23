@@ -114,13 +114,12 @@ func TestGroupForChart(t *testing.T) {
 	metrics := []collector.Metric{
 		emetric("npu", "aicore_freq", 1200, map[string]string{"npu_id": "0"}),
 		emetric("npu", "aicore_freq", 1200, map[string]string{"npu_id": "1"}),
-		emetric("npu", "ddr_freq", 1600, map[string]string{"npu_id": "0"}),
 		emetric("cpu", "power", 95, map[string]string{"cpu": "0"}),
 	}
-	cg := chartGroups[0] // npu_frequency
+	cg := chartGroups[0] // npu_aicore_freq
 	items := groupForChart(metrics, cg)
-	if len(items) != 3 {
-		t.Fatalf("expected 3 series (2 aicore_freq + 1 ddr_freq), got %d", len(items))
+	if len(items) != 2 {
+		t.Fatalf("expected 2 series (2 aicore_freq), got %d", len(items))
 	}
 	// Verify IDs are stable and unique.
 	ids := map[string]bool{}

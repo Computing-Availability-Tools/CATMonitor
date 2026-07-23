@@ -151,16 +151,16 @@ type chartGroup struct {
 // chartGroups defines the charts. Mixed-unit sub-sections are split into
 // separate charts by unit so every chart has a single Y-axis unit.
 var chartGroups = []chartGroup{
-	// NPU (9 charts, 46 metrics)
-	{"npu_frequency", "NPU 频率", "npu", []string{"aicpu_freq", "aicore_rated_freq", "aicore_freq", "ctrlcpu_freq", "vector_core_freq", "hbm_freq", "ddr_freq"}, "", "", "medium"},
-	{"npu_utilization", "NPU 利用率", "npu", []string{"utilization", "memory_usage", "npu_util", "aicpu_util", "ctrlcpu_util", "vector_core_util", "hbm_bandwidth_util", "ddr_util", "ddr_bandwidth_util", "vdec_util", "vpc_util", "venc_util", "jpege_util", "jpegd_util"}, "", "", "high"},
-	{"npu_temperature", "NPU 温度", "npu", []string{"temperature", "hbm_temp", "cluster_temp", "peri_temp", "aicore0_temp", "aicore1_temp", "ntc1_temp", "ntc2_temp", "ntc3_temp", "ntc4_temp", "soc_max_temp", "fp_max_temp", "ndie_temp", "hbm_max_temp"}, "", "", "high"},
-	{"npu_power", "NPU 功耗", "npu", []string{"power_draw"}, "", "", "high"},
-	{"npu_voltage", "NPU 电压", "npu", []string{"voltage", "aicore_voltage", "hybrid_voltage", "cpu_voltage", "ddr_voltage"}, "", "", "medium"},
-	{"npu_acg", "NPU 调频计数", "npu", []string{"acg_count"}, "", "", "low"},
-	{"npu_fan", "NPU 风扇", "npu", []string{"fan_speed"}, "", "", "low"},
-	{"npu_llc_hit_rate", "NPU LLC 命中率", "npu", []string{"llc_write_hit_rate", "llc_read_hit_rate"}, "", "", "medium"},
-	{"npu_llc_throughput", "NPU LLC 吞吐量", "npu", []string{"llc_throughput"}, "", "", "medium"},
+	// NPU (9 charts, 1 metric each, no priority)
+	{"npu_aicore_freq", "AICore频率", "npu", []string{"aicore_freq"}, "", "", ""},
+	{"npu_hbm_freq", "HBM频率", "npu", []string{"hbm_freq"}, "", "", ""},
+	{"npu_power_draw", "NPU功耗", "npu", []string{"power_draw"}, "", "", ""},
+	{"npu_voltage", "NPU电压", "npu", []string{"voltage"}, "", "", ""},
+	{"npu_npu_util", "NPU利用率", "npu", []string{"npu_util"}, "", "", ""},
+	{"npu_utilization", "AICore利用率", "npu", []string{"utilization"}, "", "", ""},
+	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "", "", ""},
+	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "", "", ""},
+	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
 	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", ""},
 	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", ""},
