@@ -32,10 +32,10 @@ type Sensor struct {
 }
 
 // defaultCacheTTL is the SDR cache window (decision D = 30s).
-const defaultCacheTTL = 60 * time.Second
+const defaultCacheTTL = 10 * time.Second
 
 // execTimeout caps how long a single ipmitool invocation may take.
-const execTimeout = 30 * time.Second
+const execTimeout = 60 * time.Second
 
 // Source is the typed interface for the ipmi data source.
 type Source interface {
