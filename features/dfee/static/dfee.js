@@ -11,7 +11,7 @@ const SECTIONS = [
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2 },
   { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2 },
-  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'] },
+  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 3 },
 ];
 
 // ---- state ----

@@ -32,7 +32,7 @@ type Sensor struct {
 }
 
 // defaultCacheTTL is the SDR cache window (decision D = 30s).
-const defaultCacheTTL = 30 * time.Second
+const defaultCacheTTL = 60 * time.Second
 
 // execTimeout caps how long a single ipmitool invocation may take.
 const execTimeout = 30 * time.Second
