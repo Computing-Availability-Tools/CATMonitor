@@ -73,9 +73,11 @@ func (p *cgoProvider) Init() error {
 func (p *cgoProvider) CardList() (int, []int, error) {
 	var cardNum C.int
 	cardList := make([]C.int, 64)
-	rc := C.dcmi_get_card_list(&cardNum, &cardList[0], 64)
+	// dcmi_get_card_num_list returns a flat list of all NPU device IDs
+	// (not card IDs). For an 8-NPU system: card_num=8, card_list=[0,1,...,7].
+	rc := C.dcmi_get_card_num_list(&cardNum, &cardList[0], 64)
 	if rc != 0 {
-		return 0, nil, fmt.Errorf("dcmi_get_card_list: %d", int32(rc))
+		return 0, nil, fmt.Errorf("dcmi_get_card_num_list: %d", int32(rc))
 	}
 	result := make([]int, int(cardNum))
 	for i := 0; i < int(cardNum); i++ {
