@@ -11,7 +11,7 @@
 package dcmi
 
 /*
-#cgo CFLAGS: -I/usr/local/Ascend/driver/include
+#cgo CFLAGS: -I/usr/local/Ascend/driver/include -w
 #cgo LDFLAGS: -L/usr/local/Ascend/driver/lib64/driver -ldcmi
 #include <stdlib.h>
 #include <string.h>
