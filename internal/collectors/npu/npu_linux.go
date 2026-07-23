@@ -67,7 +67,8 @@ const (
 	lpSubACG           = 4
 )
 
-// ensureDevices populates deviceIDs from DCMI CardList at first call.
+// ensureDevices populates devices from DCMI CardList + DeviceNumInCard.
+// Enumerates (card_id, device_id) pairs so all NPU chips are discovered.
 func (c *NPUCollector) ensureDevices() {
 	if c.devicesReady {
 		return
@@ -77,14 +78,20 @@ func (c *NPUCollector) ensureDevices() {
 	if !src.Available() {
 		return
 	}
-	// DCMI C library requires dcmi_init() before any API call.
-	// Call it once at startup; ignore "already initialized" error.
 	src.Init()
 	_, cards, err := src.CardList()
 	if err != nil {
 		return
 	}
-	c.deviceIDs = cards
+	for _, cardID := range cards {
+		devNum, err := src.DeviceNumInCard(cardID)
+		if err != nil || devNum == 0 {
+			devNum = 1 // fallback: assume 1 device per card
+		}
+		for d := 0; d < devNum; d++ {
+			c.devices = append(c.devices, npuDevice{cardID: cardID, devID: d})
+		}
+	}
 }
 
 // collectStatic collects global/static metrics once: npu_num, comm_topo,
@@ -94,7 +101,7 @@ func (c *NPUCollector) collectStatic(now time.Time) ([]collector.Metric, error) 
 
 	// npu_num
 	metrics = append(metrics, collector.Metric{
-		Component: "npu", Name: "npu_num", Value: float64(len(c.deviceIDs)), Unit: "个",
+		Component: "npu", Name: "npu_num", Value: float64(len(c.devices)), Unit: "个",
 		Timestamp: now,
 	})
 
@@ -118,11 +125,11 @@ func (c *NPUCollector) collectStatic(now time.Time) ([]collector.Metric, error) 
 	}
 
 	// chip_type per device (static)
-	for _, dev := range c.deviceIDs {
-		if chip, err := src.ChipInfo(0, dev); err == nil && chip != nil {
+	for _, d := range c.devices {
+		if chip, err := src.ChipInfo(d.cardID, d.devID); err == nil && chip != nil {
 			metrics = append(metrics, collector.Metric{
 				Component: "npu", Name: "chip_type", Value: 0, Unit: "",
-				Labels: map[string]string{"npu_id": strconv.Itoa(dev), "chip_type": chip.ChipType},
+				Labels: map[string]string{"npu_id": strconv.Itoa(d.cardID), "chip_type": chip.ChipType},
 				Timestamp: now,
 			})
 		}
@@ -134,10 +141,11 @@ func (c *NPUCollector) collectStatic(now time.Time) ([]collector.Metric, error) 
 // collectDevice collects all per-device metrics for one NPU. Called in a
 // separate goroutine per device (device-parallel). Errors per metric are
 // silently skipped (graceful degradation).
-func (c *NPUCollector) collectDevice(devID int, now time.Time) []collector.Metric {
+func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Metric {
 	var metrics []collector.Metric
-	card := 0 // single-card assumption; multi-card needs card_id per device
-	label := map[string]string{"npu_id": strconv.Itoa(devID)}
+	card := d.cardID
+	devID := d.devID
+	label := map[string]string{"npu_id": strconv.Itoa(d.cardID)}
 	src := dcmi.Default()
 
 	// --- 5.1 utilization (AICore %) ---

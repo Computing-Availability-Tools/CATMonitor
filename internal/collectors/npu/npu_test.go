@@ -151,7 +151,7 @@ func TestCollectDevice(t *testing.T) {
 	c.ensureDevices()
 	now := time.Now()
 
-	metrics := c.collectDevice(0, now)
+	metrics := c.collectDevice(npuDevice{cardID: 0, devID: 0}, now)
 	if len(metrics) < 40 {
 		t.Fatalf("expected at least 40 metrics for device 0, got %d", len(metrics))
 	}
@@ -242,7 +242,7 @@ func TestCollectEccDelta(t *testing.T) {
 	now := time.Now()
 
 	// First call: prev=0, delta=0.
-	c.collectDevice(0, now)
+	c.collectDevice(npuDevice{cardID: 0, devID: 0}, now)
 
 	// Bump mock ECC count.
 	mock := &dcmi.MockProvider{
@@ -254,7 +254,7 @@ func TestCollectEccDelta(t *testing.T) {
 	}
 	dcmi.SetProvider(mock)
 
-	metrics := c.collectDevice(0, now)
+	metrics := c.collectDevice(npuDevice{cardID: 0, devID: 0}, now)
 	m := findMetric(metrics, "hbm_single_ecc")
 	if m == nil || m.Value != 2 {
 		t.Errorf("hbm_single_ecc delta: expected 2 (5-3), got %v", m)

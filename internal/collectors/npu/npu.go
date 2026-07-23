@@ -7,12 +7,18 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
 
+// npuDevice holds the (card_id, device_id) pair for one NPU chip.
+type npuDevice struct {
+	cardID int
+	devID  int
+}
+
 // NPUCollector collects metrics from Huawei Ascend NPUs via DCMI (CGo) and
 // npu-smi/hccn_tool commands. Collection is device-parallel: each NPU's
 // metrics are collected in a separate goroutine, so 8-card latency ≈ 1-card.
 type NPUCollector struct {
 	mu              sync.Mutex
-	deviceIDs       []int         // populated at startup from dcmi.CardList()
+	devices         []npuDevice    // populated at startup from CardList + DeviceNumInCard
 	devicesReady    bool
 	prevEcc         map[string]uint64 // key "dev:type:kind" → cumulative count for delta
 	staticCollected bool              // topo, npu_num, driver_version, chip_type, comm_topo
@@ -51,15 +57,15 @@ func (c *NPUCollector) Collect() ([]collector.Metric, error) {
 	}
 
 	// Phase 2: per-device metrics (parallel).
-	if len(c.deviceIDs) > 0 {
+	if len(c.devices) > 0 {
 		var wg sync.WaitGroup
-		results := make([][]collector.Metric, len(c.deviceIDs))
-		for i, devID := range c.deviceIDs {
+		results := make([][]collector.Metric, len(c.devices))
+		for i, d := range c.devices {
 			wg.Add(1)
-			go func(idx int, dev int) {
+			go func(idx int, dev npuDevice) {
 				defer wg.Done()
 				results[idx] = c.collectDevice(dev, now)
-			}(i, devID)
+			}(i, d)
 		}
 		wg.Wait()
 		for _, m := range results {

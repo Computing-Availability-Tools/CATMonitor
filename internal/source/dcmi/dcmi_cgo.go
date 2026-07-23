@@ -73,8 +73,6 @@ func (p *cgoProvider) Init() error {
 func (p *cgoProvider) CardList() (int, []int, error) {
 	var cardNum C.int
 	cardList := make([]C.int, 64)
-	// dcmi_get_card_num_list returns a flat list of all NPU device IDs
-	// (not card IDs). For an 8-NPU system: card_num=8, card_list=[0,1,...,7].
 	rc := C.dcmi_get_card_num_list(&cardNum, &cardList[0], 64)
 	if rc != 0 {
 		return 0, nil, fmt.Errorf("dcmi_get_card_num_list: %d", int32(rc))
@@ -84,6 +82,15 @@ func (p *cgoProvider) CardList() (int, []int, error) {
 		result[i] = int(cardList[i])
 	}
 	return int(cardNum), result, nil
+}
+
+func (p *cgoProvider) DeviceNumInCard(card int) (int, error) {
+	var num C.int
+	rc := C.dcmi_get_device_num_in_card(C.int(card), &num)
+	if rc != 0 {
+		return 0, fmt.Errorf("dcmi_get_device_num_in_card: %d", int32(rc))
+	}
+	return int(num), nil
 }
 
 func (p *cgoProvider) Temperature(card, dev int) (int, error) {
