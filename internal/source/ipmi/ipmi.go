@@ -143,7 +143,7 @@ func (s *defaultSource) PowerReading() (float64, error) {
 
 // parseSDR converts `ipmitool sdr` text output into a slice of Sensors.
 // Each line is pipe-delimited: "<name> | <value> <unit> | <status>".
-// Lines without 4 pipe fields are skipped.
+// Lines without 3 pipe fields are skipped.
 func parseSDR(out string) []Sensor {
 	var sensors []Sensor
 	for _, line := range strings.Split(out, "\n") {
@@ -152,7 +152,7 @@ func parseSDR(out string) []Sensor {
 			continue
 		}
 		parts := strings.Split(line, "|")
-		if len(parts) < 4 {
+		if len(parts) < 3 {
 			continue
 		}
 		name := strings.TrimSpace(parts[0])
@@ -161,8 +161,8 @@ func parseSDR(out string) []Sensor {
 			continue
 		}
 		val, _ := strconv.ParseFloat(reading[0], 64)
-		unit := strings.TrimSpace(parts[2])
-		status := strings.TrimSpace(parts[3])
+		unit := strings.Join(reading[1:], " ")
+		status := strings.TrimSpace(parts[2])
 		sensors = append(sensors, Sensor{Name: name, Value: val, Unit: unit, Status: status})
 	}
 	return sensors
