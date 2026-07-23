@@ -179,7 +179,7 @@ var chartGroups = []chartGroup{
 	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", ""},
 	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", ""},
 	// Chassis (3 charts, split by unit)
-	{"chassis_power", "机箱功耗", "chassis", []string{"power", "fan_power"}, "", "", ""},
+	{"chassis_power", "整机功耗", "chassis", []string{"power", "fan_power"}, "", "", ""},
 	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", "", ""},
 	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", ""},
 }
