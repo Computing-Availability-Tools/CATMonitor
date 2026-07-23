@@ -58,8 +58,8 @@ func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
 				Labels:    map[string]string{"fan": fanNum},
 				Timestamp: now,
 			})
-		// power (standalone "Power", not "CPU* Pwr" or "MEM* Pwr" or "FAN* Power")
-		case name == "power" || (strings.Contains(name, "power") && !strings.Contains(name, "cpu") && !strings.Contains(name, "mem") && !strings.Contains(name, "npu") && !strings.Contains(name, "fan")):
+		// power (exact match "Power" — total system power, not PSU outputs like "Power1")
+		case name == "power":
 			metrics = append(metrics, collector.Metric{
 				Component: "chassis", Name: "power", Value: roundFloat(s.Value, 2), Unit: "W",
 				Timestamp: now,
