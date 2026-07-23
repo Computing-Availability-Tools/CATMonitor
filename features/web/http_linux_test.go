@@ -70,14 +70,14 @@ func TestHTTPAPISmoke(t *testing.T) {
 	if err := json.Unmarshal(body, &comps); err != nil {
 		t.Fatalf("decode collectors: %v", err)
 	}
-	if len(comps) != 6 {
-		t.Errorf("collectors count=%d want 6 (system is not a periodic collector)", len(comps))
+	if len(comps) != 7 {
+		t.Errorf("collectors count=%d want 7 (system is not a periodic collector)", len(comps))
 	}
 	have := map[string]bool{}
 	for _, c := range comps {
 		have[c.Component] = true
 	}
-	for _, want := range []string{"cpu", "memory", "disk", "gpu", "npu", "network"} {
+	for _, want := range []string{"chassis", "cpu", "memory", "disk", "gpu", "npu", "network"} {
 		if !have[want] {
 			t.Errorf("collector %q missing from /api/collectors", want)
 		}
