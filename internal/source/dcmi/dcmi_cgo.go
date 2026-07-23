@@ -41,10 +41,12 @@ static int dcmi_errorcode_v2_wrapper(int card, int dev, unsigned int *code) {
     return 0;
 }
 
-// Wrapper for dcmi_get_device_info — pass value by pointer internally.
+// Wrapper for dcmi_get_device_info — the 6th arg is unsigned int *size (caller
+// sets buffer size, callee updates with actual bytes written).
 static int dcmi_get_device_info_wrapper(int card, int dev, int main_cmd,
     unsigned int sub_cmd, unsigned int *val) {
-    return dcmi_get_device_info(card, dev, main_cmd, sub_cmd, val, sizeof(unsigned int));
+    unsigned int size = sizeof(unsigned int);
+    return dcmi_get_device_info(card, dev, main_cmd, sub_cmd, val, &size);
 }
 */
 import "C"
@@ -146,7 +148,7 @@ func (p *cgoProvider) ResourceInfo(card, dev int) (*ResourceInfo, error) {
 }
 
 func (p *cgoProvider) DvppRatio(card, dev int) (*DvppRatio, error) {
-	var dvpp C.struct_dcmi_dvpp_ratio_info
+	var dvpp C.struct_dcmi_dvpp_ratio
 	rc := C.dcmi_get_device_dvpp_ratio_info(C.int(card), C.int(dev), &dvpp)
 	if rc != 0 {
 		return nil, fmt.Errorf("dcmi_get_device_dvpp_ratio_info: %d", int32(rc))
