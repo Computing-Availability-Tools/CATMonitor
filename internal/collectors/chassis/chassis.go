@@ -38,14 +38,14 @@ func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
 	for _, s := range sensors {
 		name := strings.ToLower(s.Name)
 		switch {
-		// inlet_temp
-		case strings.Contains(name, "inlet") && strings.Contains(name, "temp"):
+		// inlet_temp (exact match "Inlet Temp")
+		case name == "inlet temp":
 			metrics = append(metrics, collector.Metric{
 				Component: "chassis", Name: "inlet_temp", Value: roundFloat(s.Value, 1), Unit: "°C",
 				Timestamp: now,
 			})
-		// outlet_temp
-		case strings.Contains(name, "outlet") && strings.Contains(name, "temp"):
+		// outlet_temp (exact match "Outlet Temp")
+		case name == "outlet temp":
 			metrics = append(metrics, collector.Metric{
 				Component: "chassis", Name: "outlet_temp", Value: roundFloat(s.Value, 1), Unit: "°C",
 				Timestamp: now,
