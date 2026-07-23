@@ -110,6 +110,9 @@ type FetchProvider interface {
 
 type Source interface {
 	Available() bool
+	// Init initializes the DCMI library. Must be called before any other
+	// DCMI API call. Safe to call multiple times (no-op if already initialized).
+	Init() error
 	// Enumerate devices
 	CardList() (int, []int, error)
 	// Per-device DCMI queries (return errNotAvailable if no provider)
@@ -153,6 +156,11 @@ func (s *defaultSource) Available() bool { return s.provider != nil }
 func (s *defaultSource) notAvail() error { return errNotAvailable }
 
 // --- Delegation methods ---
+
+func (s *defaultSource) Init() error {
+	if s.provider == nil { return s.notAvail() }
+	return s.provider.Init()
+}
 
 func (s *defaultSource) CardList() (int, []int, error) {
 	if s.provider == nil { return 0, nil, s.notAvail() }

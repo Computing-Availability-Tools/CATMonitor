@@ -77,6 +77,9 @@ func (c *NPUCollector) ensureDevices() {
 	if !src.Available() {
 		return
 	}
+	// DCMI C library requires dcmi_init() before any API call.
+	// Call it once at startup; ignore "already initialized" error.
+	src.Init()
 	_, cards, err := src.CardList()
 	if err != nil {
 		return
