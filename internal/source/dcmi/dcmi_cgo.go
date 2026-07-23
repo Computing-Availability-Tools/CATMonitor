@@ -27,10 +27,18 @@ static const char* dcmi_chip_ver(struct dcmi_chip_info *p) { return (const char*
 static int sensor_get_int(union dcmi_sensor_info *si) { return si->iint; }
 static int sensor_get_ntc(union dcmi_sensor_info *si, int idx) { return si->ntc_tmp[idx]; }
 
-// Wrapper for dcmi_get_device_errorcode_v2 — signature varies by CANN version;
-// this wrapper calls the 3-arg form (card, dev, &code) and returns the code.
+// Wrapper for dcmi_get_device_errorcode_v2 — actual signature:
+//   int dcmi_get_device_errorcode_v2(int card_id, int device_id,
+//       int *error_count, unsigned int *error_code_list, unsigned int list_len)
+// This wrapper retrieves the error count and first error code into a single uint.
 static int dcmi_errorcode_v2_wrapper(int card, int dev, unsigned int *code) {
-    return dcmi_get_device_errorcode_v2(card, dev, code);
+    int error_count = 0;
+    unsigned int error_codes[8] = {0};
+    int rc = dcmi_get_device_errorcode_v2(card, dev, &error_count, error_codes, 8);
+    if (rc != 0) return rc;
+    // Return the error count as the metric value (0 = no errors).
+    *code = (unsigned int)error_count;
+    return 0;
 }
 
 // Wrapper for dcmi_get_device_info — pass value by pointer internally.
