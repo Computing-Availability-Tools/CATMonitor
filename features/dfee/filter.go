@@ -146,42 +146,43 @@ type chartGroup struct {
 	labelKey    string // optional: filter metrics by this label key
 	labelVal    string // optional: match this label value (only when labelKey != "")
 	priority    string // "high" / "medium" / "low" / "" (non-NPU)
+	aggregate   string // "avg" = average all matching into one series; "" = per-instance
 }
 
 // chartGroups defines the charts. Mixed-unit sub-sections are split into
 // separate charts by unit so every chart has a single Y-axis unit.
 var chartGroups = []chartGroup{
 	// NPU (9 charts, 1 metric each, labelKey=npu_id triggers "NPU 0" label)
-	{"npu_aicore_freq", "AICore频率", "npu", []string{"aicore_freq"}, "npu_id", "", ""},
-	{"npu_hbm_freq", "HBM频率", "npu", []string{"hbm_freq"}, "npu_id", "", ""},
-	{"npu_power_draw", "NPU功耗", "npu", []string{"power_draw"}, "npu_id", "", ""},
-	{"npu_voltage", "NPU电压", "npu", []string{"voltage"}, "npu_id", "", ""},
-	{"npu_npu_util", "NPU利用率", "npu", []string{"npu_util"}, "npu_id", "", ""},
-	{"npu_utilization", "AICore利用率", "npu", []string{"utilization"}, "npu_id", "", ""},
-	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "npu_id", "", ""},
-	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", ""},
-	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", ""},
+	{"npu_aicore_freq", "AICore频率", "npu", []string{"aicore_freq"}, "npu_id", "", "", ""},
+	{"npu_hbm_freq", "HBM频率", "npu", []string{"hbm_freq"}, "npu_id", "", "", ""},
+	{"npu_power_draw", "NPU功耗", "npu", []string{"power_draw"}, "npu_id", "", "", ""},
+	{"npu_voltage", "NPU电压", "npu", []string{"voltage"}, "npu_id", "", "", ""},
+	{"npu_npu_util", "NPU利用率", "npu", []string{"npu_util"}, "npu_id", "", "", ""},
+	{"npu_utilization", "AICore利用率", "npu", []string{"utilization"}, "npu_id", "", "", ""},
+	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "npu_id", "", "", ""},
+	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", "", ""},
+	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
-	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", ""},
-	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", ""},
-	{"cpu_power", "CPU 功耗", "cpu", []string{"power"}, "", "", ""},
+	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
+	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", "", ""},
+	{"cpu_power", "CPU 功耗", "cpu", []string{"power"}, "", "", "", ""},
 	// Memory (2 charts, 7 metrics)
-	{"memory_pool", "内存池", "memory", []string{"usage_detail"}, "", "", ""},
-	{"memory_swap", "Swap", "memory", []string{"swap_detail"}, "", "", ""},
+	{"memory_pool", "内存池", "memory", []string{"usage_detail"}, "", "", "", ""},
+	{"memory_swap", "Swap", "memory", []string{"swap_detail"}, "", "", "", ""},
 	// Disk (6 charts, 4 metrics split by direction)
-	{"disk_throughput_read", "磁盘吞吐量(读)", "disk", []string{"throughput"}, "direction", "read", ""},
-	{"disk_throughput_write", "磁盘吞吐量(写)", "disk", []string{"throughput"}, "direction", "write", ""},
-	{"disk_iops_read", "IOPS(读)", "disk", []string{"iops"}, "direction", "read", ""},
-	{"disk_iops_write", "IOPS(写)", "disk", []string{"iops"}, "direction", "write", ""},
-	{"disk_read_latency", "磁盘读耗时", "disk", []string{"read_latency"}, "device", "", ""},
-	{"disk_write_latency", "磁盘写耗时", "disk", []string{"write_latency"}, "device", "", ""},
+	{"disk_throughput_read", "磁盘吞吐量(读)", "disk", []string{"throughput"}, "direction", "read", "", ""},
+	{"disk_throughput_write", "磁盘吞吐量(写)", "disk", []string{"throughput"}, "direction", "write", "", ""},
+	{"disk_iops_read", "IOPS(读)", "disk", []string{"iops"}, "direction", "read", "", ""},
+	{"disk_iops_write", "IOPS(写)", "disk", []string{"iops"}, "direction", "write", "", ""},
+	{"disk_read_latency", "磁盘读耗时", "disk", []string{"read_latency"}, "device", "", "", ""},
+	{"disk_write_latency", "磁盘写耗时", "disk", []string{"write_latency"}, "device", "", "", ""},
 	// Network (2 charts, labelKey=interface triggers simplified label)
-	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", ""},
-	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", ""},
+	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", "", ""},
+	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", "", ""},
 	// Chassis (3 charts, split by unit)
-	{"chassis_power", "整机功耗", "chassis", []string{"power", "fan_power"}, "", "", ""},
-	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", "", ""},
-	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", ""},
+	{"chassis_power", "整机功耗", "chassis", []string{"power", "fan_power"}, "", "", "", ""},
+	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", "", "", ""},
+	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", "", "avg"},
 }
 
 // ---- API response types ----
@@ -391,6 +392,22 @@ func groupForChart(metrics []collector.Metric, cg chartGroup) []seriesItem {
 			Value: m.Value,
 			Unit:  m.Unit,
 		})
+	}
+	// Aggregate mode: average all matching metrics into one series.
+	if cg.aggregate == "avg" && len(items) > 0 {
+		var sum float64
+		var unit string
+		for _, s := range items {
+			sum += s.Value
+			unit = s.Unit
+		}
+		avg := sum / float64(len(items))
+		return []seriesItem{{
+			ID:    cg.id + "_avg",
+			Label: "平均转速",
+			Value: avg,
+			Unit:  unit,
+		}}
 	}
 	// Sort by ID using natural sort (numbers compared by value, not ASCII)
 	// so load_average:1m < load_average:5m < load_average:15m.
