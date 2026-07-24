@@ -360,6 +360,40 @@ function buildCard(chart) {
   return card;
 }
 
+const SNAP_SHOW = 5;
+const SNAP_ALIGN = 3;
+
+function clearGuides(grid) {
+  grid.querySelectorAll('.guide-line').forEach(g => g.remove());
+}
+
+function showGuides(grid, card) {
+  clearGuides(grid);
+  const cardBottom = card.offsetTop + card.offsetHeight;
+  let snapY = null;
+  let snapDist = SNAP_SHOW;
+  for (const other of grid.children) {
+    if (other === card || !other.classList || !other.classList.contains('chart-card')) continue;
+    const edges = [
+      ['bottom', other.offsetTop + other.offsetHeight],
+      ['top', other.offsetTop],
+    ];
+    for (const [, y] of edges) {
+      const dist = Math.abs(cardBottom - y);
+      if (dist <= SNAP_SHOW) {
+        const guide = el('div', 'guide-line');
+        guide.style.top = y + 'px';
+        grid.appendChild(guide);
+        if (dist <= SNAP_ALIGN && dist < snapDist) {
+          snapDist = dist;
+          snapY = y;
+        }
+      }
+    }
+  }
+  return snapY;
+}
+
 function startResize(e) {
   e.preventDefault();
   e.stopPropagation();
@@ -387,10 +421,19 @@ function startResize(e) {
       card.style.gridColumn = newSpan > 1 ? `span ${newSpan}` : '';
     }
     if (canvas) renderChart(canvas, chartDefs[chartId]);
+    const snapY = showGuides(grid, card);
+    if (snapY !== null && canvas) {
+      const currentBottom = card.offsetTop + card.offsetHeight;
+      const delta = snapY - currentBottom;
+      const snapped = Math.max(120, Math.min(500, newHeight + delta));
+      canvas.style.height = snapped + 'px';
+      renderChart(canvas, chartDefs[chartId]);
+    }
   }
   function onUp() {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    clearGuides(grid);
     if (!cardSizes[chartId]) cardSizes[chartId] = {};
     cardSizes[chartId].span = currentSpan;
     cardSizes[chartId].height = parseInt(canvas?.style.height) || 200;
