@@ -37,3 +37,27 @@ health:
   enabled: true
   interval: 5s
   weight_scheme: auto
+
+# Stress benchmarks are always explicitly triggered. Keep disabled until
+# benchmark assets and their topology-specific MPI settings are deployed.
+stress:
+  enabled: false
+  web_enabled: false
+  script_path: features/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/data/stress-latest.json
+  default_benchmarks: [hpl, hpcg, stream]
+  benchmarks:
+    stream:
+      enabled: false
+      # The STREAM executable path and NUMA/environment settings are in
+      # features/stress/benchmark_check.sh for each deployment host.
+      timeout: 30m
+    hpl:
+      enabled: false
+      path: /opt/benchmarks/hpl
+      timeout: 2h
+    hpcg:
+      enabled: false
+      path: /opt/benchmarks/hpcg
+      result_dir: features/stress
+      timeout: 2h

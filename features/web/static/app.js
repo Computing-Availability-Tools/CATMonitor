@@ -105,6 +105,9 @@ let lastSnapshot = null;
 let refreshIntervalMs = 5000;
 let pollTimer = null;
 let autoOn = true;
+let stressReport = null;
+let stressConfig = null;
+let stressPollTimer = null;
 
 // ---- helpers ----
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -309,6 +312,9 @@ function renderNav() {
   }
   const aEff = el('a'); aEff.href = '/dfee/'; aEff.textContent = '能效分析';
   nav.appendChild(aEff);
+  const aStress = el('a'); aStress.href = '#/stress'; aStress.textContent = '压测';
+  if (route === 'stress') aStress.className = 'active';
+  nav.appendChild(aStress);
 }
 
 // specSummary returns a one-line identity string for a component's overview
@@ -670,14 +676,101 @@ function renderDetail(compKey, snap) {
 // ---- render dispatch ----
 function render() {
   renderNav();
+  const route = currentRoute();
+  if (route === 'stress') { renderStress(); return; }
   if (!lastSnapshot) {
     document.getElementById('page').innerHTML = '<div class="empty">正在加载数据…</div>';
     return;
   }
   renderPill(lastSnapshot);
-  const route = currentRoute();
   if (route === 'overview') renderOverview(lastSnapshot);
   else renderDetail(route, lastSnapshot);
+}
+
+function stressColor(status) {
+  if (status === 'healthy') return 'status-ok';
+  if (status === 'running' || status === 'pending') return 'status-good';
+  if (status === 'unsupported' || status === 'unavailable') return 'status-warn';
+  return 'status-crit';
+}
+
+function renderStress() {
+  const page = document.getElementById('page');
+  page.innerHTML = '';
+  page.appendChild(elText('h1', 'detail-title', '压测作业'));
+  page.appendChild(elText('p', 'stress-note', '压测会占用 CPU、内存和 MPI 资源。压测结果不会直接写入健康分，但运行期间的高利用率、负载、温度或 I/O 等实时采集值可能使健康总分暂时下降。'));
+
+  const state = stressReport ? stressReport.status : 'no_report';
+  const summary = el('div', 'panel stress-summary');
+  const head = el('div', 'panel-head');
+  head.appendChild(elText('span', '', '最近压测'));
+  head.appendChild(elText('span', 'badge ' + stressColor(state), state === 'no_report' ? '尚无报告' : state));
+  summary.appendChild(head);
+  const body = el('div', 'panel-body');
+  if (stressReport) {
+    body.appendChild(elText('div', 'stress-meta', '整体结论：' + stressReport.health_condition + ' · 平台：' + stressReport.platform + ' · 作业：' + stressReport.job_id));
+    if (stressReport.timeout_seconds) body.appendChild(elText('div', 'stress-meta', '本次作业超时上限：' + stressReport.timeout_seconds + ' 秒（仅本次有效）'));
+    if (stressReport.finished_at) body.appendChild(elText('div', 'stress-meta', '完成时间：' + new Date(stressReport.finished_at).toLocaleString()));
+  } else {
+    body.appendChild(elText('div', 'empty', '尚未执行压测。'));
+  }
+  summary.appendChild(body);
+  page.appendChild(summary);
+
+  const runPanel = el('div', 'panel');
+  const runHead = el('div', 'panel-head'); runHead.appendChild(elText('span', '', '启动压测'));
+  runPanel.appendChild(runHead);
+  const runBody = el('div', 'panel-body');
+  const enabled = stressConfig && stressConfig.enabled;
+  const configuredBenchmarks = ((stressConfig && stressConfig.benchmarks) || []).filter(item => item.enabled);
+  const runnable = enabled && configuredBenchmarks.length > 0;
+  const chooser = el('div', 'stress-chooser');
+  for (const item of ((stressConfig && stressConfig.benchmarks) || [])) {
+    const label = el('label', 'stress-option');
+    const input = document.createElement('input'); input.type = 'checkbox'; input.value = item.name;
+    input.checked = (stressConfig.default_benchmarks || []).indexOf(item.name) >= 0;
+    input.disabled = !enabled || !item.enabled;
+    label.appendChild(input); label.appendChild(document.createTextNode(' ' + item.name + (item.enabled ? '（YAML 上限 ' + item.timeout_seconds + ' 秒）' : '（未配置）')));
+    chooser.appendChild(label);
+  }
+  runBody.appendChild(chooser);
+  const timeoutControl = el('label', 'stress-timeout');
+  timeoutControl.appendChild(document.createTextNode('本次最长运行时间（秒，仅可缩短 YAML 上限）：'));
+  const timeoutInput = document.createElement('input');
+  timeoutInput.type = 'number'; timeoutInput.id = 'stress-timeout-seconds'; timeoutInput.min = '1'; timeoutInput.step = '1';
+  timeoutInput.placeholder = '留空使用 YAML 上限'; timeoutInput.disabled = !runnable;
+  timeoutControl.appendChild(timeoutInput);
+  runBody.appendChild(timeoutControl);
+  const hint = !stressConfig ? '正在读取压测配置…' : (!enabled ? '压测 Web 触发未启用：需要 stress.enabled、stress.web_enabled 以及回环地址绑定。' : (!configuredBenchmarks.length ? '没有已启用的 benchmark：请先在 YAML 中配置路径并将对应 benchmarks.<名称>.enabled 设为 true；复选框只负责选择，不会启用配置。' : '复选框只选择 YAML 中已启用的 benchmark；启动后会立即占用资源，请确认目标机器空闲。'));
+	 runBody.appendChild(elText('div', 'stress-note', hint));
+  const start = elText('button', 'btn btn-primary', '开始压测');
+  if (!runnable) {
+    start.classList.add('btn-disabled');
+    start.setAttribute('aria-disabled', 'true');
+  }
+  start.addEventListener('click', startStress);
+  runBody.appendChild(start);
+  if (stressReport && stressReport.status === 'running') {
+    const cancel = elText('button', 'btn', '取消作业');
+    cancel.addEventListener('click', cancelStress);
+    runBody.appendChild(cancel);
+  }
+  runPanel.appendChild(runBody); page.appendChild(runPanel);
+
+  if (stressReport && stressReport.benchmarks && stressReport.benchmarks.length) {
+    const results = el('div', 'panel');
+    const resultHead = el('div', 'panel-head'); resultHead.appendChild(elText('span', '', '压测结果')); results.appendChild(resultHead);
+    const resultBody = el('div', 'panel-body'); const table = document.createElement('table'); table.className = 'table';
+    table.innerHTML = '<thead><tr><th>项目</th><th>状态</th><th>耗时</th><th>数值</th><th>来源 / 信息</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    for (const result of stressReport.benchmarks) {
+      const row = document.createElement('tr');
+      const values = Object.entries(result.values || {}).map(([k, v]) => k + '=' + fmt(v)).join(', ') || '-';
+      row.innerHTML = '<td>' + result.name + '</td><td class="' + stressColor(result.status) + '">' + result.status + '</td><td>' + (result.duration_ms || 0) + 'ms</td><td>' + values + '</td><td>' + (result.source || '') + ' ' + (result.message || '') + '</td>';
+      tbody.appendChild(row);
+    }
+    table.appendChild(tbody); resultBody.appendChild(table); results.appendChild(resultBody); page.appendChild(results);
+  }
 }
 
 // ---- data fetching ----
@@ -708,6 +801,55 @@ async function fetchConfigData() {
     refreshIntervalMs = c.refresh_interval_ms || 5000;
     document.getElementById('intervalInput').value = Math.round(refreshIntervalMs / 1000);
   } catch (e) { /* ignore */ }
+}
+
+async function fetchStress() {
+  try {
+    const cfg = await fetch('/api/stress/config', { cache: 'no-store' });
+    if (cfg.ok) stressConfig = await cfg.json();
+    const report = await fetch('/api/stress/latest', { cache: 'no-store' });
+    stressReport = report.ok ? await report.json() : null;
+    if (currentRoute() === 'stress') render();
+    if (stressReport && stressReport.status === 'running') {
+      if (!stressPollTimer) stressPollTimer = setInterval(fetchStress, 1000);
+    } else if (stressPollTimer) { clearInterval(stressPollTimer); stressPollTimer = null; }
+  } catch (e) { if (currentRoute() === 'stress') showBanner('读取压测状态失败：' + e.message, true); }
+}
+
+async function startStress() {
+  if (!stressConfig || !stressConfig.enabled) {
+    showBanner('尚不能启动压测：请在 YAML 中启用 stress.enabled 和 stress.web_enabled，并将 Web 监听地址设为 127.0.0.1:端口。', true);
+    return;
+  }
+  const configured = (stressConfig.benchmarks || []).filter(item => item.enabled);
+  if (!configured.length) {
+    showBanner('尚不能启动压测：HPL/HPCG/STREAM 均未配置。请先配置真实资产目录，并将至少一个 benchmarks.<名称>.enabled 设为 true；复选框只负责选择。', true);
+    return;
+  }
+  const selected = Array.from(document.querySelectorAll('.stress-option input:checked')).map(x => x.value);
+  if (!selected.length) { showBanner('请选择至少一个已配置的 benchmark', true); return; }
+  const rawTimeout = document.getElementById('stress-timeout-seconds').value.trim();
+  let timeoutSeconds = 0;
+  if (rawTimeout) {
+    timeoutSeconds = Number(rawTimeout);
+    if (!Number.isInteger(timeoutSeconds) || timeoutSeconds <= 0) { showBanner('单次超时必须是正整数秒，或留空使用 YAML 上限。', true); return; }
+    const selectedConfig = configured.filter(item => selected.indexOf(item.name) >= 0);
+    const maximum = Math.min(...selectedConfig.map(item => item.timeout_seconds));
+    if (timeoutSeconds > maximum) { showBanner('单次超时只能缩短，不能超过所选项目的 YAML 上限 ' + maximum + ' 秒。', true); return; }
+  }
+  const timeoutLabel = timeoutSeconds ? '，本次最长 ' + timeoutSeconds + ' 秒' : '，使用 YAML 超时上限';
+  if (!window.confirm('将启动高负载压测：' + selected.join(', ') + timeoutLabel + '。这可能影响当前业务负载，确认继续吗？')) return;
+  try {
+    const response = await fetch('/api/stress/runs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({benchmarks:selected, timeout_seconds:timeoutSeconds}) });
+    if (!response.ok) { showBanner('启动失败：' + await response.text(), true); return; }
+    stressReport = await response.json(); showBanner('压测作业已提交', false); await fetchStress();
+  } catch (e) { showBanner('启动失败：' + e.message, true); }
+}
+
+async function cancelStress() {
+  if (!stressReport || !stressReport.job_id) return;
+  try { await fetch('/api/stress/runs/' + encodeURIComponent(stressReport.job_id) + '/cancel', {method:'POST'}); await fetchStress(); }
+  catch (e) { showBanner('取消失败：' + e.message, true); }
 }
 
 function startPolling() {
@@ -766,5 +908,6 @@ window.addEventListener('hashchange', render);
 (async function init() {
   await fetchCollectors();
   await fetchConfigData();
+  await fetchStress();
   startPolling();
 })();

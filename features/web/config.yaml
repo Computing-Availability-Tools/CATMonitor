@@ -9,3 +9,25 @@ collector:
 storage:
   snapshot_path: features/web/data/snapshot.json
   runtime_path: features/web/data/runtime.json
+
+# Stress execution is intentionally disabled by default. Enable it only on a
+# loopback-bound, dedicated Linux monitoring host with deployed assets.
+stress:
+  enabled: false
+  web_enabled: false
+  script_path: features/stress/benchmark_check.sh
+  report_path: features/web/data/stress-latest.json
+  default_benchmarks: [hpl, hpcg, stream]
+  benchmarks:
+    stream:
+      enabled: false
+      timeout: 30m
+    hpl:
+      enabled: false
+      path: /opt/benchmarks/hpl
+      timeout: 2h
+    hpcg:
+      enabled: false
+      path: /opt/benchmarks/hpcg
+      result_dir: features/stress
+      timeout: 2h

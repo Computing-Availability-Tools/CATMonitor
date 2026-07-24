@@ -555,3 +555,15 @@ systemctl stop catmonitor-web
 ---
 
 *文档版本：v1.3 · 对应代码状态：features/web/ 多页可扩展版 + 指标目录筛选 + v0.2.0 源层指标趋势（端口 9527 占用自动递增；静态规格双路径采集：含 os_info）*
+
+---
+
+## 14. 压测作业页面（v0.3.2）
+
+压测不是 collector，也不写入 `snapshot.json` 的健康分。SPA 增加 `#/stress` 顶级导航，读取独立的 `stress-latest.json` 并展示最近作业、逐项数值、状态、耗时和解析来源。
+
+运行入口为受控异步作业：`POST /api/stress/runs` 只接受配置中的 benchmark 名称和可选 `timeout_seconds`。该超时仅作用于本次作业，且只能缩短 YAML 中每个 benchmark 的上限，不能修改路径、脚本、环境变量、NUMA/MPI 或线程数。Manager 串行执行且同时仅允许一项作业；前端先显示高负载确认框，再每秒轮询最近报告。支持 `POST /api/stress/runs/{id}/cancel` 取消。
+
+安全限制：只有 `stress.enabled`、`stress.web_enabled` 同时为 true，且 Web 绑定 `127.0.0.1` / `localhost` / `[::1]` 时，运行按钮才启用。默认关闭。非回环部署必须先增加认证/授权，不能直接暴露执行接口。
+
+报告文件由 stress Manager 原子写入 `stress-latest.json`，HTTP 只读报告或提交固定配置作业；不复用采集 JSONL。详细执行与报告契约见 [`features/stress/STRESS_SPEC.md`](../stress/STRESS_SPEC.md)。

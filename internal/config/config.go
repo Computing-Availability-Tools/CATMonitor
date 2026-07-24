@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"gopkg.in/yaml.v3"
 )
@@ -15,6 +16,7 @@ type Config struct {
 	Collectors map[string]CollectorCfg `yaml:"collectors"`
 	Storage    StorageConfig           `yaml:"storage"`
 	Health     HealthConfig            `yaml:"health"`
+	Stress     stress.Config           `yaml:"stress"`
 }
 
 // ServerConfig holds server-level configuration.
@@ -50,12 +52,12 @@ func Default() *Config {
 		},
 		Collectors: map[string]CollectorCfg{
 			"chassis": {Enabled: true, Interval: 3 * time.Second},
-			"cpu":      {Enabled: true, Interval: 3 * time.Second},
-			"memory":   {Enabled: true, Interval: 3 * time.Second},
-			"disk":     {Enabled: true, Interval: 5 * time.Second},
-			"gpu":      {Enabled: true, Interval: 3 * time.Second},
-			"npu":      {Enabled: true, Interval: 3 * time.Second},
-			"network":  {Enabled: true, Interval: 3 * time.Second},
+			"cpu":     {Enabled: true, Interval: 3 * time.Second},
+			"memory":  {Enabled: true, Interval: 3 * time.Second},
+			"disk":    {Enabled: true, Interval: 5 * time.Second},
+			"gpu":     {Enabled: true, Interval: 3 * time.Second},
+			"npu":     {Enabled: true, Interval: 3 * time.Second},
+			"network": {Enabled: true, Interval: 3 * time.Second},
 		},
 		Storage: StorageConfig{
 			DataDir:    platform.DataDir(),
@@ -66,6 +68,12 @@ func Default() *Config {
 			Enabled:      true,
 			Interval:     5 * time.Second,
 			WeightScheme: "auto",
+		},
+		Stress: stress.Config{
+			Enabled:    false,
+			WebEnabled: false,
+			ScriptPath: "features/stress/benchmark_check.sh",
+			Benchmarks: map[string]stress.BenchmarkConfig{},
 		},
 	}
 }

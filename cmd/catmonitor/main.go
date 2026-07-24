@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
@@ -45,6 +47,8 @@ func main() {
 		runCollect()
 	case "health":
 		runHealth()
+	case "stress":
+		runStress()
 	case "list":
 		runList()
 	case "version":
@@ -64,6 +68,8 @@ Commands:
   daemon       Start daemon process (default)
   collect      Collect metrics once and print
   health       Run health check and print report
+
+  stress       Run explicitly requested stress benchmarks
   list         List all registered collectors
   version      Show version information
 
@@ -82,11 +88,15 @@ func loadConfig() *config.Config {
 	fs.String("output", "", "Output format: json|table")
 	fs.Parse(os.Args[2:])
 
+	return loadConfigPath(*configPath)
+}
+
+func loadConfigPath(configPath string) *config.Config {
 	// Load the metric catalog: env CATMONITOR_METRICS (a file) > a metrics.yaml
 	// next to the catmonitor config > dev fallback configs/metrics.yaml.
 	metricsPaths := []string{
 		os.Getenv("CATMONITOR_METRICS"),
-		filepath.Join(filepath.Dir(*configPath), "metrics.yaml"),
+		filepath.Join(filepath.Dir(configPath), "metrics.yaml"),
 		"configs/metrics.yaml",
 	}
 	if err := metrics.Init(metricsPaths...); err != nil {
@@ -94,7 +104,7 @@ func loadConfig() *config.Config {
 		os.Exit(1)
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		slog.Error("failed to load config, using defaults", "error", err)
 		return config.Default()
@@ -249,6 +259,90 @@ func runHealth() {
 	} else {
 		printHealthJSON(score)
 	}
+}
+
+func runStress() {
+	configPath, names, output, err := stressArgs(os.Args[2:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stress:", err)
+		return
+	}
+	cfg := loadConfigPath(configPath)
+	manager := stress.NewManager(cfg.Stress)
+	report, err := manager.Start(names)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stress:", err)
+		return
+	}
+	for report.Status == stress.StatusRunning {
+		time.Sleep(200 * time.Millisecond)
+		report, err = manager.Job(report.JobID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stress:", err)
+			return
+		}
+	}
+	if output == "table" {
+		printStressTable(report)
+	} else {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+	}
+	if report.Status != stress.StatusHealthy {
+		os.Exit(1)
+	}
+}
+
+func stressArgs(args []string) (string, []string, string, error) {
+	configPath := platform.ConfigPath()
+	output := "json"
+	var names []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "run":
+			continue
+		case "-c", "--config":
+			if i+1 >= len(args) {
+				return "", nil, "", fmt.Errorf("%s requires a path", args[i])
+			}
+			i++
+			configPath = args[i]
+		case "-o", "--output":
+			if i+1 >= len(args) {
+				return "", nil, "", fmt.Errorf("%s requires json or table", args[i])
+			}
+			i++
+			output = args[i]
+		case "--bench", "-b":
+			if i+1 >= len(args) {
+				return "", nil, "", fmt.Errorf("%s requires a comma-separated list", args[i])
+			}
+			i++
+			names = strings.Split(args[i], ",")
+		default:
+			return "", nil, "", fmt.Errorf("unknown argument %q", args[i])
+		}
+	}
+	if output != "json" && output != "table" {
+		return "", nil, "", fmt.Errorf("output must be json or table")
+	}
+	return configPath, names, output, nil
+}
+
+func printStressTable(report stress.Report) {
+	fmt.Printf("\nCATMonitor Stress Report  %s\n", report.HealthCondition)
+	fmt.Printf("Job: %s  Platform: %s\n\n", report.JobID, report.Platform)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Benchmark\tStatus\tDuration\tValues\tMessage")
+	for _, result := range report.Benchmarks {
+		values := make([]string, 0, len(result.Values))
+		for key, value := range result.Values {
+			values = append(values, fmt.Sprintf("%s=%.2f", key, value))
+		}
+		sort.Strings(values)
+		fmt.Fprintf(w, "%s\t%s\t%dms\t%s\t%s\n", result.Name, result.Status, result.DurationMS, strings.Join(values, ", "), result.Message)
+	}
+	w.Flush()
 }
 
 func runList() {

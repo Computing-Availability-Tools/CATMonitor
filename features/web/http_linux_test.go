@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/cpu"
@@ -54,7 +56,7 @@ func TestHTTPAPISmoke(t *testing.T) {
 	dc.collectOnce()
 	dc.collectOnce()
 
-	srv := NewServer(cfg, dc, logger)
+	srv := NewServer(cfg, dc, stress.NewManager(cfg.Stress), logger)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	client := ts.Client()
@@ -165,6 +167,24 @@ func TestHTTPAPISmoke(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
 	}
+	// Stress endpoints are visible for status but execution stays disabled by
+	// default, even when the Web server itself is healthy.
+	body, code = get(t, client, ts.URL+"/api/stress/config")
+	if code != 200 {
+		t.Errorf("stress config status=%d want 200", code)
+	}
+	var stressCfg struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(body, &stressCfg); err != nil {
+		t.Errorf("decode stress config: %v", err)
+	} else if stressCfg.Enabled {
+		t.Error("stress execution unexpectedly enabled by default")
+	}
+	code, _ = post(t, "/api/stress/runs", `{"benchmarks":["stream"]}`)
+	if code != http.StatusForbidden {
+		t.Errorf("disabled stress POST status=%d want 403", code)
+	}
 	code, _ = post(t, "/api/config", `{"refresh_interval_ms":2000}`)
 	if code != 200 {
 		t.Errorf("config POST 2000ms status=%d want 200", code)
@@ -212,6 +232,74 @@ func TestHTTPAPISmoke(t *testing.T) {
 		if !strings.Contains(js, needle) {
 			t.Errorf("static app.js missing %q (hardware-specs adaptation not embedded)", needle)
 		}
+	}
+}
+
+// TestStressWebAPISimulatedRun verifies the full Web-triggered flow without a
+// real benchmark binary. The temporary script only emits representative STREAM
+// output, so the test neither loads the host nor requires MPI assets.
+func TestStressWebAPISimulatedRun(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "benchmark_check.sh")
+	output := "#!/bin/sh\necho 'Copy: 1000.1'\necho 'Scale: 900.2'\necho 'Add: 800.3'\necho 'Triad: 700.4'\n"
+	if err := os.WriteFile(script, []byte(output), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assets := filepath.Join(dir, "stream")
+	if err := os.Mkdir(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stressCfg := stress.Config{
+		Enabled:           true,
+		WebEnabled:        true,
+		ScriptPath:        script,
+		ReportPath:        filepath.Join(dir, "stress-latest.json"),
+		DefaultBenchmarks: []string{"stream"},
+		Benchmarks: map[string]stress.BenchmarkConfig{
+			"stream": {Enabled: true, Path: assets, Timeout: time.Second},
+		},
+	}
+	cfg := &Config{Server: ServerCfg{Addr: "127.0.0.1:9527"}, Stress: stressCfg}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(cfg, nil, stress.NewManager(stressCfg), logger)
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	resp, err := ts.Client().Post(ts.URL+"/api/stress/runs", "application/json", strings.NewReader(`{"benchmarks":["stream"],"timeout_seconds":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("start status=%d want 202: %s", resp.StatusCode, body)
+	}
+	var report stress.Report
+	if err := json.NewDecoder(resp.Body).Decode(&report); err != nil {
+		t.Fatalf("decode start report: %v", err)
+	}
+	if report.JobID == "" || report.Status != stress.StatusRunning {
+		t.Fatalf("unexpected initial report: %+v", report)
+	}
+	if report.TimeoutSeconds != 1 {
+		t.Fatalf("timeout_seconds=%d want 1", report.TimeoutSeconds)
+	}
+
+	for deadline := time.Now().Add(2 * time.Second); report.Status == stress.StatusRunning && time.Now().Before(deadline); {
+		body, status := get(t, ts.Client(), ts.URL+"/api/stress/runs/"+report.JobID)
+		if status != http.StatusOK {
+			t.Fatalf("job status=%d want 200: %s", status, body)
+		}
+		if err := json.Unmarshal(body, &report); err != nil {
+			t.Fatalf("decode completed report: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if report.Status != stress.StatusHealthy || len(report.Benchmarks) != 1 {
+		t.Fatalf("unexpected completed report: %+v", report)
+	}
+	if got := report.Benchmarks[0].Values["triad_mb_s"]; got != 700.4 {
+		t.Fatalf("triad_mb_s=%v want 700.4", got)
 	}
 }
 

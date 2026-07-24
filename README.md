@@ -101,6 +101,18 @@ catmonitor health
 catmonitor health -o table
 ```
 
+### 显式压测（Linux）
+
+> 压测会产生高负载，默认关闭；必须先在配置中部署 benchmark 资产并显式启用 `stress`。
+
+```bash
+# 运行配置中的默认压测集合，输出 JSON
+catmonitor stress run -c /etc/catmonitor/catmonitor.yaml
+
+# 仅执行 HPL 和 STREAM，以表格输出
+catmonitor stress run --bench hpl,stream -o table
+```
+
 ### 查看状态
 
 ```bash
@@ -147,6 +159,10 @@ go build -o features/web/bin/catmonitor-web ./features/web
 | GET | `/api/collectors` | 采集器注册表元数据（驱动导航） |
 | GET / POST | `/api/config` | 读取 / 更新刷新间隔 |
 | POST | `/api/refresh` | 请求立即采集 |
+| GET | `/api/stress/config` | 读取可公开展示的压测配置与运行能力 |
+| GET | `/api/stress/latest` | 读取最近压测报告 |
+| POST | `/api/stress/runs` | 提交受控压测作业；可选单次缩短超时（默认禁用） |
+| GET / POST | `/api/stress/runs/{id}` / `.../{id}/cancel` | 查询 / 取消压测作业 |
 
 ### 扩展性
 
@@ -161,7 +177,7 @@ Commands:
   daemon       启动守护进程（持续采集）
   collect      单次采集所有指标快照
   health       执行一次健康检查
-  status       查看守护进程状态
+  stress       显式执行已配置的压测（Linux，高负载）
   list         列出所有已注册采集器
   version      显示版本信息
 
@@ -244,6 +260,7 @@ internal/source/{source}/     # 来源层（14 包，v0.2.0 引入，v0.2.2 扩�
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
 | [features/web/Web_SPEC.md](features/web/Web_SPEC.md) | Web 仪表盘设计与规格 |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |
+| [features/stress/STRESS_SPEC.md](features/stress/STRESS_SPEC.md) | 压测模块规格 |
 | [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md) | 能效监控模块规格 |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单 |
 | [test_report.md](test_report.md) | 测试报告 |

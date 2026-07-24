@@ -7,13 +7,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Server    ServerCfg    `yaml:"server"`
-	Collector CollectorCfg `yaml:"collector"`
-	Storage   StorageCfg   `yaml:"storage"`
+	Server    ServerCfg     `yaml:"server"`
+	Collector CollectorCfg  `yaml:"collector"`
+	Storage   StorageCfg    `yaml:"storage"`
+	Stress    stress.Config `yaml:"stress"`
 }
 
 type ServerCfg struct {
@@ -41,6 +43,13 @@ func DefaultConfig() *Config {
 		Storage: StorageCfg{
 			SnapshotPath: "features/web/data/snapshot.json",
 			RuntimePath:  "features/web/data/runtime.json",
+		},
+		Stress: stress.Config{
+			Enabled:    false,
+			WebEnabled: false,
+			ScriptPath: "features/stress/benchmark_check.sh",
+			ReportPath: "features/web/data/stress-latest.json",
+			Benchmarks: map[string]stress.BenchmarkConfig{},
 		},
 	}
 }
