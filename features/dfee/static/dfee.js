@@ -23,6 +23,23 @@ let canvasMap = {};
 let legendMap = {};
 let badgeMap = {};
 let filterSets = {}; // {filterKey: Set or null} — null = all visible
+let cardOrders = {}; // {sectionTitle: [chartId, ...]}
+let cardSizes = {}; // {chartId: {span: N, height: N}}
+let dragSource = null;
+
+function loadCardLayout() {
+  try { cardOrders = JSON.parse(localStorage.getItem('dfee-card-order') || '{}'); } catch (_) {}
+  try { cardSizes = JSON.parse(localStorage.getItem('dfee-card-size') || '{}'); } catch (_) {}
+}
+function saveCardOrder() { localStorage.setItem('dfee-card-order', JSON.stringify(cardOrders)); }
+function saveCardSize() { localStorage.setItem('dfee-card-size', JSON.stringify(cardSizes)); }
+function getOrderedIds(sec) {
+  const saved = cardOrders[sec.title] || [];
+  return [
+    ...saved.filter(id => sec.ids.includes(id)),
+    ...sec.ids.filter(id => !saved.includes(id))
+  ];
+}
 
 function loadFilterSet(key) {
   try {
@@ -178,7 +195,8 @@ function buildSections(charts) {
   for (const c of charts) chartDefs[c.id] = c;
 
   for (const sec of SECTIONS) {
-    const secCharts = sec.ids.map(id => chartDefs[id]).filter(c => c);
+    const orderedIds = getOrderedIds(sec);
+    const secCharts = orderedIds.map(id => chartDefs[id]).filter(c => c);
     const available = secCharts.filter(c => (c.series || []).length > 0).length;
     const hasPriority = secCharts.some(c => c.priority);
     const collapsedSet = getCollapsedSet();
@@ -213,6 +231,7 @@ function buildSections(charts) {
     section.appendChild(head);
 
     const grid = el('div', 'chart-grid');
+    grid.dataset.sectionTitle = sec.title;
     if (sec.gridCols) grid.style.gridTemplateColumns = `repeat(${sec.gridCols}, 1fr)`;
     for (const c of secCharts) {
       grid.appendChild(buildCard(c));
@@ -261,13 +280,46 @@ function buildCard(chart) {
   const hasData = series.length > 0;
   const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
   const pending = hasData && bufferedCount === 0;
-  const hasEnough = series.some(s => buffers[s.id] && buffers[s.id].length >= 2);
 
   const card = el('div', 'chart-card');
+  card.dataset.chartId = chart.id;
   if (!hasData) card.classList.add('compact');
+  const savedSpan = cardSizes[chart.id]?.span || 1;
+  if (savedSpan > 1) card.style.gridColumn = `span ${savedSpan}`;
 
-  // header
+  // header (draggable for reorder)
   const head = el('div', 'chart-head');
+  head.draggable = true;
+  head.addEventListener('dragstart', (e) => {
+    dragSource = card;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', chart.id);
+  });
+  head.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    dragSource = null;
+  });
+  card.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (dragSource && dragSource !== card) card.classList.add('drag-over');
+  });
+  card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+  card.addEventListener('drop', (e) => {
+    e.preventDefault();
+    card.classList.remove('drag-over');
+    if (!dragSource || dragSource === card) return;
+    const grid = card.parentElement;
+    const srcIdx = [...grid.children].indexOf(dragSource);
+    const tgtIdx = [...grid.children].indexOf(card);
+    if (srcIdx < tgtIdx) grid.insertBefore(dragSource, card.nextSibling);
+    else grid.insertBefore(dragSource, card);
+    const secTitle = grid.dataset.sectionTitle;
+    cardOrders[secTitle] = [...grid.children].map(c => c.dataset.chartId);
+    saveCardOrder();
+    renderAllCharts();
+  });
+
   const titleText = chart.y_unit ? chart.title + ' (' + chart.y_unit + ')' : chart.title;
   head.appendChild(elText('span', '', titleText));
   let badge;
@@ -295,12 +347,58 @@ function buildCard(chart) {
   const canvas = document.createElement('canvas');
   canvas.className = 'chart-canvas';
   canvas.id = 'canvas-' + chart.id;
-  canvas.style.height = canvasHeight(series.length) + 'px';
+  canvas.style.height = (cardSizes[chart.id]?.height || 200) + 'px';
   body.appendChild(canvas);
   card.appendChild(body);
   canvasMap[chart.id] = canvas;
 
+  // resize handle
+  const handle = el('div', 'resize-handle');
+  handle.addEventListener('mousedown', startResize);
+  card.appendChild(handle);
+
   return card;
+}
+
+function startResize(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const card = e.currentTarget.closest('.chart-card');
+  const chartId = card.dataset.chartId;
+  const canvas = canvasMap[chartId];
+  const grid = card.parentElement;
+  const gridCols = getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startHeight = canvas ? canvas.clientHeight : 200;
+  const startWidth = card.offsetWidth;
+  const startSpan = cardSizes[chartId]?.span || 1;
+  const colWidth = startWidth / startSpan;
+  let currentSpan = startSpan;
+
+  function onMove(ev) {
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    const newHeight = Math.max(120, Math.min(500, startHeight + dy));
+    if (canvas) canvas.style.height = newHeight + 'px';
+    const newSpan = Math.max(1, Math.min(gridCols, Math.round(startSpan + dx / colWidth)));
+    if (newSpan !== currentSpan) {
+      currentSpan = newSpan;
+      card.style.gridColumn = newSpan > 1 ? `span ${newSpan}` : '';
+    }
+    if (canvas) renderChart(canvas, chartDefs[chartId]);
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (!cardSizes[chartId]) cardSizes[chartId] = {};
+    cardSizes[chartId].span = currentSpan;
+    cardSizes[chartId].height = parseInt(canvas?.style.height) || 200;
+    saveCardSize();
+    renderAllCharts();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 // ---- buffer update ----
@@ -518,6 +616,7 @@ async function manualRefresh() {
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
 (async function init() {
+  loadCardLayout();
   for (const sec of SECTIONS) {
     if (sec.filterKey) loadFilterSet(sec.filterKey);
   }
