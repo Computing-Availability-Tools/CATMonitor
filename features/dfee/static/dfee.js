@@ -65,7 +65,9 @@ function buildFilterDropdown(sec, ids) {
   const dropdown = el('div', 'npu-dropdown');
   const trigger = el('button', 'npu-dropdown-trigger');
   trigger.type = 'button';
-  trigger.textContent = filterDisplayLabel(sec.filterKey);
+  trigger.title = filterDisplayLabel(sec.filterKey);
+  const textSpan = elText('span', 'npu-dropdown-text', filterDisplayLabel(sec.filterKey));
+  trigger.appendChild(textSpan);
   const arrow = elText('span', 'npu-dropdown-arrow', '\u25BE');
   trigger.appendChild(arrow);
   const menu = el('div', 'npu-dropdown-menu');
@@ -106,6 +108,7 @@ function onFilterCheckboxChange(sec, ids, trigger, menu) {
   }
   saveFilterSet(sec.filterKey);
   trigger.firstChild.textContent = filterDisplayLabel(sec.filterKey);
+  trigger.title = filterDisplayLabel(sec.filterKey);
   renderAllCharts();
 }
 

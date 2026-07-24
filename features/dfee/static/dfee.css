@@ -114,7 +114,11 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   background: var(--card); cursor: pointer; font-size: 12px; color: var(--text);
 }
 .npu-dropdown-trigger:hover { background: #f0f2f5; }
-.npu-dropdown-arrow { color: var(--muted); font-size: 10px; }
+.npu-dropdown-text {
+  max-width: 140px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.npu-dropdown-arrow { color: var(--muted); font-size: 10px; flex-shrink: 0; }
 .npu-dropdown-menu {
   display: none; position: absolute; top: 100%; left: 0; margin-top: 4px;
   background: var(--card); border: 1px solid var(--border); border-radius: 6px;
