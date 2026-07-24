@@ -6,7 +6,7 @@ const PALETTE = [
 ];
 
 const SECTIONS = [
-  { title: 'NPU', accent: '#2563eb', ids: ['npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage'], gridCols: 5, spans: { 'npu_aicore_freq': 2, 'npu_hbm_freq': 3, 'npu_power_draw': 2, 'npu_voltage': 3 }, filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage'], gridCols: 6, spans: { 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3, 'npu_power_draw': 3, 'npu_voltage': 3 }, filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
