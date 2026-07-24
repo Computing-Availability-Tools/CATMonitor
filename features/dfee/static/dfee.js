@@ -6,11 +6,11 @@ const PALETTE = [
 ];
 
 const SECTIONS = [
-  { title: 'NPU', accent: '#2563eb', ids: ['npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_hbm_bandwidth_util', 'npu_memory_usage'] },
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_hbm_bandwidth_util', 'npu_memory_usage'], filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
-  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2 },
-  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2 },
+  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
+  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2, filterLabel: 'NIC', filterKey: 'network_' },
   { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 3 },
 ];
 
@@ -22,18 +22,19 @@ let chartDefs = {};
 let canvasMap = {};
 let legendMap = {};
 let badgeMap = {};
-let npuFilterSet = null; // null = all visible; Set = only these NPU IDs
+let filterSets = {}; // {filterKey: Set or null} — null = all visible
 
-function loadNpuFilter() {
+function loadFilterSet(key) {
   try {
-    const saved = JSON.parse(localStorage.getItem('dfee-npu-filter') || '[]');
-    if (saved.length > 0) npuFilterSet = new Set(saved);
+    const saved = JSON.parse(localStorage.getItem('dfee-filter-' + key) || '[]');
+    if (saved.length > 0) filterSets[key] = new Set(saved);
   } catch (_) {}
 }
-function saveNpuFilter() {
-  localStorage.setItem('dfee-npu-filter', npuFilterSet ? JSON.stringify([...npuFilterSet]) : '[]');
+function saveFilterSet(key) {
+  const set = filterSets[key];
+  localStorage.setItem('dfee-filter-' + key, set ? JSON.stringify([...set]) : '[]');
 }
-function getNpuIds(charts) {
+function getFilterIds(charts) {
   const ids = new Set();
   for (const c of charts) {
     for (const s of (c.series || [])) {
@@ -41,36 +42,43 @@ function getNpuIds(charts) {
       if (parts.length > 1) ids.add(parts[0]);
     }
   }
-  return [...ids].sort((a, b) => Number(a) - Number(b));
+  return [...ids].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
 }
 function isSeriesVisible(chart, series) {
-  if (!chart.id.startsWith('npu_') || !npuFilterSet) return true;
-  return npuFilterSet.has(series.id.split(':')[0]);
+  for (const sec of SECTIONS) {
+    if (sec.filterKey && chart.id.startsWith(sec.filterKey)) {
+      const set = filterSets[sec.filterKey];
+      if (!set) return true;
+      return set.has(series.id.split(':')[0]);
+    }
+  }
+  return true;
 }
-function npuFilterLabel() {
-  if (!npuFilterSet) return '全部';
-  return [...npuFilterSet].sort((a, b) => Number(a) - Number(b)).join(', ');
+function filterDisplayLabel(key) {
+  const set = filterSets[key];
+  if (!set) return '全部';
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, {numeric: true})).join(', ');
 }
-function buildNpuDropdown(npuIds) {
+function buildFilterDropdown(sec, ids) {
   const wrap = el('div', 'npu-filter');
-  const label = elText('span', 'filter-label', 'NPU CARD ID');
+  const label = elText('span', 'filter-label', sec.filterLabel);
   const dropdown = el('div', 'npu-dropdown');
   const trigger = el('button', 'npu-dropdown-trigger');
   trigger.type = 'button';
-  trigger.textContent = npuFilterLabel();
+  trigger.textContent = filterDisplayLabel(sec.filterKey);
   const arrow = elText('span', 'npu-dropdown-arrow', '\u25BE');
   trigger.appendChild(arrow);
   const menu = el('div', 'npu-dropdown-menu');
   menu.onclick = (e) => e.stopPropagation();
-  for (const id of npuIds) {
+  for (const id of ids) {
     const item = el('label', 'npu-dropdown-item');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = id;
-    cb.checked = !npuFilterSet || npuFilterSet.has(id);
-    cb.onchange = () => onNpuCheckboxChange(npuIds, trigger);
+    cb.checked = !filterSets[sec.filterKey] || filterSets[sec.filterKey].has(id);
+    cb.onchange = () => onFilterCheckboxChange(sec, ids, trigger, menu);
     item.appendChild(cb);
-    item.appendChild(document.createTextNode(' NPU ' + id));
+    item.appendChild(document.createTextNode(' ' + (sec.filterPrefix || '') + id));
     menu.appendChild(item);
   }
   trigger.onclick = (e) => {
@@ -86,18 +94,18 @@ function buildNpuDropdown(npuIds) {
   dropdown.appendChild(menu);
   return wrap;
 }
-function onNpuCheckboxChange(npuIds, trigger) {
-  const checked = npuIds.filter(id => {
-    const cb = document.querySelector('.npu-dropdown-item input[value="' + id + '"]');
+function onFilterCheckboxChange(sec, ids, trigger, menu) {
+  const checked = ids.filter(id => {
+    const cb = menu.querySelector('input[value="' + CSS.escape(id) + '"]');
     return cb && cb.checked;
   });
-  if (checked.length === 0 || checked.length === npuIds.length) {
-    npuFilterSet = null;
+  if (checked.length === 0 || checked.length === ids.length) {
+    filterSets[sec.filterKey] = null;
   } else {
-    npuFilterSet = new Set(checked);
+    filterSets[sec.filterKey] = new Set(checked);
   }
-  saveNpuFilter();
-  trigger.firstChild.textContent = npuFilterLabel();
+  saveFilterSet(sec.filterKey);
+  trigger.firstChild.textContent = filterDisplayLabel(sec.filterKey);
   renderAllCharts();
 }
 
@@ -193,10 +201,10 @@ function buildSections(charts) {
       }
       head.appendChild(filter);
     }
-    if (sec.title === 'NPU') {
-      const npuIds = getNpuIds(secCharts);
-      if (npuIds.length > 1) {
-        head.appendChild(buildNpuDropdown(npuIds));
+    if (sec.filterKey) {
+      const filterIds = getFilterIds(secCharts);
+      if (filterIds.length > 1) {
+        head.appendChild(buildFilterDropdown(sec, filterIds));
       }
     }
     section.appendChild(head);
@@ -507,7 +515,9 @@ async function manualRefresh() {
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
 (async function init() {
-  loadNpuFilter();
+  for (const sec of SECTIONS) {
+    if (sec.filterKey) loadFilterSet(sec.filterKey);
+  }
   await pollTick();
   startPolling();
 })();
