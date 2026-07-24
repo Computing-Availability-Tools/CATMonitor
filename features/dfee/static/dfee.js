@@ -6,7 +6,7 @@ const PALETTE = [
 ];
 
 const SECTIONS = [
-  { title: 'NPU', accent: '#2563eb', ids: ['npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_hbm_bandwidth_util', 'npu_memory_usage'], filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_power_draw', 'npu_voltage'], gridCols: 5, spans: { 'npu_aicore_freq': 2, 'npu_hbm_freq': 3, 'npu_power_draw': 2, 'npu_voltage': 3 }, filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
@@ -233,9 +233,10 @@ function buildSections(charts) {
     const grid = el('div', 'chart-grid');
     grid.dataset.sectionTitle = sec.title;
     if (sec.gridCols) grid.style.gridTemplateColumns = `repeat(${sec.gridCols}, 1fr)`;
-    for (const c of secCharts) {
-      grid.appendChild(buildCard(c));
-    }
+    secCharts.forEach((c) => {
+      const span = sec.spans ? sec.spans[c.id] : undefined;
+      grid.appendChild(buildCard(c, span));
+    });
     section.appendChild(grid);
     container.appendChild(section);
   }
@@ -275,7 +276,7 @@ function togglePriority(grid, secCharts, val, clickedBtn, filterContainer) {
   }
 }
 
-function buildCard(chart) {
+function buildCard(chart, defaultSpan) {
   const series = chart.series || [];
   const hasData = series.length > 0;
   const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
@@ -283,8 +284,9 @@ function buildCard(chart) {
 
   const card = el('div', 'chart-card');
   card.dataset.chartId = chart.id;
+  card.dataset.defaultSpan = defaultSpan || 1;
   if (!hasData) card.classList.add('compact');
-  const savedSpan = cardSizes[chart.id]?.span || 1;
+  const savedSpan = cardSizes[chart.id]?.span || defaultSpan || 1;
   if (savedSpan > 1) card.style.gridColumn = `span ${savedSpan}`;
 
   // header (draggable for reorder)
@@ -406,7 +408,7 @@ function startResize(e) {
   const startY = e.clientY;
   const startHeight = canvas ? canvas.clientHeight : 200;
   const startWidth = card.offsetWidth;
-  const startSpan = cardSizes[chartId]?.span || 1;
+  const startSpan = cardSizes[chartId]?.span || parseInt(card.dataset.defaultSpan) || 1;
   const colWidth = startWidth / startSpan;
   let currentSpan = startSpan;
 
@@ -618,8 +620,23 @@ async function pollTick() {
   const ts = data.timestamp ? new Date(data.timestamp) : null;
   document.getElementById('updateTime').textContent = ts ? ts.toLocaleTimeString('zh-CN') : '--';
 
-  // Update buffers BEFORE building sections so buildCard sees current data
-  // when deciding badge state (采集中 vs N 条).
+  // Detect server restart: if session_id changed, clear all cached layout.
+  if (data.session_id) {
+    const saved = localStorage.getItem('dfee-session-id');
+    if (saved && saved !== data.session_id) {
+      localStorage.removeItem('dfee-card-order');
+      localStorage.removeItem('dfee-card-size');
+      localStorage.removeItem('dfee-collapsed');
+      for (const sec of SECTIONS) {
+        if (sec.filterKey) localStorage.removeItem('dfee-filter-' + sec.filterKey);
+      }
+      cardOrders = {};
+      cardSizes = {};
+      filterSets = {};
+    }
+    localStorage.setItem('dfee-session-id', data.session_id);
+  }
+
   updateBuffers(data);
 
   if (Object.keys(chartDefs).length === 0 && data.charts) {

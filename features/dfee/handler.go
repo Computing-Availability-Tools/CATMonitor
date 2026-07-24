@@ -114,6 +114,7 @@ func (h *Handler) handleAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := EfficiencyResponse{
+		SessionID:       snap.SessionID,
 		Timestamp:       snap.Timestamp,
 		RefreshInterval: snap.RefreshInterval,
 		Charts:          charts,

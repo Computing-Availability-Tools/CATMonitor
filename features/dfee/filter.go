@@ -14,6 +14,7 @@ import (
 // ---- snapshot reader (self-contained, does not depend on web package) ----
 
 type snapshot struct {
+	SessionID       string             `json:"session_id"`
 	Timestamp       time.Time          `json:"timestamp"`
 	RefreshInterval int                `json:"refresh_interval_ms"`
 	Metrics         []collector.Metric `json:"metrics"`
@@ -203,6 +204,7 @@ type chartData struct {
 }
 
 type EfficiencyResponse struct {
+	SessionID       string      `json:"session_id"`
 	Timestamp       time.Time   `json:"timestamp"`
 	RefreshInterval int         `json:"refresh_interval_ms"`
 	Charts          []chartData `json:"charts"`
