@@ -11,7 +11,7 @@ const SECTIONS = [
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2 },
   { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2 },
-  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 2 },
+  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 3 },
 ];
 
 // ---- state ----
@@ -22,6 +22,21 @@ let chartDefs = {};
 let canvasMap = {};
 let legendMap = {};
 let badgeMap = {};
+
+function getCollapsedSet() {
+  try { return new Set(JSON.parse(localStorage.getItem('dfee-collapsed') || '[]')); }
+  catch (_) { return new Set(); }
+}
+function saveCollapsedSet(set) {
+  localStorage.setItem('dfee-collapsed', JSON.stringify([...set]));
+}
+function toggleSection(section, title) {
+  const collapsed = section.classList.toggle('collapsed');
+  const set = getCollapsedSet();
+  if (collapsed) set.add(title); else set.delete(title);
+  saveCollapsedSet(set);
+  if (!collapsed) renderAllCharts();
+}
 
 // ---- helpers ----
 function el(tag, cls) {
@@ -77,13 +92,17 @@ function buildSections(charts) {
     const secCharts = sec.ids.map(id => chartDefs[id]).filter(c => c);
     const available = secCharts.filter(c => (c.series || []).length > 0).length;
     const hasPriority = secCharts.some(c => c.priority);
+    const collapsedSet = getCollapsedSet();
 
     const section = el('section', 'section');
     section.style.setProperty('--section-accent', sec.accent);
+    if (collapsedSet.has(sec.title)) section.classList.add('collapsed');
 
     const head = el('div', 'section-head');
+    head.appendChild(elText('span', 'toggle-icon', '\u25BC'));
     head.appendChild(elText('span', '', sec.title));
     head.appendChild(elText('span', 'count', available + '/' + secCharts.length + ' 可用'));
+    head.onclick = () => toggleSection(section, sec.title);
     if (hasPriority) {
       const filter = el('div', 'priority-filter');
       for (const [label, val] of [['全部',''], ['高','high'], ['中','medium'], ['低','low']]) {
@@ -91,7 +110,7 @@ function buildSections(charts) {
         btn.textContent = label;
         btn.dataset.priority = val;
         if (val === '') btn.classList.add('active');
-        btn.onclick = () => togglePriority(grid, secCharts, val, btn, filter);
+        btn.onclick = (e) => { e.stopPropagation(); togglePriority(grid, secCharts, val, btn, filter); };
         filter.appendChild(btn);
       }
       head.appendChild(filter);
