@@ -47,16 +47,56 @@ function isSeriesVisible(chart, series) {
   if (!chart.id.startsWith('npu_') || !npuFilterSet) return true;
   return npuFilterSet.has(series.id.split(':')[0]);
 }
-function toggleNpuFilter(id, btn, filterContainer) {
-  if (!npuFilterSet) {
-    npuFilterSet = new Set();
-    filterContainer.querySelectorAll('.npu-btn').forEach(b => npuFilterSet.add(b.dataset.npuId));
+function npuFilterLabel() {
+  if (!npuFilterSet) return '全部';
+  return [...npuFilterSet].sort((a, b) => Number(a) - Number(b)).join(', ');
+}
+function buildNpuDropdown(npuIds) {
+  const wrap = el('div', 'npu-filter');
+  const label = elText('span', 'filter-label', 'NPU CARD ID');
+  const dropdown = el('div', 'npu-dropdown');
+  const trigger = el('button', 'npu-dropdown-trigger');
+  trigger.type = 'button';
+  trigger.textContent = npuFilterLabel();
+  const arrow = elText('span', 'npu-dropdown-arrow', '\u25BE');
+  trigger.appendChild(arrow);
+  const menu = el('div', 'npu-dropdown-menu');
+  for (const id of npuIds) {
+    const item = el('label', 'npu-dropdown-item');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = id;
+    cb.checked = !npuFilterSet || npuFilterSet.has(id);
+    cb.onchange = () => onNpuCheckboxChange(npuIds, trigger);
+    item.appendChild(cb);
+    item.appendChild(document.createTextNode(' NPU ' + id));
+    menu.appendChild(item);
   }
-  if (npuFilterSet.has(id)) { npuFilterSet.delete(id); btn.classList.remove('active'); }
-  else { npuFilterSet.add(id); btn.classList.add('active'); }
-  const allBtns = filterContainer.querySelectorAll('.npu-btn');
-  if ([...allBtns].every(b => b.classList.contains('active'))) npuFilterSet = null;
+  trigger.onclick = (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('open');
+  };
+  document.addEventListener('click', function closeMenu(e) {
+    if (!wrap.contains(e.target)) menu.classList.remove('open');
+  });
+  wrap.appendChild(label);
+  wrap.appendChild(dropdown);
+  dropdown.appendChild(trigger);
+  dropdown.appendChild(menu);
+  return wrap;
+}
+function onNpuCheckboxChange(npuIds, trigger) {
+  const checked = npuIds.filter(id => {
+    const cb = document.querySelector('.npu-dropdown-item input[value="' + id + '"]');
+    return cb && cb.checked;
+  });
+  if (checked.length === 0 || checked.length === npuIds.length) {
+    npuFilterSet = null;
+  } else {
+    npuFilterSet = new Set(checked);
+  }
   saveNpuFilter();
+  trigger.firstChild.textContent = npuFilterLabel();
   renderAllCharts();
 }
 
@@ -155,16 +195,7 @@ function buildSections(charts) {
     if (sec.title === 'NPU') {
       const npuIds = getNpuIds(secCharts);
       if (npuIds.length > 1) {
-        const filter = el('div', 'npu-filter');
-        for (const id of npuIds) {
-          const btn = el('button', 'npu-btn');
-          btn.textContent = id;
-          btn.dataset.npuId = id;
-          if (!npuFilterSet || npuFilterSet.has(id)) btn.classList.add('active');
-          btn.onclick = (e) => { e.stopPropagation(); toggleNpuFilter(id, btn, filter); };
-          filter.appendChild(btn);
-        }
-        head.appendChild(filter);
+        head.appendChild(buildNpuDropdown(npuIds));
       }
     }
     section.appendChild(head);

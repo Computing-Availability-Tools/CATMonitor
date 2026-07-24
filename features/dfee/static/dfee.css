@@ -105,14 +105,29 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
 .prio-btn:hover { background: #f0f2f5; }
 .prio-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-.npu-filter { display: flex; gap: 4px; margin-left: auto; }
-.npu-btn {
-  padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px;
-  background: var(--card); cursor: pointer; font-size: 12px;
-  color: var(--muted); min-width: 28px;
+.npu-filter { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.filter-label { color: var(--muted); font-size: 12px; font-weight: 400; }
+.npu-dropdown { position: relative; }
+.npu-dropdown-trigger {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 10px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--card); cursor: pointer; font-size: 12px; color: var(--text);
 }
-.npu-btn:hover { background: #f0f2f5; }
-.npu-btn.active { background: var(--section-accent, var(--accent)); color: #fff; border-color: var(--section-accent, var(--accent)); }
+.npu-dropdown-trigger:hover { background: #f0f2f5; }
+.npu-dropdown-arrow { color: var(--muted); font-size: 10px; }
+.npu-dropdown-menu {
+  display: none; position: absolute; top: 100%; left: 0; margin-top: 4px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12); padding: 4px; z-index: 100;
+  min-width: 100px; max-height: 240px; overflow-y: auto;
+}
+.npu-dropdown-menu.open { display: flex; flex-direction: column; gap: 2px; }
+.npu-dropdown-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; font-size: 12px; cursor: pointer; border-radius: 4px;
+}
+.npu-dropdown-item:hover { background: #f0f2f5; }
+.npu-dropdown-item input { margin: 0; cursor: pointer; }
 
 /* ---- chart grid ---- */
 .chart-grid {
