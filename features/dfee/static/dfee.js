@@ -61,6 +61,7 @@ function buildNpuDropdown(npuIds) {
   const arrow = elText('span', 'npu-dropdown-arrow', '\u25BE');
   trigger.appendChild(arrow);
   const menu = el('div', 'npu-dropdown-menu');
+  menu.onclick = (e) => e.stopPropagation();
   for (const id of npuIds) {
     const item = el('label', 'npu-dropdown-item');
     const cb = document.createElement('input');
