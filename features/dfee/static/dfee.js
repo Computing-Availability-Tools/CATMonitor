@@ -22,6 +22,43 @@ let chartDefs = {};
 let canvasMap = {};
 let legendMap = {};
 let badgeMap = {};
+let npuFilterSet = null; // null = all visible; Set = only these NPU IDs
+
+function loadNpuFilter() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('dfee-npu-filter') || '[]');
+    if (saved.length > 0) npuFilterSet = new Set(saved);
+  } catch (_) {}
+}
+function saveNpuFilter() {
+  localStorage.setItem('dfee-npu-filter', npuFilterSet ? JSON.stringify([...npuFilterSet]) : '[]');
+}
+function getNpuIds(charts) {
+  const ids = new Set();
+  for (const c of charts) {
+    for (const s of (c.series || [])) {
+      const parts = s.id.split(':');
+      if (parts.length > 1) ids.add(parts[0]);
+    }
+  }
+  return [...ids].sort((a, b) => Number(a) - Number(b));
+}
+function isSeriesVisible(chart, series) {
+  if (!chart.id.startsWith('npu_') || !npuFilterSet) return true;
+  return npuFilterSet.has(series.id.split(':')[0]);
+}
+function toggleNpuFilter(id, btn, filterContainer) {
+  if (!npuFilterSet) {
+    npuFilterSet = new Set();
+    filterContainer.querySelectorAll('.npu-btn').forEach(b => npuFilterSet.add(b.dataset.npuId));
+  }
+  if (npuFilterSet.has(id)) { npuFilterSet.delete(id); btn.classList.remove('active'); }
+  else { npuFilterSet.add(id); btn.classList.add('active'); }
+  const allBtns = filterContainer.querySelectorAll('.npu-btn');
+  if ([...allBtns].every(b => b.classList.contains('active'))) npuFilterSet = null;
+  saveNpuFilter();
+  renderAllCharts();
+}
 
 function getCollapsedSet() {
   try { return new Set(JSON.parse(localStorage.getItem('dfee-collapsed') || '[]')); }
@@ -114,6 +151,21 @@ function buildSections(charts) {
         filter.appendChild(btn);
       }
       head.appendChild(filter);
+    }
+    if (sec.title === 'NPU') {
+      const npuIds = getNpuIds(secCharts);
+      if (npuIds.length > 1) {
+        const filter = el('div', 'npu-filter');
+        for (const id of npuIds) {
+          const btn = el('button', 'npu-btn');
+          btn.textContent = id;
+          btn.dataset.npuId = id;
+          if (!npuFilterSet || npuFilterSet.has(id)) btn.classList.add('active');
+          btn.onclick = (e) => { e.stopPropagation(); toggleNpuFilter(id, btn, filter); };
+          filter.appendChild(btn);
+        }
+        head.appendChild(filter);
+      }
     }
     section.appendChild(head);
 
@@ -228,7 +280,7 @@ function updateBuffers(data) {
 function updateLegend(chart) {
   const legend = legendMap[chart.id];
   if (!legend) return;
-  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isSeriesVisible(chart, s));
   legend.innerHTML = '';
   for (let i = 0; i < series.length; i++) {
     const s = series[i];
@@ -260,7 +312,7 @@ function renderChart(canvas, chart) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, cw, ch);
 
-  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isSeriesVisible(chart, s));
   if (series.length === 0) return;
 
   // Y axis range
@@ -336,9 +388,10 @@ function renderChart(canvas, chart) {
 function updateBadge(chart) {
   const badge = badgeMap[chart.id];
   if (!badge) return;
-  const series = chart.series || [];
-  const hasData = series.length > 0;
-  const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
+  const allSeries = chart.series || [];
+  const visibleSeries = allSeries.filter(s => isSeriesVisible(chart, s));
+  const hasData = allSeries.length > 0;
+  const bufferedCount = visibleSeries.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
   if (!hasData) {
     badge.className = 'badge badge-empty';
     badge.textContent = '无数据';
@@ -347,7 +400,7 @@ function updateBadge(chart) {
     badge.textContent = '采集中';
   } else {
     badge.className = 'badge badge-ok';
-    badge.textContent = series.length + ' 条';
+    badge.textContent = visibleSeries.length + ' 条';
   }
 }
 
@@ -422,6 +475,7 @@ async function manualRefresh() {
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
 (async function init() {
+  loadNpuFilter();
   await pollTick();
   startPolling();
 })();

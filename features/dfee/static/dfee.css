@@ -105,6 +105,15 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
 .prio-btn:hover { background: #f0f2f5; }
 .prio-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+.npu-filter { display: flex; gap: 4px; margin-left: auto; }
+.npu-btn {
+  padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--card); cursor: pointer; font-size: 12px;
+  color: var(--muted); min-width: 28px;
+}
+.npu-btn:hover { background: #f0f2f5; }
+.npu-btn.active { background: var(--section-accent, var(--accent)); color: #fff; border-color: var(--section-accent, var(--accent)); }
+
 /* ---- chart grid ---- */
 .chart-grid {
   display: grid;
