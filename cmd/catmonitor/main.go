@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/exporter"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
@@ -121,6 +122,7 @@ func runDaemon() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	cacheStore := exporter.NewCachingStorage(store)
 
 	// Build collector configs
 	collectorCfgs := make(map[string]collector.CollectorConfig)
@@ -131,8 +133,11 @@ func runDaemon() {
 		}
 	}
 
-	scheduler := collector.NewScheduler(collector.DefaultRegistry, store, logger)
+	scheduler := collector.NewScheduler(collector.DefaultRegistry, cacheStore, logger)
 	scheduler.SetFilter(metrics.Filter)
+
+	// Prometheus exporter endpoint
+	go exporter.ServeMetrics(":9100", cacheStore, logger)
 
 	// Set up health evaluator
 	var healthEval *health.Evaluator

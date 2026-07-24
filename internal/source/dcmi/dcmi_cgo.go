@@ -11,7 +11,7 @@
 package dcmi
 
 /*
-#cgo CFLAGS: -I/usr/local/Ascend/driver/include
+#cgo CFLAGS: -I/usr/local/Ascend/driver/include -w
 #cgo LDFLAGS: -L/usr/local/Ascend/driver/lib64/driver -ldcmi
 #include <stdlib.h>
 #include <string.h>
@@ -22,12 +22,37 @@ package dcmi
 static const char* dcmi_chip_type(struct dcmi_chip_info *p) { return (const char*)p->chip_type; }
 static const char* dcmi_chip_name(struct dcmi_chip_info *p) { return (const char*)p->chip_name; }
 static const char* dcmi_chip_ver(struct dcmi_chip_info *p) { return (const char*)p->chip_ver; }
+
+// CGo cannot access union fields directly; use C helpers to extract values.
+static int sensor_get_int(union dcmi_sensor_info *si) { return si->iint; }
+static int sensor_get_ntc(union dcmi_sensor_info *si, int idx) { return si->ntc_tmp[idx]; }
+
+// Wrapper for dcmi_get_device_errorcode_v2 — actual signature:
+//   int dcmi_get_device_errorcode_v2(int card_id, int device_id,
+//       int *error_count, unsigned int *error_code_list, unsigned int list_len)
+// This wrapper retrieves the error count and first error code into a single uint.
+static int dcmi_errorcode_v2_wrapper(int card, int dev, unsigned int *code) {
+    int error_count = 0;
+    unsigned int error_codes[8] = {0};
+    int rc = dcmi_get_device_errorcode_v2(card, dev, &error_count, error_codes, 8);
+    if (rc != 0) return rc;
+    // Return the error count as the metric value (0 = no errors).
+    *code = (unsigned int)error_count;
+    return 0;
+}
+
+// Wrapper for dcmi_get_device_info — the 6th arg is unsigned int *size (caller
+// sets buffer size, callee updates with actual bytes written).
+static int dcmi_get_device_info_wrapper(int card, int dev, int main_cmd,
+    unsigned int sub_cmd, unsigned int *val) {
+    unsigned int size = sizeof(unsigned int);
+    return dcmi_get_device_info(card, dev, main_cmd, sub_cmd, val, &size);
+}
 */
 import "C"
 
 import (
 	"fmt"
-	"unsafe"
 )
 
 func init() {
@@ -48,15 +73,24 @@ func (p *cgoProvider) Init() error {
 func (p *cgoProvider) CardList() (int, []int, error) {
 	var cardNum C.int
 	cardList := make([]C.int, 64)
-	rc := C.dcmi_get_card_list(&cardNum, &cardList[0], 64)
+	rc := C.dcmi_get_card_num_list(&cardNum, &cardList[0], 64)
 	if rc != 0 {
-		return 0, nil, fmt.Errorf("dcmi_get_card_list: %d", int32(rc))
+		return 0, nil, fmt.Errorf("dcmi_get_card_num_list: %d", int32(rc))
 	}
 	result := make([]int, int(cardNum))
 	for i := 0; i < int(cardNum); i++ {
 		result[i] = int(cardList[i])
 	}
 	return int(cardNum), result, nil
+}
+
+func (p *cgoProvider) DeviceNumInCard(card int) (int, error) {
+	var num C.int
+	rc := C.dcmi_get_device_num_in_card(C.int(card), &num)
+	if rc != 0 {
+		return 0, fmt.Errorf("dcmi_get_device_num_in_card: %d", int32(rc))
+	}
+	return int(num), nil
 }
 
 func (p *cgoProvider) Temperature(card, dev int) (int, error) {
@@ -111,8 +145,7 @@ func (p *cgoProvider) ChipInfo(card, dev int) (*ChipInfo, error) {
 
 func (p *cgoProvider) ErrorCodeV2(card, dev int) (uint, error) {
 	var code C.uint
-	// dcmi_get_device_errorcode_v2(card, dev, &code) — see full signature in .h
-	rc := C.dcmi_get_device_errorcode_v2(C.int(card), C.int(dev), &code)
+	rc := C.dcmi_errorcode_v2_wrapper(C.int(card), C.int(dev), &code)
 	if rc != 0 {
 		return 0, fmt.Errorf("dcmi_get_device_errorcode_v2: %d", int32(rc))
 	}
@@ -120,9 +153,28 @@ func (p *cgoProvider) ErrorCodeV2(card, dev int) (uint, error) {
 }
 
 func (p *cgoProvider) ResourceInfo(card, dev int) (*ResourceInfo, error) {
-	// dcmi_get_device_resource_info returns process PIDs and count.
-	// Full struct depends on CANN version; this is a placeholder.
 	return &ResourceInfo{PidList: nil, ProcessCnt: 0}, nil
+}
+
+func (p *cgoProvider) DvppRatio(card, dev int) (*DvppRatio, error) {
+	var dvpp C.struct_dcmi_dvpp_ratio
+	rc := C.dcmi_get_device_dvpp_ratio_info(C.int(card), C.int(dev), &dvpp)
+	if rc != 0 {
+		return nil, fmt.Errorf("dcmi_get_device_dvpp_ratio_info: %d", int32(rc))
+	}
+	return &DvppRatio{
+		VdecRatio:  int(dvpp.vdec_ratio),
+		VpcRatio:   int(dvpp.vpc_ratio),
+		VencRatio:  int(dvpp.venc_ratio),
+		JpegeRatio: int(dvpp.jpege_ratio),
+		JpegdRatio: int(dvpp.jpegd_ratio),
+	}, nil
+}
+
+func (p *cgoProvider) ResourceInfoFull(card, dev int) ([]uint, error) {
+	// dcmi_get_device_resource_info returns process PIDs.
+	// Full implementation depends on CANN version struct layout.
+	return nil, nil
 }
 
 func (p *cgoProvider) HbmInfo(card, dev int) (*HbmInfo, error) {
@@ -151,7 +203,7 @@ func (p *cgoProvider) Frequency(card, dev int, freqType int) (uint, error) {
 
 func (p *cgoProvider) UtilizationRate(card, dev int, rateType uint) (uint, error) {
 	var rate C.uint
-	rc := C.dcmi_get_device_utilization_rate(C.int(card), C.int(dev), C.uint(rateType), &rate)
+	rc := C.dcmi_get_device_utilization_rate(C.int(card), C.int(dev), C.int(int(rateType)), &rate)
 	if rc != 0 {
 		return 0, fmt.Errorf("dcmi_get_device_utilization_rate: %d", int32(rc))
 	}
@@ -194,7 +246,7 @@ func (p *cgoProvider) SensorInfo(card, dev int, sensorID int) (int, error) {
 	if rc != 0 {
 		return 0, fmt.Errorf("dcmi_get_device_sensor_info: %d", int32(rc))
 	}
-	return int(si.iint), nil
+	return int(C.sensor_get_int(&si)), nil
 }
 
 func (p *cgoProvider) SensorNTC(card, dev int) ([4]int, error) {
@@ -205,14 +257,14 @@ func (p *cgoProvider) SensorNTC(card, dev int) ([4]int, error) {
 	}
 	var result [4]int
 	for i := 0; i < 4; i++ {
-		result[i] = int(si.ntc_tmp[i])
+		result[i] = int(C.sensor_get_ntc(&si, C.int(i)))
 	}
 	return result, nil
 }
 
 func (p *cgoProvider) DeviceInfo(card, dev int, mainCmd int, subCmd uint) (uint, error) {
 	var val C.uint
-	rc := C.dcmi_get_device_info(C.int(card), C.int(dev), C.enum_dcmi_main_cmd(mainCmd), C.uint(subCmd), unsafe.Pointer(&val), C.uint(C.sizeof_uint))
+	rc := C.dcmi_get_device_info_wrapper(C.int(card), C.int(dev), C.int(mainCmd), C.uint(subCmd), &val)
 	if rc != 0 {
 		return 0, fmt.Errorf("dcmi_get_device_info: %d", int32(rc))
 	}

@@ -6,12 +6,12 @@ const PALETTE = [
 ];
 
 const SECTIONS = [
-  { title: 'NPU', accent: '#2563eb', ids: ['npu_frequency', 'npu_utilization', 'npu_temperature', 'npu_power', 'npu_voltage', 'npu_acg', 'npu_fan', 'npu_llc_hit_rate', 'npu_llc_throughput'] },
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3 }, filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
-  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2 },
-  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2 },
-  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'] },
+  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
+  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2, filterLabel: 'NIC', filterKey: 'network_' },
+  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 3 },
 ];
 
 // ---- state ----
@@ -22,6 +22,127 @@ let chartDefs = {};
 let canvasMap = {};
 let legendMap = {};
 let badgeMap = {};
+let filterSets = {}; // {filterKey: Set or null} — null = all visible
+let cardOrders = {}; // {sectionTitle: [chartId, ...]}
+let cardSizes = {}; // {chartId: {span: N, height: N}}
+let dragSource = null;
+
+function loadCardLayout() {
+  try { cardOrders = JSON.parse(localStorage.getItem('dfee-card-order') || '{}'); } catch (_) {}
+  try { cardSizes = JSON.parse(localStorage.getItem('dfee-card-size') || '{}'); } catch (_) {}
+}
+function saveCardOrder() { localStorage.setItem('dfee-card-order', JSON.stringify(cardOrders)); }
+function saveCardSize() { localStorage.setItem('dfee-card-size', JSON.stringify(cardSizes)); }
+function getOrderedIds(sec) {
+  const saved = cardOrders[sec.title] || [];
+  return [
+    ...saved.filter(id => sec.ids.includes(id)),
+    ...sec.ids.filter(id => !saved.includes(id))
+  ];
+}
+
+function loadFilterSet(key) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('dfee-filter-' + key) || '[]');
+    if (saved.length > 0) filterSets[key] = new Set(saved);
+  } catch (_) {}
+}
+function saveFilterSet(key) {
+  const set = filterSets[key];
+  localStorage.setItem('dfee-filter-' + key, set ? JSON.stringify([...set]) : '[]');
+}
+function getFilterIds(charts) {
+  const ids = new Set();
+  for (const c of charts) {
+    for (const s of (c.series || [])) {
+      const parts = s.id.split(':');
+      if (parts.length > 1) ids.add(parts[0]);
+    }
+  }
+  return [...ids].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+}
+function isSeriesVisible(chart, series) {
+  for (const sec of SECTIONS) {
+    if (sec.filterKey && chart.id.startsWith(sec.filterKey)) {
+      const set = filterSets[sec.filterKey];
+      if (!set) return true;
+      return set.has(series.id.split(':')[0]);
+    }
+  }
+  return true;
+}
+function filterDisplayLabel(key) {
+  const set = filterSets[key];
+  if (!set) return '全部';
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, {numeric: true})).join(', ');
+}
+function buildFilterDropdown(sec, ids) {
+  const wrap = el('div', 'npu-filter');
+  const label = elText('span', 'filter-label', sec.filterLabel);
+  const dropdown = el('div', 'npu-dropdown');
+  const trigger = el('button', 'npu-dropdown-trigger');
+  trigger.type = 'button';
+  trigger.title = filterDisplayLabel(sec.filterKey);
+  const textSpan = elText('span', 'npu-dropdown-text', filterDisplayLabel(sec.filterKey));
+  trigger.appendChild(textSpan);
+  const arrow = elText('span', 'npu-dropdown-arrow', '\u25BE');
+  trigger.appendChild(arrow);
+  const menu = el('div', 'npu-dropdown-menu');
+  menu.onclick = (e) => e.stopPropagation();
+  for (const id of ids) {
+    const item = el('label', 'npu-dropdown-item');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = id;
+    cb.checked = !filterSets[sec.filterKey] || filterSets[sec.filterKey].has(id);
+    cb.onchange = () => onFilterCheckboxChange(sec, ids, trigger, menu);
+    item.appendChild(cb);
+    item.appendChild(document.createTextNode(' ' + (sec.filterPrefix || '') + id));
+    menu.appendChild(item);
+  }
+  trigger.onclick = (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('open');
+  };
+  document.addEventListener('click', function closeMenu(e) {
+    if (!wrap.contains(e.target)) menu.classList.remove('open');
+  });
+  wrap.appendChild(label);
+  wrap.appendChild(dropdown);
+  dropdown.appendChild(trigger);
+  dropdown.appendChild(menu);
+  return wrap;
+}
+function onFilterCheckboxChange(sec, ids, trigger, menu) {
+  const checked = ids.filter(id => {
+    const cb = menu.querySelector('input[value="' + CSS.escape(id) + '"]');
+    return cb && cb.checked;
+  });
+  if (checked.length === 0 || checked.length === ids.length) {
+    filterSets[sec.filterKey] = null;
+  } else {
+    filterSets[sec.filterKey] = new Set(checked);
+  }
+  saveFilterSet(sec.filterKey);
+  trigger.firstChild.textContent = filterDisplayLabel(sec.filterKey);
+  trigger.title = filterDisplayLabel(sec.filterKey);
+  renderAllCharts();
+}
+
+function getCollapsedSet() {
+  try { return new Set(JSON.parse(localStorage.getItem('dfee-collapsed') || '[]')); }
+  catch (_) { return new Set(); }
+}
+function saveCollapsedSet(set) {
+  localStorage.setItem('dfee-collapsed', JSON.stringify([...set]));
+}
+function toggleSection(section, title) {
+  const collapsed = section.classList.toggle('collapsed');
+  const set = getCollapsedSet();
+  if (collapsed) set.add(title); else set.delete(title);
+  saveCollapsedSet(set);
+  if (!collapsed) renderAllCharts();
+}
 
 // ---- helpers ----
 function el(tag, cls) {
@@ -74,16 +195,21 @@ function buildSections(charts) {
   for (const c of charts) chartDefs[c.id] = c;
 
   for (const sec of SECTIONS) {
-    const secCharts = sec.ids.map(id => chartDefs[id]).filter(c => c);
+    const orderedIds = getOrderedIds(sec);
+    const secCharts = orderedIds.map(id => chartDefs[id]).filter(c => c);
     const available = secCharts.filter(c => (c.series || []).length > 0).length;
     const hasPriority = secCharts.some(c => c.priority);
+    const collapsedSet = getCollapsedSet();
 
     const section = el('section', 'section');
     section.style.setProperty('--section-accent', sec.accent);
+    if (collapsedSet.has(sec.title)) section.classList.add('collapsed');
 
     const head = el('div', 'section-head');
+    head.appendChild(elText('span', 'toggle-icon', '\u25BC'));
     head.appendChild(elText('span', '', sec.title));
     head.appendChild(elText('span', 'count', available + '/' + secCharts.length + ' 可用'));
+    head.onclick = () => toggleSection(section, sec.title);
     if (hasPriority) {
       const filter = el('div', 'priority-filter');
       for (const [label, val] of [['全部',''], ['高','high'], ['中','medium'], ['低','low']]) {
@@ -91,18 +217,26 @@ function buildSections(charts) {
         btn.textContent = label;
         btn.dataset.priority = val;
         if (val === '') btn.classList.add('active');
-        btn.onclick = () => togglePriority(grid, secCharts, val, btn, filter);
+        btn.onclick = (e) => { e.stopPropagation(); togglePriority(grid, secCharts, val, btn, filter); };
         filter.appendChild(btn);
       }
       head.appendChild(filter);
     }
+    if (sec.filterKey) {
+      const filterIds = getFilterIds(secCharts);
+      if (filterIds.length > 1) {
+        head.appendChild(buildFilterDropdown(sec, filterIds));
+      }
+    }
     section.appendChild(head);
 
     const grid = el('div', 'chart-grid');
+    grid.dataset.sectionTitle = sec.title;
     if (sec.gridCols) grid.style.gridTemplateColumns = `repeat(${sec.gridCols}, 1fr)`;
-    for (const c of secCharts) {
-      grid.appendChild(buildCard(c));
-    }
+    secCharts.forEach((c) => {
+      const span = sec.spans ? sec.spans[c.id] : undefined;
+      grid.appendChild(buildCard(c, span));
+    });
     section.appendChild(grid);
     container.appendChild(section);
   }
@@ -142,18 +276,52 @@ function togglePriority(grid, secCharts, val, clickedBtn, filterContainer) {
   }
 }
 
-function buildCard(chart) {
+function buildCard(chart, defaultSpan) {
   const series = chart.series || [];
   const hasData = series.length > 0;
   const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
   const pending = hasData && bufferedCount === 0;
-  const hasEnough = series.some(s => buffers[s.id] && buffers[s.id].length >= 2);
 
   const card = el('div', 'chart-card');
+  card.dataset.chartId = chart.id;
+  card.dataset.defaultSpan = defaultSpan || 1;
   if (!hasData) card.classList.add('compact');
+  const savedSpan = cardSizes[chart.id]?.span || defaultSpan || 1;
+  if (savedSpan > 1) card.style.gridColumn = `span ${savedSpan}`;
 
-  // header
+  // header (draggable for reorder)
   const head = el('div', 'chart-head');
+  head.draggable = true;
+  head.addEventListener('dragstart', (e) => {
+    dragSource = card;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', chart.id);
+  });
+  head.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    dragSource = null;
+  });
+  card.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (dragSource && dragSource !== card) card.classList.add('drag-over');
+  });
+  card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+  card.addEventListener('drop', (e) => {
+    e.preventDefault();
+    card.classList.remove('drag-over');
+    if (!dragSource || dragSource === card) return;
+    const grid = card.parentElement;
+    const srcIdx = [...grid.children].indexOf(dragSource);
+    const tgtIdx = [...grid.children].indexOf(card);
+    if (srcIdx < tgtIdx) grid.insertBefore(dragSource, card.nextSibling);
+    else grid.insertBefore(dragSource, card);
+    const secTitle = grid.dataset.sectionTitle;
+    cardOrders[secTitle] = [...grid.children].map(c => c.dataset.chartId);
+    saveCardOrder();
+    renderAllCharts();
+  });
+
   const titleText = chart.y_unit ? chart.title + ' (' + chart.y_unit + ')' : chart.title;
   head.appendChild(elText('span', '', titleText));
   let badge;
@@ -181,12 +349,101 @@ function buildCard(chart) {
   const canvas = document.createElement('canvas');
   canvas.className = 'chart-canvas';
   canvas.id = 'canvas-' + chart.id;
-  canvas.style.height = canvasHeight(series.length) + 'px';
+  canvas.style.height = (cardSizes[chart.id]?.height || 200) + 'px';
   body.appendChild(canvas);
   card.appendChild(body);
   canvasMap[chart.id] = canvas;
 
+  // resize handle
+  const handle = el('div', 'resize-handle');
+  handle.addEventListener('mousedown', startResize);
+  card.appendChild(handle);
+
   return card;
+}
+
+const SNAP_SHOW = 5;
+const SNAP_ALIGN = 3;
+
+function clearGuides(grid) {
+  grid.querySelectorAll('.guide-line').forEach(g => g.remove());
+}
+
+function showGuides(grid, card) {
+  clearGuides(grid);
+  const cardBottom = card.offsetTop + card.offsetHeight;
+  let snapY = null;
+  let snapDist = SNAP_SHOW;
+  for (const other of grid.children) {
+    if (other === card || !other.classList || !other.classList.contains('chart-card')) continue;
+    const edges = [
+      ['bottom', other.offsetTop + other.offsetHeight],
+      ['top', other.offsetTop],
+    ];
+    for (const [, y] of edges) {
+      const dist = Math.abs(cardBottom - y);
+      if (dist <= SNAP_SHOW) {
+        const guide = el('div', 'guide-line');
+        guide.style.top = y + 'px';
+        grid.appendChild(guide);
+        if (dist <= SNAP_ALIGN && dist < snapDist) {
+          snapDist = dist;
+          snapY = y;
+        }
+      }
+    }
+  }
+  return snapY;
+}
+
+function startResize(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const card = e.currentTarget.closest('.chart-card');
+  const chartId = card.dataset.chartId;
+  const canvas = canvasMap[chartId];
+  const grid = card.parentElement;
+  const gridCols = getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startHeight = canvas ? canvas.clientHeight : 200;
+  const startWidth = card.offsetWidth;
+  const startSpan = cardSizes[chartId]?.span || parseInt(card.dataset.defaultSpan) || 1;
+  const colWidth = startWidth / startSpan;
+  let currentSpan = startSpan;
+
+  function onMove(ev) {
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    const newHeight = Math.max(120, Math.min(500, startHeight + dy));
+    if (canvas) canvas.style.height = newHeight + 'px';
+    const newSpan = Math.max(1, Math.min(gridCols, Math.round(startSpan + dx / colWidth)));
+    if (newSpan !== currentSpan) {
+      currentSpan = newSpan;
+      card.style.gridColumn = newSpan > 1 ? `span ${newSpan}` : '';
+    }
+    if (canvas) renderChart(canvas, chartDefs[chartId]);
+    const snapY = showGuides(grid, card);
+    if (snapY !== null && canvas) {
+      const currentBottom = card.offsetTop + card.offsetHeight;
+      const delta = snapY - currentBottom;
+      const snapped = Math.max(120, Math.min(500, newHeight + delta));
+      canvas.style.height = snapped + 'px';
+      renderChart(canvas, chartDefs[chartId]);
+    }
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    clearGuides(grid);
+    if (!cardSizes[chartId]) cardSizes[chartId] = {};
+    cardSizes[chartId].span = currentSpan;
+    cardSizes[chartId].height = parseInt(canvas?.style.height) || 200;
+    saveCardSize();
+    renderAllCharts();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 // ---- buffer update ----
@@ -209,7 +466,7 @@ function updateBuffers(data) {
 function updateLegend(chart) {
   const legend = legendMap[chart.id];
   if (!legend) return;
-  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isSeriesVisible(chart, s));
   legend.innerHTML = '';
   for (let i = 0; i < series.length; i++) {
     const s = series[i];
@@ -241,7 +498,7 @@ function renderChart(canvas, chart) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, cw, ch);
 
-  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isSeriesVisible(chart, s));
   if (series.length === 0) return;
 
   // Y axis range
@@ -317,9 +574,10 @@ function renderChart(canvas, chart) {
 function updateBadge(chart) {
   const badge = badgeMap[chart.id];
   if (!badge) return;
-  const series = chart.series || [];
-  const hasData = series.length > 0;
-  const bufferedCount = series.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
+  const allSeries = chart.series || [];
+  const visibleSeries = allSeries.filter(s => isSeriesVisible(chart, s));
+  const hasData = allSeries.length > 0;
+  const bufferedCount = visibleSeries.filter(s => buffers[s.id] && buffers[s.id].length > 0).length;
   if (!hasData) {
     badge.className = 'badge badge-empty';
     badge.textContent = '无数据';
@@ -328,7 +586,7 @@ function updateBadge(chart) {
     badge.textContent = '采集中';
   } else {
     badge.className = 'badge badge-ok';
-    badge.textContent = series.length + ' 条';
+    badge.textContent = visibleSeries.length + ' 条';
   }
 }
 
@@ -362,8 +620,23 @@ async function pollTick() {
   const ts = data.timestamp ? new Date(data.timestamp) : null;
   document.getElementById('updateTime').textContent = ts ? ts.toLocaleTimeString('zh-CN') : '--';
 
-  // Update buffers BEFORE building sections so buildCard sees current data
-  // when deciding badge state (采集中 vs N 条).
+  // Detect server restart: if session_id changed, clear all cached layout.
+  if (data.session_id) {
+    const saved = localStorage.getItem('dfee-session-id');
+    if (saved && saved !== data.session_id) {
+      localStorage.removeItem('dfee-card-order');
+      localStorage.removeItem('dfee-card-size');
+      localStorage.removeItem('dfee-collapsed');
+      for (const sec of SECTIONS) {
+        if (sec.filterKey) localStorage.removeItem('dfee-filter-' + sec.filterKey);
+      }
+      cardOrders = {};
+      cardSizes = {};
+      filterSets = {};
+    }
+    localStorage.setItem('dfee-session-id', data.session_id);
+  }
+
   updateBuffers(data);
 
   if (Object.keys(chartDefs).length === 0 && data.charts) {
@@ -403,6 +676,10 @@ async function manualRefresh() {
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
 (async function init() {
+  loadCardLayout();
+  for (const sec of SECTIONS) {
+    if (sec.filterKey) loadFilterSet(sec.filterKey);
+  }
   await pollTick();
   startPolling();
 })();

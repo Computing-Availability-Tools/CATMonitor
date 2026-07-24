@@ -19,6 +19,7 @@ import (
 	// hardware-identity specs (device model / GPU / NPU / disk / NIC) are NOT a
 	// periodic collector — they are gathered once at startup by collectHWSpecs
 	// (see hwinfo.go) so the periodic loop stays free of one-shot logic.
+	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/chassis"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/cpu"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/disk"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/gpu"

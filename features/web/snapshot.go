@@ -14,6 +14,7 @@ import (
 // read by the HTTP layer. It is the decoupling boundary: the web side never
 // calls collectors directly, it only reads this file.
 type Snapshot struct {
+	SessionID       string               `json:"session_id"`
 	Timestamp       time.Time            `json:"timestamp"`
 	RefreshInterval int                  `json:"refresh_interval_ms"`
 	HistoryPoints   int                  `json:"history_points"`

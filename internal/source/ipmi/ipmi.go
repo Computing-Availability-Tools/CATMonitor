@@ -32,10 +32,10 @@ type Sensor struct {
 }
 
 // defaultCacheTTL is the SDR cache window (decision D = 30s).
-const defaultCacheTTL = 30 * time.Second
+const defaultCacheTTL = 10 * time.Second
 
 // execTimeout caps how long a single ipmitool invocation may take.
-const execTimeout = 5 * time.Second
+const execTimeout = 60 * time.Second
 
 // Source is the typed interface for the ipmi data source.
 type Source interface {
@@ -57,7 +57,7 @@ type sdrFetcher = func() (string, error)
 func realFetchSDR() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ipmitool", "sdr").Output()
+	out, err := exec.CommandContext(ctx, "ipmitool", "sensor").Output()
 	if err != nil {
 		return "", err
 	}
@@ -141,9 +141,10 @@ func (s *defaultSource) PowerReading() (float64, error) {
 	return parsePowerReading(text), nil
 }
 
-// parseSDR converts `ipmitool sdr` text output into a slice of Sensors.
-// Each line is pipe-delimited: "<name> | <value> <unit> | <status>".
-// Lines without 4 pipe fields are skipped.
+// parseSDR converts `ipmitool sensor` (or `ipmitool sdr`) text output into a
+// slice of Sensors. Handles both formats:
+//   3-field: "<name> | <value> <unit> | <status>"
+//   4-field: "<name> | <value> | <unit> | <status>"
 func parseSDR(out string) []Sensor {
 	var sensors []Sensor
 	for _, line := range strings.Split(out, "\n") {
@@ -152,7 +153,7 @@ func parseSDR(out string) []Sensor {
 			continue
 		}
 		parts := strings.Split(line, "|")
-		if len(parts) < 4 {
+		if len(parts) < 3 {
 			continue
 		}
 		name := strings.TrimSpace(parts[0])
@@ -161,8 +162,16 @@ func parseSDR(out string) []Sensor {
 			continue
 		}
 		val, _ := strconv.ParseFloat(reading[0], 64)
-		unit := strings.TrimSpace(parts[2])
-		status := strings.TrimSpace(parts[3])
+		var unit, status string
+		if len(parts) >= 4 {
+			// 4-field: name | value | unit | status
+			unit = strings.TrimSpace(parts[2])
+			status = strings.TrimSpace(parts[3])
+		} else {
+			// 3-field: name | value+unit | status
+			unit = strings.Join(reading[1:], " ")
+			status = strings.TrimSpace(parts[2])
+		}
 		sensors = append(sensors, Sensor{Name: name, Value: val, Unit: unit, Status: status})
 	}
 	return sensors

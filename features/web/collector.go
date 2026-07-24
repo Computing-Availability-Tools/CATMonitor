@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -36,6 +37,9 @@ type DataCollector struct {
 	// than in the collector registry. Guarded by hwMu.
 	hwMu    sync.Mutex
 	hwSpecs []collector.Metric
+	// sessionID is generated once at startup and included in every snapshot
+	// so the frontend can detect a server restart and reset cached layout.
+	sessionID string
 }
 
 func NewDataCollector(cfg *Config, logger *slog.Logger) *DataCollector {
@@ -56,6 +60,7 @@ func NewDataCollector(cfg *Config, logger *slog.Logger) *DataCollector {
 		enabled:    enabled,
 		reload:     make(chan struct{}, 1),
 		collectNow: make(chan struct{}, 1),
+		sessionID:  strconv.FormatInt(time.Now().Unix(), 10),
 	}
 }
 
@@ -169,6 +174,7 @@ func (dc *DataCollector) collectOnce() {
 	score := health.NewEvaluator(health.GetScheme("auto")).Evaluate(allMetrics)
 
 	snap := &Snapshot{
+		SessionID:       dc.sessionID,
 		Timestamp:       time.Now(),
 		RefreshInterval: int(dc.Interval() / time.Millisecond),
 		HistoryPoints:   dc.historyCap,
