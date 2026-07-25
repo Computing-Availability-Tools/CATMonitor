@@ -83,13 +83,13 @@ func TestHandleAPI(t *testing.T) {
 			}
 		}
 	}
-	// NPU frequency chart should have aicore_freq.
-	npuFreq := findChart(resp1.Charts, "npu_frequency")
+	// NPU aicore_freq chart should have aicore_freq.
+	npuFreq := findChart(resp1.Charts, "npu_aicore_freq")
 	if npuFreq == nil {
-		t.Fatal("npu_frequency chart not found")
+		t.Fatal("npu_aicore_freq chart not found")
 	}
 	if len(npuFreq.Series) != 1 {
-		t.Errorf("expected 1 npu_frequency series, got %d", len(npuFreq.Series))
+		t.Errorf("expected 1 npu_aicore_freq series, got %d", len(npuFreq.Series))
 	}
 	// CPU power chart should have power metric.
 	cpuPower := findChart(resp1.Charts, "cpu_power")

@@ -1,6 +1,6 @@
-CPU1 Temp        | 65.000     | degrees C  | ok
-CPU2 Temp        | 63.000     | degrees C  | ok
-MEM1 Temp        | 42.000     | degrees C  | ok
-MEM1 Pwr         | 12.500     | Watts      | na
-CPU1 Pwr         | 125.500    | Watts      | na
-CPU2 Pwr         | 118.300    | Watts      | na
+CPU1 Temp        | 65.000 degrees C      | ok
+CPU2 Temp        | 63.000 degrees C      | ok
+MEM1 Temp        | 42.000 degrees C      | ok
+MEM1 Pwr         | 12.500 Watts          | na
+CPU1 Pwr         | 125.500 Watts         | na
+CPU2 Pwr         | 118.300 Watts         | na

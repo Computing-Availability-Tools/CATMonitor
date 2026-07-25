@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	// hardware-identity specs (device model / GPU / NPU / disk / NIC) are NOT a
 	// periodic collector — they are gathered once at startup by collectHWSpecs
 	// (see hwinfo.go) so the periodic loop stays free of one-shot logic.
+	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/chassis"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/cpu"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/disk"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/gpu"
@@ -27,6 +29,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/ipmi"
 )
 
 func main() {
@@ -59,6 +62,8 @@ func main() {
 	}
 
 	dc := NewDataCollector(cfg, logger)
+
+	ipmi.SetCacheDir(filepath.Dir(cfg.Storage.SnapshotPath))
 
 	// Collect hardware identity specs once at startup (non-blocking: smartctl /
 	// dmidecode / nvidia-smi may take a moment; the snapshot's Specs field stays
