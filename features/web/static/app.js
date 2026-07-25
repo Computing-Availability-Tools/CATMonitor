@@ -687,11 +687,27 @@ function render() {
   else renderDetail(route, lastSnapshot);
 }
 
-function stressColor(status) {
-  if (status === 'healthy') return 'status-ok';
-  if (status === 'running' || status === 'pending') return 'status-good';
-  if (status === 'unsupported' || status === 'unavailable') return 'status-warn';
-  return 'status-crit';
+function stressVisual(status) {
+  if (status === 'healthy') return { label: 'OK', color: '#2e7d32' };
+  if (status === 'running' || status === 'pending') return { label: 'Running', color: '#689f38' };
+  if (status === 'unsupported' || status === 'unavailable') return { label: 'Warning', color: '#f57c00' };
+  return { label: 'Critical', color: '#c62828' };
+}
+
+function stressBadge(status) {
+  const visual = stressVisual(status);
+  const badge = elText('span', 'badge stress-badge', visual.label);
+  badge.style.background = visual.color;
+  badge.title = status;
+  return badge;
+}
+
+function stressValueLabel(key) {
+  const labels = {
+    copy_mb_s: 'Copy', scale_mb_s: 'Scale', add_mb_s: 'Add', triad_mb_s: 'Triad',
+    gflops: 'GFLOP/s', time_seconds: 'Time (s)'
+  };
+  return labels[key] || key;
 }
 
 function renderStress() {
@@ -704,7 +720,7 @@ function renderStress() {
   const summary = el('div', 'panel stress-summary');
   const head = el('div', 'panel-head');
   head.appendChild(elText('span', '', '最近压测'));
-  head.appendChild(elText('span', 'badge ' + stressColor(state), state === 'no_report' ? '尚无报告' : state));
+  head.appendChild(state === 'no_report' ? elText('span', 'badge na', '尚无报告') : stressBadge(state));
   summary.appendChild(head);
   const body = el('div', 'panel-body');
   if (stressReport) {
@@ -765,8 +781,15 @@ function renderStress() {
     const tbody = document.createElement('tbody');
     for (const result of stressReport.benchmarks) {
       const row = document.createElement('tr');
-      const values = Object.entries(result.values || {}).map(([k, v]) => k + '=' + fmt(v)).join(', ') || '-';
-      row.innerHTML = '<td>' + result.name + '</td><td class="' + stressColor(result.status) + '">' + result.status + '</td><td>' + (result.duration_ms || 0) + 'ms</td><td>' + values + '</td><td>' + (result.source || '') + ' ' + (result.message || '') + '</td>';
+      row.appendChild(elText('td', '', result.name));
+      const statusCell = el('td'); statusCell.appendChild(stressBadge(result.status)); row.appendChild(statusCell);
+      row.appendChild(elText('td', '', (result.duration_ms || 0) + 'ms'));
+      const valuesCell = el('td');
+      const values = Object.entries(result.values || {}).sort(([a], [b]) => a.localeCompare(b));
+      if (!values.length) valuesCell.textContent = '-';
+      for (const [key, value] of values) valuesCell.appendChild(elText('div', 'stress-value', stressValueLabel(key) + ': ' + fmt(value) + (key.endsWith('_mb_s') ? ' MB/s' : '')));
+      row.appendChild(valuesCell);
+      row.appendChild(elText('td', '', ((result.source || '') + ' ' + (result.message || '')).trim()));
       tbody.appendChild(row);
     }
     table.appendChild(tbody); resultBody.appendChild(table); results.appendChild(resultBody); page.appendChild(results);

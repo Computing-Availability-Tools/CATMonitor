@@ -111,6 +111,9 @@ catmonitor stress run -c /etc/catmonitor/catmonitor.yaml
 
 # 仅执行 HPL 和 STREAM，以表格输出
 catmonitor stress run --bench hpl,stream -o table
+
+# 查看压测命令和参数
+catmonitor stress run --help
 ```
 
 ### 查看状态

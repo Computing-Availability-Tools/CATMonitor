@@ -262,6 +262,10 @@ func runHealth() {
 }
 
 func runStress() {
+	if stressHelpRequested(os.Args[2:]) {
+		printStressUsage()
+		return
+	}
 	configPath, names, output, err := stressArgs(os.Args[2:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stress:", err)
@@ -291,6 +295,29 @@ func runStress() {
 	if report.Status != stress.StatusHealthy {
 		os.Exit(1)
 	}
+}
+
+func stressHelpRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+func printStressUsage() {
+	fmt.Println(`Usage:
+  catmonitor stress run [--bench hpl,hpcg,stream] [-c config.yaml] [-o json|table]
+
+Run the explicitly enabled stress benchmarks. Linux only; each benchmark must
+be enabled in the configuration. A non-healthy result exits with status 1.
+
+Options:
+  -b, --bench       Comma-separated benchmark names; omit for default_benchmarks
+  -c, --config      CATMonitor configuration file path
+  -o, --output      json (default) or table
+  -h, --help        Show this help`)
 }
 
 func stressArgs(args []string) (string, []string, string, error) {
