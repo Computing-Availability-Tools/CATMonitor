@@ -81,7 +81,9 @@ func loadConfig() *config.Config {
 	fs.String("c", platform.ConfigPath(), "Config file path (short)")
 	fs.String("o", "", "Output format: json|table")
 	fs.String("output", "", "Output format: json|table")
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		os.Exit(0)
+	}
 
 	// Load the metric catalog: env CATMONITOR_METRICS (a file) > a metrics.yaml
 	// next to the catmonitor config > dev fallback configs/metrics.yaml.
