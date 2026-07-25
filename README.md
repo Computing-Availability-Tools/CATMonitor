@@ -11,7 +11,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 | 版本号 | v0.3.2 |
 | 发布时间 | 2026-07-25 |
 | 平台支持 | Linux (x86_64), Windows (x86_64) |
-| 许可证 | 内部项目 |
+| 许可证 | Apache-2.0（见 [LICENSE](LICENSE)） |
 
 ## 功能特性
 
