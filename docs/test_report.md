@@ -294,7 +294,7 @@ Chassis  chassis_power chassis_temp chassis_fan
 2. **GPU/NPU/Chassis 无真机**：系统测试仅验证"优雅降级"路径（空数据 / 计数 0 / 不崩溃）；真实指标采集需在配备对应硬件的机器上复测。
 3. **server_type 判定口径不一致**：`catmonitor health` CLI 因 NPU 采集器产出 `npu_num` 指标判定 `accelerated`（95/Excellent）；web 端 hwinfo 探测无真实 NPU 硬件判定 `cpu_only`（87/Good）。非功能缺陷，建议后续统一 server_type 判定依据（以"是否存在真实硬件"而非"采集器是否产出计数指标"为准）。
 4. **daemon 短时运行未落盘 JSONL**：`catmonitor daemon` 在 ~8s 测试窗口内未向 `data_dir` 写入 `.jsonl` 文件（目录为空）。可能原因：`exporter.NewCachingStorage` 在内存缓存指标供 `/metrics` 读取，短时未触发 JSONL 落盘；建议真机长时运行观察落盘周期（`max_file_age: 168h` / `rotation: daily`）。
-5. **文档版本号不一致**：`docs/CATMonitor_indi_list.md` 头部为 v0.5.3 / 204 指标（来自 feature 分支），而代码常量为 `v0.3.1`；root `test_report.md` 仍为 v0.3.1 / 241 用例。本次合并时约定 markdown 稍后精修，留待统一。
+5. **文档版本号与报告位置**：v0.3.2 已在代码常量、`docs/CATMonitor_indi_list.md` 头部、README/SPEC/DESIGN/Release_Notes 间统一；冗余的根 `test_report.md`（v0.3.1 旧版）已删除，测试报告统一收敛至 `docs/test_report.md`。
 6. **NPU 原始单位待实测**：DCMI 的 voltage/temperature/llc_hit_rate 等单位需真机对照 `npu-smi info` 反推，本环境无法验证。
 7. **未推送到远端**：合并提交 `c824349` 仅在本地完成，等待指示后再 `git push`。
 
