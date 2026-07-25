@@ -527,12 +527,43 @@ function renderOverview(snap) {
   page.appendChild(title);
 
   const grid = el('div', 'grid');
+  grid.appendChild(stressOverviewCard());
   for (const c of comps) {
     const card = summaryCard(c.component, snap);
     if (card) grid.appendChild(card);
   }
   if (!grid.children.length) grid.appendChild(elText('div', 'empty', '无可用部件数据'));
   page.appendChild(grid);
+}
+
+function stressOverviewCard() {
+  const card = el('div', 'card stress-overview-card');
+  card.onclick = () => navigate('stress');
+  const head = el('div', 'card-head');
+  head.appendChild(elText('div', 'card-title', '最近压测'));
+  const state = stressReport ? stressReport.status : 'no_report';
+  head.appendChild(state === 'no_report' ? elText('span', 'badge na', '尚无报告') : stressBadge(state));
+  card.appendChild(head);
+
+  const body = el('div', 'card-body');
+  if (!stressReport) {
+    body.appendChild(elText('div', 'empty', '尚未执行压测；点击查看可用项目与执行说明。'));
+  } else {
+    body.appendChild(elText('div', 'stress-overview-meta', '结论：' + (stressReport.health_condition || '--')));
+    const finished = stressReport.finished_at || stressReport.started_at;
+    if (finished) body.appendChild(elText('div', 'stress-overview-meta', (stressReport.finished_at ? '完成：' : '开始：') + new Date(finished).toLocaleString()));
+    const results = el('div', 'stress-overview-results');
+    for (const result of (stressReport.benchmarks || [])) {
+      const row = el('div', 'stress-overview-result');
+      row.appendChild(elText('span', '', result.name));
+      row.appendChild(stressBadge(result.status));
+      results.appendChild(row);
+    }
+    body.appendChild(results);
+  }
+  body.appendChild(elText('div', 'stress-overview-link', '查看压测详情 →'));
+  card.appendChild(body);
+  return card;
 }
 
 function summaryCard(compKey, snap) {
@@ -832,7 +863,7 @@ async function fetchStress() {
     if (cfg.ok) stressConfig = await cfg.json();
     const report = await fetch('/api/stress/latest', { cache: 'no-store' });
     stressReport = report.ok ? await report.json() : null;
-    if (currentRoute() === 'stress') render();
+    if (currentRoute() === 'stress' || currentRoute() === 'overview') render();
     if (stressReport && stressReport.status === 'running') {
       if (!stressPollTimer) stressPollTimer = setInterval(fetchStress, 1000);
     } else if (stressPollTimer) { clearInterval(stressPollTimer); stressPollTimer = null; }

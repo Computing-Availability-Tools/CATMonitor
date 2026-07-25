@@ -314,3 +314,9 @@ a { color: inherit; text-decoration: none; }
 
 .stress-badge { min-width: 54px; text-align: center; }
 .stress-value { white-space: nowrap; line-height: 1.55; font-variant-numeric: tabular-nums; }
+.stress-overview-card { cursor: pointer; }
+.stress-overview-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(37,99,235,.12); }
+.stress-overview-meta { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.stress-overview-results { margin-top: 8px; }
+.stress-overview-result { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 12px; }
+.stress-overview-link { margin-top: 10px; color: var(--accent); font-size: 12px; text-align: right; }
