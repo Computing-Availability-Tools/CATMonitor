@@ -4,6 +4,72 @@
 
 ---
 
+## v0.3.2
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.2 |
+| 发布时间 | 2026-07-25 |
+| 发布人 | Sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (c21a081) → main (merge c824349，no-ff，1 处冲突已解决) |
+
+### 变更摘要
+
+- **Prometheus 导出模块**：新增 `features/exporter`——`CachingStorage` 包装在 `JSONLStorage` 外（实现 `collector.Storage` 接口），一次采集同时落盘 JSONL + 更新内存缓存（按组件分组原子替换），HTTP `/metrics` 端点（`:9100`）从缓存读取转 Prometheus 文本格式（`catmonitor_{component}_{name}` 前缀，`_total`/`_time` 后缀判 counter，含 `# HELP`/`# TYPE`/labels）；daemon 集成仅需 ~5 行；附 `/-/healthy`、`/-/ready` 健康端点
+- **NPU 指标扩展 74→119**：新增 45 项 `hccn_tool` 网络统计指标（Medium，网口/PCIe 带宽、RoCE 速度/链路等扩展统计）；指标总数 159→204（High 24 / Medium 121 / Low 59）
+- **NPU 采集器 DCMI CGo 修复**：`dcmi_init()` 初始化、`dcmi_get_card_num_list` 返回全部设备 ID、`dcmi_get_device_errorcode_v2` 5 参数签名适配、`dcmi_get_device_info` 指针参数、dvpp struct 名修正；NPU card/device 二级枚举（CardList + DeviceNumInCard 遍历全部设备）；默认布局调整（4 行 3+2+2+2、gridCols 6 列、功耗电压首行、图例简化）
+- **IPMI 来源层重构**：`ipmitool sdr`→`sensor` 命令 + 解析器兼容 3/4 段格式 + 定向 `ipmi sensor get` 采集 + 两级缓存（传感器名称 24h / 采集结果 10s）+ 磁盘持久化 + 降级回退 + 超时 5s→30s→60s；进出风口温度精确匹配、风扇转速取平均、整机功耗只匹配 `Power`（排除 PSU 输出）
+- **dfee 能效监控增强**：图表卡片拖拽重排 + 右下角手柄缩放（`align-self: start` 边框不跟随增长）+ 虚线对齐辅助（3px 吸附）；NPU/磁盘/网络多选下拉筛选（重构为通用筛选框架，固定宽度 + 截断省略号）；模块折叠（机箱 3 图同行）；NPU 改为单指标图布局
+- **main.go 行为修复**：`--help` 解析后 `os.Exit(0)` 退出，不再继续执行采集
+- **web 修复**：补充 chassis 采集器 import，修复机箱类指标无数据
+- **配置**：新增 `configs/metrics.yaml` 默认指标采集目录
+- **文档**：README 精简（使用说明迁移至新增 `docs/User_Manual.md`）；SPEC 改为功能规格（不含技术细节，链接各 feature SPEC）；DESIGN 新增 exporter 章节、更新 NPU/IPMI/dfee；indi_list 版本升至 v0.3.2/204 指标
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.2`
+- **测试**：263 用例全过（较 v0.3.1 的 241 +22，来自 `features/exporter` + `internal/source/hccn_tool` 扩展用例），覆盖率 29.5%~97.0%，`go vet` 零警告，Linux/Windows 双平台编译通过；无 NPU/GPU 系统测试通过（`:9100/metrics` 导出 33 指标名 / 31 gauge + 2 counter、`:9527` web/dfee 5 端点全 200、GPU/NPU/Chassis 优雅降级不崩溃）
+
+### 已知限制
+
+1. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `dcmi` 构建标签后，本机无 CANN SDK 无法编译，需在真 NPU 服务器 `go build -tags dcmi` 验证 CGo 绑定
+2. **GPU/NPU/Chassis 无真机**：系统测试仅验证优雅降级路径（空数据 / 计数 0 / 不崩溃），真实指标采集需在配备对应硬件的机器复测
+3. **server_type 判定口径不一致**：`catmonitor health` CLI 因 NPU 采集器产出 `npu_num` 指标判定 `accelerated`，web 端 hwinfo 探测无真实 NPU 硬件判定 `cpu_only`，非功能缺陷，建议后续统一
+4. **daemon 短时运行未落盘 JSONL**：`CachingStorage` 在内存缓存指标供 `/metrics` 读取，短时未触发 JSONL 落盘，建议真机长时运行观察落盘周期
+5. **dfee_SPEC.md 内部描述待修订**：其头部仍写"25 图/74 指标/优先级筛选"，与合并后实际行为（61 图表定义、拖拽缩放、多选筛选、取消优先级筛选）有出入，待后续修订
+6. **未推送到远端**：合并提交 `c824349` 仅在本地完成
+
+---
+
+## v0.3.1
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.1 |
+| 发布时间 | 2026-07-17 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (9868b80) → main (fast-forward) |
+
+### 变更摘要
+
+- **Chassis 机箱环境采集器**：新增第 7 个采集器 `internal/collectors/chassis`（5 指标：整机功耗 / 进出风口温度 / 风扇转速 / 风扇功率，来自 ipmitool SDR，与 CPU/Memory 共享 30s SDR 缓存，Linux 专有）
+- **Disk 读/写耗时**：Disk 采集器新增 `read_latency`/`write_latency` 指标（/proc/diskstats field 7/11，ms/s）；`internal/source/proc` DiskStat 加 ReadTime/WriteTime 字段。Disk 指标 7→9
+- **dfee 能效监控模块**：新增 `features/dfee` 能效监控模块（25 张实时图表 + CPU 8 jiffies→7 利用率推导 + 网络差值），从 159 项指标中过滤 74 项能效指标，独立 SPA 路由 `/dfee/`；`features/web/server.go` 加 dfee.Register 路由注册，`features/web/static/app.js` 加导航入口
+- **dfee metrics 覆盖**：`features/dfee/metrics.yaml` 将 8 个 CPU Low 时间指标 + 14 个 NPU Low 指标覆盖为 Medium，使它们通过 metrics.Filter 进入 snapshot.json 供 dfee 推导/展示
+- **DCMI 库路径修正**：`internal/source/dcmi/dcmi_cgo.go` 明确 `#cgo CFLAGS`/`LDFLAGS` 指向 `/usr/local/Ascend/driver/`
+- **配置扩展**：`internal/config/config.go` + `configs/catmonitor.yaml` 加 chassis 采集器配置项
+- **文档**：README/SPEC/DESIGN/indi_list 同步新增 Chassis/dfee/Disk latency，版本号升至 v0.3.1
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.1`；指标总数 152→159（+5 Chassis +2 Disk latency），部件 6→7
+- **测试**：241 用例全过（较 v0.3.0 的 215 +26），`go vet` 零警告，Linux/Windows 双平台编译通过
+
+### 已知限制
+
+- DCMI CGo 未真机验证（需 NPU 服务器 `go build -tags dcmi`）；DCMI 原始单位待实测
+- Chassis/Disk latency 未加入 configs/metrics.yaml 默认目录（靠 default-allow 规则采集）
+- GPU/NPU/Chassis 无真机验证（测试由 mock 驱动）
+- 继承 v0.3.0 已知限制：interval 未接 scheduler ticker、Windows 来源层迁移延后、`-c` 短选项 bug
+
+---
+
 ## v0.3.0
 
 | 项目 | 说明 |
