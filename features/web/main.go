@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -28,6 +29,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/ipmi"
 )
 
 func main() {
@@ -60,6 +62,8 @@ func main() {
 	}
 
 	dc := NewDataCollector(cfg, logger)
+
+	ipmi.SetCacheDir(filepath.Dir(cfg.Storage.SnapshotPath))
 
 	// Collect hardware identity specs once at startup (non-blocking: smartctl /
 	// dmidecode / nvidia-smi may take a moment; the snapshot's Specs field stays
