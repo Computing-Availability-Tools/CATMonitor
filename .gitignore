@@ -17,3 +17,6 @@ AGENTS.md
 
 # local_docs is local-only, do not sync to remote
 local_docs/
+
+# loc_configs is local-only, do not sync to remote
+loc_configs/
