@@ -110,7 +110,7 @@ health:
     report_path: features/web/data/stress-latest.json
     default_benchmarks: [stream]
     benchmarks:
-      stream: { enabled: false, timeout: 30m }
+      stream: { enabled: false, timeout: 1m }
       hpl: { enabled: false, timeout: 2h }
       hpcg: { enabled: false, result_dir: /root/haoran/hpcg-3.1/build_Kunpeng_MPI_OMP/bin, timeout: 3m }
 ```
@@ -380,6 +380,7 @@ Manager 同时只执行一份作业，冲突返回 409。
 ### 7.4 健康压测页（`renderStress`）
 
 - 仅列出 YAML 中的固定 benchmark；未启用项目显示“未配置”，基础资产预检失败显示原因，二者均不可选。
+- 快照和压测配置轮询不得覆盖用户尚未提交的 benchmark 勾选项及单次超时输入；YAML 默认项只用于页面首次初始化。
 - 可为当前作业填写正整数秒，但只能缩短所选项目的最小 YAML 上限。
 - 提交前二次确认，高负载运行时禁用新提交并显示停止按钮。
 - 性能值逐行显示；`healthy` 与 `time_limit_reached` 均使用绿色 `OK`。

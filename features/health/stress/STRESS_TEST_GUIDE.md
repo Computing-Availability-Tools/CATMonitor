@@ -172,7 +172,7 @@ health:
     benchmarks:
       stream:
         enabled: true
-        timeout: 30m
+        timeout: 1m
       hpl:
         enabled: true
         timeout: 4m

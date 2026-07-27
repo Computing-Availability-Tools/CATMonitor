@@ -18,6 +18,8 @@
 
 - **health/stress 子特性**：新增 Linux STREAM/HPL/HPCG 显式压测，命令为 `catmonitor health stress run`；配置统一嵌套在 `health.stress`，部署命令由每台机器的 `benchmark_check.sh` 维护
 - **Web 健康压测**：新增概览摘要、`#/stress` 页面和 `/api/health/stress/*` 作业 API；只允许回环地址/来源提交，启动与取消要求 JSON、自定义操作头和浏览器同源校验
+- **Web 表单刷新修复**：快照和压测配置轮询不再将用户勾选项重置为默认 STREAM，尚未提交的 benchmark 选择与单次超时输入会在页面重绘时保留
+- **STREAM 默认时限**：默认最大运行窗口由 30 分钟缩短为 1 分钟；仍允许在 Web 上仅为单次作业进一步缩短
 - **限时通过语义**：STREAM/HPL/HPCG 达到配置运行窗口时统一记录 `time_limit_reached` 并按通过聚合，允许没有最终性能值；Linux 取消会终止本机完整 benchmark/MPI 进程组
 - **鲲鹏 HPL 适配**：`benchmark_check.sh` 固化 51.62.10.90 的 HPL 2.3/OpenBLAS/OpenMPI 配置（8 MPI × 12 线程），HPL 与 STREAM 一样不从 YAML 读取资产路径；正常结束上报 N/NB/P/Q/进程数/耗时/GFLOPS，并识别 residual failure
 - **鲲鹏 HPCG 适配**：固化官方 HPCG 3.1 的 96 MPI × 1 线程、逐核绑定和 32³/60 秒参数；正常完成强制校验本次新增或变化的 VALID 结果文件并上报 GFLOP/s 与执行时间，YAML 上限为 3 分钟

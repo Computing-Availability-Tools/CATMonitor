@@ -107,6 +107,8 @@ let pollTimer = null;
 let autoOn = true;
 let stressConfig = null;
 let stressReport = null;
+let stressSelectionDraft = null;
+let stressTimeoutDraft = '';
 
 // ---- helpers ----
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -717,6 +719,24 @@ function stressBadge(status) {
   const badge = elText('span', 'badge stress-badge', visual.label);
   badge.style.background = visual.color; badge.title = status; return badge;
 }
+function syncStressSelectionDraft() {
+  if (!stressConfig) return;
+  const selectable = new Set((stressConfig.benchmarks || [])
+    .filter(item => item.enabled && item.available)
+    .map(item => item.name));
+  if (stressSelectionDraft === null) {
+    stressSelectionDraft = (stressConfig.default_benchmarks || [])
+      .filter(name => selectable.has(name));
+    return;
+  }
+  stressSelectionDraft = stressSelectionDraft.filter(name => selectable.has(name));
+}
+function updateStressSelectionDraft(name, checked) {
+  const selected = new Set(stressSelectionDraft || []);
+  if (checked) selected.add(name);
+  else selected.delete(name);
+  stressSelectionDraft = Array.from(selected);
+}
 function renderStress() {
   const page = document.getElementById('page'); page.innerHTML = '';
   page.appendChild(elText('h1', 'detail-title', '健康压测'));
@@ -725,13 +745,15 @@ function renderStress() {
   const body = el('div', 'panel-body');
   const enabled = stressConfig && stressConfig.enabled;
   const running = stressReport && stressReport.status === 'running';
+  syncStressSelectionDraft();
   let availableCount = 0;
   for (const item of ((stressConfig && stressConfig.benchmarks) || [])) {
     const label = el('label', 'stress-option'); const input = document.createElement('input');
     if (item.enabled && item.available) availableCount++;
     input.type = 'checkbox'; input.value = item.name;
     input.disabled = !enabled || !item.enabled || !item.available || running;
-    input.checked = !input.disabled && ((stressConfig.default_benchmarks || []).indexOf(item.name) >= 0);
+    input.checked = (stressSelectionDraft || []).indexOf(item.name) >= 0;
+    input.addEventListener('change', () => updateStressSelectionDraft(item.name, input.checked));
     let detail = '（未配置）';
     if (item.enabled && item.available) detail = '（上限 ' + item.timeout_seconds + ' 秒）';
     else if (item.enabled) detail = '（资产预检失败：' + (item.message || '不可用') + '）';
@@ -739,6 +761,8 @@ function renderStress() {
     body.appendChild(label);
   }
   const timeout = document.createElement('input'); timeout.id = 'stress-timeout'; timeout.type = 'number'; timeout.min = '1'; timeout.placeholder = '单次缩短超时（秒，可选）';
+  timeout.value = stressTimeoutDraft;
+  timeout.addEventListener('input', () => { stressTimeoutDraft = timeout.value; });
   timeout.disabled = !enabled || running; body.appendChild(timeout);
   const button = elText('button', 'btn btn-primary', running ? '压测运行中' : '开始压测'); button.disabled = !enabled || running || availableCount === 0; button.addEventListener('click', startStress); body.appendChild(button);
   if (running && stressReport.job_id) {
@@ -781,6 +805,7 @@ async function startStress() {
   const selected = Array.from(document.querySelectorAll('.stress-option input:checked')).map(x => x.value);
   if (!selected.length) { showBanner('请选择至少一个已配置的 benchmark。', true); return; }
   const raw = document.getElementById('stress-timeout').value.trim(); const timeoutSeconds = raw ? Number(raw) : 0;
+  stressTimeoutDraft = raw;
   if (raw && (!Number.isInteger(timeoutSeconds) || timeoutSeconds <= 0)) { showBanner('单次超时必须是正整数秒。', true); return; }
   if (timeoutSeconds) {
     const selectedConfigs = (stressConfig.benchmarks || []).filter(item => selected.indexOf(item.name) >= 0);

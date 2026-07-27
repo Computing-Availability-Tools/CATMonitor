@@ -215,7 +215,10 @@ func TestHTTPAPISmoke(t *testing.T) {
 			t.Errorf("static app.js missing %q (hardware-specs adaptation not embedded)", needle)
 		}
 	}
-	for _, needle := range []string{"X-CATMonitor-Action", "health-stress", "report_error", "item.available"} {
+	for _, needle := range []string{
+		"X-CATMonitor-Action", "health-stress", "report_error", "item.available",
+		"stressSelectionDraft", "stressTimeoutDraft", "updateStressSelectionDraft",
+	} {
 		if !strings.Contains(js, needle) {
 			t.Errorf("static app.js missing %q (health stress control)", needle)
 		}

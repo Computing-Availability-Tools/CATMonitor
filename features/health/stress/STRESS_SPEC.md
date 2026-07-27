@@ -27,7 +27,7 @@ health:
     report_path: features/web/data/stress-latest.json
     default_benchmarks: [stream]
     benchmarks:
-      stream: { enabled: false, timeout: 30m }
+      stream: { enabled: false, timeout: 1m }
       hpl: { enabled: false, timeout: 2h }
       hpcg: { enabled: false, result_dir: /root/haoran/hpcg-3.1/build_Kunpeng_MPI_OMP/bin, timeout: 3m }
 ```
