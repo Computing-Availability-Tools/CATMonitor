@@ -42,57 +42,83 @@ func (c *CPUCollector) Collect() ([]collector.Metric, error) {
 	var metrics []collector.Metric
 
 	// Dynamic metrics (collected every cycle).
-	if m, err := c.collectCpuTimeStats(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"usage", "user_time", "nice_time", "system_time", "idle_time", "iowait_time", "irq_time", "softirq_time", "steal_time"}) {
+		if m, err := c.collectCpuTimeStats(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectLoadAverage(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"load_average", "process_count"}) {
+		if m, err := c.collectLoadAverage(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectFrequency(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"process_count"}) {
+		if m, err := c.collectProcessCount(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectContextSwitches(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"frequency", "avg_freq"}) {
+		if m, err := c.collectFrequency(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectProcessCount(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"context_switches"}) {
+		if m, err := c.collectContextSwitches(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectIpmiMetrics(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"temperature", "mem_temperature", "power"}) {
+		if m, err := c.collectIpmiMetrics(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectCoreState(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"online_core_num", "offline_core_num", "isolated_core_num"}) {
+		if m, err := c.collectCoreState(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectBuddyInfo(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"numa_order_num", "numa_info"}) {
+		if m, err := c.collectBuddyInfo(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectMCEErrors(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("cpu", []string{"cpu_ce_errors", "cpu_uce_errors"}) {
+		if m, err := c.collectMCEErrors(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 
 	// Static metrics (collected once, then cached via flag — mirrors
 	// modelInfoCollected idiom; lscpu source also caches internally).
 	if !c.modelInfoCollected {
-		if m, err := c.collectModelInfo(now); err == nil {
-			metrics = append(metrics, m...)
+		if collector.AnyWanted("cpu", []string{"model_info"}) {
+			if m, err := c.collectModelInfo(now); err == nil {
+				metrics = append(metrics, m...)
+			}
 		}
 		c.modelInfoCollected = true
 	}
 	if !c.topologyCollected {
-		if m, err := c.collectTopology(now); err == nil {
-			metrics = append(metrics, m...)
+		if collector.AnyWanted("cpu", []string{"numa_node_num", "core_num", "die_core_num", "numa_core_num", "cpu_num"}) {
+			if m, err := c.collectTopology(now); err == nil {
+				metrics = append(metrics, m...)
+			}
 		}
 		c.topologyCollected = true
 	}
 	if !c.freqStatsCollected {
-		if m, err := c.collectFreqStats(now); err == nil {
-			metrics = append(metrics, m...)
+		if collector.AnyWanted("cpu", []string{"min_freq", "max_freq"}) {
+			if m, err := c.collectFreqStats(now); err == nil {
+				metrics = append(metrics, m...)
+			}
 		}
 		c.freqStatsCollected = true
 	}
 	if !c.cacheInfoCollected {
-		if m, err := c.collectCacheInfo(now); err == nil {
-			metrics = append(metrics, m...)
+		if collector.AnyWanted("cpu", []string{"l1d_cache_size", "l1i_cache_size", "l2_cache_size", "l3_cache_size"}) {
+			if m, err := c.collectCacheInfo(now); err == nil {
+				metrics = append(metrics, m...)
+			}
 		}
 		c.cacheInfoCollected = true
 	}

@@ -50,14 +50,16 @@ func (c *NPUCollector) Collect() ([]collector.Metric, error) {
 
 	// Phase 1: global/static metrics (once).
 	if !c.staticCollected {
-		if m, err := c.collectStatic(now); err == nil {
-			allMetrics = append(allMetrics, m...)
+		if collector.AnyWanted("npu", []string{"npu_num", "driver_version", "chip_type", "comm_topo"}) {
+			if m, err := c.collectStatic(now); err == nil {
+				allMetrics = append(allMetrics, m...)
+			}
 		}
 		c.staticCollected = true
 	}
 
 	// Phase 2: per-device metrics (parallel).
-	if len(c.devices) > 0 {
+	if len(c.devices) > 0 && collector.AnyWanted("npu", []string{"utilization", "memory_usage", "temperature", "power_draw", "voltage", "aicore_freq", "hbm_freq", "npu_util", "vector_core_util", "hbm_bandwidth_util", "ecc_errors", "fan_speed"}) {
 		var wg sync.WaitGroup
 		results := make([][]collector.Metric, len(c.devices))
 		for i, d := range c.devices {

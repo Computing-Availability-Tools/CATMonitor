@@ -15,6 +15,7 @@ type Config struct {
 	Collectors map[string]CollectorCfg `yaml:"collectors"`
 	Storage    StorageConfig           `yaml:"storage"`
 	Health     HealthConfig            `yaml:"health"`
+	Collection CollectionConfig         `yaml:"collection"`
 }
 
 // ServerConfig holds server-level configuration.
@@ -40,6 +41,11 @@ type HealthConfig struct {
 	Enabled      bool          `yaml:"enabled"`
 	Interval     time.Duration `yaml:"interval"`
 	WeightScheme string        `yaml:"weight_scheme"` // auto | cpu_only | accelerated_8card | accelerated_4card
+}
+
+// CollectionConfig controls which metrics are collected (pre-filter by priority).
+type CollectionConfig struct {
+	MinPriority string `yaml:"min_priority"` // low | medium | high
 }
 
 // Default returns the default configuration.

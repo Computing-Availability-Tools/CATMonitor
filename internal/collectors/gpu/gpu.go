@@ -22,6 +22,9 @@ func (c *GPUCollector) DefaultInterval() time.Duration {
 func (c *GPUCollector) DefaultEnabled() bool { return true }
 
 func (c *GPUCollector) Collect() ([]collector.Metric, error) {
+	if !collector.AnyWanted("gpu", []string{"utilization", "memory_usage", "memory_detail", "temperature", "power_draw", "fan_speed", "ecc_errors", "clock_frequency"}) {
+		return nil, nil
+	}
 	now := time.Now()
 	gpus, err := nvidia_smi.Default().Query()
 	if err != nil {

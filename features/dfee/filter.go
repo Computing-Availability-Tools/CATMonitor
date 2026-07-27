@@ -164,7 +164,7 @@ var chartGroups = []chartGroup{
 	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", "", ""},
 	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
-	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
+	{"cpu_utilization", "CPU 利用率", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
 	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", "", ""},
 	{"cpu_power", "CPU 功耗", "cpu", []string{"power"}, "", "", "", ""},
 	// Memory (2 charts, 7 metrics)

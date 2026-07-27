@@ -43,3 +43,23 @@ type Collector interface {
 	DefaultInterval() time.Duration
 	DefaultEnabled() bool
 }
+
+// wantedChecker is injected by the caller (e.g. metrics.AnyWanted) to avoid
+// an import cycle between collector and metrics. nil = collect everything.
+var wantedChecker func(string, []string) bool
+
+// SetWantedChecker installs a function that reports whether any of the given
+// metrics should be collected. Called by collectors via AnyWanted before
+// expensive sub-methods.
+func SetWantedChecker(fn func(string, []string) bool) {
+	wantedChecker = fn
+}
+
+// AnyWanted reports whether any of the given metrics should be collected.
+// Returns true when no checker is installed (backward compatible).
+func AnyWanted(component string, names []string) bool {
+	if wantedChecker == nil {
+		return true
+	}
+	return wantedChecker(component, names)
+}

@@ -28,6 +28,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/network"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/ipmi"
 )
@@ -54,6 +55,10 @@ func main() {
 	if err := metrics.LoadModuleOverride("features/dfee/metrics.yaml"); err != nil {
 		logger.Error("dfee metrics override failed", "error", err)
 	}
+
+	// Inject wanted checker so collectors can skip sub-methods for Low metrics.
+	// Web uses default threshold (low = collect all) since dfee needs Low metrics.
+	collector.SetWantedChecker(metrics.AnyWanted)
 
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
@@ -114,6 +119,9 @@ func main() {
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = httpServer.Shutdown(shutCtx)
+
+	// Remove the snapshot so a restart doesn't serve stale data.
+	_ = os.Remove(cfg.Storage.SnapshotPath)
 }
 
 // listenWithFallback tries to listen on initialAddr; if the port is already in

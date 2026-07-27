@@ -32,49 +32,71 @@ func (c *MemoryCollector) Collect() ([]collector.Metric, error) {
 	var metrics []collector.Metric
 
 	// Memory pool + swap (from /proc/meminfo).
-	if m, err := c.collectUsage(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"usage", "usage_detail", "swap_usage", "swap_detail"}) {
+		if m, err := c.collectUsage(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectSwapUsage(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"swap_usage", "swap_detail"}) {
+		if m, err := c.collectSwapUsage(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// Swap in/out activity (from /proc/vmstat, delta).
-	if m, err := c.collectSwapIO(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"swap_in", "swap_out"}) {
+		if m, err := c.collectSwapIO(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// Pressure + fragmentation.
-	if m, err := c.collectSaturation(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"saturation", "fragmentation"}) {
+		if m, err := c.collectSaturation(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectFragmentation(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"fragmentation"}) {
+		if m, err := c.collectFragmentation(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// ECC errors (from /sys EDAC).
-	if m, err := c.collectECCErrors("ce_count", "ecc_ce_errors", now); err == nil {
-		metrics = append(metrics, m...)
-	}
-	if m, err := c.collectECCErrors("ue_count", "ecc_uce_errors", now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"ecc_ce_errors", "ecc_uce_errors"}) {
+		if m, err := c.collectECCErrors("ce_count", "ecc_ce_errors", now); err == nil {
+			metrics = append(metrics, m...)
+		}
+		if m, err := c.collectECCErrors("ue_count", "ecc_uce_errors", now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// OOM + page faults (from dmesg / /proc/vmstat).
-	if m, err := c.collectOOMCount(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"oom_count", "page_faults"}) {
+		if m, err := c.collectOOMCount(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
-	if m, err := c.collectPageFaults(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"page_faults"}) {
+		if m, err := c.collectPageFaults(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// Isolated + free page counters (from /proc/vmstat).
-	if m, err := c.collectPageCounters(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"isolated_pages", "free_pages"}) {
+		if m, err := c.collectPageCounters(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// Memory power (from ipmitool SDR, shared 30s cache).
-	if m, err := c.collectPower(now); err == nil {
-		metrics = append(metrics, m...)
+	if collector.AnyWanted("memory", []string{"power"}) {
+		if m, err := c.collectPower(now); err == nil {
+			metrics = append(metrics, m...)
+		}
 	}
 	// Static DIMM inventory (from dmidecode, startup-once).
 	if !c.moduleInfoCollected {
-		if m, err := c.collectModuleInfo(now); err == nil {
-			metrics = append(metrics, m...)
+		if collector.AnyWanted("memory", []string{"module_info", "module_size", "module_num"}) {
+			if m, err := c.collectModuleInfo(now); err == nil {
+				metrics = append(metrics, m...)
+			}
 		}
 		c.moduleInfoCollected = true
 	}

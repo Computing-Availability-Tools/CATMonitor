@@ -12,7 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
-	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/exporter"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
@@ -115,6 +114,10 @@ func runDaemon() {
 	cfg := loadConfig()
 	logger := setupLogger()
 
+	// Set collection threshold based on config (default: low = collect all).
+	metrics.SetCollectionThreshold(cfg.Collection.MinPriority)
+	collector.SetWantedChecker(metrics.AnyWanted)
+
 	store, err := storage.New(cfg.Storage.DataDir)
 	if err != nil {
 		logger.Error("failed to create storage", "error", err)
@@ -138,33 +141,10 @@ func runDaemon() {
 	// Prometheus exporter endpoint
 	go exporter.ServeMetrics(":9100", cacheStore, logger)
 
-	// Set up health evaluator
-	var healthEval *health.Evaluator
-	if cfg.Health.Enabled {
-		scheme := health.GetScheme(cfg.Health.WeightScheme)
-		healthEval = health.NewEvaluator(scheme)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	scheduler.Start(ctx, collectorCfgs)
-
-	// Health check goroutine
-	if healthEval != nil {
-		go func() {
-			ticker := time.NewTicker(cfg.Health.Interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					runHealthCheck(scheduler, healthEval, store, logger)
-				}
-			}
-		}()
-	}
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -196,6 +176,10 @@ func runHealthCheck(scheduler *collector.Scheduler, eval *health.Evaluator, stor
 func runCollect() {
 	cfg := loadConfig()
 	output := getOutputFormat()
+
+	// Set collection threshold + inject wanted checker (same as daemon).
+	metrics.SetCollectionThreshold(cfg.Collection.MinPriority)
+	collector.SetWantedChecker(metrics.AnyWanted)
 
 	var allMetrics []collector.Metric
 	for _, c := range collector.DefaultRegistry.All() {

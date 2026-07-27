@@ -31,38 +31,52 @@ func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 	var metrics []collector.Metric
 
 	// space_usage per real mount point.
-	mounts, err := proc.Default().Mounts()
-	if err != nil {
-		return nil, err
-	}
-	for _, m := range mounts {
-		if virtualFS[m.Fstype] {
-			continue
-		}
-		spaceMetrics, err := c.collectSpaceUsage(m.Device, m.MountPoint, m.Fstype, now)
+	if collector.AnyWanted("disk", []string{"space_usage", "space_detail"}) {
+		mounts, err := proc.Default().Mounts()
 		if err != nil {
-			continue
+			return nil, err
 		}
-		metrics = append(metrics, spaceMetrics...)
+		for _, m := range mounts {
+			if virtualFS[m.Fstype] {
+				continue
+			}
+			spaceMetrics, err := c.collectSpaceUsage(m.Device, m.MountPoint, m.Fstype, now)
+			if err != nil {
+				continue
+			}
+			metrics = append(metrics, spaceMetrics...)
+		}
 	}
 
-	if iopsMetrics, err := c.collectIOPS(now); err == nil {
-		metrics = append(metrics, iopsMetrics...)
+	if collector.AnyWanted("disk", []string{"iops"}) {
+		if iopsMetrics, err := c.collectIOPS(now); err == nil {
+			metrics = append(metrics, iopsMetrics...)
+		}
 	}
-	if throughputMetrics, err := c.collectThroughput(now); err == nil {
-		metrics = append(metrics, throughputMetrics...)
+	if collector.AnyWanted("disk", []string{"throughput"}) {
+		if throughputMetrics, err := c.collectThroughput(now); err == nil {
+			metrics = append(metrics, throughputMetrics...)
+		}
 	}
-	if latencyMetrics, err := c.collectLatency(now); err == nil {
-		metrics = append(metrics, latencyMetrics...)
+	if collector.AnyWanted("disk", []string{"read_latency", "write_latency"}) {
+		if latencyMetrics, err := c.collectLatency(now); err == nil {
+			metrics = append(metrics, latencyMetrics...)
+		}
 	}
-	if ioWaitMetrics, err := c.collectIoWait(now); err == nil {
-		metrics = append(metrics, ioWaitMetrics...)
+	if collector.AnyWanted("disk", []string{"io_wait"}) {
+		if ioWaitMetrics, err := c.collectIoWait(now); err == nil {
+			metrics = append(metrics, ioWaitMetrics...)
+		}
 	}
-	if ioErrMetrics, err := c.collectIoErrors(now); err == nil {
-		metrics = append(metrics, ioErrMetrics...)
+	if collector.AnyWanted("disk", []string{"io_errors"}) {
+		if ioErrMetrics, err := c.collectIoErrors(now); err == nil {
+			metrics = append(metrics, ioErrMetrics...)
+		}
 	}
-	if smartMetrics, err := c.collectSMART(now); err == nil {
-		metrics = append(metrics, smartMetrics...)
+	if collector.AnyWanted("disk", []string{"smart_status", "smart_temperature"}) {
+		if smartMetrics, err := c.collectSMART(now); err == nil {
+			metrics = append(metrics, smartMetrics...)
+		}
 	}
 
 	return metrics, nil
