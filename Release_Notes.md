@@ -16,6 +16,13 @@
 
 ### 变更摘要
 
+- **health/stress 子特性**：新增 Linux STREAM/HPL/HPCG 显式压测，命令为 `catmonitor health stress run`；配置统一嵌套在 `health.stress`，部署命令由每台机器的 `benchmark_check.sh` 维护
+- **Web 健康压测**：新增概览摘要、`#/stress` 页面和 `/api/health/stress/*` 作业 API；只允许回环地址/来源提交，启动与取消要求 JSON、自定义操作头和浏览器同源校验
+- **限时通过语义**：STREAM/HPL/HPCG 达到配置运行窗口时统一记录 `time_limit_reached` 并按通过聚合，允许没有最终性能值；Linux 取消会终止本机完整 benchmark/MPI 进程组
+- **鲲鹏 HPL 适配**：`benchmark_check.sh` 固化 51.62.10.90 的 HPL 2.3/OpenBLAS/OpenMPI 配置（8 MPI × 12 线程），HPL 与 STREAM 一样不从 YAML 读取资产路径；正常结束上报 N/NB/P/Q/进程数/耗时/GFLOPS，并识别 residual failure
+- **鲲鹏 HPCG 适配**：固化官方 HPCG 3.1 的 96 MPI × 1 线程、逐核绑定和 32³/60 秒参数；正常完成强制校验本次新增或变化的 VALID 结果文件并上报 GFLOP/s 与执行时间，YAML 上限为 3 分钟
+- **范围收敛**：移除 `benchmark_check.sh` 中未接入配置、状态和测试契约的 OSU 分支；当前只支持 STREAM、HPL、HPCG
+- **结果与报告可靠性**：HPCG 只读取本次新增/变化的结果文件；初始报告无法原子落盘时拒绝启动，后续落盘错误通过 `report_error` 返回
 - **Prometheus 导出模块**：新增 `features/exporter`——`CachingStorage` 包装在 `JSONLStorage` 外（实现 `collector.Storage` 接口），一次采集同时落盘 JSONL + 更新内存缓存（按组件分组原子替换），HTTP `/metrics` 端点（`:9100`）从缓存读取转 Prometheus 文本格式（`catmonitor_{component}_{name}` 前缀，`_total`/`_time` 后缀判 counter，含 `# HELP`/`# TYPE`/labels）；daemon 集成仅需 ~5 行；附 `/-/healthy`、`/-/ready` 健康端点
 - **NPU 指标扩展 74→119**：新增 45 项 `hccn_tool` 网络统计指标（Medium，网口/PCIe 带宽、RoCE 速度/链路等扩展统计）；指标总数 159→204（High 24 / Medium 121 / Low 59）
 - **NPU 采集器 DCMI CGo 修复**：`dcmi_init()` 初始化、`dcmi_get_card_num_list` 返回全部设备 ID、`dcmi_get_device_errorcode_v2` 5 参数签名适配、`dcmi_get_device_info` 指针参数、dvpp struct 名修正；NPU card/device 二级枚举（CardList + DeviceNumInCard 遍历全部设备）；默认布局调整（4 行 3+2+2+2、gridCols 6 列、功耗电压首行、图例简化）

@@ -72,6 +72,16 @@ health:
   enabled: true
   interval: 5s
   weight_scheme: auto      # auto | cpu_only | accelerated_8card | accelerated_4card
+  stress:
+    enabled: false         # CLI 总开关
+    web_enabled: false     # Web 触发附加开关
+    script_path: features/health/stress/benchmark_check.sh
+    report_path: features/web/data/stress-latest.json
+    default_benchmarks: [stream]
+    benchmarks:
+      stream: { enabled: false, timeout: 30m }
+      hpl: { enabled: false, timeout: 2h }
+      hpcg: { enabled: false, result_dir: /root/haoran/hpcg-3.1/build_Kunpeng_MPI_OMP/bin, timeout: 3m }
 ```
 
 ### 配置路径
@@ -181,6 +191,32 @@ daemon 启动后：
 
 捕获 `SIGINT`/`SIGTERM` 优雅退出。
 
+### 3.6 health stress run — 显式健康压测
+
+第一版仅在 Linux 运行，Windows 构建可用但执行返回 `unsupported`。先在每台
+机器的 `features/health/stress/benchmark_check.sh` 中写入实际二进制全路径、
+环境变量、MPI/NUMA 命令，再在 `health.stress.benchmarks` 启用对应项目。
+三类 benchmark 的执行路径都不放入 YAML；HPCG 只配置本次结果文件的读取
+目录。HPL 正常完成后会上报 N、NB、P、Q、MPI 进程数、耗时和 GFLOPS。
+
+```bash
+bash -n features/health/stress/benchmark_check.sh
+catmonitor health stress run --help
+catmonitor health stress run --bench stream -c configs/catmonitor.yaml -o table
+catmonitor health stress run --bench hpl,hpcg -c configs/catmonitor.yaml -o json
+```
+
+`enabled` 是 CLI 和 Manager 的总开关，`web_enabled` 只是额外开放 Web
+提交，两者职责不同。STREAM、HPL、HPCG 达到 YAML 时限后均会停止本机
+进程组并记录 `time_limit_reached`，该状态按通过处理，允许没有最终性能值。
+命令提前报错或正常结束后解析不到必需结果才是 `unhealthy`。HPCG 只读取
+本次作业新增或变化的结果文件。压测结果不直接计入健康总分，但高负载可能
+使同期实时健康分暂时变化。
+
+完整的 WSL 构建、跨平台测试、Web 预览、Linux 节点配置及 STREAM/HPL/HPCG
+实机验收步骤见
+[health/stress 执行与测试指南](../features/health/stress/STRESS_TEST_GUIDE.md)。
+
 ---
 
 ## 4. Web 仪表盘（catmonitor-web）
@@ -199,8 +235,9 @@ daemon 启动后：
 
 ### 4.2 页面
 
-- **概览页**（`/`）：整体健康度（总分 + 进度条 + 等级）+ 设备规格面板（点击展开完整规格）+ 各部件状态 + 部件概览卡片（含趋势 sparkline）
+- **概览页**（`/`）：整体健康度、设备规格、部件卡片，以及最近健康压测摘要
 - **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（该部件全部历史序列 sparkline）+ 全部指标表
+- **健康压测**（`#/stress`）：选择已启用项目、可选缩短本次超时、启动/停止并查看分行结果
 - **能效监控**（`/dfee/`）：见 §6
 
 ### 4.3 REST API
@@ -211,6 +248,28 @@ daemon 启动后：
 | GET | `/api/collectors` | 采集器注册表元数据 |
 | GET / POST | `/api/config` | 读取 / 更新刷新间隔（热生效 + 持久化到 `runtime.json`） |
 | POST | `/api/refresh` | 请求立即采集 |
+| GET | `/api/health/stress/config` | 可由 Web 选择的压测项目与超时上限 |
+| GET | `/api/health/stress/latest` | 最近一份压测报告 |
+| POST | `/api/health/stress/runs` | 提交压测作业 |
+| GET | `/api/health/stress/runs/{id}` | 查询作业 |
+| POST | `/api/health/stress/runs/{id}/cancel` | 停止作业 |
+
+Web 提交仅在 `health.stress.enabled: true`、`web_enabled: true` 且 Web
+绑定 `127.0.0.1`/`localhost`/`::1` 时开放。远端 Windows 浏览器建议经
+SSH 隧道访问，例如
+`ssh -L 9527:127.0.0.1:9527 root@<Linux节点>`，再打开
+`http://127.0.0.1:9527`。
+
+直接调用启动/取消 API 时还必须使用
+`Content-Type: application/json` 和
+`X-CATMonitor-Action: health-stress`；浏览器请求必须同源。例如：
+
+```bash
+curl -H 'Content-Type: application/json' \
+     -H 'X-CATMonitor-Action: health-stress' \
+     -d '{"benchmarks":["stream"],"timeout_seconds":60}' \
+     http://127.0.0.1:9527/api/health/stress/runs
+```
 
 > 详细设计与扩展机制见 [features/web/Web_SPEC.md](../features/web/Web_SPEC.md)。
 

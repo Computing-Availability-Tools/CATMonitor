@@ -13,21 +13,22 @@
 
 ### 1.1 目标
 
-为 CATMonitor 设计一个**纯评估库**：输入是采集器产出的指标流，输出是一个 0–100 的健康度评分与等级，供 CLI 与 Web 仪表盘展示。模块本身**不采集任何数据**——所有输入来自既有采集架构。
+为 CATMonitor 设计一个**纯评估库**：输入是采集器产出的指标流，输出是一个 0–100 的健康度评分与等级，供 CLI 与 Web 仪表盘展示。`features/health` 根包本身**不采集数据、不执行外部命令**——所有评分输入来自既有采集架构。显式高负载诊断位于独立 Go 子包 `features/health/stress`，遵循其自己的 SPEC，不进入本评分契约。
 
 ### 1.2 设计前提（三条锚点）
 
-1. **当前采集架构**：6 个采集器（cpu/memory/disk/gpu/npu/network）经来源层（`internal/source/` 14 包）获取数据、产出 `collector.Metric`；外部工具/文件不可用时采集器优雅降级（对应指标不产出，不报错）。
-2. **能采集的指标**：共 152 个（见 [`indi_list`](../../docs/CATMonitor_indi_list.md)），按部件 × 优先级分布如下。本模块**只纳入 CPU / 内存 / 硬盘 / GPU·NPU 四类部件**（网卡属链路吞吐、非部件故障健康信号，不参与健康度），**只纳入 High 与 Medium 优先级指标**，Low 级诊断指标一律不参与扣分。
+1. **当前采集架构**：7 个采集器（cpu/memory/disk/gpu/npu/network/chassis）经来源层（`internal/source/` 14 包）获取数据、产出 `collector.Metric`；外部工具/文件不可用时采集器优雅降级（对应指标不产出，不报错）。
+2. **能采集的指标**：共 204 个（见 [`indi_list`](../../docs/CATMonitor_indi_list.md)），按部件 × 优先级分布如下。本评分模块**只纳入 CPU / 内存 / 硬盘 / GPU·NPU 四类部件**；Network 与 Chassis 不进入当前权重方案；只纳入 High 与 Medium 优先级指标，Low 级诊断指标一律不参与扣分。
 
    | 部件 | 指标总数 | High | Medium | Low | 是否参与健康度 |
    |------|:---:|:---:|:---:|:---:|---|
    | CPU | 40 | 4 | 12 | 24 | 是（High+Medium） |
    | Memory | 19 | 4 | 7 | 8 | 是（High+Medium） |
-   | Disk | 7 | 1 | 4 | 2 | 是（High+Medium） |
+   | Disk | 9 | 1 | 5 | 3 | 是（High+Medium） |
    | GPU | 7 | 3 | 3 | 1 | 是（High+Medium） |
-   | NPU | 74 | 9 | 43 | 22 | 是（High+Medium） |
+   | NPU | 119 | 9 | 88 | 22 | 是（High+Medium） |
    | Network | 5 | 1 | 3 | 1 | **否**（链路指标，非健康信号） |
+   | Chassis | 5 | 2 | 3 | 0 | **否**（当前权重方案未纳入） |
 
 3. **等级划分**（既定，本模块直接采用）：
 
@@ -44,6 +45,7 @@
 - 不做配置驱动的阈值/权重（规则结构固定于代码，YAML 仅选权重方案）。
 - 不纳入 Low 级指标扣分；不为网卡设计健康度。
 - 不依赖 GPU/NPU 功率 TDP 参考值（采集器暂未产出，相关规则暂缓）。
+- 不在 `HealthScore` 中表达压测作业状态或性能值；压测见 [stress/STRESS_SPEC.md](stress/STRESS_SPEC.md)。
 
 ---
 
@@ -51,20 +53,21 @@
 
 ### 2.1 位置
 
-- 仓库根 `health/`，与 `web/`、`cmd/`、`internal/` 同层级，同一 `go.mod`。作为根级公开包，CAT 系列其他工具可直接 import。
+- `features/health/` 根目录，与其它 `features/<feature>` 同属一个 `go.mod`。
 - 包名 `package health`。
+- 显式压测为子目录 `features/health/stress/`，包名 `package stress`；Go 包边界保证其 OS/命令依赖不会进入纯评分根包。
 
 ### 2.2 依赖关系
 
 ```
 cmd/catmonitor ──┐
-web/ ─────────────┼──>  health/  ──>  internal/collector (仅 collector.Metric 类型)
-                  │
-internal/config ──┘   (HealthConfig 留在 internal/config，不动)
+features/web/ ───┼──> features/health/ ──> internal/collector
+                 │
+                 └──> features/health/stress/ ──> benchmark_check.sh
 ```
 
-- **唯一下游依赖**：`internal/collector` 的 `collector.Metric`。同 `go.mod` 下根级包可 import `internal/`，故无需解耦数据模型、无需引入中性 `Sample` 类型。
-- **禁止**：import `internal/source/*`、`internal/config`、`cmd/*`、`web/*`；禁止 `os.ReadFile`/`exec.Command`/系统调用。一切数据经采集器产出后喂入。
+- **评分根包的唯一下游依赖**：`internal/collector` 的 `collector.Metric`。
+- **评分根包禁止**：import `internal/source/*`、`internal/config`、`cmd/*`、`features/web/*`；禁止 `os.ReadFile`/`exec.Command`/系统调用。一切评分数据经采集器产出后喂入。该限制不扩展到拥有独立 SPEC 的 `stress` 子包。
 
 ### 2.3 上游消费方
 
@@ -298,8 +301,8 @@ score := health.NewEvaluator(health.GetScheme(cfg.Health.WeightScheme)).Evaluate
 - **优雅降级**：指标缺失（空切片/缺某部件）时不报错、不扣分、`Score==Max`。
 - **等级映射**：覆盖四级边界（89/90、74/75、59/60）。
 - **schema 稳定**：`HealthScore` 序列化字段集与类型固定，作为前端契约。
-- **跨平台**：`health/` 无 `//go:build` 标签、纯逻辑无 OS 依赖，Linux/Windows 均编译且可跑测试。
-- 运行：`go vet ./...` → `go build ./...`（+ `GOOS=windows GOARCH=amd64` 交叉编译）→ `go test ./health/`，从仓库根运行。
+- **跨平台**：`features/health` 根包无 `//go:build` 标签、纯逻辑无 OS 依赖，Linux/Windows 均编译且可跑测试；`stress` 子包仅 Linux 执行但必须支持 Windows 构建。
+- 运行：`go vet ./...` → `go build ./...`（+ `GOOS=windows GOARCH=amd64` 交叉编译）→ `go test ./features/health/...`，从仓库根运行。
 
 ---
 

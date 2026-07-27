@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health/stress"
 	"gopkg.in/yaml.v3"
 )
 
@@ -14,6 +15,7 @@ type Config struct {
 	Server    ServerCfg    `yaml:"server"`
 	Collector CollectorCfg `yaml:"collector"`
 	Storage   StorageCfg   `yaml:"storage"`
+	Health    HealthCfg    `yaml:"health"`
 }
 
 type ServerCfg struct {
@@ -31,6 +33,10 @@ type StorageCfg struct {
 	RuntimePath  string `yaml:"runtime_path"`
 }
 
+type HealthCfg struct {
+	Stress stress.Config `yaml:"stress"`
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerCfg{Addr: ":9527"},
@@ -42,6 +48,10 @@ func DefaultConfig() *Config {
 			SnapshotPath: "features/web/data/snapshot.json",
 			RuntimePath:  "features/web/data/runtime.json",
 		},
+		Health: HealthCfg{Stress: stress.Config{
+			ScriptPath: "features/health/stress/benchmark_check.sh",
+			ReportPath: "features/web/data/stress-latest.json",
+		}},
 	}
 }
 

@@ -590,7 +590,7 @@ Collect() {
 
 ## 3. 健康度评估模块设计
 
-> v0.3.0 健康度模块从 `internal/health` 抽取至特性层 `features/health`：消费 `collector.Metric`，不做底层采集；规则对齐 `indi_list` 的 High/Medium 指标。规则与扣分阈值详见 [`features/health/HEALTH_SPEC.md`](features/health/HEALTH_SPEC.md)。
+> v0.3.0 健康度评分从 `internal/health` 抽取至特性层 `features/health` 根包：消费 `collector.Metric`，不做底层采集；规则对齐 `indi_list` 的 High/Medium 指标。v0.3.2 增加独立子包 `features/health/stress`，用于显式高负载诊断，不进入评分模型。
 
 ### 3.1 设计原则
 
@@ -613,6 +613,9 @@ features/health/
 ├── util.go            # 公共工具（取最差子温度等）
 ├── metrics.yaml       # health 自有指标目录（启动时优先读取覆盖默认）
 ├── HEALTH_SPEC.md     # 规则与扣分阈值规格
+├── HEALTH_DESIGN.md   # health 根包与 stress 子包的边界
+├── README.md          # 特性入口
+├── stress/            # STREAM/HPL/HPCG 显式压测（独立 Go 包、SPEC/DESIGN/README）
 └── *_test.go          # 表驱动测试
 ```
 
@@ -632,6 +635,28 @@ features/health/
 - 否则使用默认 CPU-only 方案（CPU:30, Mem:40, Disk:30）
 
 > 判定逻辑基于实际采集到的指标，而非 `nvidia-smi` / `npu-smi` 是否可用。这样在无硬件或有硬件但采集失败时都能正确选择方案。
+
+### 3.4 health/stress 显式压测子特性
+
+`features/health/stress` 与纯评分根包共享 health 业务域，但使用独立状态模型：
+
+```
+CLI: catmonitor health stress run ─┐
+                                   ├─> stress.Manager ─> benchmark_check.sh
+Web: /api/health/stress/* ─────────┘         │
+                                             ├─> stdout / 本次 HPCG 结果文件解析
+                                             └─> 原子写 stress-latest.json
+```
+
+- 只在用户显式请求时串行运行 STREAM/HPL/HPCG；daemon 和普通 `health` 不触发。
+- Linux 执行，Windows 可构建并返回 `unsupported`。
+- 每台机器的二进制全路径、MPI/NUMA 与环境变量留在 `benchmark_check.sh`。
+- 所有项目达到配置窗口均记录 `time_limit_reached` 并按通过聚合，不伪造最终性能值。
+- HPCG 只读取相对作业启动前快照新增或变化的结果文件，避免复用历史结果。
+- 本机超时/取消终止完整进程组；多节点 MPI 远端清理由部署和 MPI 实现负责，第一版不承诺。
+- 压测状态和数值不写入 `HealthScore`，但负载可能使同期采集的实时健康分暂时变化。
+
+详细契约见 [`features/health/stress/STRESS_SPEC.md`](features/health/stress/STRESS_SPEC.md)。
 
 ---
 
@@ -704,7 +729,7 @@ catmonitor [command] [flags]
 | `daemon` | 启动守护进程，持续周期采集指标并计算健康度 | `catmonitor daemon` |
 | `collect` | 单次采集所有指标，输出快照到标准输出或文件 | `catmonitor collect` |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 | `catmonitor health` |
-| `status` | 查看守护进程运行状态（PID、运行时长、已注册采集器） | `catmonitor status` |
+| `health stress run` | 显式运行配置中已启用的 Linux 压测项目 | `catmonitor health stress run --bench stream` |
 | `list` | 列出所有已注册采集器及其指标清单 | `catmonitor list` |
 | `version` | 显示版本号、Go 版本、编译时间 | `catmonitor version` |
 
@@ -841,27 +866,6 @@ Registered Collectors:
 └──────────┴──────────┴──────────┴──────────┴─────────┴─────────┘
 ```
 
-#### 场景五：查看守护进程状态（运维监控）
-
-```bash
-catmonitor status
-```
-
-输出示例：
-
-```
-CATMonitor Daemon Status
-┌─────────────────┬──────────────────────────────┐
-│ PID             │ 12345                        │
-│ Uptime          │ 3h 24m 15s                   │
-│ Active Collectors │ 5 (cpu, memory, disk, gpu, network) │
-│ Data Directory  │ /var/lib/catmonitor/data     │
-│ Server Type     │ accelerated_8card            │
-│ Last Health     │ 85 (Good) @ 2026-07-10 10:29 │
-│ Config File     │ /etc/catmonitor/catmonitor.yaml │
-└─────────────────┴──────────────────────────────┘
-```
-
 ### 5.5 systemd 集成
 
 安装为 systemd 服务（Phase 3 实现）：
@@ -908,7 +912,7 @@ WantedBy=multi-user.target
 
 ### 6.1 模块定位与解耦
 
-`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**不新增 go.mod、不改主项目任何文件**。与 `cmd/catmonitor`、`internal/collectors`、`features/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`。指标采集和快照不依赖 daemon/CLI 进程；压测入口不调用 CLI，而与 CLI 复用 `features/health/stress.Manager`。
 
 ### 6.2 目录结构
 
@@ -926,9 +930,10 @@ features/web/
 ├── static/
 │   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
 │   ├── style.css       # 浅色卡片式主题
-│   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 扩展 manifest
+│   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 健康压测
 └── data/              # 运行时数据（运行时生成，git 忽略）
     ├── snapshot.json  # 采集 goroutine 写，HTTP 层读
+    ├── stress-latest.json # stress.Manager 写入的最近作业报告
     └── runtime.json   # 界面调整的刷新间隔持久化
 ```
 
@@ -946,6 +951,10 @@ features/web/
 ```
 
 **解耦边界**：HTTP 层**只读** `snapshot.json`，**绝不直接调用采集器**；采集 goroutine 是 `snapshot.json` 的**唯一写者**（写临时文件 + `os.Rename` 原子写，读者永不会读到半截文件）。
+
+压测 API 是独立控制路径，只调用 `stress.Manager` 并写
+`stress-latest.json`，不修改 `snapshot.json` 或 `HealthScore`。启动/取消
+要求回环监听与来源、双开关、JSON、自定义操作头和同源校验。
 
 ### 6.4 Snapshot 数据模型
 
@@ -994,8 +1003,8 @@ features/web/
 
 ### 6.8 HTTP API 与前端设计
 
-- **路由**（`server.go`）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`、`/dfee/`（能效监控，见 §7）。详见 SPEC §9.7。
-- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline）+ 全部指标表。导航栏含「能效分析」入口（v0.3.1，跳转 `/dfee/`）。
+- **路由**（`server.go`）：快照/采集配置 API、`/api/health/stress/*` 受控作业 API，以及 `/dfee/` 能效监控。详见 `features/web/Web_SPEC.md` §6。
+- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情，`#/stress` 健康压测）。概览含最近压测摘要；压测页选择通过资产预检的项目、缩短本次超时并启动/停止作业。
 - **显示 manifest**（`app.js`）：`MANIFEST`（部件显示名/关键指标）、`SERIES_LABELS`（序列显示名）、`NAV_ORDER`（导航排序）、`SPEC_DEFS`/`LABEL_NAMES`（规格面板）。未登记部件/指标/序列均有通用回退，不会崩溃。
 
 ### 6.9 扩展机制
@@ -1016,6 +1025,7 @@ features/web/
 2. **轮询而非推送**：前端 `setInterval` 轮询 `/api/snapshot`；如需实时推送，预留 WebSocket/SSE（`snapshot.json` 解耦边界可直接复用）。
 3. **无持久化历史存储**：历史仅存内存环形缓冲（重启清空），未落盘；如需长期趋势，预留 JSONL 落盘。
 4. **指标展示优先级**：当前 metric 不携带优先级字段，概览关键指标靠 MANIFEST 人工指定；未来若主项目 Metric 增加优先级可改为自动选取。
+5. **压测执行范围**：第一版只承诺单机 Linux；多节点 MPI 远端清理尚未实机验收。
 
 ---
 

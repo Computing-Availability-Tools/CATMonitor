@@ -17,6 +17,6 @@ func (c *NPUCollector) collectStatic(now time.Time) ([]collector.Metric, error) 
 	return nil, nil
 }
 
-func (c *NPUCollector) collectDevice(devID int, now time.Time) []collector.Metric {
+func (c *NPUCollector) collectDevice(dev npuDevice, now time.Time) []collector.Metric {
 	return nil
 }
