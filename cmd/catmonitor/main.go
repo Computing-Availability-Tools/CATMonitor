@@ -201,6 +201,10 @@ func runCollect() {
 	cfg := loadConfig()
 	output := getOutputFormat()
 
+	// Set collection threshold + inject wanted checker (same as daemon).
+	metrics.SetCollectionThreshold(cfg.Collection.MinPriority)
+	collector.SetWantedChecker(metrics.AnyWanted)
+
 	var allMetrics []collector.Metric
 	for _, c := range collector.DefaultRegistry.All() {
 		if !isCollectorEnabled(cfg, c.Name()) {
