@@ -11,6 +11,9 @@ import (
 )
 
 func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
+	if !collector.AnyWanted("network", []string{"throughput", "packet_count", "error_count", "rx_bytes_total", "tx_bytes_total", "connection_count", "interface_status"}) {
+		return nil, nil
+	}
 	now := time.Now()
 	var metrics []collector.Metric
 

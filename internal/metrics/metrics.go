@@ -62,6 +62,61 @@ var (
 	inst *Catalog
 )
 
+// collectionThreshold controls the minimum priority for collection (pre-filter).
+// 0 = Low (collect everything), 1 = Medium, 2 = High. Default 0 = backward compatible.
+var collectionThreshold int
+
+// priorityValue converts a priority string to a numeric value for comparison.
+func priorityValue(p string) int {
+	switch p {
+	case "High":
+		return 2
+	case "Medium":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// SetCollectionThreshold sets the minimum priority for collection.
+// "low" = collect all, "medium" = skip Low, "high" = skip Low+Medium.
+func SetCollectionThreshold(p string) {
+	collectionThreshold = priorityValue(p)
+}
+
+// IsWanted reports whether a metric should be collected based on its priority
+// and the collection threshold. Unknown metrics (not in catalog) are collected
+// by default to avoid catalog drift silently dropping data.
+func IsWanted(component, name string) bool {
+	c := Default()
+	if c == nil {
+		return true
+	}
+	m, ok := c.components[component]
+	if !ok {
+		return true
+	}
+	sp, ok := m[name]
+	if !ok {
+		return true
+	}
+	if sp.Static {
+		return true
+	}
+	return priorityValue(sp.Priority) >= collectionThreshold
+}
+
+// AnyWanted reports whether any of the given metrics should be collected.
+// Used by collector sub-methods to decide whether to run at all.
+func AnyWanted(component string, names []string) bool {
+	for _, name := range names {
+		if IsWanted(component, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // Init loads the default catalog from the first existing path in paths. If no
 // path exists, the catalog is empty (default-allow everything). Must be called
 // once at startup before Default()/Filter.

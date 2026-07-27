@@ -37,3 +37,7 @@ health:
   enabled: true
   interval: 5s
   weight_scheme: auto
+
+collection:
+  # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)
+  min_priority: low

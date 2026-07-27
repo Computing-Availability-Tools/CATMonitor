@@ -28,6 +28,9 @@ func (c *ChassisCollector) DefaultInterval() time.Duration {
 func (c *ChassisCollector) DefaultEnabled() bool { return true }
 
 func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
+	if !collector.AnyWanted("chassis", []string{"power", "inlet_temp", "outlet_temp", "fan_speed", "fan_power"}) {
+		return nil, nil
+	}
 	now := time.Now()
 	sensors, err := ipmi.Default().SDR()
 	if err != nil {

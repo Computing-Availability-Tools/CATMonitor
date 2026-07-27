@@ -115,6 +115,10 @@ func runDaemon() {
 	cfg := loadConfig()
 	logger := setupLogger()
 
+	// Set collection threshold based on config (default: low = collect all).
+	metrics.SetCollectionThreshold(cfg.Collection.MinPriority)
+	collector.SetWantedChecker(metrics.AnyWanted)
+
 	store, err := storage.New(cfg.Storage.DataDir)
 	if err != nil {
 		logger.Error("failed to create storage", "error", err)
