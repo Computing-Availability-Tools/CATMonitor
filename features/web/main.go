@@ -119,6 +119,9 @@ func main() {
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = httpServer.Shutdown(shutCtx)
+
+	// Remove the snapshot so a restart doesn't serve stale data.
+	_ = os.Remove(cfg.Storage.SnapshotPath)
 }
 
 // listenWithFallback tries to listen on initialAddr; if the port is already in

@@ -24,6 +24,7 @@ package metrics
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -68,10 +69,10 @@ var collectionThreshold int
 
 // priorityValue converts a priority string to a numeric value for comparison.
 func priorityValue(p string) int {
-	switch p {
-	case "High":
+	switch strings.ToLower(p) {
+	case "high":
 		return 2
-	case "Medium":
+	case "medium":
 		return 1
 	default:
 		return 0
@@ -86,7 +87,8 @@ func SetCollectionThreshold(p string) {
 
 // IsWanted reports whether a metric should be collected based on its priority
 // and the collection threshold. Unknown metrics (not in catalog) are collected
-// by default to avoid catalog drift silently dropping data.
+// by default to avoid catalog drift silently dropping data. Static metrics are
+// subject to the same threshold as dynamic metrics.
 func IsWanted(component, name string) bool {
 	c := Default()
 	if c == nil {
@@ -98,9 +100,6 @@ func IsWanted(component, name string) bool {
 	}
 	sp, ok := m[name]
 	if !ok {
-		return true
-	}
-	if sp.Static {
 		return true
 	}
 	return priorityValue(sp.Priority) >= collectionThreshold
