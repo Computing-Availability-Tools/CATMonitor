@@ -707,41 +707,34 @@ catmonitor [command] [flags]
 | `daemon` | 启动守护进程，持续周期采集指标并经 exporter 导出（v0.3.3 起不再周期评估健康度，改由 `health` 子命令按需执行） | `catmonitor daemon` |
 | `collect` | 单次采集所有指标，输出快照到标准输出或文件 | `catmonitor collect` |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 | `catmonitor health` |
-| `status` | 查看守护进程运行状态（PID、运行时长、已注册采集器） | `catmonitor status` |
 | `list` | 列出所有已注册采集器及其指标清单 | `catmonitor list` |
-| `version` | 显示版本号、Go 版本、编译时间 | `catmonitor version` |
+| `version` | 显示版本号、Go 版本 | `catmonitor version` |
 
 ### 5.3 全局参数
 
 | 参数 | 短选项 | 默认值 | 说明 |
 |------|--------|--------|------|
 | `--config` | `-c` | 平台自适应 (Linux: `/etc/catmonitor/catmonitor.yaml`, Windows: `C:\ProgramData\catmonitor\catmonitor.yaml`) | 配置文件路径 |
-| `--data-dir` | `-d` | 平台自适应 (Linux: `/var/lib/catmonitor/data`, Windows: `C:\ProgramData\catmonitor\data`) | 数据输出目录 |
-| `--component` | 无 | 空（全部） | 只采集指定部件，逗号分隔：`cpu,memory,disk` |
-| `--output` | `-o` | `json` | 输出格式：`json` / `table` / `yaml` |
-| `--interval` | `-i` | 空（使用配置） | 覆盖采集周期，如 `5s` |
-| `--verbose` | `-v` | false | 输出详细日志（调试用） |
-| `--help` | `-h` | — | 显示帮助信息 |
+| `--output` | `-o` | `json` | 输出格式：`json` / `table` |
+| `--help` | `-h` | — | 显示帮助信息（解析后即退出） |
+
+> 注：`-d/--data-dir`、`--component`、`--interval`、`-v/--verbose` 历史文档曾列出，但 `cmd/catmonitor` 未实现（传入会被 flag 包视为未知参数触发退出）；数据目录通过配置文件 `storage.data_dir` 调整，采集周期通过各 collector 的 `interval` 调整。
 
 ### 5.4 使用场景
 
 #### 场景一：启动守护进程（日常运行）
 
 ```bash
-# 使用默认配置启动
+# 使用默认配置启动（前台）
 catmonitor daemon
 
 # 指定配置文件启动
 catmonitor daemon -c /etc/catmonitor/my-config.yaml
 
-# 前台运行（调试模式）
-catmonitor daemon -v
-
-# 指定数据输出目录
-catmonitor daemon --data-dir /tmp/catmonitor-data
+# 数据输出目录在配置文件 storage.data_dir 中调整（无命令行 flag）
 ```
 
-守护进程启动后，按各采集器配置周期持续采集指标，写入 `{data_dir}/{component}_{date}.jsonl`，同时按健康度周期写入 `health_{date}.jsonl`。
+守护进程启动后，按各采集器配置周期持续采集指标，写入 `{data_dir}/{component}_{date}.jsonl`；v0.3.3 起 daemon 不再周期评估/落盘健康度，改由 `catmonitor health` 子命令按需执行（输出到 stdout）。
 
 #### 场景二：单次采集快照（巡检）
 
@@ -749,32 +742,24 @@ catmonitor daemon --data-dir /tmp/catmonitor-data
 # 采集所有指标，输出 JSON
 catmonitor collect
 
-# 只采集 CPU 和内存
-catmonitor collect --component cpu,memory
-
 # 采集并以表格形式输出
 catmonitor collect -o table
 
 # 采集并保存到指定文件
 catmonitor collect -o json > /tmp/snapshot.json
-
-# 覆盖采集周期为 1s（仅影响单次采集的行为）
-catmonitor collect --interval 1s
 ```
 
-表格输出示例：
+> 采集输出受配置 `collection.min_priority` 影响（low 全采 / medium 跳过 Low / high 仅 High）；只采指定部件、采集周期需改配置文件，无对应命令行 flag。
+
+表格输出示例（`printMetricsTable`，tabwriter 纯文本）：
 
 ```
-┌───────────┬──────────────┬────────┬─────────┬──────────────────┐
-│ Component │ Metric       │ Value  │ Unit    │ Labels           │
-├───────────┼──────────────┼────────┼─────────┼──────────────────┤
-│ cpu       │ usage        │ 45.2   │ %       │ core=total       │
-│ cpu       │ load_average │ 2.34   │         │ interval=1m      │
-│ memory    │ usage        │ 62.5   │ %       │                  │
-│ memory    │ swap_usage   │ 15.3   │ %       │                  │
-│ disk      │ space_usage  │ 72.5   │ %       │ mount=/          │
-│ network   │ throughput   │ 125000 │ bytes/s │ if=eth0,dir=rx   │
-└───────────┴──────────────┴────────┴─────────┴──────────────────┘
+Component  Metric        Value    Unit  Labels
+cpu        usage         45.2     %     core=total
+cpu        load_average  2.34           interval=1m
+memory     usage         62.5     %
+disk       space_usage   72.5     %     device=sda,mount_point=/
+network    throughput    125000   B/s   interface=eth0,direction=rx
 ```
 
 #### 场景三：健康检查（运维诊断）

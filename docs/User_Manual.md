@@ -5,6 +5,34 @@
 
 ---
 
+## 0. 快速上手（60 秒）
+
+```bash
+make build                                    # 编译 ./bin/catmonitor
+./bin/catmonitor daemon &                    # 启动守护进程（采集 + Prometheus :9100）
+curl -s http://localhost:9100/metrics | head # 抓取 Prometheus 指标
+./bin/catmonitor health                      # 一次性健康检查
+./bin/catmonitor collect -o table | head     # 一次性指标采集
+```
+
+> Web 仪表盘（可选）：`go build -o features/web/bin/catmonitor-web ./features/web && ./features/web/bin/catmonitor-web`，浏览器打开 http://localhost:9527。
+
+## 目录
+
+- [1. 构建与安装](#1-构建与安装)
+- [2. 配置](#2-配置)
+- [3. 命令行](#3-命令行)（含 [常用场景速查](#常用场景速查)）
+- [4. Web 仪表盘](#4-web-仪表盘catmonitor-web)
+- [5. Prometheus 导出](#5-prometheus-导出exporter)
+- [6. 能效监控（dfee）](#6-能效监控dfee)
+- [7. 健康度评分](#7-健康度评分)
+- [8. 数据格式](#8-数据格式)
+- [9. 无硬件环境的优雅降级](#9-无硬件环境的优雅降级)
+- [10. 扩展](#10-扩展)
+- [11. 排错与常见问题](#11-排错与常见问题)
+
+---
+
 ## 1. 构建与安装
 
 ### 1.1 依赖
@@ -33,6 +61,7 @@ GOOS=windows go build -o features/web/bin/catmonitor-web.exe ./features/web
 ```
 
 > 默认构建排除 CGo（`dcmi_cgo.go` 在 `//go:build cgo && linux && dcmi` 后），无 CANN SDK 也能编译；NPU 的 DCMI 指标在无 `-tags dcmi` 时优雅降级。
+> `make build` 产物为 `bin/catmonitor`（Makefile 变量 `BIN=bin/catmonitor`）；Web 二进制需单独 `go build`（无 make 目标）。
 
 ### 1.3 安装（Linux systemd）
 
@@ -69,13 +98,23 @@ storage:
   rotation: daily           # 按天轮转
 
 health:
-  enabled: true
-  interval: 5s
-  weight_scheme: auto      # auto | cpu_only | accelerated_8card | accelerated_4card
+  enabled: true             # v0.3.3 起 daemon 不再读取（保留字段，当前不生效）
+  interval: 5s              # 同上，daemon 不再周期评估健康度
+  weight_scheme: auto      # 仅 `catmonitor health` CLI 使用：auto | cpu_only | accelerated_8card | accelerated_4card
 
 collection:
   min_priority: low        # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 ```
+
+**字段用途**：
+
+| 字段 | 用于 | 说明 |
+|------|------|------|
+| `server.type` | daemon / health | 服务器类型提示，`auto` 由实际采集指标自动判定 |
+| `collectors.*.enabled` / `.interval` | daemon | 各采集器开关与采集周期 |
+| `storage.*` | daemon | JSONL 数据目录、保留时长、轮转策略 |
+| `health.weight_scheme` | `health` CLI | 健康度权重方案；`enabled`/`interval` v0.3.3 起 daemon 不再使用 |
+| `collection.min_priority` | daemon / collect | 按优先级阈值预过滤采集粒度 |
 
 ### 配置路径
 
@@ -94,7 +133,7 @@ collection:
 catmonitor [command] [flags]
 
 Commands:
-  daemon       启动守护进程（持续采集 + 健康度 + Prometheus 导出）— 默认
+  daemon       启动守护进程（持续采集 + Prometheus 导出）— 默认；健康度评估由 health 子命令按需执行
   collect      单次采集所有指标快照
   health       执行一次健康检查
   list         列出所有已注册采集器
@@ -105,6 +144,19 @@ Flags:
   -o, --output      输出格式: json|table
   -h, --help        帮助信息（解析后即退出）
 ```
+
+> 仅上述 flag 实际生效。`-d/--data-dir`、`-v/--verbose`、`--component`、`--interval` 未实现（历史文档/二进制 help 曾误列），数据目录与采集周期请通过配置文件调整。
+
+### 常用场景速查
+
+| 场景 | 命令 |
+|------|------|
+| 常驻采集 + Prometheus | `catmonitor daemon` |
+| 一次性巡检（指标） | `catmonitor collect -o table` |
+| 一次性健康体检 | `catmonitor health` |
+| 查看采集器清单 | `catmonitor list` |
+| 查看版本 | `catmonitor version` |
+| Web 仪表盘 | `catmonitor-web`（独立二进制，见 §4） |
 
 ### 3.1 version
 
@@ -148,6 +200,7 @@ npu        npu_num       0.00     个
 ```
 
 > 无 NPU/GPU/BMC 环境下，gpu/chassis 返回空、npu 返回 `npu_num=0`，均不报错（优雅降级）。
+> `collect` 输出受配置 `collection.min_priority` 影响：`low`（默认）全采、`medium` 跳过 Low 指标、`high` 仅采 High；改配置后 `collect` 行数会相应变化。
 
 ### 3.4 health — 健康检查
 
@@ -173,7 +226,7 @@ Server Type:    accelerated
 ```bash
 catmonitor daemon                       # 默认配置前台运行
 catmonitor daemon -c /etc/catmonitor/my.yaml
-catmonitor daemon -v                    # 详细日志
+# 无 -v/--verbose 选项；如需更详细日志，改 slog Handler 级别（见源码 setupLogger）
 ```
 
 daemon 启动后：
@@ -215,6 +268,7 @@ daemon 启动后：
 | GET | `/api/collectors` | 采集器注册表元数据 |
 | GET / POST | `/api/config` | 读取 / 更新刷新间隔（热生效 + 持久化到 `runtime.json`） |
 | POST | `/api/refresh` | 请求立即采集 |
+| GET | `/api/dfee` | 过滤+推导后的能效图表数据（见 §6） |
 
 > 详细设计与扩展机制见 [features/web/Web_SPEC.md](../features/web/Web_SPEC.md)。
 
@@ -326,11 +380,15 @@ dfee 随 `catmonitor-web` 启动自动挂载（`features/web/server.go` 注册 `
 
 文件路径：`{data_dir}/{component}_{date}.jsonl`，按天轮转，超 `max_file_age` 清理。
 
-### 8.2 健康度（JSONL）
+### 8.2 健康度（CLI 输出，不落盘）
 
-```jsonl
-{"score":95,"grade":"Excellent","components":{"cpu":{"score":10,"max":10,...},...},"timestamp":"..."}
+`catmonitor health` 输出到 stdout（表格或 `-o json`），v0.3.3 起 daemon 不再周期评估/落盘健康度，故无 `health_*.jsonl` 文件产生：
+
+```json
+{"score":95,"grade":"Excellent","server_type":"accelerated","components":{"cpu":{"score":10,"max":10,"deductions":null},...},"timestamp":"..."}
 ```
+
+> 如需持久化健康度，重定向 CLI 输出：`catmonitor health -o json >> health.jsonl`。
 
 ---
 
@@ -352,3 +410,22 @@ dfee 随 `catmonitor-web` 启动自动挂载（`features/web/server.go` 注册 `
 - **新增部件采集器**：实现 `Collector` 接口并在 `init()` 注册 + `main.go` 加 `import _`，核心代码零修改。详见 [DESIGN.md §1.3](../DESIGN.md)。
 - **Web 接入新部件**：`features/web/main.go` 加一行 blank import，导航/卡片/详情页自动出现。
 - **新增能效图表**：`features/dfee/filter.go` 加分组条目 + `dfee.js` 加图表。
+
+---
+
+## 11. 排错与常见问题
+
+| 现象 | 原因 / 解决 |
+|------|-------------|
+| `catmonitor daemon -v` 直接退出 | `-v/--verbose` 未实现；移除该参数，日志级别见源码 `setupLogger` |
+| `catmonitor daemon --data-dir X` 退出 | `--data-dir` 未实现；数据目录改配置 `storage.data_dir` |
+| `:9100` 被占用 | exporter 端口固定 `:9100`，释放占用进程或修改 `features/exporter` 中 `ServeMetrics(":9100", ...)` |
+| `:9527` 被占用 | web 自动 +1 回退到 `:9528` 等，看启动日志 `web server starting addr=...` |
+| `catmonitor-web` 报 `metrics catalog init failed` | web 须从仓库根目录运行（`metrics.Init` 加载相对路径 `configs/metrics.yaml`） |
+| collect / :9100 指标数量变少 | 检查 `collection.min_priority`：`medium` 跳过 Low、`high` 仅 High |
+| GPU/NPU/Chassis 无数据 | 对应命令（`nvidia-smi`/`npu-smi`/`ipmitool`）缺失即优雅降级返回空，非错误；`npu` 仍输出 `npu_num=0` |
+| `health` 评分与 web 不一致 | CLI 因 `npu_num` 指标判 `accelerated`、web 据真实硬件判 `cpu_only`，口径不同（已知项） |
+| DCMI/NPU CGo 编译失败 | `dcmi_cgo.go` 在 `-tags dcmi` 后，需真机 CANN SDK；默认构建排除即可 |
+| 健康度无 `health_*.jsonl` 文件 | v0.3.3 起 daemon 不再落盘健康度；用 `catmonitor health -o json >> health.jsonl` 自行持久化 |
+
+> 无 NPU/GPU 环境的系统测试结果见 [docs/test_report.md](test_report.md)。
