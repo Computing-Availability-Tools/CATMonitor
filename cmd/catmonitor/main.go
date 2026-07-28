@@ -69,9 +69,8 @@ Commands:
 
 Flags:
   -c, --config      Config file path (default: ` + platform.ConfigPath() + `)
-  -d, --data-dir    Data output directory (default: ` + platform.DataDir() + `)
   -o, --output      Output format: json|table (default: json)
-  -v, --verbose     Verbose logging`)
+  -h, --help        Show help (parsed, then exit)`)
 }
 
 func loadConfig() *config.Config {
@@ -154,23 +153,6 @@ func runDaemon() {
 	logger.Info("received signal, shutting down", "signal", sig)
 	cancel()
 	scheduler.Stop()
-}
-
-func runHealthCheck(scheduler *collector.Scheduler, eval *health.Evaluator, store *storage.JSONLStorage, logger *slog.Logger) {
-	// Collect all metrics
-	var allMetrics []collector.Metric
-	for _, c := range collector.DefaultRegistry.All() {
-		collected, err := c.Collect()
-		if err != nil {
-			logger.Error("collection failed", "collector", c.Name(), "error", err)
-			continue
-		}
-		allMetrics = append(allMetrics, collected...)
-	}
-
-	allMetrics = metrics.Filter(allMetrics)
-	score := eval.Evaluate(allMetrics)
-	logger.Info("health check", "score", score.Score, "grade", score.Grade)
 }
 
 func runCollect() {
