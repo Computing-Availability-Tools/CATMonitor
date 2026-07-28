@@ -34,6 +34,7 @@
 - **web 修复**：补充 chassis 采集器 import，修复机箱类指标无数据
 - **配置**：新增 `configs/metrics.yaml` 默认指标采集目录
 - **文档**：README 精简（使用说明迁移至新增 `docs/User_Manual.md`）；SPEC 改为功能规格（不含技术细节，链接各 feature SPEC）；DESIGN 新增 exporter 章节、更新 NPU/IPMI/dfee；indi_list 版本升至 v0.3.2/204 指标
+- **health/stress 文档收敛**：保留特性根目录 README/SPEC/DESIGN/TEST_GUIDE 作为规范入口，新增 `docs/` 分类节点部署、滚动验收、迁移历史和归档资料；51.62.10.87 与 51.62.10.90 的 MPICH/OpenMPI、资产路径和超时配置明确隔离
 - **版本号**：`cmd/catmonitor` version 升至 `0.3.2`
 - **测试**：263 用例全过（较 v0.3.1 的 241 +22，来自 `features/exporter` + `internal/source/hccn_tool` 扩展用例），覆盖率 29.5%~97.0%，`go vet` 零警告，Linux/Windows 双平台编译通过；无 NPU/GPU 系统测试通过（`:9100/metrics` 导出 33 指标名 / 31 gauge + 2 counter、`:9527` web/dfee 5 端点全 200、GPU/NPU/Chassis 优雅降级不崩溃）
 

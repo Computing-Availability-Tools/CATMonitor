@@ -216,6 +216,9 @@ catmonitor health stress run --bench hpl,hpcg -c configs/catmonitor.yaml -o json
 完整的 WSL 构建、跨平台测试、Web 预览、Linux 节点配置及 STREAM/HPL/HPCG
 实机验收步骤见
 [health/stress 执行与测试指南](../features/health/stress/STRESS_TEST_GUIDE.md)。
+不同 Linux 节点的固定资产、MPI 参数和离线部署流程见
+[health/stress 文档中心](../features/health/stress/docs/README.md)，必须选择
+与目标机器匹配的节点指南。
 
 ---
 

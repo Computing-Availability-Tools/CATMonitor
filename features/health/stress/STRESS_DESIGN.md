@@ -9,3 +9,9 @@ STREAM、HPL 与 HPCG 的二进制、输入文件、运行目录和环境均直�
 STREAM、HPL、HPCG 达到配置窗口且命令此前未退出报错时统一记录 `time_limit_reached`，聚合为 `Healthy`，不伪造最终性能值；提前非零退出或正常结束后解析失败才是 `unhealthy`。
 
 HPCG 启动前记录结果目录中文件的大小、修改时间与 SHA-256，命令成功结束后强制从新增或发生变化的候选文件解析 VALID、GFLOP/s 与执行时间；stdout 不作为正常完成的替代数据源。报告使用同目录临时文件加 `os.Rename` 原子替换；初始落盘失败阻止作业启动，后续失败写入内存报告的 `report_error`。
+
+## 相关文档
+
+- [STRESS_SPEC.md](STRESS_SPEC.md)：功能与接口契约；
+- [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)：自动化与实机验证；
+- [docs/README.md](docs/README.md)：节点适配、验收结果和迁移历史。

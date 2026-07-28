@@ -85,11 +85,13 @@ catmonitor list
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单（204 项） |
 | [docs/test_report.md](docs/test_report.md) | 测试报告（无 NPU/GPU 系统测试） |
+| [docs/COPYRIGHT_APPLICATION.md](docs/COPYRIGHT_APPLICATION.md) | 软件著作权申请材料清单（待权利人确认） |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |
 | [features/health/HEALTH_DESIGN.md](features/health/HEALTH_DESIGN.md) | health 特性设计 |
 | [features/health/stress/STRESS_SPEC.md](features/health/stress/STRESS_SPEC.md) | 健康压测子特性规格 |
 | [features/health/stress/STRESS_DESIGN.md](features/health/stress/STRESS_DESIGN.md) | 健康压测子特性设计 |
 | [features/health/stress/STRESS_TEST_GUIDE.md](features/health/stress/STRESS_TEST_GUIDE.md) | 健康压测构建、Web 预览与 Linux 实机验收指南 |
+| [features/health/stress/docs/README.md](features/health/stress/docs/README.md) | 健康压测节点部署、验收记录与迁移历史索引 |
 | [features/web/Web_SPEC.md](features/web/Web_SPEC.md) | Web 仪表盘规格 |
 | [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md) | 能效监控模块规格 |
 | [features/exporter/exporter_SPEC.md](features/exporter/exporter_SPEC.md) | Prometheus 导出模块规格 |

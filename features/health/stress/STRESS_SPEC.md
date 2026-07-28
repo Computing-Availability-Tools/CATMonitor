@@ -69,3 +69,10 @@ Web 仅在 `health.stress.enabled`、`web_enabled` 均为 true，服务监听回
 单元测试覆盖 STREAM/HPL/HPCG 解析、HPCG 新旧结果隔离、所有项目限时通过、进程组停止、报告持久化错误、CLI 退出码和 Web API 同源保护。Linux 运行测试和构建；Windows 做交叉构建。真实 benchmark 只在资产与拓扑匹配的 Linux 节点验收。
 
 当前进程组停止保证本机 Bash、MPI 启动器及同进程组子进程被清理；多节点 MPI 的远端进程清理取决于 MPI 实现和部署脚本，未完成多节点实机验收前不应宣称支持。
+
+## 6. 相关文档
+
+- [README.md](README.md)：子特性入口；
+- [STRESS_DESIGN.md](STRESS_DESIGN.md)：实现设计；
+- [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)：开发、构建与通用验收；
+- [docs/README.md](docs/README.md)：节点部署、验收记录与迁移历史。

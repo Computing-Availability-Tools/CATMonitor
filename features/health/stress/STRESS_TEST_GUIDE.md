@@ -1,5 +1,10 @@
 # health/stress 执行与测试指南
 
+> 文档定位：开发、构建和通用验收指南。生产节点的具体资产路径、MPI/NUMA
+> 参数和实测结果统一放在 [docs/README.md](docs/README.md) 分类管理；若与
+> 本文示例冲突，以 [STRESS_SPEC.md](STRESS_SPEC.md) 的功能契约和对应节点
+> 指南为准。
+
 本文用于验证 CATMonitor 0.3.2 的 `health/stress` 子特性。测试分为三层：
 
 1. Windows/WSL 完成编译、单元测试和 Web 页面预览；
