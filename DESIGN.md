@@ -60,6 +60,8 @@
 > v0.3.1 新增第 7 个采集器 `internal/collectors/chassis`（5 指标：整机功耗 / 进出风口温度 / 风扇转速 / 风扇功率，来自 ipmitool SDR，与 CPU/Memory 共享 30s SDR 缓存）；Disk 采集器新增 `read_latency`/`write_latency`（/proc/diskstats field 7/11，ms/s）；新增 `features/dfee` 能效监控模块（25 张实时图表 + CPU 8 jiffies→7 利用率推导 + 网络差值，从 159 项指标中过滤 74 项能效指标，独立 SPA 路由 `/dfee/`）。指标总数 152→159，部件 6→7。
 >
 > v0.3.2 新增 **Prometheus 导出模块** `features/exporter`：`CachingStorage` 包装在 JSONLStorage 外（实现 `collector.Storage` 接口），一次采集同时落盘 JSONL + 更新内存缓存（按组件分组原子替换），HTTP `/metrics` 端点（`:9100`）从缓存读取转 Prometheus 文本格式（`catmonitor_{component}_{name}` 前缀，`_total`/`_time` 后缀判 counter），daemon 集成仅需 ~5 行。**NPU 指标 74→119**（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。**IPMI 来源层重构**：`ipmitool sdr`→`sensor` 命令 + 3/4 段解析兼容 + 定向 `ipmi sensor get` 采集 + 两级缓存（传感器名称 24h / 采集结果 10s）+ 磁盘持久化 + 降级回退 + 超时 60s。**dfee 能效监控增强**：图表卡片拖拽重排 + 右下角手柄缩放 + 虚线对齐辅助（3px 吸附）、NPU/磁盘/网络多选下拉筛选、模块折叠。`main.go` `--help` 解析后 `os.Exit(0)` 退出。
+>
+> v0.3.3 新增 **采集粒度控制**：`collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集；`internal/metrics` 暴露 `SetCollectionThreshold`/`AnyWanted`，`internal/collector` 经 `SetWantedChecker` DI 注入，采集器在执行采集前调用 `collector.AnyWanted(component, names)` 判断是否有目标指标通过阈值，无则整组跳过（如 NPU static/per-device 阶段、CPU/Memory/Disk 子指标组），降低无谓开销。daemon 与 `runCollect` 启动时均装配。**daemon 移除周期健康检查 goroutine**（健康度评估改由 `catmonitor health` 子命令按需执行）。**web 退出清 snapshot**。修复 `npu_other.go` 非 linux 桩 `collectDevice` 签名未同步 `npuDevice` 致 Windows 交叉编译失败（v0.3.2 起遗留）。
 
 ### 1.2 跨平台架构设计
 
@@ -279,19 +281,19 @@ CATMonitor/
           ▼
    metrics.Filter(allMetrics)         # 指标采集目录过滤（High/Medium + static）
           ▼
-   CachingStorage.Write(metrics)       # v0.3.2：exporter 缓存层（实现 collector.Storage）
-   ├── 1. 按组件分组更新内存缓存（原子替换）  ──→  HTTP /metrics 读取转 Prometheus 文本
-   └── 2. 委托 JSONLStorage.Write(metrics)  ──→  JSON 文件
-          (路径: {data_dir}/{component}_{date}.jsonl)
-          │
-          ▼
-   HealthEvaluator.Evaluate(latestMetrics)  ──→  HealthScore
-          │                                     (自动检测 GPU/NPU)
-          ▼
-   Storage.WriteHealth(score)  ──→  health_{date}.jsonl
-          │
-          ▼
-   HTTP server (:9100)                   # v0.3.2：exporter 端点
+    CachingStorage.Write(metrics)       # v0.3.2：exporter 缓存层（实现 collector.Storage）
+    ├── 1. 按组件分组更新内存缓存（原子替换）  ──→  HTTP /metrics 读取转 Prometheus 文本
+    └── 2. 委托 JSONLStorage.Write(metrics)  ──→  JSON 文件
+           (路径: {data_dir}/{component}_{date}.jsonl)
+
+   [daemon v0.3.3 起不再周期评估健康度；健康度评估由 `catmonitor health` 子命令按需执行：]
+    HealthEvaluator.Evaluate(collectedMetrics)  ──→  HealthScore
+           │                                     (自动检测 GPU/NPU)
+           ▼
+    输出表格 / JSON；如需落盘由调用方接管
+           │
+           ▼
+    HTTP server (:9100)                   # v0.3.2：exporter 端点
    ├── GET /metrics  → CachingStorage.AllMetrics() → Prometheus 文本
    ├── GET /-/healthy → 200 OK
    └── GET /-/ready   → 缓存非空 200 / 否则 503
@@ -377,6 +379,7 @@ type Source interface {
 3. **模块覆盖**：模块自有 `metrics.yaml`（如 `features/health/metrics.yaml`、`features/web/metrics.yaml`）经 `LoadModuleOverride` 按 `name` 合并覆盖默认目录（模块值优先，缺省字段保留默认）。
 4. **Filter（选择策略）**：`priority ∈ {High,Medium} OR static==true` 默认采集；Low 诊断指标默认不采。**目录中缺失的指标默认放行**（default-allow），避免目录漂移静默丢数据。模块覆盖可通过改写 priority 单独 opt-in/out。
 5. **DI 注入**：`scheduler.SetFilter(catalog.Filter)` 由 `cmd/catmonitor` 启动时装配；`interval` 本期仅记录、不接 ticker（采集仍 per-collector 既有节拍）。
+6. **采集粒度预过滤（v0.3.3）**：`collection.min_priority`（low/medium/high）经 `metrics.SetCollectionThreshold` 设定阈值；`collector.SetWantedChecker(metrics.AnyWanted)` 把 `AnyWanted(component, names)` 注入采集核心。采集器在执行昂贵采集阶段前调用 `collector.AnyWanted` 判断该指标组是否有任一指标通过阈值，无则整组跳过（NPU static / per-device、CPU / Memory / Disk 子指标组等）。优先级值大小写不敏感。daemon 与 `runCollect` 启动时均装配。
 
 #### 目录文件（YAML）
 
@@ -701,7 +704,7 @@ catmonitor [command] [flags]
 
 | 子命令 | 说明 | 示例 |
 |--------|------|------|
-| `daemon` | 启动守护进程，持续周期采集指标并计算健康度 | `catmonitor daemon` |
+| `daemon` | 启动守护进程，持续周期采集指标并经 exporter 导出（v0.3.3 起不再周期评估健康度，改由 `health` 子命令按需执行） | `catmonitor daemon` |
 | `collect` | 单次采集所有指标，输出快照到标准输出或文件 | `catmonitor collect` |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 | `catmonitor health` |
 | `status` | 查看守护进程运行状态（PID、运行时长、已注册采集器） | `catmonitor status` |

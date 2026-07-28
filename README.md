@@ -8,8 +8,8 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 说明 |
 |------|------|
-| 版本号 | v0.3.2 |
-| 发布时间 | 2026-07-25 |
+| 版本号 | v0.3.3 |
+| 发布时间 | 2026-07-28 |
 | 平台支持 | Linux (x86_64), Windows (x86_64) |
 | 许可证 | Apache-2.0（见 [LICENSE](LICENSE)） |
 
@@ -21,6 +21,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 - **能效监控（dfee）**：能效指标实时图表 SPA，支持卡片拖拽缩放、多选下拉筛选、模块折叠
 - **Prometheus 导出（exporter）**：daemon 内置 `/metrics` 端点（`:9100`），一次采集同时落盘 JSONL + 缓存导出，零额外进程
 - **指标采集目录**：`configs/metrics.yaml` 统一管控采哪些指标、优先级、默认是否采集，模块可覆盖
+- **采集粒度控制**：`collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集，采集器经 `AnyWanted` DI 在执行前跳过无需采集的指标组，降低开销
 - **来源层架构**：`internal/source/`（14 包）抽象数据获取与解析，采集器不直接读文件/执行命令，无硬件时优雅降级
 - **跨平台**：Linux / Windows 双平台，构建标签隔离平台代码
 - **易扩展**：新增部件采集器只需实现统一接口并注册，核心代码零修改

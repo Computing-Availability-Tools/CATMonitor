@@ -4,6 +4,39 @@
 
 ---
 
+## v0.3.3
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.3 |
+| 发布时间 | 2026-07-28 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (70865d7) → main (merge e1c14c4，no-ff，无冲突) + 热修 b2181e6 |
+
+### 变更摘要
+
+- **采集粒度控制（核心特性）**：新增 `collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集；`internal/metrics` 暴露 `SetCollectionThreshold`/`AnyWanted`/`IsWanted`（优先级值大小写不敏感），`internal/collector` 经 `SetWantedChecker` DI 注入；CPU/Memory/Disk/NPU 等采集器在执行昂贵采集阶段前调用 `collector.AnyWanted` 判断指标组是否通过阈值，无则整组跳过，降低无谓开销；daemon 与 `runCollect` 启动时均装配
+- **daemon 移除周期健康检查**：`runDaemon` 不再启动 health 评估 goroutine，健康度评估改由 `catmonitor health` 子命令按需执行
+- **web 退出清 snapshot**：`features/web/main.go` 收到 SIGINT/SIGTERM 后清理 snapshot 再退出
+- **配置**：`configs/catmonitor.yaml` 新增 `collection.min_priority: low`（默认全采）；`.gitignore` 增加 `loc_configs/`（本地测试用 `metrics_low.yaml` 不入库）
+- **dfee**：CPU 图表标题 `CPU 利用率分解` → `CPU 利用率`
+- **热修**：`internal/collectors/npu/npu_other.go` `collectDevice(devID int, ...)` → `collectDevice(dev npuDevice, ...)`，与 `npu_linux.go` 签名对齐，修复非 linux 平台签名不匹配致 Windows 交叉编译失败（v0.3.2 起 `67ef5f1` 引入 `npuDevice` 时遗留，非本次合并引入）
+- **文档**：README/SPEC/DESIGN/User_Manual/indi_list 同步采集粒度控制说明 + 版本号升至 v0.3.3；DESIGN 数据流与架构注释更新（daemon 不再周期评估健康度、§1.7 增预过滤要点）
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.3`；指标总数不变（204）
+- **测试**：263 用例全过（与 v0.3.2 持平），覆盖率 29.5%~94.3%，`go vet` 零警告，Linux/Windows 双平台编译通过（Windows 交叉编译恢复）；无 NPU/GPU 系统测试通过（`:9100/metrics` 52 TYPE / 173 指标行 + `/-/healthy`·`/-/ready` 200、`:9527` root/dfee/snapshot/collectors 全 200、GPU/NPU/Chassis 优雅降级不崩溃）
+
+### 已知限制
+
+1. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `dcmi` 构建标签后，本机无 CANN SDK 无法编译，需在真 NPU 服务器 `go build -tags dcmi` 验证
+2. **GPU/NPU/Chassis 无真机**：系统测试仅验证优雅降级路径（空数据 / 计数 0 / 不崩溃），真实指标采集需在配备对应硬件的机器复测
+3. **采集粒度控制仅验证默认 low**：`medium`（跳过 Low）/ `high`（仅 High）的预过滤行为未在系统测试中实跑，且未补对应单元测试（`internal/metrics` 覆盖率由 85.9% 降至 66.3%），建议后续补测
+4. **server_type 判定口径不一致**：`catmonitor health` CLI 因 NPU 采集器产出 `npu_num` 判定 `accelerated`，web 端 hwinfo 探测无真实 NPU 判定 `cpu_only`，非功能缺陷，建议后续统一
+5. **daemon 短时运行未落盘 JSONL**：`CachingStorage` 内存缓存供 `/metrics` 读取，短时未触发 JSONL 落盘，建议真机长时运行观察
+6. **未推送到远端**：合并提交 `e1c14c4` + 热修 `b2181e6` 暂在本地完成
+
+---
+
 ## v0.3.2
 
 | 项目 | 说明 |

@@ -72,6 +72,9 @@ health:
   enabled: true
   interval: 5s
   weight_scheme: auto      # auto | cpu_only | accelerated_8card | accelerated_4card
+
+collection:
+  min_priority: low        # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 ```
 
 ### 配置路径
@@ -107,7 +110,7 @@ Flags:
 
 ```bash
 $ catmonitor version
-CATMonitor v0.3.2 (Go 1.23+)
+CATMonitor v0.3.3 (Go 1.23+)
 ```
 
 ### 3.2 list — 采集器注册表
@@ -175,9 +178,10 @@ catmonitor daemon -v                    # 详细日志
 
 daemon 启动后：
 - Scheduler 按各采集器 `interval` 周期采集 → 写 JSONL（`{data_dir}/{component}_{date}.jsonl`）
+- 采集粒度由 `collection.min_priority` 控制：`low` 全采（默认），`medium` 跳过 Low 指标组，`high` 仅采 High；采集器经 `AnyWanted` DI 在执行前跳过无需采集的指标组
 - `exporter.CachingStorage` 包装存储层，一次采集同时落盘 + 缓存到内存
 - HTTP `/metrics` 端点监听 `:9100`（见 §5）
-- 按 `health.interval` 周期评估健康度 → 写 `health_{date}.jsonl`
+- v0.3.3 起 daemon 不再周期评估健康度；健康度评估改由 `catmonitor health` 子命令按需执行
 
 捕获 `SIGINT`/`SIGTERM` 优雅退出。
 

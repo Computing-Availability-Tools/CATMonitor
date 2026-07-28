@@ -21,7 +21,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 4. **Web 可视化**：独立 Web 仪表盘二进制，可视化单机健康度与各部件指标。
 5. **能效监控**：能效指标实时图表 SPA，支持交互式筛选与卡片拖拽缩放。
 6. **易扩展**：新增部件采集器只需实现统一接口并注册，核心代码零修改。
-7. **可配置**：每个指标的采集周期、是否启用、采集优先级均可通过配置调整。
+7. **可配置**：每个指标的采集周期、是否启用、采集优先级均可通过配置调整；支持 `collection.min_priority` 按优先级阈值控制采集粒度（low 全采 / medium 跳过 Low / high 仅 High）。
 8. **跨平台**：Linux 与 Windows 双平台支持。
 9. **优雅降级**：无 GPU/NPU/BMC 等硬件或工具缺失时，对应采集器返回空、不崩溃、不影响其它采集器。
 
@@ -96,6 +96,8 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 - **Medium**：重要辅助指标，对健康度有参考价值，默认采集，周期 10-60s
 - **Low**：诊断性指标，按需采集，默认不采集
 
+> **采集粒度控制**：`collection.min_priority` 配置项按优先级阈值预过滤——`low`（默认，全采）、`medium`（跳过 Low）、`high`（仅 High）。采集器经 `AnyWanted` DI 在执行采集前判断是否有目标指标通过阈值，无则整组跳过，降低无谓开销。
+
 ### 4.2 各部件指标概要
 
 | 部件 | 指标数 | High | Medium | Low | Linux | Windows |
@@ -121,7 +123,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 子命令 | 功能 |
 |--------|------|
-| `daemon` | 启动守护进程：持续采集 + 健康度评估 + Prometheus 导出（默认） |
+| `daemon` | 启动守护进程：持续采集 + Prometheus 导出（默认）。健康度评估改由 `health` 子命令按需执行 |
 | `collect` | 单次采集所有指标，输出 JSON 或表格 |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 |
 | `list` | 列出所有已注册采集器 |
@@ -204,6 +206,9 @@ health:
   enabled: true
   interval: 5s
   weight_scheme: auto     # auto | cpu_only | accelerated_8card | accelerated_4card
+
+collection:
+  min_priority: low       # low (全采) | medium (跳过 Low) | high (仅 High)
 ```
 
 ---
@@ -236,7 +241,7 @@ health:
 | Mock 测试 | GPU/NPU 无硬件场景 |
 | 端到端测试 | 守护进程启动→采集→存储→评分→导出 |
 
-> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.2：263 单元测试 PASS + 无 NPU/GPU 系统测试）。
+> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.3：单元测试 PASS + 无 NPU/GPU 系统测试 + Linux/Windows 双平台编译通过）。
 
 ---
 
@@ -244,6 +249,7 @@ health:
 
 | 版本 | 主要内容 |
 |------|----------|
+| v0.3.3 | 采集粒度控制（`collection.min_priority` + `AnyWanted` DI 预过滤）；daemon 移除周期健康检查（改由 `health` 子命令）；web 退出清 snapshot；修复 npu 非 linux 桩签名致 Windows 交叉编译失败 |
 | v0.3.2 | 新增 Prometheus exporter（`:9100/metrics`）；NPU 新增 45 项 `hccn_tool` 网络统计（74→119）；IPMI 来源层重构（`sdr→sensor`、定向采集、两级缓存、降级回退）；dfee 能效监控增强（卡片拖拽缩放、多选下拉筛选、模块折叠）；`--help` 解析后退出 |
 | v0.3.1 | 新增 Chassis 机箱环境采集器（5 指标）、Disk 读/写耗时、`features/dfee` 能效监控模块 |
 | v0.3.0 | 引入指标采集目录 + `features/` 特性层（health/web），健康度抽取为按部件评估器 |
