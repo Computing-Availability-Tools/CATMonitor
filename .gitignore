@@ -19,4 +19,4 @@ AGENTS.md
 local_docs/
 
 # loc_configs is local-only, do not sync to remote
-loc_configs/
+local_configs/

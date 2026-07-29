@@ -348,6 +348,16 @@ components:
         priority: Medium
         unit: ""
         static: false
+      - name: read_latency
+        cn_name: "磁盘读耗时"
+        priority: Low
+        unit: "ms/s"
+        static: false
+      - name: write_latency
+        cn_name: "磁盘写耗时"
+        priority: Low
+        unit: "ms/s"
+        static: false
   - component: gpu
     interval: 3s
     metrics:
@@ -385,6 +395,11 @@ components:
         cn_name: "时钟频率"
         priority: Low
         unit: "MHz"
+        static: false
+      - name: memory_detail
+        cn_name: "显存明细"
+        priority: Medium
+        unit: "MB"
         static: false
   - component: npu
     interval: 3s
@@ -1022,4 +1037,32 @@ components:
         cn_name: "发送字节"
         priority: Medium
         unit: "B"
+        static: false
+  - component: chassis
+    interval: 3s
+    metrics:
+      - name: power
+        cn_name: "整机功耗"
+        priority: High
+        unit: "W"
+        static: false
+      - name: inlet_temp
+        cn_name: "进风口温度"
+        priority: High
+        unit: "°C"
+        static: false
+      - name: outlet_temp
+        cn_name: "出风口温度"
+        priority: Medium
+        unit: "°C"
+        static: false
+      - name: fan_speed
+        cn_name: "风扇转速"
+        priority: Medium
+        unit: "RPM"
+        static: false
+      - name: fan_power
+        cn_name: "风扇功耗"
+        priority: Low
+        unit: "W"
         static: false
