@@ -24,6 +24,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 7. **可配置**：每个指标的采集周期、是否启用、采集优先级均可通过配置调整。
 8. **跨平台**：Linux 与 Windows 双平台支持。
 9. **优雅降级**：无 GPU/NPU/BMC 等硬件或工具缺失时，对应采集器返回空、不崩溃、不影响其它采集器。
+10. **显式健康压测**：Linux 上按需运行 STREAM、HPL、HPCG；不由 daemon 或普通健康检查自动触发，且不直接计入健康总分。
 
 ### 1.3 技术约束（概要）
 
@@ -47,7 +48,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 | 模块 | 功能 | 规格 |
 |------|------|------|
 | 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（14 包） + 指标采集目录 | [DESIGN.md](DESIGN.md) §1-2 |
-| `features/health` | 健康度评估：消费采集指标，按部件评估器 + 权重自适应，输出总分/等级/扣分明细 | [HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) |
+| `features/health` | 健康度评估；其 `stress` 子特性提供显式 STREAM/HPL/HPCG 作业、报告与 Web 触发 | [HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) / [STRESS_SPEC.md](features/health/stress/STRESS_SPEC.md) |
 | `features/web` | Web 仪表盘二进制：概览页 + 部件详情页 + 趋势 + 设备规格，REST API | [Web_SPEC.md](features/web/Web_SPEC.md) |
 | `features/dfee` | 能效监控 SPA：能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
 | `features/exporter` | Prometheus 导出：CachingStorage 包装存储 + `/metrics` 端点 + 健康端点 | [exporter_SPEC.md](features/exporter/exporter_SPEC.md) |
@@ -124,6 +125,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 | `daemon` | 启动守护进程：持续采集 + 健康度评估 + Prometheus 导出（默认） |
 | `collect` | 单次采集所有指标，输出 JSON 或表格 |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 |
+| `health stress run` | 在 Linux 上运行配置中已启用的健康压测项目 |
 | `list` | 列出所有已注册采集器 |
 | `version` | 显示版本信息 |
 
@@ -145,7 +147,9 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 - **概览页**：整体健康度 + 设备规格面板 + 各部件状态 + 部件概览卡片（趋势 sparkline）
 - **部件详情页**：部件得分/扣分项 + 趋势面板 + 全部指标表
-- **REST API**：`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`
+- **健康压测页**：选择已部署且通过基础资产预检的项目、仅缩短单次超时、启动/取消作业，并展示状态与分行性能值
+- **REST API**：快照/采集配置 API，以及 `/api/health/stress/*` 压测配置、最近报告、作业和取消 API
+- **控制安全**：高负载作业仅允许回环监听/来源，且启动和取消要求 JSON、自定义操作头与浏览器同源校验
 - **端口回退**：`:9527` 被占用时自动 +1 递增
 
 > 详见 [features/web/Web_SPEC.md](features/web/Web_SPEC.md)。
@@ -225,7 +229,7 @@ health:
 ## 10. 测试要求
 
 1. **每增加一个指标采集，必须验证采集是否正确**，不通过则修改重新测试。
-2. **每完成一个阶段，做一次完整测试**，输出测试报告 `docs/test_report.md`。
+2. **每完成一个阶段，做一次完整测试**，测试结果由 CI 或发布产物保存，不提交与单台机器绑定的验收快照。
 3. **无硬件由 mock 驱动**：GPU/NPU/Chassis 在无硬件环境用 mock + 优雅降级路径验证。
 
 | 层级 | 范围 |
@@ -236,7 +240,7 @@ health:
 | Mock 测试 | GPU/NPU 无硬件场景 |
 | 端到端测试 | 守护进程启动→采集→存储→评分→导出 |
 
-> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.2：263 单元测试 PASS + 无 NPU/GPU 系统测试）。
+> Go 单元测试与被测 package 同目录，跨包共享夹具位于 `tests/testdata`；使用 `go test ./...` 执行完整回归。
 
 ---
 

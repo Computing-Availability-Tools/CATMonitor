@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/cpu"
@@ -213,6 +215,184 @@ func TestHTTPAPISmoke(t *testing.T) {
 			t.Errorf("static app.js missing %q (hardware-specs adaptation not embedded)", needle)
 		}
 	}
+	for _, needle := range []string{
+		"X-CATMonitor-Action", "health-stress", "report_error", "item.available",
+		"stressSelectionDraft", "stressTimeoutDraft", "updateStressSelectionDraft",
+	} {
+		if !strings.Contains(js, needle) {
+			t.Errorf("static app.js missing %q (health stress control)", needle)
+		}
+	}
+	styleBody, styleCode := get(t, client, ts.URL+"/static/style.css")
+	if styleCode != http.StatusOK || !strings.Contains(string(styleBody), ".btn:disabled") {
+		t.Errorf("disabled stress action must have a visibly disabled button style")
+	}
+}
+
+func TestHealthStressWebAPITimeLimitedRun(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "benchmark_check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stressCfg := stress.Config{
+		Enabled: true, WebEnabled: true, ScriptPath: script,
+		ReportPath: filepath.Join(dir, "stress-latest.json"),
+		Benchmarks: map[string]stress.BenchmarkConfig{
+			"hpl": {Enabled: true, Timeout: 50 * time.Millisecond},
+		},
+	}
+	cfg := &Config{Server: ServerCfg{Addr: "127.0.0.1:9527"}, Health: HealthCfg{Stress: stressCfg}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ts := httptest.NewServer(NewServer(cfg, nil, logger, stress.NewManager(stressCfg)).Routes())
+	defer ts.Close()
+
+	configBody, configCode := get(t, ts.Client(), ts.URL+"/api/health/stress/config")
+	if configCode != http.StatusOK || !strings.Contains(string(configBody), `"available":true`) {
+		t.Fatalf("stress config status=%d body=%s", configCode, configBody)
+	}
+
+	rejected, err := http.NewRequest(http.MethodPost, ts.URL+"/api/health/stress/runs", strings.NewReader(`{"benchmarks":["hpl"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected.Header.Set("Content-Type", "application/json")
+	rejectedResp, err := ts.Client().Do(rejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectedBody, _ := io.ReadAll(rejectedResp.Body)
+	rejectedResp.Body.Close()
+	if rejectedResp.StatusCode != http.StatusForbidden || rejectedResp.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("missing action header status=%d content-type=%q body=%s", rejectedResp.StatusCode, rejectedResp.Header.Get("Content-Type"), rejectedBody)
+	}
+
+	crossOrigin, err := stressRequest(ts.URL+"/api/health/stress/runs", `{"benchmarks":["hpl"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossOrigin.Header.Set("Origin", "https://attacker.example")
+	crossOriginResp, err := ts.Client().Do(crossOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossOriginResp.Body.Close()
+	if crossOriginResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin status=%d want 403", crossOriginResp.StatusCode)
+	}
+
+	unknownField, err := stressRequest(ts.URL+"/api/health/stress/runs", `{"benchmarks":["hpl"],"script_path":"/tmp/injected"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownFieldResp, err := ts.Client().Do(unknownField)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownFieldResp.Body.Close()
+	if unknownFieldResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown stress field status=%d want 400", unknownFieldResp.StatusCode)
+	}
+
+	request, err := stressRequest(ts.URL+"/api/health/stress/runs", `{"benchmarks":["hpl"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := ts.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("start status=%d want 202: %s", resp.StatusCode, body)
+	}
+	var report stress.Report
+	if err := json.NewDecoder(resp.Body).Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(time.Second); report.Status == stress.StatusRunning && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+		body, code := get(t, ts.Client(), ts.URL+"/api/health/stress/runs/"+report.JobID)
+		if code != http.StatusOK {
+			t.Fatalf("job status=%d: %s", code, body)
+		}
+		if err := json.Unmarshal(body, &report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if report.Status != stress.StatusHealthy || report.Benchmarks[0].Status != stress.StatusTimeLimitReached {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+}
+
+func TestHealthStressWebAPICancel(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "benchmark_check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stressCfg := stress.Config{
+		Enabled: true, WebEnabled: true, ScriptPath: script,
+		ReportPath: filepath.Join(dir, "stress-latest.json"),
+		Benchmarks: map[string]stress.BenchmarkConfig{
+			"stream": {Enabled: true, Timeout: 5 * time.Second},
+		},
+	}
+	cfg := &Config{Server: ServerCfg{Addr: "127.0.0.1:9527"}, Health: HealthCfg{Stress: stressCfg}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ts := httptest.NewServer(NewServer(cfg, nil, logger, stress.NewManager(stressCfg)).Routes())
+	defer ts.Close()
+
+	start, err := stressRequest(ts.URL+"/api/health/stress/runs", `{"benchmarks":["stream"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startResp, err := ts.Client().Do(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer startResp.Body.Close()
+	var report stress.Report
+	if err := json.NewDecoder(startResp.Body).Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+
+	cancel, err := stressRequest(ts.URL+"/api/health/stress/runs/"+report.JobID+"/cancel", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelResp, err := ts.Client().Do(cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelResp.Body.Close()
+	if cancelResp.StatusCode != http.StatusOK {
+		t.Fatalf("cancel status=%d want 200", cancelResp.StatusCode)
+	}
+	for deadline := time.Now().Add(time.Second); report.Status == stress.StatusRunning && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+		body, code := get(t, ts.Client(), ts.URL+"/api/health/stress/runs/"+report.JobID)
+		if code != http.StatusOK {
+			t.Fatalf("job status=%d: %s", code, body)
+		}
+		if err := json.Unmarshal(body, &report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if report.Status != stress.StatusCancelled || report.Benchmarks[0].Status != stress.StatusCancelled {
+		t.Fatalf("unexpected cancelled report: %+v", report)
+	}
+}
+
+func stressRequest(url, body string) (*http.Request, error) {
+	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CATMonitor-Action", stressActionHeader)
+	return request, nil
 }
 
 func get(t *testing.T, c *http.Client, url string) ([]byte, int) {

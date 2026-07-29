@@ -9,3 +9,16 @@ collector:
 storage:
   snapshot_path: features/web/data/snapshot.json
   runtime_path: features/web/data/runtime.json
+
+health:
+  stress:
+    enabled: false
+    web_enabled: false
+    script_path: features/health/stress/benchmark_check.sh
+    report_path: features/web/data/stress-latest.json
+    default_benchmarks: [stream]
+    benchmarks:
+      stream: { enabled: false, timeout: 1m }
+      hpl: { enabled: false, timeout: 2h }
+      # Set result_dir before enabling HPCG on a Linux host.
+      hpcg: { enabled: false, result_dir: "", timeout: 3m }

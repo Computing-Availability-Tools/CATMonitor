@@ -3,7 +3,8 @@
 > **文档定位**：本文档是 CATMonitor Web 仪表盘的**唯一设计与规格文档**，描述当前实现的真实状态，并明确为未来"新增部件 / 新增采集指标"预留的扩展点。后续开发以本文档为准。
 >
 > **对应代码**：`features/web/` 目录（与主项目同一 Go module，不新增 go.mod）。
-> **不改动主项目任何现有文件**：与 `cmd/catmonitor`、`internal/collectors`、`internal/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+> Web 的周期采集与主 daemon 解耦；健康压测通过
+> `features/health/stress.Manager` 复用 CLI 的受控作业实现。
 
 ---
 
@@ -13,10 +14,11 @@
 
 提供一个 Web 仪表盘，可视化单台服务器的健康度与各部件采集指标，支持可配置刷新间隔。设计原则：
 
-1. **解耦**：Web 服务与现有采集守护进程/CLI 完全解耦，不修改任何主项目文件。
+1. **边界清晰**：Web 的指标采集/快照不依赖 daemon 或 CLI 进程；健康压测不调用 CLI，而是与 CLI 复用 `features/health/stress.Manager`。
 2. **多页面**：概览页（整体健康度 + 各部件关键指标）+ 各部件详情页（详细指标 + 趋势）。
 3. **可扩展**：新增部件类型 / 采集指标时，尽可能自动出现，零代码或仅需一处一行的新增。
 4. **极简依赖**：Go 标准库 + 已有 `gopkg.in/yaml.v3`，前端原生 HTML/CSS/JS，无构建步骤，零新依赖。
+5. **受控压测**：仅回环监听与回环来源允许 Web 提交；高负载 POST 要求 JSON、自定义操作头和浏览器同源校验。浏览器不能指定脚本、路径、环境变量或延长 YAML 超时。
 
 ### 1.2 架构总览
 
@@ -36,10 +38,12 @@
 │                                  ↑热更新间隔                          │
 └────────────────────────────────────────────────────────────────────┘
                    ↑ fetch /api/snapshot (setInterval)
-             浏览器（SPA：概览 + 各部件详情页）
+             浏览器（SPA：概览 + 部件详情 + 健康压测）
 ```
 
-**解耦边界**：HTTP 层**只读** `snapshot.json`，**绝不直接调用采集器**；采集 goroutine 是 `snapshot.json` 的**唯一写者**（写临时文件 + `os.Rename` 原子写，读者永不会读到半截文件）。
+**解耦边界**：指标 HTTP API 只读 `snapshot.json`，不直接调用采集器；
+压测 API 只调用独立的 `stress.Manager`，报告原子写入
+`stress-latest.json`，不修改 snapshot 或评分结果。
 
 **指标筛选**：采集结果在写盘前先经 `metrics.Filter`（按 `internal/metrics` 目录筛选：默认仅保留 High/Medium 优先级与 static 身份指标，Low 诊断指标默认丢弃；目录缺失时 default-allow 全放行）。Web 模块通过 `metrics.Init(configs/metrics.yaml)` + `metrics.LoadModuleOverride(features/web/metrics.yaml)` 加载目录，可覆盖默认优先级。
 
@@ -73,9 +77,10 @@ features/web/
 ├── static/
 │   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
 │   ├── style.css       # 浅色卡片式主题
-│   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 扩展 manifest
+│   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 健康压测
 └── data/              # 运行时数据（运行时生成，不应提交到 git）
     ├── snapshot.json  # 采集 goroutine 写，HTTP 层读
+    ├── stress-latest.json # stress.Manager 原子写的最近作业报告
     └── runtime.json   # 界面调整的刷新间隔持久化
 ```
 
@@ -97,6 +102,17 @@ collector:
 storage:
   snapshot_path: features/web/data/snapshot.json   # 快照文件
   runtime_path:  features/web/data/runtime.json   # 运行时覆盖持久化
+health:
+  stress:
+    enabled: false             # Manager/CLI 总开关
+    web_enabled: false         # Web 提交附加开关
+    script_path: features/health/stress/benchmark_check.sh
+    report_path: features/web/data/stress-latest.json
+    default_benchmarks: [stream]
+    benchmarks:
+      stream: { enabled: false, timeout: 1m }
+      hpl: { enabled: false, timeout: 2h }
+      hpcg: { enabled: false, result_dir: "", timeout: 3m }
 ```
 
 ### 3.2 配置加载优先级（`config.go`）
@@ -290,6 +306,11 @@ module_info, module_size, module_num
 | GET | `/api/config` | 当前配置 | 200 | — |
 | POST | `/api/config` | 更新刷新间隔（热生效 + 持久化） | 200 | 400 / 405 |
 | POST | `/api/refresh` | 请求立即采集 | 200 | 405 |
+| GET | `/api/health/stress/config` | Web 可用项目与超时上限 | 200 | 405 |
+| GET | `/api/health/stress/latest` | 最近压测报告 | 200 | 404 / 405 |
+| POST | `/api/health/stress/runs` | 提交压测作业 | 202 | 400 / 403 / 409 / 415 / 501 |
+| GET | `/api/health/stress/runs/{id}` | 查询指定作业 | 200 | 404 |
+| POST | `/api/health/stress/runs/{id}/cancel` | 停止指定作业 | 200 | 404 |
 
 ### 6.2 详细契约
 
@@ -314,6 +335,20 @@ module_info, module_size, module_num
 
 **POST /api/refresh** → 调 `DataCollector.CollectNow()`（经主循环串行触发，不并发写历史），返回 `{"ok":true}`。前端随后轮询即可见新数据。
 
+**健康压测 API** → 仅在 `health.stress.enabled`、`web_enabled` 均为
+true、`server.addr` 是回环地址且 HTTP 连接来源也是回环地址时允许提交。请求体只含
+`benchmarks` 和可选 `timeout_seconds`；项目必须已在 YAML 启用，单次
+超时只能缩短对应 YAML 上限。脚本、路径、环境变量和 MPI/NUMA 参数不从
+HTTP 接收。启动和取消必须使用 `Content-Type: application/json` 与
+`X-CATMonitor-Action: health-stress`；浏览器携带 `Origin` 时必须与
+`Host` 同源。请求体上限 64 KiB，未知字段或多个 JSON 值返回 400。
+Manager 同时只执行一份作业，冲突返回 409。
+
+`GET /api/health/stress/config` 对每项返回 `enabled`、`available`、
+`message` 与 `timeout_seconds`；`available` 只表示脚本及可由 Go 判断的
+目录预检通过，具体执行器/MPI/NUMA 仍由 `benchmark_check.sh` 最终检查。
+所有 API 错误统一返回 `application/json` 的 `{"error":"..."}`。
+
 ---
 
 ## 7. 前端设计（`static/`）
@@ -323,6 +358,7 @@ module_info, module_size, module_num
 单页应用，hash 路由（无后端路由、无历史 API 复杂度）：
 - `#/` → 概览页
 - `#/<component>`（如 `#/cpu`）→ 该部件详情页
+- `#/stress` → 健康压测页
 - `hashchange` 事件触发重渲染；导航高亮当前路由。
 
 数据获取：`fetchCollectors()`（导航）→ `fetchConfigData()`（间隔）→ `startPolling()`（`setInterval` 调 `/api/snapshot`，间隔 = `refresh_interval_ms`）。改间隔 → `POST /api/config` → 重置轮询。
@@ -333,6 +369,7 @@ module_info, module_size, module_num
 - **设备规格面板**（`renderSpecs`，hero 右上）：从 `snap.specs` 抽取核心静态身份的紧凑键值表（设备/CPU/内存总量/硬盘数与总容量/网卡/GPU/NPU）。内存总量取自每周期的 `usage_detail` 指标（非 specs）。点击面板弹出完整规格 modal（`openSpecsModal`）：按 component 分组（system→cpu→memory→disk→gpu→npu→network，未知部件排末尾），每组一张"类型/标识/明细"表（`specsGroup`）。无任何 specs 时显示"无静态规格信息"。
 - **部件芯片**：每个已注册部件一个彩色圆点芯片（颜色由该部件得分比决定），点击进详情。
 - **部件概览卡片网格**：每卡 = 部件名 + 得分/满分 + 状态徽章 + 头条趋势 sparkline（若 manifest 指定）+ 关键指标键值表（manifest.key）。无数据时显示"无数据"徽章。点击进详情。
+- **压测摘要**：显示 Web 是否启用、最近作业总体状态和各 benchmark 状态，点击进入压测页。
 
 ### 7.3 部件详情页（`renderDetail`）
 
@@ -340,7 +377,16 @@ module_info, module_size, module_num
 - **趋势面板**：自动列出所有 `<component>_*` 历史序列，每个渲染 sparkline + 当前值。
 - **全部指标面板**：表格列出该部件全部指标（指标名/值/标签），覆盖该部件所有 metric 实例（如每核心、每挂载点、每卡）。
 
-### 7.4 显示 manifest（`app.js`，可选提示）
+### 7.4 健康压测页（`renderStress`）
+
+- 仅列出 YAML 中的固定 benchmark；未启用项目显示“未配置”，基础资产预检失败显示原因，二者均不可选。
+- 快照和压测配置轮询不得覆盖用户尚未提交的 benchmark 勾选项及单次超时输入；YAML 默认项只用于页面首次初始化。
+- 可为当前作业填写正整数秒，但只能缩短所选项目的最小 YAML 上限。
+- 提交前二次确认，高负载运行时禁用新提交并显示停止按钮。
+- 性能值逐行显示；`healthy` 与 `time_limit_reached` 均使用绿色 `OK`。
+- STREAM/HPL/HPCG 的 `time_limit_reached` 均显示绿色 `OK`；无结果值时明确显示“通过；未产生最终性能数据”。
+
+### 7.5 显示 manifest（`app.js`，可选提示）
 
 ```js
 const MANIFEST = {
@@ -366,7 +412,7 @@ const MANIFEST = {
 - `headline` / `headlineLabel`：概览卡头条 sparkline 序列；未登记则无头条 sparkline。
 - `key`：概览卡关键指标（支持字符串=指标名取首个，或 `{name, prefer:{label:value}}` 按标签精确选）；未登记部件取前 4 条 metric。
 
-### 7.5 其他前端常量
+### 7.6 其他前端常量
 
 - `METRIC_NAMES`：指标名 → 中文显示名映射（未命中则用原始名）。涵盖核心指标、v0.2.0 源层指标（user_time/system_time/avg_freq/numa_*/cache_*、swap_in/saturation/fragmentation/ecc_*/oom_count/page_faults/isolated_* 等）、以及静态身份（`device_model`/`os_info`/`gpu_info`/`npu_info`/`disk_info`/`net_info`/`module_info` 等）。
 - `SERIES_LABELS`：历史序列 key → 显示名（未命中则用 `key` 去前缀 + 下划线转空格）。覆盖全部 26 条 trackedSeries。
@@ -374,7 +420,7 @@ const MANIFEST = {
 - `SPEC_DEFS`：静态 spec 指标名 → `{type, primary}`（类型显示名 + 持有主标识的 label key），驱动 specs 面板/modal 的"类型/标识"列。覆盖 `device_model`/`os_info`/`model_info`/`gpu_info`/`npu_info`/`disk_info`/`net_info`/`module_info`。
 - `LABEL_NAMES`：label key → 中文显示名（如 `manufacturer`→厂商、`product_name`→型号、`serial`→序列号、`mac`→MAC、`pretty_name`→OS、`kernel`→内核 等），用于 specs modal 的"明细"列。
 
-### 7.6 状态色映射
+### 7.7 状态色映射
 
 `statusOf(score, max)`：比率 ≥0.9 OK(绿) / ≥0.75 Good / ≥0.6 Warning(橙) / 否则 Critical(红)。`gradeColor(grade)` 同色系。无 max 时 N/A(灰)。
 
@@ -508,7 +554,8 @@ systemctl stop catmonitor-web
 
 - 构建：`go build` / `go vet` / `GOOS=windows` 交叉编译。
 - 路由：`GET /`、`/static/*`、404、Content-Type、旧端口未占用。
-- API：`/api/collectors`（6 采集器元数据）、`/api/config`、`/api/snapshot` 结构深度校验（timestamp/health/metrics/history 齐全、score 范围、grade 枚举、components 含 score/max/deductions）。
+- API：`/api/collectors`（7 采集器元数据）、`/api/config`、`/api/snapshot` 结构深度校验（timestamp/health/metrics/history 齐全、score 范围、grade 枚举、components 含 score/max/deductions）。
+- 健康压测 API：配置/资产可用性、限时作业、JSON 错误响应、缺少操作头、跨源拒绝、查询与取消。
 - 扩展历史：验证 `cpu_load_average`、`memory_swap_usage` 等新序列出现。
 - 间隔热更新：`POST /api/config` 8s → `runtime.json` 持久化 → `GET` 回读一致 → snapshot 反映 8000ms。
 - 边界：`<1000ms→400`、坏 JSON→400、`PUT→405`。
@@ -521,7 +568,8 @@ systemctl stop catmonitor-web
 - 历史：`TestTrackedSeriesInvariants`（key 前缀契约 + v0.2.0 序列存在性守护）、`TestUpdateHistoryRingBuffer`、`TestUpdateHistoryV02Metrics`（覆盖全部 26 条序列的 mode/label 过滤规则）、`TestUpdateHistoryMissingMetric`。
 - 静态规格 stash：`TestFilterStatic`（`staticMetricNames` 过滤）、`TestStashStaticsPersistsAcrossCycles`（首周期后静态指标持续存活于 `specs`）。
 - 硬件身份采集（`hwinfo.go`）：`TestHWGpuInfo`、`TestHWNpuInfo`、`TestHWDeviceModel`、`TestHWOSInfo`、`TestHWNetInfo`、`TestHWDiskInfo`（各 mock 注入）、`TestCollectHWSpecsSmoke`（整体冒烟，仅接受 6 个已知身份指标名）、`TestParseNPUStatic`（npu-smi 解析）。
-- HTTP：`TestHTTPAPISmoke`（路由 + 端口回退 + snapshot 结构 + 6 采集器 + `system` 不在列表 + v0.2.0 序列在 `app.js` 内嵌）。
+- HTTP：`TestHTTPAPISmoke`（路由 + 端口回退 + snapshot 结构 + 7 采集器 + `system` 不在列表 + v0.2.0 序列在 `app.js` 内嵌）。
+- 压测：`TestHealthStressWebAPITimeLimitedRun` 使用假脚本验证基础资产预检、操作头/同源保护和限时通过，不调用真实 benchmark。
 
 运行：`make` 无 web 目标（不新增，避免改根 Makefile），直接 `go test ./features/web/`。Linux-only 测试（`collect_once_linux_test.go`、`http_linux_test.go`）用 `//go:build linux` 守护，因依赖 `/proc`、`/sys` 与真实采集器。
 
@@ -535,6 +583,7 @@ systemctl stop catmonitor-web
 4. **`max_file_age` 类清理未实现**：`runtime.json` 不做清理（单文件，无需）。
 5. **扩展前置依赖主项目采集器**：新部件的真正采集逻辑仍需在 `internal/collectors/<name>/` 实现（见主项目 `AGENTS.md`），web 仅负责可视化与一行注册。
 6. **指标展示优先级**：当前 metric 不携带优先级字段（主项目 `collector.Metric` 无 Priority），概览关键指标靠 MANIFEST 人工指定；未来若主项目 Metric 增加优先级，可改为按优先级自动选取关键指标。
+7. **多节点 MPI 清理未验收**：本机进程组可被完整停止；远端 MPI 进程是否随启动器退出取决于 MPI 与部署脚本，第一版只承诺单机 Linux。
 
 ---
 
@@ -551,7 +600,8 @@ systemctl stop catmonitor-web
 | 端口 | 9527（占用时自动 +1 递增） | 用户指定默认 9527；端口被占用自动探测下一可用端口，保证可拉起（见 §8.5） |
 | 前端打包 | `//go:embed` | 单二进制可移植，离线可用 |
 | 配置持久化 | runtime.json 叠加 YAML | 界面调整重启保留，又不污染 YAML |
+| 压测控制安全 | 回环监听/来源 + 双开关 + JSON + 自定义操作头 + 同源校验 | Web 从只读观察扩展到高负载控制后仍保持最小暴露面 |
 
 ---
 
-*文档版本：v1.3 · 对应代码状态：features/web/ 多页可扩展版 + 指标目录筛选 + v0.2.0 源层指标趋势（端口 9527 占用自动递增；静态规格双路径采集：含 os_info）*
+*文档版本：v1.4 · 对应代码状态：v0.3.2 Web 多页可扩展版 + 健康压测受控作业 + 指标目录筛选 + 能效入口*

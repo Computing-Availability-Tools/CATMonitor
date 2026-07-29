@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health/stress"
 	// Blank imports trigger collector self-registration via init(), exactly as
 	// cmd/catmonitor does. This reuses the existing collectors without modifying
 	// them; the scheduler only discovers collectors imported here. The static
@@ -89,7 +90,7 @@ func main() {
 		dc.Run(ctx)
 	}()
 
-	srv := NewServer(cfg, dc, logger)
+	srv := NewServer(cfg, dc, logger, stress.NewManager(cfg.Health.Stress))
 	httpServer := &http.Server{
 		Handler: srv.Routes(),
 	}

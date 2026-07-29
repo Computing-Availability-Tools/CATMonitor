@@ -16,6 +16,15 @@
 
 ### 变更摘要
 
+- **health/stress 子特性**：新增 Linux STREAM/HPL/HPCG 显式压测，命令为 `catmonitor health stress run`；配置统一嵌套在 `health.stress`，部署命令由每台机器的 `benchmark_check.sh` 维护
+- **Web 健康压测**：新增概览摘要、`#/stress` 页面和 `/api/health/stress/*` 作业 API；只允许回环地址/来源提交，启动与取消要求 JSON、自定义操作头和浏览器同源校验
+- **Web 表单刷新修复**：快照和压测配置轮询不再将用户勾选项重置为默认 STREAM，尚未提交的 benchmark 选择与单次超时输入会在页面重绘时保留
+- **STREAM 默认时限**：默认最大运行窗口由 30 分钟缩短为 1 分钟；仍允许在 Web 上仅为单次作业进一步缩短
+- **限时通过语义**：STREAM/HPL/HPCG 达到配置运行窗口时统一记录 `time_limit_reached` 并按通过聚合，允许没有最终性能值；Linux 取消会终止本机完整 benchmark/MPI 进程组
+- **HPL 适配模板**：`benchmark_check.sh` 保留主机侧 HPL 路径、BLAS/MPI 参数和线程配置入口；HPL 不从 YAML 读取资产路径，正常结束上报 N/NB/P/Q/进程数/耗时/GFLOPS，并识别 residual failure
+- **HPCG 适配模板**：主机脚本维护 MPI、线程、绑定、网格和运行时间参数；正常完成强制校验本次新增或变化的 VALID 结果文件并上报 GFLOP/s 与执行时间
+- **范围收敛**：移除 `benchmark_check.sh` 中未接入配置、状态和测试契约的 OSU 分支；当前只支持 STREAM、HPL、HPCG
+- **结果与报告可靠性**：HPCG 只读取本次新增/变化的结果文件；初始报告无法原子落盘时拒绝启动，后续落盘错误通过 `report_error` 返回
 - **Prometheus 导出模块**：新增 `features/exporter`——`CachingStorage` 包装在 `JSONLStorage` 外（实现 `collector.Storage` 接口），一次采集同时落盘 JSONL + 更新内存缓存（按组件分组原子替换），HTTP `/metrics` 端点（`:9100`）从缓存读取转 Prometheus 文本格式（`catmonitor_{component}_{name}` 前缀，`_total`/`_time` 后缀判 counter，含 `# HELP`/`# TYPE`/labels）；daemon 集成仅需 ~5 行；附 `/-/healthy`、`/-/ready` 健康端点
 - **NPU 指标扩展 74→119**：新增 45 项 `hccn_tool` 网络统计指标（Medium，网口/PCIe 带宽、RoCE 速度/链路等扩展统计）；指标总数 159→204（High 24 / Medium 121 / Low 59）
 - **NPU 采集器 DCMI CGo 修复**：`dcmi_init()` 初始化、`dcmi_get_card_num_list` 返回全部设备 ID、`dcmi_get_device_errorcode_v2` 5 参数签名适配、`dcmi_get_device_info` 指针参数、dvpp struct 名修正；NPU card/device 二级枚举（CardList + DeviceNumInCard 遍历全部设备）；默认布局调整（4 行 3+2+2+2、gridCols 6 列、功耗电压首行、图例简化）
@@ -25,6 +34,7 @@
 - **web 修复**：补充 chassis 采集器 import，修复机箱类指标无数据
 - **配置**：新增 `configs/metrics.yaml` 默认指标采集目录
 - **文档**：README 精简（使用说明迁移至新增 `docs/User_Manual.md`）；SPEC 改为功能规格（不含技术细节，链接各 feature SPEC）；DESIGN 新增 exporter 章节、更新 NPU/IPMI/dfee；indi_list 版本升至 v0.3.2/204 指标
+- **health/stress 文档收敛**：开源仓库保留 README/SPEC/DESIGN/TEST_GUIDE；节点地址、资产路径、实测数值、迁移历史和滚动验收记录不进入开源文档
 - **版本号**：`cmd/catmonitor` version 升至 `0.3.2`
 - **测试**：263 用例全过（较 v0.3.1 的 241 +22，来自 `features/exporter` + `internal/source/hccn_tool` 扩展用例），覆盖率 29.5%~97.0%，`go vet` 零警告，Linux/Windows 双平台编译通过；无 NPU/GPU 系统测试通过（`:9100/metrics` 导出 33 指标名 / 31 gauge + 2 counter、`:9527` web/dfee 5 端点全 200、GPU/NPU/Chassis 优雅降级不崩溃）
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"gopkg.in/yaml.v3"
 )
@@ -41,6 +42,7 @@ type HealthConfig struct {
 	Enabled      bool          `yaml:"enabled"`
 	Interval     time.Duration `yaml:"interval"`
 	WeightScheme string        `yaml:"weight_scheme"` // auto | cpu_only | accelerated_8card | accelerated_4card
+	Stress       stress.Config `yaml:"stress"`
 }
 
 // CollectionConfig controls which metrics are collected (pre-filter by priority).
@@ -56,12 +58,12 @@ func Default() *Config {
 		},
 		Collectors: map[string]CollectorCfg{
 			"chassis": {Enabled: true, Interval: 3 * time.Second},
-			"cpu":      {Enabled: true, Interval: 3 * time.Second},
-			"memory":   {Enabled: true, Interval: 3 * time.Second},
-			"disk":     {Enabled: true, Interval: 5 * time.Second},
-			"gpu":      {Enabled: true, Interval: 3 * time.Second},
-			"npu":      {Enabled: true, Interval: 3 * time.Second},
-			"network":  {Enabled: true, Interval: 3 * time.Second},
+			"cpu":     {Enabled: true, Interval: 3 * time.Second},
+			"memory":  {Enabled: true, Interval: 3 * time.Second},
+			"disk":    {Enabled: true, Interval: 5 * time.Second},
+			"gpu":     {Enabled: true, Interval: 3 * time.Second},
+			"npu":     {Enabled: true, Interval: 3 * time.Second},
+			"network": {Enabled: true, Interval: 3 * time.Second},
 		},
 		Storage: StorageConfig{
 			DataDir:    platform.DataDir(),
@@ -72,6 +74,10 @@ func Default() *Config {
 			Enabled:      true,
 			Interval:     5 * time.Second,
 			WeightScheme: "auto",
+			Stress: stress.Config{
+				ScriptPath: "features/health/stress/benchmark_check.sh",
+				ReportPath: "features/web/data/stress-latest.json",
+			},
 		},
 	}
 }

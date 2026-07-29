@@ -17,6 +17,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 - **多部件采集**：CPU / 内存 / 硬盘 / GPU / NPU / 网卡 / 机箱 共 7 个部件，**204 个指标**（详见 [指标清单](docs/CATMonitor_indi_list.md)）
 - **健康度评估**：基于采集指标自动计算 0-100 健康分，自动检测 GPU/NPU 切换权重方案
+- **健康压测**：Linux 上显式触发 STREAM / HPL / HPCG，CLI 与本机 Web 共用作业状态和报告；限时作业可无最终性能值通过
 - **Web 仪表盘**：独立 `catmonitor-web` 二进制，可视化单机健康度与各部件指标，默认端口 9527
 - **能效监控（dfee）**：能效指标实时图表 SPA，支持卡片拖拽缩放、多选下拉筛选、模块折叠
 - **Prometheus 导出（exporter）**：daemon 内置 `/metrics` 端点（`:9100`），一次采集同时落盘 JSONL + 缓存导出，零额外进程
@@ -53,6 +54,7 @@ catmonitor daemon
 # 单次采集 / 健康检查 / 采集器列表
 catmonitor collect -o table
 catmonitor health -o table
+catmonitor health stress run --bench stream -c configs/catmonitor.yaml -o table
 catmonitor list
 ```
 
@@ -82,8 +84,11 @@ catmonitor list
 | [SPEC.md](SPEC.md) | 功能规格说明书（不含技术细节） |
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单（204 项） |
-| [docs/test_report.md](docs/test_report.md) | 测试报告（无 NPU/GPU 系统测试） |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |
+| [features/health/HEALTH_DESIGN.md](features/health/HEALTH_DESIGN.md) | health 特性设计 |
+| [features/health/stress/STRESS_SPEC.md](features/health/stress/STRESS_SPEC.md) | 健康压测子特性规格 |
+| [features/health/stress/STRESS_DESIGN.md](features/health/stress/STRESS_DESIGN.md) | 健康压测子特性设计 |
+| [features/health/stress/STRESS_TEST_GUIDE.md](features/health/stress/STRESS_TEST_GUIDE.md) | 健康压测通用构建、测试与验收指南 |
 | [features/web/Web_SPEC.md](features/web/Web_SPEC.md) | Web 仪表盘规格 |
 | [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md) | 能效监控模块规格 |
 | [features/exporter/exporter_SPEC.md](features/exporter/exporter_SPEC.md) | Prometheus 导出模块规格 |
@@ -100,13 +105,13 @@ CATMonitor/
 │   ├── metrics/             # 指标采集目录（MetricSpec/Catalog/Filter）
 │   ├── config/ platform/ storage/   # 配置 / 平台适配 / 数据存储(JSONL)
 ├── features/                # 特性层
-│   ├── health/              #   健康度评估
+│   ├── health/              #   健康度评估 + stress 显式压测子特性
 │   ├── web/                 #   Web 仪表盘（catmonitor-web）
 │   ├── dfee/                #   能效监控模块
 │   └── exporter/            #   Prometheus 导出（CachingStorage + /metrics）
 ├── configs/                 # 默认配置（catmonitor.yaml + metrics.yaml）
-├── docs/                    # 文档（指标清单 / 使用手册 / 测试报告）
-├── tests/ scripts/          # 测试框架与数据 / 安装脚本
+├── docs/                    # 文档（指标清单 / 使用手册）
+├── tests/ scripts/          # 共享测试夹具 / 安装脚本
 └── Makefile
 ```
 
