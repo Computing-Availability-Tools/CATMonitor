@@ -5,20 +5,27 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/Computing-Availability-Tools/CATMonitor/features/dfee"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
 
+// historyPoints is the per-component history ring depth the daemon uses
+// (fixed; not configurable). Reported to the frontend so it knows the trend
+// series length.
+const historyPoints = 60
+
 type Server struct {
-	cfg       *Config
-	collector *DataCollector
-	logger    *slog.Logger
+	dir    string
+	logger *slog.Logger
 }
 
-func NewServer(cfg *Config, dc *DataCollector, logger *slog.Logger) *Server {
-	return &Server{cfg: cfg, collector: dc, logger: logger}
+func NewServer(dir string, logger *slog.Logger) *Server {
+	return &Server{dir: dir, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -33,8 +40,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/collectors", s.handleCollectors)
 	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/refresh", s.handleRefresh)
-	dfee.Register(mux, s.cfg.Storage.SnapshotPath)
 	return mux
 }
 
@@ -52,88 +57,89 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
-	snap, err := Read(s.cfg.Storage.SnapshotPath)
+// globalPath returns the daemon-produced global snapshot path.
+func (s *Server) globalPath() string { return filepath.Join(s.dir, "snapshot.json") }
+
+// readGlobal loads the global snapshot, returning 503 when not yet produced.
+func (s *Server) readGlobal(w http.ResponseWriter) *snapshot.GlobalSnapshot {
+	g, err := snapshot.ReadGlobal(s.globalPath())
 	if err != nil {
 		http.Error(w, `{"error":"snapshot not ready"}`, http.StatusServiceUnavailable)
+		return nil
+	}
+	return g
+}
+
+// handleSnapshot assembles the frontend-facing snapshot view from the global
+// snapshot (health/session/refresh) + all per-component files (metrics +
+// history + specs) produced by the daemon.
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	g := s.readGlobal(w)
+	if g == nil {
 		return
+	}
+	entries, _ := os.ReadDir(s.dir)
+	var metrics []collector.Metric
+	history := map[string][]float64{}
+	var specs []collector.Metric
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "snapshot_") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		c, err := snapshot.ReadComp(filepath.Join(s.dir, name))
+		if err != nil {
+			continue
+		}
+		metrics = append(metrics, c.Metrics...)
+		for k, v := range c.History {
+			history[k] = v
+		}
+		specs = append(specs, c.Specs...)
+	}
+	specs = append(specs, g.SystemSpecs...)
+
+	snap := &snapshot.Snapshot{
+		SessionID:       g.SessionID,
+		Timestamp:       time.Now(),
+		RefreshInterval: g.RefreshInterval,
+		HistoryPoints:   historyPoints,
+		Health:          g.Health,
+		Metrics:         metrics,
+		History:         history,
+		Specs:           specs,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 	json.NewEncoder(w).Encode(snap)
 }
 
-// handleCollectors returns metadata for every registered collector from the
-// global registry. This drives the frontend nav and lets new collectors (added
-// via a blank import in main.go) appear as pages automatically, with zero
-// frontend changes.
+// handleCollectors returns the collector metadata the daemon wrote into the
+// global snapshot (drives the frontend nav). web no longer imports collectors.
 func (s *Server) handleCollectors(w http.ResponseWriter, r *http.Request) {
-	type collectorInfo struct {
-		Name      string `json:"name"`
-		Component string `json:"component"`
-		Priority  string `json:"priority"`
-		Interval  string `json:"interval"`
-		Enabled   bool   `json:"enabled"`
+	g := s.readGlobal(w)
+	if g == nil {
+		return
 	}
-	all := collector.DefaultRegistry.All()
-	list := make([]collectorInfo, 0, len(all))
-	for _, c := range all {
-		list = append(list, collectorInfo{
-			Name:      c.Name(),
-			Component: c.Component(),
-			Priority:  c.Priority().String(),
-			Interval:  c.DefaultInterval().String(),
-			Enabled:   c.DefaultEnabled(),
-		})
-	}
-	writeJSON(w, list)
+	writeJSON(w, g.Collectors)
 }
 
+// handleConfig is read-only: the refresh cadence is owned by the daemon (read
+// from the global snapshot); the frontend polls at refresh_interval_ms.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, map[string]any{
-			"refresh_interval_ms": s.collector.Interval().Milliseconds(),
-			"history_points":      s.cfg.Collector.HistoryPoints,
-		})
-	case http.MethodPost:
-		var body struct {
-			RefreshIntervalMS int `json:"refresh_interval_ms"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if body.RefreshIntervalMS < 1000 {
-			http.Error(w, "refresh_interval_ms must be >= 1000", http.StatusBadRequest)
-			return
-		}
-		d := time.Duration(body.RefreshIntervalMS) * time.Millisecond
-		s.cfg.Collector.RefreshInterval = d
-		s.collector.SetInterval(d)
-		if err := saveRuntime(s.cfg); err != nil {
-			s.logger.Warn("persist runtime failed", "error", err)
-		}
-		writeJSON(w, map[string]any{
-			"refresh_interval_ms": d.Milliseconds(),
-			"history_points":      s.cfg.Collector.HistoryPoints,
-		})
-	default:
-		w.Header().Set("Allow", "GET, POST")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleRefresh triggers an immediate collection via the collector's main loop
-// (serialized, no concurrent writers). The next client poll sees fresh data.
-func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.collector.CollectNow()
-	writeJSON(w, map[string]any{"ok": true})
+	g := s.readGlobal(w)
+	if g == nil {
+		return
+	}
+	writeJSON(w, map[string]any{
+		"refresh_interval_ms": g.RefreshInterval,
+		"history_points":      historyPoints,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -21,7 +21,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 4. **Web 可视化**：独立 Web 仪表盘二进制，可视化单机健康度与各部件指标。
 5. **能效监控**：能效指标实时图表 SPA，支持交互式筛选与卡片拖拽缩放。
 6. **易扩展**：新增部件采集器只需实现统一接口并注册，核心代码零修改。
-7. **可配置**：每个指标的采集周期、是否启用、采集优先级均可通过配置调整。
+7. **可配置**：每个指标的采集周期、是否启用、采集优先级均可通过配置调整；支持 `collection.min_priority` 按优先级阈值控制采集粒度（low 全采 / medium 跳过 Low / high 仅 High）。
 8. **跨平台**：Linux 与 Windows 双平台支持。
 9. **优雅降级**：无 GPU/NPU/BMC 等硬件或工具缺失时，对应采集器返回空、不崩溃、不影响其它采集器。
 
@@ -46,11 +46,14 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 模块 | 功能 | 规格 |
 |------|------|------|
-| 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（14 包） + 指标采集目录 | [DESIGN.md](DESIGN.md) §1-2 |
+| 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（14 包） + 指标采集目录（含 feature-scope 白名单） | [DESIGN.md](DESIGN.md) §1-2 |
 | `features/health` | 健康度评估：消费采集指标，按部件评估器 + 权重自适应，输出总分/等级/扣分明细 | [HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) |
-| `features/web` | Web 仪表盘二进制：概览页 + 部件详情页 + 趋势 + 设备规格，REST API | [Web_SPEC.md](features/web/Web_SPEC.md) |
-| `features/dfee` | 能效监控 SPA：能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
+| `features/snapshot` | Snapshot 统一生产：daemon 唯一生产 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs），只读特性消费快照 | [DESIGN.md](DESIGN.md) §6 |
+| `features/web` | Web 仪表盘二进制：**只读消费** snapshot，概览页 + 部件详情页 + 趋势 + 设备规格，REST API | [Web_SPEC.md](features/web/Web_SPEC.md) |
+| `features/dfee` | 能效监控独立二进制：**只读消费** snapshot，能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
 | `features/exporter` | Prometheus 导出：CachingStorage 包装存储 + `/metrics` 端点 + 健康端点 | [exporter_SPEC.md](features/exporter/exporter_SPEC.md) |
+| `features/faultsub` | 故障订阅推送：NPU 故障判定（卡掉线/健康状态/错误码/HBM UCE/RoCE 链路） + HTTP Webhook 推送 + 订阅/快照/事件 REST API | [faultsub_SPEC.md](features/faultsub/faultsub_SPEC.md) |
+| `features/stragglerout` | 落后节点 KPI 输出：NPU KPI 时序按"每时刻×每卡"聚合追加写日级 JSONL，供 straggler 慢节点检测器消费 | [stragglerout_SPEC.md](features/stragglerout/stragglerout_SPEC.md) |
 
 ---
 
@@ -96,6 +99,8 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 - **Medium**：重要辅助指标，对健康度有参考价值，默认采集，周期 10-60s
 - **Low**：诊断性指标，按需采集，默认不采集
 
+> **采集粒度控制**：`collection.min_priority` 配置项按优先级阈值预过滤——`low`（默认，全采）、`medium`（跳过 Low）、`high`（仅 High）。采集器经 `AnyWanted` DI 在执行采集前判断是否有目标指标通过阈值，无则整组跳过，降低无谓开销。
+
 ### 4.2 各部件指标概要
 
 | 部件 | 指标数 | High | Medium | Low | Linux | Windows |
@@ -104,16 +109,18 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 | Memory | 19 | 4 | 7 | 8 | ✅ | ✅（同上） |
 | Disk | 9 | 1 | 5 | 3 | ✅ | ✅（2/9） |
 | GPU | 7 | 3 | 3 | 1 | ✅ | ✅（7/7） |
-| NPU | 119 | 9 | 88 | 22 | ✅ | ✗（Linux 专有；DCMI 走 CGo `-tags dcmi`，Windows no-op 降级） |
+| NPU | 120 | 11 | 87 | 22 | ✅ | ✗（Linux 专有；DCMI 走 CGo `-tags dcmi`，Windows no-op 降级） |
 | Network | 5 | 1 | 3 | 1 | ✅ | ✅（5/5） |
 | Chassis | 5 | 2 | 3 | 0 | ✅ | ✗（Linux 专有，依赖 ipmitool） |
-| **合计** | **204** | **24** | **121** | **59** | | |
+| **合计** | **205** | **26** | **120** | **59** | | |
 
-> v0.3.2 NPU 指标 74→119（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。
+> v0.3.2 NPU 指标 74→119（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。v0.3.3 新增 NPU `card_drop`（掉卡检测，High）并将 `error_code` 升级为 High（返回完整 hex 错误码列表 + 计数），指标总数 204→205。
 
 ### 4.3 指标采集目录
 
 为统一管控"采哪些指标、按什么优先级、默认是否采集"，提供指标采集目录（`configs/metrics.yaml` 为默认目录，模块可用自有 `metrics.yaml` 按 name 覆盖合并）。默认策略：High/Medium + 静态身份指标默认采集，Low 诊断指标默认不采集。目录中缺失的指标默认放行，避免静默丢数据。
+
+**Feature-scoped 采集**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标（每个 feature 的 `metrics.yaml` 列出其需要的指标 name）。daemon 启动时加载各 feature 覆盖后，以 `SetFeatureScope` 取各 feature 列出指标的**并集**建立白名单；`features` 非空时，`metrics.Filter` 只保留白名单内且 `priority ≥ collection.min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 为空则退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 只采 dfee `metrics.yaml` 列出的指标并集，`features: [web, dfee]` 采 web∪dfee 并集。同时 `ComponentIntervals` 取各 feature `metrics.yaml` 声明 interval 的最小值派生每组件采集 cadence（C_comp），覆盖 `collectors.<name>.interval`——使 feature 所需刷新节奏成为采集节奏（采集即快照刷新）。
 
 ---
 
@@ -121,7 +128,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 子命令 | 功能 |
 |--------|------|
-| `daemon` | 启动守护进程：持续采集 + 健康度评估 + Prometheus 导出（默认） |
+| `daemon` | 启动守护进程：持续采集 + Prometheus 导出（默认）。健康度评估改由 `health` 子命令按需执行 |
 | `collect` | 单次采集所有指标，输出 JSON 或表格 |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 |
 | `list` | 列出所有已注册采集器 |
@@ -141,24 +148,26 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 ### 6.1 Web 仪表盘
 
-独立二进制 `catmonitor-web`，可视化单台服务器的健康度与各部件采集指标。与采集守护进程/CLI 解耦，以 `snapshot.json` 为读写边界。
+独立二进制 `catmonitor-web`，**只读消费** daemon 产出的 snapshot（全局 `snapshot.json` + per-component `snapshot_<comp>.json`），可视化单台服务器的健康度与各部件采集指标。不再自行采集——采集与 snapshot 生产统一由 daemon 完成。
 
 - **概览页**：整体健康度 + 设备规格面板 + 各部件状态 + 部件概览卡片（趋势 sparkline）
 - **部件详情页**：部件得分/扣分项 + 趋势面板 + 全部指标表
-- **REST API**：`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`
+- **REST API**（只读）：`GET /api/snapshot`（组装 global+per-comp）、`GET /api/collectors`、`GET /api/config`
+- **启动参数**：`-addr`（默认 `:9527`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）
 - **端口回退**：`:9527` 被占用时自动 +1 递增
 
 > 详见 [features/web/Web_SPEC.md](features/web/Web_SPEC.md)。
 
 ### 6.2 能效监控（dfee）
 
-`/dfee/` SPA，专门展示能效相关指标的实时图表。
+独立二进制 `catmonitor-dfee`（默认端口 `:9528`），**只读消费** daemon 产出的 snapshot，渲染 `/dfee/` SPA 展示能效相关指标的实时图表。
 
-- **能效指标过滤**：从全量指标过滤能效项，按部件分组
+- **能效指标过滤**：从 snapshot 指标过滤能效项，按部件分组
 - **CPU 利用率推导**：8 个原始 jiffies → 7 项利用率百分比（后端有状态 delta）
 - **网络字节差值**：累计值 → 采集间增量
 - **交互**：卡片拖拽重排 + 手柄缩放 + 虚线对齐辅助、多选下拉筛选、模块折叠
-- **解耦**：独立 Go package，只读 `snapshot.json`，不修改现有 web 业务代码
+- **解耦**：独立二进制（`features/dfee` package main），只读 snapshot，不修改 web 业务代码
+- **启动参数**：`-addr`（默认 `:9528`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）
 
 > 详见 [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md)。
 
@@ -202,8 +211,32 @@ storage:
 
 health:
   enabled: true
-  interval: 5s
   weight_scheme: auto     # auto | cpu_only | accelerated_8card | accelerated_4card
+
+collection:
+  min_priority: low       # low (全采) | medium (跳过 Low) | high (仅 High)
+
+features: [dfee]          # feature-scope 白名单：各 feature metrics.yaml 并集；空 = 默认目录全集
+                          # 派生 per-component 采集 cadence C_comp = min(声明该 comp 的 feature interval)
+
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 off）
+  enabled: false          # off 时 daemon 不写 snapshot 文件，行为同前
+  dir: /var/lib/catmonitor/snapshot   # snapshot_<comp>.json + snapshot.json 目录
+
+faultsub:                 # 故障订阅推送（默认 off）；详见 features/faultsub/faultsub_SPEC.md
+  enabled: false
+  rest_addr: ":9101"      # 订阅 REST API 监听地址
+  webhook_timeout: 5s
+  webhook_retry: 1
+  event_buffer: 1024
+  defaults: { debounce_ms: 0, min_severity: "warning" }
+  rules: { card_drop: true, npu_health: true, npu_error_code: true, hbm_uce: true, ddr_uce: true, roce_link_down: true, driver_unhealthy: false }
+
+straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详见 features/stragglerout/stragglerout_SPEC.md
+  enabled: false
+  data_dir: /var/lib/catmonitor/straggler
+  retention: 360h         # 15 天
+  flush_interval: 60s
 ```
 
 ---
@@ -236,7 +269,7 @@ health:
 | Mock 测试 | GPU/NPU 无硬件场景 |
 | 端到端测试 | 守护进程启动→采集→存储→评分→导出 |
 
-> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.2：263 单元测试 PASS + 无 NPU/GPU 系统测试）。
+> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.3：单元测试 PASS + 无 NPU/GPU 系统测试 + Linux/Windows 双平台编译通过）。
 
 ---
 
@@ -244,6 +277,7 @@ health:
 
 | 版本 | 主要内容 |
 |------|----------|
+| v0.3.3 | 采集粒度控制（`collection.min_priority` + `AnyWanted` DI 预过滤）；daemon 移除周期健康检查（改由 `health` 子命令）；web 退出清 snapshot；修复 npu 非 linux 桩签名致 Windows 交叉编译失败 |
 | v0.3.2 | 新增 Prometheus exporter（`:9100/metrics`）；NPU 新增 45 项 `hccn_tool` 网络统计（74→119）；IPMI 来源层重构（`sdr→sensor`、定向采集、两级缓存、降级回退）；dfee 能效监控增强（卡片拖拽缩放、多选下拉筛选、模块折叠）；`--help` 解析后退出 |
 | v0.3.1 | 新增 Chassis 机箱环境采集器（5 指标）、Disk 读/写耗时、`features/dfee` 能效监控模块 |
 | v0.3.0 | 引入指标采集目录 + `features/` 特性层（health/web），健康度抽取为按部件评估器 |

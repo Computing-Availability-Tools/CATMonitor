@@ -1,4 +1,4 @@
-package main
+package snapshot
 
 import (
 	"os"
@@ -14,7 +14,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
 
-// collectHWSpecs gathers one-shot hardware identity specs (server model, GPU,
+// CollectHWSpecs gathers one-shot hardware identity specs (server model, GPU,
 // NPU, disk, NIC) ONCE at web startup. It is deliberately NOT a registered
 // periodic collector: these values are static identity, not time-series, so
 // running them every collection cycle (and relying on a stash to keep them
@@ -24,7 +24,7 @@ import (
 // cpu/memory statics (model_info, module_info, ...) are still emitted by their
 // existing periodic collectors and stashed separately — only the cross-component
 // identity specs that nothing else emits live here.
-func collectHWSpecs() []collector.Metric {
+func CollectHWSpecs() []collector.Metric {
 	return newHWCollector().collect()
 }
 

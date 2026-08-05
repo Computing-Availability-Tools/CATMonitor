@@ -1,4 +1,4 @@
-package dfee
+package main
 
 import "embed"
 

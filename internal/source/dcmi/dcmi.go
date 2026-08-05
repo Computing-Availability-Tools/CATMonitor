@@ -17,6 +17,20 @@ import "errors"
 // binding, or libdcmi.so not loadable).
 var errNotAvailable = errors.New("dcmi: not available (build with -tags dcmi on a CANN host)")
 
+// DeviceNotReadyErrCode is the DCMI return code meaning the device is not
+// ready (card dropped / unreachable). dcmi_get_device_health returns this
+// code when the NPU is offline; the EEP fault manager treats it as a card
+// drop. Surfaces via CardDrop().
+const DeviceNotReadyErrCode = -8012
+
+// DeviceErrors holds the full device error-code list (hex strings) plus the
+// count. ErrorCodeList returns this so fault detectors can match specific
+// codes (e.g. 0x40f84e00 card drop) rather than just a count.
+type DeviceErrors struct {
+	Count int
+	Codes []string // e.g. ["0x40f84e00", "0x00000001"]
+}
+
 // --- Go structs mirroring the C dcmi_* structs (from dcmi_interface_api.h) ---
 
 type ChipInfo struct {
@@ -86,6 +100,8 @@ type FetchProvider interface {
 	Health(card, dev int) (uint, error)
 	ChipInfo(card, dev int) (*ChipInfo, error)
 	ErrorCodeV2(card, dev int) (uint, error)
+	ErrorCodeList(card, dev int) (*DeviceErrors, error)
+	CardDrop(card, dev int) (bool, error)
 	ResourceInfo(card, dev int) (*ResourceInfo, error)
 	HbmInfo(card, dev int) (*HbmInfo, error)
 	Frequency(card, dev int, freqType int) (uint, error)
@@ -120,6 +136,8 @@ type Source interface {
 	Health(card, dev int) (uint, error)
 	ChipInfo(card, dev int) (*ChipInfo, error)
 	ErrorCodeV2(card, dev int) (uint, error)
+	ErrorCodeList(card, dev int) (*DeviceErrors, error)
+	CardDrop(card, dev int) (bool, error)
 	ResourceInfo(card, dev int) (*ResourceInfo, error)
 	HbmInfo(card, dev int) (*HbmInfo, error)
 	Frequency(card, dev int, freqType int) (uint, error)
@@ -191,6 +209,14 @@ func (s *defaultSource) ChipInfo(card, dev int) (*ChipInfo, error) {
 func (s *defaultSource) ErrorCodeV2(card, dev int) (uint, error) {
 	if s.provider == nil { return 0, s.notAvail() }
 	return s.provider.ErrorCodeV2(card, dev)
+}
+func (s *defaultSource) ErrorCodeList(card, dev int) (*DeviceErrors, error) {
+	if s.provider == nil { return nil, s.notAvail() }
+	return s.provider.ErrorCodeList(card, dev)
+}
+func (s *defaultSource) CardDrop(card, dev int) (bool, error) {
+	if s.provider == nil { return false, s.notAvail() }
+	return s.provider.CardDrop(card, dev)
 }
 func (s *defaultSource) ResourceInfo(card, dev int) (*ResourceInfo, error) {
 	if s.provider == nil { return nil, s.notAvail() }

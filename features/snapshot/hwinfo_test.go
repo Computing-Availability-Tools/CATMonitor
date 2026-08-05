@@ -1,4 +1,4 @@
-package main
+package snapshot
 
 import (
 	"os"
@@ -138,7 +138,7 @@ func TestHWDiskInfo(t *testing.T) {
 // panic and must only emit the 6 known identity metric names (or none when the
 // hardware/tools are absent).
 func TestCollectHWSpecsSmoke(t *testing.T) {
-	m := collectHWSpecs()
+	m := CollectHWSpecs()
 	known := map[string]bool{
 		"device_model": true, "os_info": true, "gpu_info": true, "npu_info": true,
 		"disk_info": true, "net_info": true,

@@ -12,9 +12,13 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/exporter"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/faultsub"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stragglerout"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
@@ -30,7 +34,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 )
 
-const version = "0.3.2"
+const version = "0.3.3"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -69,9 +73,8 @@ Commands:
 
 Flags:
   -c, --config      Config file path (default: ` + platform.ConfigPath() + `)
-  -d, --data-dir    Data output directory (default: ` + platform.DataDir() + `)
   -o, --output      Output format: json|table (default: json)
-  -v, --verbose     Verbose logging`)
+  -h, --help        Show help (parsed, then exit)`)
 }
 
 func loadConfig() *config.Config {
@@ -101,6 +104,21 @@ func loadConfig() *config.Config {
 		slog.Error("failed to load config, using defaults", "error", err)
 		return config.Default()
 	}
+	// Load each enabled feature's metrics.yaml override (priority/selectivity):
+	// unions the metrics each feature needs so they survive metrics.Filter.
+	// Intervals are parsed separately in runDaemon (LoadModuleOverride is
+	// last-wins, not min).
+	featurePaths := make([]string, 0, len(cfg.Features))
+	for _, f := range cfg.Features {
+		p := filepath.Join("features", f, "metrics.yaml")
+		featurePaths = append(featurePaths, p)
+		if err := metrics.LoadModuleOverride(p); err != nil {
+			slog.Error("feature metrics override failed", "feature", f, "path", p, "error", err)
+		}
+	}
+	// Scoped collection: when features non-empty, only metrics listed by some
+	// enabled feature (AND priority >= min_priority) are collected. Empty -> unscoped.
+	metrics.SetFeatureScope(featurePaths)
 	return cfg
 }
 
@@ -135,14 +153,134 @@ func runDaemon() {
 		}
 	}
 
-	scheduler := collector.NewScheduler(collector.DefaultRegistry, cacheStore, logger)
+	// Derive per-component collection cadence (C_comp) from enabled features:
+	// for each component, take the min interval declared across the features'
+	// metrics.yaml; components no feature declares keep catmonitor.yaml's
+	// collectors.<name>.interval. This makes feature interval the collection
+	// cadence (collection == per-component snapshot refresh). Empty features
+	// list => catmonitor.yaml collectors.interval throughout.
+	if len(cfg.Features) > 0 {
+		declared := map[string]time.Duration{} // comp -> min across features
+		for _, f := range cfg.Features {
+			fi, _ := metrics.ComponentIntervals(filepath.Join("features", f, "metrics.yaml"))
+			for comp, dur := range fi {
+				if prev, ok := declared[comp]; !ok || dur < prev {
+					declared[comp] = dur
+				}
+			}
+		}
+		for name, cc := range collectorCfgs {
+			// Collector name == component (1:1); override interval where a
+			// feature declared one.
+			if dur, ok := declared[name]; ok {
+				cc.Interval = dur
+				collectorCfgs[name] = cc
+			}
+		}
+		if len(declared) > 0 {
+			logger.Info("derived per-component cadence from features", "features", cfg.Features, "declared_components", len(declared))
+		}
+	}
+
+	// Optionally wrap the storage chain with the fault-subscription tap.
+	// When faultsub is disabled, sink stays as the exporter's CachingStorage
+	// and daemon behavior is unchanged.
+	var sink collector.Storage = cacheStore
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if cfg.StragglerOutput.Enabled {
+		kpiw := stragglerout.NewKPIWriter(cfg.StragglerOutput.DataDir, cfg.StragglerOutput.Retention, logger)
+		sstore := stragglerout.NewStragglerStorage(cacheStore, stragglerout.NewKPIMapper(), kpiw, cfg.StragglerOutput.FlushInterval, logger)
+		go func() {
+			<-ctx.Done()
+			sstore.Flush(time.Now())
+		}()
+		sink = sstore
+		logger.Info("straggler_output enabled", "data_dir", cfg.StragglerOutput.DataDir)
+	}
+	if cfg.FaultSub.Enabled {
+		rules := faultsub.RuleConfig{}
+		for k, v := range cfg.FaultSub.Rules {
+			rules[faultsub.FaultType(k)] = v
+		}
+		det := faultsub.NewDetector(rules)
+		wh := faultsub.NewWebhook(cfg.FaultSub.WebhookTimeout, logger)
+		disp := faultsub.NewDispatcher(wh, faultsub.NewSubscriptionManager(),
+			cfg.FaultSub.WebhookRetry, cfg.FaultSub.EventBuffer, logger)
+		fstore := faultsub.NewFaultStorage(cacheStore, det, disp, logger)
+		go faultsub.ServeAPI(ctx, cfg.FaultSub.RestAddr, disp, fstore, logger)
+		sink = fstore
+		logger.Info("faultsub enabled", "rest_addr", cfg.FaultSub.RestAddr)
+	}
+
+	// Snapshot production (per-component files snapshot_<comp>.json + one
+	// global snapshot.json), consumed by read-only features (web/dfee). Opt-in:
+	// when disabled the daemon writes no snapshot files and behaves as before.
+	// When enabled the daemon is the sole snapshot producer; web must run as a
+	// read-only consumer (no self-collection).
+	if cfg.Snapshot.Enabled {
+		pcw := snapshot.NewPerCompWriter(sink, cfg.Snapshot.Dir, 60, logger)
+		sink = pcw // scheduler writes through the per-component snapshot writer
+
+		// Build collector metadata + per-component intervals for the global snapshot.
+		regAll := collector.DefaultRegistry.All()
+		collectors := make([]snapshot.CollectorInfo, 0, len(regAll))
+		intervals := make(map[string]int, len(regAll))
+		for _, c := range regAll {
+			interval := c.DefaultInterval()
+			if cc, ok := collectorCfgs[c.Name()]; ok {
+				interval = cc.Interval
+			}
+			collectors = append(collectors, snapshot.CollectorInfo{
+				Name:      c.Name(),
+				Component: c.Component(),
+				Priority:  c.Priority().String(),
+				Interval:  interval.String(),
+				Enabled:   c.DefaultEnabled(),
+			})
+			intervals[c.Component()] = int(interval / time.Millisecond)
+		}
+		// Global cadence C_global: min over per-component cadences.
+		minMS := 0
+		for _, ms := range intervals {
+			if minMS == 0 || ms < minMS {
+				minMS = ms
+			}
+		}
+		refresh := time.Duration(minMS) * time.Millisecond
+		gw := snapshot.NewGlobalWriter(cacheStore, cfg.Snapshot.Dir, refresh, logger)
+		gw.SetCollectors(collectors)
+		gw.SetIntervals(intervals)
+		go gw.Run(ctx)
+
+		// One-shot hardware identity at startup: system specs -> global writer,
+		// per-component specs (gpu_info/npu_info/...) -> per-comp writer.
+		go func() {
+			specs := snapshot.CollectHWSpecs()
+			var sys []collector.Metric
+			byComp := map[string][]collector.Metric{}
+			for _, m := range specs {
+				if m.Component == "system" {
+					sys = append(sys, m)
+				} else {
+					byComp[m.Component] = append(byComp[m.Component], m)
+				}
+			}
+			gw.SetSystemSpecs(sys)
+			for comp, ms := range byComp {
+				pcw.SetCompSpecs(comp, ms)
+			}
+			logger.Info("hardware specs distributed to snapshot writers", "count", len(specs))
+		}()
+
+		logger.Info("snapshot production enabled", "dir", cfg.Snapshot.Dir, "refresh", refresh)
+	}
+
+	scheduler := collector.NewScheduler(collector.DefaultRegistry, sink, logger)
 	scheduler.SetFilter(metrics.Filter)
 
 	// Prometheus exporter endpoint
 	go exporter.ServeMetrics(":9100", cacheStore, logger)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	scheduler.Start(ctx, collectorCfgs)
 
@@ -154,23 +292,6 @@ func runDaemon() {
 	logger.Info("received signal, shutting down", "signal", sig)
 	cancel()
 	scheduler.Stop()
-}
-
-func runHealthCheck(scheduler *collector.Scheduler, eval *health.Evaluator, store *storage.JSONLStorage, logger *slog.Logger) {
-	// Collect all metrics
-	var allMetrics []collector.Metric
-	for _, c := range collector.DefaultRegistry.All() {
-		collected, err := c.Collect()
-		if err != nil {
-			logger.Error("collection failed", "collector", c.Name(), "error", err)
-			continue
-		}
-		allMetrics = append(allMetrics, collected...)
-	}
-
-	allMetrics = metrics.Filter(allMetrics)
-	score := eval.Evaluate(allMetrics)
-	logger.Info("health check", "score", score.Score, "grade", score.Grade)
 }
 
 func runCollect() {

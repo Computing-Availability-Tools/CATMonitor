@@ -41,6 +41,25 @@ static int dcmi_errorcode_v2_wrapper(int card, int dev, unsigned int *code) {
     return 0;
 }
 
+// Wrapper that returns the full error-code list (up to list_len entries) and
+// the count, so callers can inspect specific codes (e.g. 0x40f84e00 card
+// drop) rather than just the count. rc=0 on success.
+static int dcmi_errorcode_list_wrapper(int card, int dev,
+        int *out_count, unsigned int *out_codes, int list_len) {
+    return dcmi_get_device_errorcode_v2(card, dev, out_count, out_codes, list_len);
+}
+
+// Card-drop detection: dcmi_get_device_health returns DeviceNotReadyErrCode
+// (-8012) when the NPU is offline/dropped. This wrapper isolates that rc so
+// the collector can emit an explicit card_drop metric instead of silently
+// degrading. Returns *dropped=1 when rc == -8012, else 0; returns the raw rc.
+static int dcmi_card_drop_wrapper(int card, int dev, int *dropped) {
+    unsigned int health = 0;
+    int rc = dcmi_get_device_health(card, dev, &health);
+    *dropped = (rc == -8012) ? 1 : 0;
+    return rc;
+}
+
 // Wrapper for dcmi_get_device_info — the 6th arg is unsigned int *size (caller
 // sets buffer size, callee updates with actual bytes written).
 static int dcmi_get_device_info_wrapper(int card, int dev, int main_cmd,
@@ -150,6 +169,32 @@ func (p *cgoProvider) ErrorCodeV2(card, dev int) (uint, error) {
 		return 0, fmt.Errorf("dcmi_get_device_errorcode_v2: %d", int32(rc))
 	}
 	return uint(code), nil
+}
+
+func (p *cgoProvider) ErrorCodeList(card, dev int) (*DeviceErrors, error) {
+	const n = 128
+	var count C.int
+	codes := make([]C.uint, n)
+	rc := C.dcmi_errorcode_list_wrapper(C.int(card), C.int(dev), &count, &codes[0], C.int(n))
+	if rc != 0 {
+		return nil, fmt.Errorf("dcmi_get_device_errorcode_v2: %d", int32(rc))
+	}
+	out := &DeviceErrors{Count: int(count)}
+	for i := 0; i < int(count) && i < n; i++ {
+		if codes[i] != 0 {
+			out.Codes = append(out.Codes, fmt.Sprintf("0x%08x", uint(codes[i])))
+		}
+	}
+	return out, nil
+}
+
+func (p *cgoProvider) CardDrop(card, dev int) (bool, error) {
+	var dropped C.int
+	rc := C.dcmi_card_drop_wrapper(C.int(card), C.int(dev), &dropped)
+	if rc != 0 && rc != DeviceNotReadyErrCode {
+		return false, fmt.Errorf("dcmi_get_device_health: %d", int32(rc))
+	}
+	return int(dropped) == 1, nil
 }
 
 func (p *cgoProvider) ResourceInfo(card, dev int) (*ResourceInfo, error) {

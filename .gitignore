@@ -1,5 +1,6 @@
 bin/
-catmonitor
+# 二进制产物仅在 bin/ 下；不要用裸 "catmonitor" 规则，会误伤 cmd/catmonitor 源码目录
+bin/catmonitor
 *.exe
 *.exe~
 *.dll
