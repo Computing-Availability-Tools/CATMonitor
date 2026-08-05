@@ -4,6 +4,16 @@
 
 ---
 
+## Unreleased — reliability stress
+
+- 新增独立 `features/stress`，通过 `catmonitor stress` 显式运行 STREAM、HPL、HPCG；普通 health 和 daemon 不自动触发。
+- 新增 `/stress/` 独立页面和 `/api/stress/*`，挂载到 snapshot 只读 Web；Web 默认读取平台 CATMonitor 主配置，也可通过 `CATMONITOR_CONFIG` 或 `-config` 覆盖。
+- CLI/Web 共享原子报告、最近 100 次历史和 Linux 跨进程锁；支持单次缩短超时、作业取消、进程组回收及 profile、资产和配置哈希追溯。
+- 节点执行器、MPI/NUMA 参数继续由源码目录外的 `benchmark_check.sh` 管理；Web 不提供脚本、路径或任意参数编辑。
+- 第一版只支持 Linux 单机执行；Windows 保证构建并返回 `unsupported`，暂不支持 OSU 和多节点 MPI。
+
+---
+
 ## v0.3.3
 
 | 项目 | 说明 |

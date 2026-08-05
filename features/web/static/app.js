@@ -307,6 +307,8 @@ function renderNav() {
     if (route === c.component) a.className = 'active';
     nav.appendChild(a);
   }
+  const aStress = el('a'); aStress.href = '/stress/'; aStress.textContent = '可靠性压测';
+  nav.appendChild(aStress);
 }
 
 // specSummary returns a one-line identity string for a component's overview

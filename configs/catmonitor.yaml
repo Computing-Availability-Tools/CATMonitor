@@ -37,6 +37,20 @@ health:
   enabled: true
   weight_scheme: auto
 
+# Explicit high-load diagnostics. The daemon and regular health evaluation
+# never start this feature; CLI/Web execution must be requested explicitly.
+stress:
+  enabled: false
+  web_enabled: false
+  script_path: /etc/catmonitor/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress-latest.json
+  default_benchmarks: [stream]
+  benchmarks:
+    stream: { enabled: false, timeout: 1m }
+    hpl: { enabled: false, timeout: 2h }
+    # Directory where this host's HPCG writes HPCG-Benchmark*.txt.
+    hpcg: { enabled: false, result_dir: "", timeout: 3m }
+
 collection:
   # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)
   min_priority: low

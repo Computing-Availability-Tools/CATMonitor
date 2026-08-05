@@ -107,6 +107,17 @@ health:
   enabled: true             # v0.3.3 起 daemon 不再周期评估（保留字段）
   weight_scheme: auto      # 仅 `catmonitor health` CLI 使用：auto | cpu_only | accelerated_8card | accelerated_4card
 
+stress:
+  enabled: false
+  web_enabled: false
+  script_path: /etc/catmonitor/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress-latest.json
+  default_benchmarks: [stream]
+  benchmarks:
+    stream: { enabled: false, timeout: 1m }
+    hpl: { enabled: false, timeout: 2h }
+    hpcg: { enabled: false, result_dir: "", timeout: 3m }
+
 collection:
   min_priority: low        # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 
@@ -147,6 +158,7 @@ straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详�
 | `collectors.*.enabled` / `.interval` | daemon | 各采集器开关与采集周期 |
 | `storage.*` | daemon | JSONL 数据目录、保留时长、轮转策略 |
 | `health.weight_scheme` | `health` CLI | 健康度权重方案；`enabled` v0.3.3 起 daemon 不再周期评估 |
+| `stress.*` | `stress` CLI / Web | 可靠性压测授权、共享报告、项目和最大运行窗口；节点执行参数由部署脚本维护 |
 | `collection.min_priority` | daemon / collect | 按优先级阈值预过滤采集粒度 |
 | `features` | daemon | feature-scope 白名单：各 feature `metrics.yaml` 并集；派生 per-component cadence `C_comp = min(feature interval)` |
 | `snapshot.enabled` / `.dir` | daemon | snapshot 生产开关与目录（on 时 web/dfee 只读消费） |
@@ -160,7 +172,7 @@ straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详�
 | Linux | `/etc/catmonitor/catmonitor.yaml` | `/var/lib/catmonitor/data` |
 | Windows | `C:\ProgramData\catmonitor\catmonitor.yaml` | `C:\ProgramData\catmonitor\data` |
 
-可用 `-config` 覆盖配置路径（注：短 flag `-c` 已注册但未生效，请用长形式 `-config`）。指标采集目录 `metrics.yaml` 加载顺序：环境变量 `CATMONITOR_METRICS` → 配置目录下 `metrics.yaml` → 开发回退 `configs/metrics.yaml`。
+普通 CLI 可用 `-config` 覆盖配置路径（现有短 flag `-c` 尚未接入普通命令）；stress CLI 同时支持 `-c/--config`。Web 默认读取同一平台路径，非标准部署可使用 `CATMONITOR_CONFIG` 或 `-config` 覆盖。指标采集目录 `metrics.yaml` 加载顺序：环境变量 `CATMONITOR_METRICS` → 配置目录下 `metrics.yaml` → 开发回退 `configs/metrics.yaml`。
 
 ---
 
@@ -173,6 +185,7 @@ Commands:
   daemon       启动守护进程（持续采集 + Prometheus 导出）— 默认；健康度评估由 health 子命令按需执行
   collect      单次采集所有指标快照
   health       执行一次健康检查
+  stress       显式运行 Linux 可靠性压测
   list         列出所有已注册采集器
   version      显示版本信息
 
@@ -191,6 +204,7 @@ Flags:
 | 常驻采集 + Prometheus | `catmonitor daemon` |
 | 一次性巡检（指标） | `catmonitor collect -o table` |
 | 一次性健康体检 | `catmonitor health` |
+| Linux 可靠性压测 | `catmonitor stress -o table` |
 | 查看采集器清单 | `catmonitor list` |
 | 查看版本 | `catmonitor version` |
 | Web 仪表盘 | `catmonitor-web`（独立二进制，见 §4） |
@@ -258,7 +272,18 @@ Server Type:    accelerated
   TOTAL      95 / 100  Excellent
 ```
 
-### 3.5 daemon — 守护进程
+### 3.5 stress — 可靠性压测
+
+```bash
+catmonitor stress --help
+catmonitor stress -o table                  # 运行 YAML 的 default_benchmarks
+catmonitor stress --bench stream -o table   # 覆盖本次运行项目
+catmonitor stress -o json                   # 回显完整 JSON 报告
+```
+
+stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。完整适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+
+### 3.6 daemon — 守护进程
 
 ```bash
 catmonitor daemon                       # 默认配置前台运行
@@ -279,7 +304,7 @@ daemon 启动后：
 
 ## 4. Web 仪表盘（catmonitor-web）
 
-独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标。不再自行采集——需先启动 daemon 并开启 `snapshot.enabled`。
+独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标，不再自行采集。独立 stress feature 可按主配置额外挂载受保护的作业接口，但不会写 snapshot。
 
 ### 4.1 启动
 
@@ -291,7 +316,8 @@ daemon 启动后：
 catmonitor daemon
 
 # 再启动 web 只读消费者（-snapshot-dir 须与 daemon snapshot.dir 一致）
-catmonitor-web -addr :9527 -snapshot-dir /var/lib/catmonitor/snapshot
+catmonitor-web -addr 127.0.0.1:9527 -snapshot-dir /var/lib/catmonitor/snapshot
+# 非标准主配置路径追加：-config /path/to/catmonitor.yaml
 # 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting"）
 ```
 
@@ -301,6 +327,7 @@ catmonitor-web -addr :9527 -snapshot-dir /var/lib/catmonitor/snapshot
 
 - **概览页**（`/`）：整体健康度（总分 + 进度条 + 等级）+ 设备规格面板（点击展开完整规格）+ 各部件状态 + 部件概览卡片（含趋势 sparkline）
 - **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（该部件全部历史序列 sparkline，数据来自 daemon 产出的 per-comp history）+ 全部指标表
+- **可靠性压测**（`/stress/`）：独立页面；默认只读展示配置和共享报告，只有 Linux、回环监听及 `stress.enabled/web_enabled` 均满足时才能提交作业
 
 ### 4.3 REST API（只读）
 
@@ -311,6 +338,8 @@ catmonitor-web -addr :9527 -snapshot-dir /var/lib/catmonitor/snapshot
 | GET | `/api/config` | 当前配置（cadence + history_points，只读） |
 
 > 重构删除 `POST /api/config`（间隔热改）与 `POST /api/refresh`（立即采集）——刷新间隔由 daemon cadence 决定。详细设计与扩展机制见 [features/web/Web_SPEC.md](../features/web/Web_SPEC.md)。
+>
+> `/api/stress/*` 由独立 stress feature 提供，不属于 snapshot API；契约见 [STRESS_SPEC.md](../features/stress/STRESS_SPEC.md)。
 
 ---
 

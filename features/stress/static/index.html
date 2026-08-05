@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CATMonitor 可靠性压测</title>
+  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20260731.1">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-group">
+      <a href="/" class="brand">CATMonitor</a>
+      <span class="product-divider"></span>
+      <span class="subtitle">可靠性压测</span>
+    </div>
+    <a href="/" class="back-link"><span aria-hidden="true">←</span> 返回健康概览</a>
+  </header>
+
+  <noscript>
+    <div class="asset-alert">浏览器未执行 JavaScript，无法读取可靠性压测配置和报告。</div>
+  </noscript>
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">RELIABILITY STRESS</div>
+        <h1>可靠性压测</h1>
+        <p>通过 STREAM、HPL、HPCG 验证节点在高负载下的内存带宽、浮点计算与综合计算可靠性。</p>
+        <div class="risk-note">
+          <span class="risk-icon" aria-hidden="true">!</span>
+          <span>运行期间会占用 CPU、内存及 MPI/NUMA 资源，可能使实时健康分暂时下降；压测结果不直接计入健康总分。</span>
+        </div>
+      </div>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="pulse-ring ring-one"></div>
+        <div class="pulse-ring ring-two"></div>
+        <div class="shield">
+          <span class="shield-check">✓</span>
+        </div>
+        <div class="signal signal-a"></div>
+        <div class="signal signal-b"></div>
+        <div class="signal signal-c"></div>
+      </div>
+    </section>
+
+    <section class="summary-grid" aria-label="可靠性压测概览">
+      <article class="summary-card">
+        <span class="summary-icon status-icon" aria-hidden="true"></span>
+        <div>
+          <div class="summary-label">作业状态</div>
+          <div id="overview-status" class="summary-value">未运行</div>
+        </div>
+      </article>
+      <article class="summary-card">
+        <span class="summary-icon asset-icon" aria-hidden="true"></span>
+        <div>
+          <div class="summary-label">可用项目</div>
+          <div id="overview-available" class="summary-value">-- / 3</div>
+        </div>
+      </article>
+      <article class="summary-card">
+        <span class="summary-icon source-icon" aria-hidden="true"></span>
+        <div>
+          <div class="summary-label">触发来源</div>
+          <div id="overview-source" class="summary-value">--</div>
+        </div>
+      </article>
+      <article class="summary-card">
+        <span class="summary-icon time-icon" aria-hidden="true"></span>
+        <div>
+          <div class="summary-label">最近耗时</div>
+          <div id="overview-duration" class="summary-value">--</div>
+        </div>
+      </article>
+    </section>
+
+    <div class="workspace">
+      <section class="panel control-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="section-kicker">BENCHMARKS</div>
+            <h2>选择可靠性压测项目</h2>
+          </div>
+          <span id="policy-state" class="policy-badge">读取配置</span>
+        </div>
+        <div id="policy" class="policy-message">正在读取配置…</div>
+        <div id="choices" class="benchmark-grid"></div>
+
+        <section id="profile-preview" class="profile-preview" hidden>
+          <div class="profile-preview-heading">
+            <div>
+              <div class="section-kicker">EFFECTIVE PROFILE</div>
+              <h3>本次执行参数与资源规模</h3>
+            </div>
+            <span class="readonly-badge">只读</span>
+          </div>
+          <p class="profile-preview-hint">
+            以下内容来自宿主机脚本的无副作用预检；网页不能修改执行器、MPI 参数或脚本。
+          </p>
+          <div id="profile-cards" class="profile-cards"></div>
+        </section>
+
+        <div class="run-settings">
+          <div class="timeout-field">
+            <label for="timeout">单次缩短超时</label>
+            <div class="input-shell">
+              <input id="timeout" type="number" min="1" placeholder="不得超过配置上限">
+              <span>秒</span>
+            </div>
+            <small>留空时使用各项目在 YAML 中配置的最大运行窗口</small>
+          </div>
+          <div class="actions">
+            <button id="start" class="primary-action" disabled>
+              <span class="button-play" aria-hidden="true"></span>
+              开始可靠性压测
+            </button>
+            <button id="cancel" class="danger-action" hidden>停止当前作业</button>
+          </div>
+        </div>
+        <div id="error" class="error-message" role="alert"></div>
+
+        <div id="progress-panel" class="progress-panel" hidden>
+          <div class="progress-copy">
+            <span id="progress-title">可靠性压测运行中</span>
+            <span id="progress-benchmark">正在准备…</span>
+          </div>
+          <div class="progress-track"><div class="progress-bar"></div></div>
+          <div class="progress-hint">请保持页面开启；页面刷新不会中断宿主机作业。</div>
+        </div>
+      </section>
+
+      <aside class="panel guide-panel">
+        <div class="section-kicker">COVERAGE</div>
+        <h2>能力覆盖</h2>
+        <div class="coverage-list">
+          <div class="coverage-item">
+            <span class="coverage-mark stream-mark"></span>
+            <div><b>内存子系统</b><small>STREAM · Copy / Scale / Add / Triad</small></div>
+          </div>
+          <div class="coverage-item">
+            <span class="coverage-mark hpl-mark"></span>
+            <div><b>浮点计算</b><small>HPL · Dense Linear Algebra</small></div>
+          </div>
+          <div class="coverage-item">
+            <span class="coverage-mark hpcg-mark"></span>
+            <div><b>综合计算</b><small>HPCG · Memory / Compute / MPI</small></div>
+          </div>
+        </div>
+        <div class="result-rule">
+          <span>判定规则</span>
+          <b>运行成功即通过</b>
+          <p>不设置性能阈值。达到配置时限且此前未发生错误，也记录为通过。</p>
+        </div>
+      </aside>
+    </div>
+
+    <div class="report-workspace">
+      <aside class="panel history-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="section-kicker">HISTORY</div>
+            <h2>最近作业</h2>
+          </div>
+          <span id="history-count" class="history-count">0</span>
+        </div>
+        <p class="history-hint">保留最近 100 次已完成作业，点击查看当次指标。</p>
+        <div id="history-list" class="history-list"></div>
+        <div id="empty-history" class="history-empty">完成首次压测后生成历史记录</div>
+      </aside>
+
+      <section class="panel results-panel">
+        <div class="panel-heading">
+          <div>
+            <div id="report-kicker" class="section-kicker">LATEST REPORT</div>
+            <h2 id="report-title">最近一次可靠性压测</h2>
+          </div>
+          <div class="report-heading-actions">
+            <button id="show-latest" class="text-action" hidden>查看最新</button>
+            <span id="status" class="status-badge neutral">未运行</span>
+          </div>
+        </div>
+        <div id="meta" class="report-meta">尚无可靠性压测报告</div>
+        <div id="empty-results" class="empty-state">
+          <div class="empty-chart" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <b>等待首次可靠性压测</b>
+          <span>完成后将在这里展示各项目状态、运行耗时与性能指标。</span>
+        </div>
+        <div id="result-cards" class="result-grid"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer>CATMonitor 可靠性压测 · STREAM / HPL / HPCG · Linux</footer>
+  <script>
+    window.__stressBootTimer = window.setTimeout(function () {
+      var policy = document.getElementById('policy');
+      if (policy && policy.textContent.indexOf('正在读取配置') >= 0) {
+        policy.textContent = '前端脚本未加载。请检查 /stress/static/stress.js 是否返回 200。';
+      }
+    }, 3000);
+  </script>
+  <script src="./static/stress.js?v=20260731.2"></script>
+</body>
+</html>

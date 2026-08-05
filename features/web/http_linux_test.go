@@ -74,7 +74,7 @@ func TestHTTPAPIReadOnlyConsumer(t *testing.T) {
 	)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(dir, logger)
+	srv := NewServer(dir, logger, nil, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	client := ts.Client()
@@ -84,7 +84,9 @@ func TestHTTPAPIReadOnlyConsumer(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("collectors status=%d want 200", code)
 	}
-	var comps []struct{ Component string `json:"component"` }
+	var comps []struct {
+		Component string `json:"component"`
+	}
 	if err := json.Unmarshal(body, &comps); err != nil {
 		t.Fatalf("decode collectors: %v", err)
 	}

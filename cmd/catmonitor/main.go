@@ -19,6 +19,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stragglerout"
+	stresscli "github.com/Computing-Availability-Tools/CATMonitor/features/stress/cli"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
@@ -49,6 +50,10 @@ func main() {
 		runCollect()
 	case "health":
 		runHealth()
+	case "stress":
+		if code := stresscli.Run(os.Args[2:], setupLogger(), os.Stdout, os.Stderr); code != 0 {
+			os.Exit(code)
+		}
 	case "list":
 		runList()
 	case "version":
@@ -68,6 +73,7 @@ Commands:
   daemon       Start daemon process (default)
   collect      Collect metrics once and print
   health       Run health check and print report
+  stress       Run an explicit stress benchmark job
   list         List all registered collectors
   version      Show version information
 

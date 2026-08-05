@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
 
@@ -20,12 +21,14 @@ import (
 const historyPoints = 60
 
 type Server struct {
-	dir    string
-	logger *slog.Logger
+	dir        string
+	logger     *slog.Logger
+	stress     *stress.Manager
+	stressAddr string
 }
 
-func NewServer(dir string, logger *slog.Logger) *Server {
-	return &Server{dir: dir, logger: logger}
+func NewServer(dir string, logger *slog.Logger, stressManager *stress.Manager, stressAddr string) *Server {
+	return &Server{dir: dir, logger: logger, stress: stressManager, stressAddr: stressAddr}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -40,6 +43,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/collectors", s.handleCollectors)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	if s.stress != nil {
+		stress.Register(mux, s.stress, s.stressAddr, s.logger)
+	}
 	return mux
 }
 
