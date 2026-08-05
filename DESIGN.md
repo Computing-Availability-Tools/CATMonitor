@@ -63,7 +63,7 @@
 >
 > v0.3.3 新增 **采集粒度控制**：`collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集；`internal/metrics` 暴露 `SetCollectionThreshold`/`AnyWanted`，`internal/collector` 经 `SetWantedChecker` DI 注入，采集器在执行采集前调用 `collector.AnyWanted(component, names)` 判断是否有目标指标通过阈值，无则整组跳过（如 NPU static/per-device 阶段、CPU/Memory/Disk 子指标组），降低无谓开销。daemon 与 `runCollect` 启动时均装配。**daemon 移除周期健康检查 goroutine**（健康度评估改由 `catmonitor health` 子命令按需执行）。**web 退出清 snapshot**。修复 `npu_other.go` 非 linux 桩 `collectDevice` 签名未同步 `npuDevice` 致 Windows 交叉编译失败（v0.3.2 起遗留）。
 
-> **v0.3.3 后续重构（`feature/catmonitor` 合入，底座版本号不变）**：① snapshot 生产统一收归 daemon——新增 `features/snapshot` 包（`PerCompWriter` 按 per-component 写 `snapshot_<comp>.json` + `GlobalWriter` 维护全局 `snapshot.json`），web/dfee 转为**只读消费者**不再各自采集（web 删 `DataCollector`/`config.go`/`config.yaml`，改 `-addr`/`-snapshot-dir` flag；dfee 转独立二进制 `catmonitor-dfee` `package main`，`:9528`）。② **Feature-scoped 采集**：`features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法；并派生 per-component cadence `C_comp = min(feature interval)`、`C_global = min(C_comp)`。详见 §6 Web、§7 dfee、§1.7-7。
+> **v0.3.3 后续重构（`feature/catmonitor` 合入，底座版本号不变）**：① snapshot 生产统一收归 daemon——新增 `features/snapshot` 包（`PerCompWriter` 按 per-component 写 `snapshot_<comp>.json` + `GlobalWriter` 维护全局 `snapshot.json`），web/dfee 转为**只读消费者**不再各自采集（web 删 `DataCollector`/`config.go`/`config.yaml`，改 `-addr`/`-snapshot-dir` flag；dfee 转独立二进制 `catmonitor-dfee` `package main`，`:9528`）。② **Feature-scoped 采集**：`features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法；并派生 per-component cadence `C_comp = min(feature interval)`、`C_global = min(C_comp)`。③ **DCMI 掉卡检测**：`source/dcmi` 新增 `DeviceNotReadyErrCode`(-8012)、`ErrorCodeList`（返回完整 hex 错误码列表 `DeviceErrors{Count,Codes}`）、`CardDrop`；NPU 新增 `card_drop` 指标（High）、`error_code` 升级为完整列表（High，`value`=数量、`labels.error_codes`=hex 列表），供故障检测匹配特定码。④ **故障订阅推送 `features/faultsub`**：`FaultStorage` 作为 daemon Storage 管道 tap，复用采集管道对 NPU 指标做故障判定（卡掉线/健康/错误码/HBM UCE/RoCE 链路），HTTP Webhook 推送 `FaultEvent` + REST 订阅 API（`:9101`），opt-in 默认 off。详见 §9。⑤ **落后节点 KPI 输出 `features/stragglerout`**：`StragglerStorage` 作为 daemon Storage 管道 tap，把 NPU KPI 按"每时刻×每卡"聚合追加写日级 JSONL，供 straggler 慢节点检测器消费，opt-in 默认 off。详见 §10。详见 §6 Web、§7 dfee、§9 faultsub、§10 stragglerout、§1.7-7。
 
 ### 1.2 跨平台架构设计
 
@@ -225,33 +225,50 @@ CATMonitor/
 │   │   ├── util.go                   #     公共工具（取最差子温度等）
 │   │   ├── metrics.yaml             #     health 自有指标目录（启动时优先读取）
 │   │   └── HEALTH_SPEC.md           #     健康度规则规格
-│   └── web/                         #   Web 仪表盘（v0.2.1 新增，v0.3.0 由 web/ 迁入 features/）
-│       ├── main.go                  #     入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
-│       ├── static.go                #     //go:embed static，内嵌前端资源
-│       ├── config.go                #     配置结构 + YAML 加载 + runtime.json 运行时覆盖
-│       ├── collector.go             #     DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
-│       ├── snapshot.go              #     Snapshot 结构（含 Specs 字段）+ 原子读写
-│       ├── hwinfo.go                #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info）
-│       ├── server.go                #     HTTP 路由与处理函数（含 dfee.Register，v0.3.1）
-│       ├── config.yaml              #     默认配置
-│       ├── metrics.yaml             #     web 自有指标目录（启动时优先读取）
-│       ├── static/                  #     前端资源（index.html + style.css + app.js，含能效分析导航入口）
-│       └── data/                    #     运行时数据（snapshot.json / runtime.json，git 忽略）
-│   └── dfee/                         #   能效监控模块（v0.3.1 新增，v0.3.2 增强：拖拽缩放/多选筛选/折叠）
-│       ├── dfee_SPEC.md             #     能效模块设计规格（唯一设计+规格文档）
-│       ├── energy_efficiency_metrics.md #  能效指标清单
-│       ├── filter.go                #     能效指标过滤 + 分组（通用筛选框架）
-│       ├── cpu_derive.go            #     CPU 8 jiffies → 7 利用率推导
-│       ├── net_derive.go            #     网络差值计算
-│       ├── handler.go               #     HTTP handler + 静态文件服务
-│       ├── embed.go                 #     //go:embed static
-│       ├── metrics.yaml             #     dfee 指标目录覆盖（CPU Low → Medium）
-│       └── static/                  #     前端（dfee.js + dfee.css + index.html，含拖拽缩放/多选筛选/折叠）
-│   └── exporter/                     #   Prometheus 导出模块（v0.3.2 新增）
-│       ├── exporter_SPEC.md         #     导出模块唯一设计+规格文档
-│       ├── prometheus.go            #     Encode()：Metric → Prometheus 文本（HELP/TYPE/labels，counter 推断）
-│       ├── storage.go                #     CachingStorage：实现 collector.Storage，包装 JSONLStorage + 内存缓存
-│       └── *_test.go                #     导出格式 + 缓存测试
+│   ├── snapshot/                    #   Snapshot 统一生产（v0.3.3 后续新增：daemon 唯一写者，供只读特性消费）
+│   │   ├── snapshot.go               #     CompSnapshot/GlobalSnapshot 结构 + 原子读写（Read/ReadGlobal）
+│   │   ├── comp.go                   #     PerCompWriter：按组件写 snapshot_<comp>.json（原子 rename）
+│   │   ├── global.go                 #     GlobalWriter：全局 snapshot.json（health/collectors/intervals/system_specs）
+│   │   ├── atomic.go                 #     原子写工具（临时文件 + os.Rename）
+│   │   ├── read.go                   #     只读读取入口（供 web/dfee 消费）
+│   │   ├── series.go                 #     环形历史（固定 60 点）
+│   │   └── hwinfo.go                 #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info）
+│   ├── web/                          #   Web 仪表盘（catmonitor-web，v0.3.3 后续转只读消费者）
+│   │   ├── main.go                   #     入口：-addr/-snapshot-dir flag + HTTP server + 端口回退 + 信号处理
+│   │   ├── server.go                 #     HTTP 路由（只读：/api/snapshot 组装 global+per-comp）
+│   │   ├── static.go                 #     //go:embed static，内嵌前端资源
+│   │   ├── metrics.yaml              #     web feature 指标目录（供 daemon LoadModuleOverride + SetFeatureScope）
+│   │   └── static/                   #     前端资源（index.html + style.css + app.js）
+│   ├── dfee/                         #   能效监控（catmonitor-dfee 独立二进制，v0.3.3 后续转只读消费者，:9528）
+│   │   ├── main.go                   #     入口：-addr/-snapshot-dir flag + HTTP server（package main）
+│   │   ├── dfee_SPEC.md             #     能效模块设计规格（唯一设计+规格文档）
+│   │   ├── energy_efficiency_metrics.md #  能效指标清单
+│   │   ├── filter.go                #     能效指标过滤 + 分组（通用筛选框架）
+│   │   ├── cpu_derive.go            #     CPU 8 jiffies → 7 利用率推导
+│   │   ├── net_derive.go            #     网络差值计算
+│   │   ├── handler.go               #     HTTP handler + 静态文件服务（/dfee/ + /api/dfee）
+│   │   ├── embed.go                 #     //go:embed static
+│   │   ├── metrics.yaml             #     dfee 指标目录覆盖（CPU Low → Medium）
+│   │   └── static/                  #     前端（dfee.js + dfee.css + index.html，含拖拽缩放/多选筛选/折叠）
+│   ├── exporter/                     #   Prometheus 导出模块（v0.3.2 新增）
+│   │   ├── exporter_SPEC.md         #     导出模块唯一设计+规格文档
+│   │   ├── prometheus.go            #     Encode()：Metric → Prometheus 文本（HELP/TYPE/labels，counter 推断）
+│   │   ├── storage.go                #     CachingStorage：实现 collector.Storage，包装 JSONLStorage + 内存缓存
+│   │   └── *_test.go                #     导出格式 + 缓存测试
+│   ├── faultsub/                    #   故障订阅推送（v0.3.3 后续新增，opt-in，:9101）
+│   │   ├── faultsub_SPEC.md         #     模块设计规格
+│   │   ├── event.go                 #     FaultEvent/FaultType/Severity 数据模型
+│   │   ├── subscription.go          #     Subscription/SubscriptionManager（订阅表+去抖）
+│   │   ├── detector.go              #     FaultDetector 故障判定规则引擎（卡掉线/健康/错误码/HBM UCE/RoCE 链路）
+│   │   ├── storage.go               #     FaultStorage：实现 collector.Storage（管道 tap，落盘+判定+分发）
+│   │   ├── dispatcher.go            #     Dispatcher：匹配+去抖+异步分发+环形缓冲
+│   │   ├── webhook.go               #     Webhook 推送器（net/http 客户端）
+│   │   └── server.go                #     REST 订阅 API（/faultsub/*）
+│   └── stragglerout/                #   落后节点 KPI 输出（v0.3.3 后续新增，opt-in）
+│       ├── stragglerout_SPEC.md     #     模块设计规格
+│       ├── storage.go                #     StragglerStorage：实现 collector.Storage（管道 tap，委托 inner + KPI 抽取缓冲 flush）
+│       ├── sample.go                #     KPISample 数据模型 + KPIMapper（NPU KPI → straggler 字段映射）
+│       └── writer.go                #     KPIWriter：日级 JSONL 追加写 + 保留期清理
 ├── configs/
 │   ├── catmonitor.yaml              # 默认配置文件
 │   └── metrics.yaml                 # 默认指标采集目录（6 部件，v0.3.0 新增）
@@ -514,7 +531,7 @@ nvidia-smi \
 | 数据来源 | `dcmi`(CGo)/`npu_smi`/`hccn_tool` 三个来源包；NPU 全部指标为 Linux 专属 |
 | 外部依赖 | `libdcmi.so`（CANN，CGo，需 `-tags dcmi`）；`npu-smi`、`hccn_tool`（昇腾驱动自带，无 CGo） |
 | 采集方式 | **device 并行采集**：collector 层每块 NPU 一个 goroutine，`WaitGroup` 等齐，单卡失败不影响其他卡 |
-| 平台分离 | `npu_linux.go`（`//go:build linux`，实现 119 指标）+ `npu_other.go`（`//go:build !linux`，no-op stub）；Windows 上 `Collect()` 整体降级跳过 |
+| 平台分离 | `npu_linux.go`（`//go:build linux`，实现 120 指标）+ `npu_other.go`（`//go:build !linux`，no-op stub）；Windows 上 `Collect()` 整体降级跳过 |
 | 可用性检测 | `dcmi.Default().Available()` = CGo provider 是否注册（`-tags dcmi` 时为 true）；命令类来源去掉 `Available()` 门控，直接调 + 处理 error |
 | Mock | 测试通过 `dcmi.SetMockProvider()`、`npu_smi.SetMock()`、`hccn_tool.SetMock()` 注入 |
 
@@ -524,7 +541,7 @@ nvidia-smi \
 Collect() {
   Phase 1: collectStatic(now)        // 全局/静态指标采 1 次：npu_num/comm_topo/driver_version/chip_type
   Phase 2: for each deviceID {
-    go collectDevice(devID, now)     // 每 device 一个 goroutine，采全部 119 指标
+    go collectDevice(devID, now)     // 每 device 一个 goroutine，采全部 120 指标
   }
   wg.Wait()                          // 等齐，合并结果
 }
@@ -532,8 +549,9 @@ Collect() {
 
 - 并行在 collector 层（来源层保持单 device 接口，简单可测）；ECC delta 用 mutex 保护 `prevEcc` map。
 - 既有 5 个指标改走 DCMI：utilization(`dcmi_get_device_utilization_rate`)、memory_usage(`dcmi_get_device_hbm_info`)、temperature(`dcmi_get_device_temperature`)、power_draw(`dcmi_get_device_power_info`)、health_status(`dcmi_get_device_health`)。
+- **掉卡检测（v0.3.3 后续增强）**：`error_code` 经 `source/dcmi.ErrorCodeList` 升级为返回**完整 hex 错误码列表**（`DeviceErrors{Count, Codes[]}`，如 `0x40f84e00` 掉卡），`value`=数量、`labels.error_codes`=逗号分隔 hex 列表，供 `features/faultsub` 故障检测器匹配特定码；新增 `card_drop`（经 `source/dcmi.CardDrop`，当 `dcmi_get_device_health` 返回 `DeviceNotReadyErrCode` -8012 时 `value`=1），显式 0/1 掉卡状态使故障检测器无需解析错误码即可触发。两者均为 High 优先级。
 
-**119 指标分布**（v0.3.2：74→119，新增 45 项 `hccn_tool` 网络统计，均为 Medium）：
+**120 指标分布**（v0.3.2：74→119，新增 45 项 `hccn_tool` 网络统计，均为 Medium；v0.3.3 后续：119→120，新增 `card_drop` 掉卡检测 High，`error_code` 升级 High）：
 
 | 组 | 指标数 | 来源 |
 |----|:------:|------|
@@ -548,9 +566,10 @@ Collect() {
 | LLC(3) | 3 | dcmi(LlcPerf) |
 | 带宽/网络 | 9 | hccn_tool + npu_smi(-t hccs-bw) + dcmi(NetworkHealth) |
 | hccn_tool 网络统计（v0.3.2 新增） | 45 | hccn_tool（`-i <id> -<opt> -g`，网口/PCIe 带宽、RoCE 速度/链路等扩展统计） |
-| **合计** | **119** | |
+| 掉卡检测（v0.3.3 后续新增） | 1 | dcmi（`CardDrop`：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode` -8012） |
+| **合计** | **120** | |
 
-**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）；无 NPU 硬件时输出 `npu_num=0`。`npu_smi`/`hccn_tool` 命令执行超时或缺失时返回 error，静默跳过。DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
+**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）；无 NPU 硬件时输出 `npu_num=0`。`npu_smi`/`hccn_tool` 命令执行超时或缺失时返回 error，静默跳过。掉卡判定：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode`（-8012）时 `CardDrop()` 判定设备未就绪/掉卡，`card_drop`=1；`ErrorCodeList()` 返回完整 hex 错误码列表（含 `0x40f84e00` 等掉卡码），供 `features/faultsub` 匹配。DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
 
 
 ### 2.6 Network 采集器
@@ -1162,6 +1181,160 @@ features/exporter/
 ├── prometheus.go             # Encode()：Metric → Prometheus 文本（HELP/TYPE/labels/counter 推断）+ ServeMetrics()
 ├── storage.go                # CachingStorage：实现 collector.Storage，包装 JSONLStorage + 内存缓存
 └── *_test.go                 # 导出格式 + 缓存测试（覆盖率 81.1%）
+```
+
+---
+
+## 9. 故障订阅推送模块设计（features/faultsub，v0.3.3 后续新增，opt-in）
+
+> 详细规格见 [`features/faultsub/faultsub_SPEC.md`](features/faultsub/faultsub_SPEC.md)。本节描述架构、数据流与集成方式。
+
+### 9.1 模块定位
+
+为 CATMonitor 提供故障信息的订阅/推送能力。外部故障管理者（如 EEP 弹性容错特性）可订阅 NPU 故障事件，daemon 在采集周期内判定故障并以 **HTTP Webhook** 主动推送 `FaultEvent`（JSON），同时提供 REST API 用于订阅注册/查询/快照/事件回补。核心原则：复用采集管道（`FaultStorage` 作为 daemon `collector.Storage` 管道 tap，一次 Write 同时落盘 + 故障判定，不改变 JSONL/Prometheus 输出）；零新依赖（仅 `net/http`）；事件驱动（按状态变迁推送，持续故障不重复，订阅级去抖抑制）；默认关闭。
+
+### 9.2 架构与数据流
+
+```
+cmd/catmonitor (daemon)
+  │
+  ├── Scheduler.Start(ctx, configs)
+  │     └── collectAndStore(c)
+  │           → c.Collect() → metrics.Filter(allMetrics)
+  │           → FaultStorage.Write(metrics)            [若 faultsub 启用]
+  │                 ├── 1. 委托内层 CachingStorage.Write（落盘 + 导出缓存，不变）
+  │                 ├── 2. FaultDetector.Detect(metrics) → []FaultEvent
+  │                 └── 3. Dispatcher.Dispatch(ev)
+  │                       ├── record → 环形缓冲（REST 事件回补）
+  │                       └── 匹配订阅 → shouldFire(去抖) →
+  │                             ├── webhook: go deliverWebhook → net/http POST
+  │                             └── poll: 已 record，无需动作
+  │
+  └── REST :9101 (net/http)
+        ├── POST   /faultsub/subscriptions        注册订阅（声明回调URL/类型/NPU/去抖）
+        ├── GET    /faultsub/subscriptions        列出
+        ├── GET    /faultsub/subscriptions/{id}   查看
+        ├── DELETE /faultsub/subscriptions/{id}   注销
+        ├── GET    /faultsub/snapshot             各 NPU 最新活跃故障快照
+        ├── GET    /faultsub/events?since=&type=&npu_id=  近期事件回补
+        ├── GET    /faultsub/types                支持的故障类型
+        ├── GET    /-/healthy                     200 OK
+        └── GET    /-/ready                       有采集过则 200，否则 503
+```
+
+### 9.3 故障判定规则（FaultDetector）
+
+纯 Go 规则引擎，消费 `collector.Metric`，按 `catmonitor.yaml` 的 `faultsub.rules` 开关启用（unset = enabled）：
+
+| FaultType | 触发条件 | 关联指标 |
+|------------|----------|----------|
+| `card_drop` | `card_drop`==1 | `npu/card_drop`（`dcmi_get_device_health` 返回 -8012） |
+| `npu_health` | `health_status` 非 0 | `npu/health_status` |
+| `npu_error_code` | `error_code` 数量 > 0 | `npu/error_code`（`labels.error_codes` hex 列表） |
+| `hbm_uce` | `hbm_double_ecc` > 0 | `npu/hbm_double_ecc` |
+| `ddr_uce` | `ddr_double_ecc` > 0 | `npu/ddr_double_ecc` |
+| `roce_link_down` | `roce_link_status` 非 0 | `npu/roce_link_status` |
+| `driver_unhealthy` | `driver_health` 非 0 | `npu/driver_health`（默认 disabled） |
+
+事件按状态变迁推送（出现/恢复），持续故障不重复；订阅级 `debounce_ms` 进一步抑制。
+
+### 9.4 集成方式（零侵入，opt-in）
+
+`cmd/catmonitor/main.go` 中可选包装（`faultsub.enabled=false` 时 `sink` 保持 `CachingStorage`，daemon 行为不变）：
+
+```go
+if cfg.FaultSub.Enabled {
+    det := faultsub.NewDetector(rules)
+    wh  := faultsub.NewWebhook(cfg.FaultSub.WebhookTimeout, logger)
+    disp := faultsub.NewDispatcher(wh, faultsub.NewSubscriptionManager(),
+        cfg.FaultSub.WebhookRetry, cfg.FaultSub.EventBuffer, logger)
+    fstore := faultsub.NewFaultStorage(cacheStore, det, disp, logger)
+    go faultsub.ServeAPI(ctx, cfg.FaultSub.RestAddr, disp, fstore, logger)
+    sink = fstore // scheduler 写经 FaultStorage（落盘 + 判定 + 分发）
+}
+```
+
+### 9.5 目录结构
+
+```
+features/faultsub/
+├── faultsub_SPEC.md         # 模块设计规格
+├── event.go                 # FaultEvent / FaultType / Severity 数据模型
+├── subscription.go          # Subscription / SubscriptionManager（订阅表+去抖）
+├── detector.go              # FaultDetector 故障判定规则引擎（纯 Go）
+├── storage.go               # FaultStorage：实现 collector.Storage（管道 tap）
+├── dispatcher.go            # Dispatcher：匹配+去抖+异步分发+环形缓冲
+├── webhook.go               # Webhook 推送器（net/http 客户端）
+├── server.go                # REST 订阅 API（/faultsub/*）
+└── *_test.go                # 各故障规则 + tap + 分发 + REST 测试
+```
+
+---
+
+## 10. 落后节点 KPI 输出模块设计（features/stragglerout，v0.3.3 后续新增，opt-in）
+
+> 详细规格见 [`features/stragglerout/stragglerout_SPEC.md`](features/stragglerout/stragglerout_SPEC.md)。本节描述架构、数据流与集成方式。
+
+### 10.1 模块定位
+
+为 straggler 慢节点检测器提供专用 KPI 时序文件，替代其自带 `kpi_collect.sh`。作为 daemon 的 `collector.Storage` 管道 tap（`StragglerStorage` 包装内层 `CachingStorage`），复用采集管道，把每次采集到的 NPU KPI 指标按"每时刻×每卡"聚合追加写为日级 JSONL，供 straggler CLI 读取。零新依赖（仅标准库），默认关闭（`straggler_output.enabled=false` 时无 KPI 文件、daemon 零回归）。
+
+### 10.2 架构与数据流
+
+```
+Scheduler → StragglerStorage.Write(metrics)
+              ├── 委托 inner.Write (CachingStorage → JSONL，不变)
+              └── KPIMapper.Extract(npu metrics) → 缓冲 → 周期 flush → KPIWriter.Append
+                    → {data_dir}/straggler_kpi_{date}.jsonl (保留 retention)
+```
+
+### 10.3 文件格式（JSONL，每行一个 KPISample）
+
+```json
+{"ts":1784547926,"vals":{"0":{"temp":47,"power":1628,"aicore_freq":1800,"aicore_util":45,"hbm_util":50,"tx_bandwidth":1250,"rx_pfc_pkt":0,"roce_tx_err_pkt":0,"roce_out_of_order":0,"roce_new_pkt_rty":0}},"cpu_avg":{"cpu1":"4.26"}}
+```
+
+字段与 straggler `resource.CSVRow` 1:1 对应，straggler 的 JSON reader 直接重建 `TimeSeriesData`。计数器写**原始累计值**（不做 delta），straggler 聚合时累加，语义对齐。
+
+### 10.4 指标映射（KPIMapper）
+
+| straggler 字段 | CATMonitor metric.Name | 来源 |
+|---|---|---|
+| temp | temperature | npu（DCMI） |
+| power | power_draw | npu（DCMI） |
+| aicore_freq | aicore_freq | npu（DCMI） |
+| aicore_util | utilization | npu（DCMI） |
+| hbm_util | memory_usage | npu（DCMI） |
+| tx_bandwidth | net_tx_bandwidth | npu（hccn_tool） |
+| rx_pfc_pkt | mac_rx_pfc_pkt_num | npu（hccn_tool） |
+| roce_tx_err_pkt | roce_tx_err_pkt_num | npu（hccn_tool） |
+| roce_out_of_order | roce_out_of_order_num | npu（hccn_tool） |
+| roce_new_pkt_rty | roce_new_pkt_rty / roce_retrans_pkt_num（别名兼容） | npu（hccn_tool） |
+| cpu_avg | cpu/usage | 按 cpu 标签聚合，忽略 total |
+
+### 10.5 集成方式（零侵入，opt-in）
+
+`cmd/catmonitor/main.go` 中可选包装：
+
+```go
+if cfg.StragglerOutput.Enabled {
+    kpiw  := stragglerout.NewKPIWriter(cfg.StragglerOutput.DataDir, cfg.StragglerOutput.Retention, logger)
+    sstore := stragglerout.NewStragglerStorage(cacheStore, stragglerout.NewKPIMapper(), kpiw,
+        cfg.StragglerOutput.FlushInterval, logger)
+    go func() { <-ctx.Done(); sstore.Flush(time.Now()) }() // 关闭时冲刷缓冲
+    sink = sstore
+}
+```
+
+### 10.6 目录结构
+
+```
+features/stragglerout/
+├── stragglerout_SPEC.md     # 模块设计规格
+├── storage.go                # StragglerStorage：实现 collector.Storage（管道 tap，委托 inner + KPI 抽取缓冲 flush）
+├── sample.go                # KPISample 数据模型 + KPIMapper（NPU KPI → straggler 字段映射）
+├── writer.go                # KPIWriter：日级 JSONL 追加写 + 保留期清理
+└── storage_test.go          # Extract 各 NPU 指标 + 别名 + cpu + tap + flush 落盘 + 保留期测试
 ```
 
 > 不应提交：`features/web/bin/`、`features/web/data/*`（构建/运行时产物，已 git 忽略）。

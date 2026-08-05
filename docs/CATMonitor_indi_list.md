@@ -3,10 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.3.3 ｜ **更新日期**: 2026-07-31 ｜ **指标总数**: 204（High 24 / Medium 121 / Low 59）
+> **版本**: v0.3.3 ｜ **更新日期**: 2026-08-05 ｜ **指标总数**: 205（High 26 / Medium 120 / Low 59）
 > **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
 > **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。v0.3.3 起 `collection.min_priority`（low/medium/high）按优先级阈值预过滤；v0.3.3 后续 `features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法。
-> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:9527）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表，只读消费 snapshot，:9528）+ `features/exporter`（Prometheus 导出 :9100/metrics）+ `features/faultsub`（故障订阅推送 :9101）。
+> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:9527）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表，只读消费 snapshot，:9528）+ `features/exporter`（Prometheus 导出 :9100/metrics）+ `features/faultsub`（故障订阅推送 :9101）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
 
 ---
 
@@ -28,10 +28,10 @@
 | Memory | 19 | 4 | 7 | 8 |
 | Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
-| NPU | 119 | 9 | 88 | 22 |
+| NPU | 120 | 11 | 87 | 22 |
 | Network | 5 | 1 | 3 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **204** | **24** | **121** | **59** |
+| **合计** | **205** | **26** | **120** | **59** |
 
 ---
 
@@ -955,7 +955,7 @@ NPU 采集器通过三类数据源获取华为昇腾 NPU 运行状态，且采�
 | 5.7 | chip_type | NPU芯片类型 | Low | 启动时1次 | 是 | - | DCMI dcmi_get_device_chip_info |
 | 5.8 | driver_version | NPU驱动版本 | Low | 启动时1次 | 是 | - | DCMI dcmi_get_driver_version |
 | 5.9 | driver_health | NPU驱动健康状态 | Medium | 10s | 是 | - | DCMI dcmi_get_driver_health |
-| 5.10 | error_code | NPU错误码 | Medium | 10s | 是 | - | DCMI dcmi_get_device_errorcode_v2 |
+| 5.10 | error_code | NPU错误码 | High | 10s | 是 | - | DCMI dcmi_get_device_errorcode_v2（ErrorCodeList，返回完整 hex 错误码列表） |
 | 5.11 | process_info | NPU进程PID信息 | Low | 30s | 否 | - | DCMI dcmi_get_device_resource_info |
 | 5.12 | process_total | NPU进程总数量 | Low | 30s | 否 | 个 | DCMI dcmi_get_device_resource_info |
 | 5.13 | comm_topo | NPU通信拓扑 | Low | 启动时1次 | 是 | - | npu-smi info -t topo |
@@ -1020,6 +1020,7 @@ NPU 采集器通过三类数据源获取华为昇腾 NPU 运行状态，且采�
 | 5.72 | pcie_rx_bandwidth | NPU PCIe接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (PCIe RX) |
 | 5.73 | hccs_tx_bandwidth | NPU HCCS发送带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i N -c 0 -time 50 |
 | 5.74 | hccs_rx_bandwidth | NPU HCCS接收带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i N -c 0 -time 50 |
+| 5.75 | card_drop | NPU卡掉线状态 | High | 3s | 是 | - | DCMI dcmi_get_device_health（DeviceNotReadyErrCode -8012，经 CardDrop 包装） |
 
 ### 采集方法
 
@@ -1119,12 +1120,24 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.10 error_code（NPU错误码）
 
-- **数据来源**：DCMI `dcmi_get_device_errorcode_v2(card, dev, &code)`
-- **采集方法**：取设备级错误码（0=无错误）
-- **Labels**：`npu_id`
+- **数据来源**：DCMI `dcmi_get_device_errorcode_v2(card, dev, &count, &codes[], n)`（经 `source/dcmi.ErrorCodeList` 包装）
+- **采集方法**：返回设备级**完整错误码列表**（hex 字符串，如 `0x40f84e00` 表示掉卡）；`value` 填错误码**数量**（向后兼容 Prometheus 计数器），完整 hex 列表放 `labels.error_codes`（逗号分隔），供 `features/faultsub` 故障检测器匹配特定错误码而非仅靠计数
+- **Labels**：`npu_id`、`error_codes`（逗号分隔的 hex 列表，如 `0x40f84e00,0x00000001`）
+- **优先级**：High（`configs/metrics.yaml`）
 - **输出示例**：
 ```json
-{"component":"npu","name":"error_code","value":0,"unit":"","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"npu","name":"error_code","value":2,"unit":"","labels":{"npu_id":"0","error_codes":"0x40f84e00,0x00000001"},"timestamp":"2026-08-05T10:30:00Z"}
+```
+
+#### 5.75 card_drop（NPU卡掉线状态）
+
+- **数据来源**：DCMI `dcmi_get_device_health(card, dev, &health)`（经 `source/dcmi.CardDrop` 包装）
+- **采集方法**：当 `dcmi_get_device_health` 返回 `DeviceNotReadyErrCode`（-8012，设备未就绪/掉卡）时判定为掉卡；`value`=1 表示掉卡，0 表示正常。显式 0/1 指标，使 `features/faultsub` 故障检测器无需解析错误码即可触发掉卡事件
+- **Labels**：`npu_id`
+- **优先级**：High（`configs/metrics.yaml`）
+- **输出示例**：
+```json
+{"component":"npu","name":"card_drop","value":0,"unit":"","labels":{"npu_id":"0"},"timestamp":"2026-08-05T10:30:00Z"}
 ```
 
 #### 5.11 process_info（NPU进程PID信息）
@@ -1941,7 +1954,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 
 ## 附录B：已实现采集指标清单
 
-> 以下 159 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、Disk 扩展至 9、NPU 扩展至 74 个指标，Chassis 新增 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
+> 以下 205 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、Disk 扩展至 9、NPU 扩展至 120 个指标（含 `card_drop` 掉卡检测），Chassis 新增 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
 ### CPU（40 个）
 
@@ -2038,7 +2051,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 6 | ecc_errors | ECC错误数 | Medium | 次 |
 | 7 | clock_frequency | 时钟频率 | Low | MHz |
 
-### NPU（74 个）
+### NPU（120 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2051,7 +2064,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 7 | chip_type | NPU芯片类型 | Low | - |
 | 8 | driver_version | NPU驱动版本 | Low | - |
 | 9 | driver_health | NPU驱动健康状态 | Medium | - |
-| 10 | error_code | NPU错误码 | Medium | - |
+| 10 | error_code | NPU错误码 | High | - |
 | 11 | process_info | NPU进程PID信息 | Low | - |
 | 12 | process_total | NPU进程总数量 | Low | 个 |
 | 13 | comm_topo | NPU通信拓扑 | Low | - |
@@ -2161,6 +2174,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 117 | nic_tx_all_oct_num | NIC发送总报文字节数 | Medium | bytes |
 | 118 | nic_rx_all_pkg_num | NIC接收总报文数 | Medium | 个 |
 | 119 | nic_rx_all_oct_num | NIC接收总报文字节数 | Medium | bytes |
+| 120 | card_drop | NPU卡掉线状态 | High | - |
 
 ### Network（5 个）
 
@@ -2190,7 +2204,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | Memory | 19 | 4 | 7 | 8 |
 | Disk | 9 | 1 | 5 | 3 |
 | GPU | 7 | 3 | 3 | 1 |
-| NPU | 119 | 9 | 88 | 22 |
+| NPU | 120 | 11 | 87 | 22 |
 | Network | 5 | 1 | 3 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **204** | **24** | **121** | **59** |
+| **合计** | **205** | **26** | **120** | **59** |

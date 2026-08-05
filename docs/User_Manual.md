@@ -116,7 +116,27 @@ snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消�
   enabled: false          # off 时 daemon 不写 snapshot；on 时 web/dfee 须以只读消费者运行
   dir: /var/lib/catmonitor/snapshot
 
-# faultsub / straggler_output 为 opt-in 特性，默认 off，详见对应 features/*_SPEC.md
+faultsub:                 # 故障订阅推送（默认 off）；详见 features/faultsub/faultsub_SPEC.md
+  enabled: false
+  rest_addr: ":9101"      # 订阅 REST API 监听地址
+  webhook_timeout: 5s     # webhook 推送超时
+  webhook_retry: 1        # 失败重试次数
+  event_buffer: 1024     # 近期事件环形缓冲（GET /faultsub/events 回补）
+  defaults: { debounce_ms: 0, min_severity: "warning" }
+  rules:                  # 故障判定规则开关（unset = enabled）；含 NPU 掉卡检测 card_drop（基于 card_drop 指标 / DCMI DeviceNotReady -8012）
+    card_drop: true
+    npu_health: true
+    npu_error_code: true
+    hbm_uce: true
+    ddr_uce: true
+    roce_link_down: true
+    driver_unhealthy: false
+
+straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详见 features/stragglerout/stragglerout_SPEC.md
+  enabled: false
+  data_dir: /var/lib/catmonitor/straggler
+  retention: 360h         # 15 天
+  flush_interval: 60s    # 内存缓冲 flush 周期
 ```
 
 **字段用途**：
@@ -130,6 +150,8 @@ snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消�
 | `collection.min_priority` | daemon / collect | 按优先级阈值预过滤采集粒度 |
 | `features` | daemon | feature-scope 白名单：各 feature `metrics.yaml` 并集；派生 per-component cadence `C_comp = min(feature interval)` |
 | `snapshot.enabled` / `.dir` | daemon | snapshot 生产开关与目录（on 时 web/dfee 只读消费） |
+| `faultsub.*` | daemon | 故障订阅推送 opt-in：`enabled`/`rest_addr`(:9101)/`webhook_*`/`event_buffer`/`defaults`/`rules`（含 `card_drop` 掉卡检测开关）；off 时 daemon 行为不变 |
+| `straggler_output.*` | daemon | 落后节点 KPI 输出 opt-in：`enabled`/`data_dir`/`retention`/`flush_interval`；off 时无 KPI 文件 |
 
 ### 配置路径
 
@@ -138,7 +160,7 @@ snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消�
 | Linux | `/etc/catmonitor/catmonitor.yaml` | `/var/lib/catmonitor/data` |
 | Windows | `C:\ProgramData\catmonitor\catmonitor.yaml` | `C:\ProgramData\catmonitor\data` |
 
-可用 `-c` 覆盖配置路径。指标采集目录 `metrics.yaml` 加载顺序：环境变量 `CATMONITOR_METRICS` → 配置目录下 `metrics.yaml` → 开发回退 `configs/metrics.yaml`。
+可用 `-config` 覆盖配置路径（注：短 flag `-c` 已注册但未生效，请用长形式 `-config`）。指标采集目录 `metrics.yaml` 加载顺序：环境变量 `CATMONITOR_METRICS` → 配置目录下 `metrics.yaml` → 开发回退 `configs/metrics.yaml`。
 
 ---
 
@@ -424,7 +446,7 @@ catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 | 缺失项 | 行为 |
 |--------|------|
 | `nvidia-smi` | gpu 采集器返回空，collect 跳过，health 不列入 GPU |
-| `npu-smi` / CANN | npu 返回 `npu_num=0`（无 `-tags dcmi` 时 DCMI 降级） |
+| `npu-smi` / CANN | npu 返回 `npu_num=0`（无 `-tags dcmi` 时 DCMI 降级）；`error_code`/`card_drop` 不产生，faultsub 无事件 |
 | `ipmitool` / BMC | chassis 采集器返回空，dfee 机箱图表 series 为空 |
 | `smartctl` | disk 的 `smart_status` 缺失，health 扣分但不中断 |
 
@@ -435,7 +457,7 @@ catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 ## 10. 扩展
 
 - **新增部件采集器**：实现 `Collector` 接口并在 `init()` 注册 + `main.go` 加 `import _`，核心代码零修改。详见 [DESIGN.md §1.3](../DESIGN.md)。
-- **Web 接入新部件**：`features/web/main.go` 加一行 blank import，导航/卡片/详情页自动出现。
+- **Web 展示新部件**：在 daemon 侧注册新采集器（见上），snapshot 即包含其指标，web 仪表盘自动展示（web 是只读消费者，不再 blank import 采集器、不改 web 代码）。
 - **新增能效图表**：`features/dfee/filter.go` 加分组条目 + `dfee.js` 加图表。
 
 ---
