@@ -22,6 +22,10 @@ import (
 func main() {
 	addr := flag.String("addr", ":9528", "listen address (port taken => auto +1)")
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
+	exporter := flag.String("exporter", "disabled", "enable Prometheus exporter: enabled|disabled")
+	exporterPort := flag.String("exporter_port", "9333", "exporter listen port")
+	device := flag.String("device", "", "NPU device filter (comma-separated, e.g. 0,1); empty = all")
+	dockerContainer := flag.String("docker-container", "", "docker container name for software version collection")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -46,11 +50,30 @@ func main() {
 		}
 	}()
 
+	// Start Prometheus exporter if enabled.
+	var exporterServer *http.Server
+	if *exporter == "enabled" {
+		logger.Info("collecting static info for exporter...")
+		exp := NewExporter(*dir, *device, *dockerContainer)
+		expMux := http.NewServeMux()
+		expMux.Handle("/metrics", exp)
+		exporterServer = &http.Server{Addr: ":" + *exporterPort, Handler: expMux}
+		go func() {
+			logger.Info("exporter starting", "port", *exporterPort)
+			if err := exporterServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("exporter server error", "error", err)
+			}
+		}()
+	}
+
 	<-ctx.Done()
 	logger.Info("shutting down", "signal", ctx.Err())
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = httpServer.Shutdown(shutCtx)
+	if exporterServer != nil {
+		_ = exporterServer.Shutdown(shutCtx)
+	}
 }
 
 // listenWithFallback tries to listen on initialAddr; if the port is already in

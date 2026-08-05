@@ -355,6 +355,26 @@ components:
         priority: Low
         unit: "ms/s"
         static: false
+      - name: read_sectors_total
+        cn_name: "磁盘读扇区总数"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: written_sectors_total
+        cn_name: "磁盘写扇区总数"
+        priority: Medium
+        unit: ""
+        static: false
+      - name: read_time_total
+        cn_name: "磁盘读耗时总计"
+        priority: Medium
+        unit: "ms"
+        static: false
+      - name: write_time_total
+        cn_name: "磁盘写耗时总计"
+        priority: Medium
+        unit: "ms"
+        static: false
   - component: gpu
     metrics:
       - name: utilization
