@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -17,6 +18,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/features/exporter"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/faultsub"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/health/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stragglerout"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
@@ -67,7 +69,7 @@ Usage:
 Commands:
   daemon       Start daemon process (default)
   collect      Collect metrics once and print
-  health       Run health check and print report
+  health       Run health check, or a health subfeature command
   list         List all registered collectors
   version      Show version information
 
@@ -119,6 +121,20 @@ func loadConfig() *config.Config {
 	// Scoped collection: when features non-empty, only metrics listed by some
 	// enabled feature (AND priority >= min_priority) are collected. Empty -> unscoped.
 	metrics.SetFeatureScope(featurePaths)
+	return cfg
+}
+
+func loadConfigPath(configPath string) *config.Config {
+	metricsPaths := []string{os.Getenv("CATMONITOR_METRICS"), filepath.Join(filepath.Dir(configPath), "metrics.yaml"), "configs/metrics.yaml"}
+	if err := metrics.Init(metricsPaths...); err != nil {
+		slog.Error("metrics catalog init failed", "error", err)
+		os.Exit(1)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		slog.Error("failed to load config, using defaults", "error", err)
+		return config.Default()
+	}
 	return cfg
 }
 
@@ -324,6 +340,12 @@ func runCollect() {
 }
 
 func runHealth() {
+	if len(os.Args) > 2 && os.Args[2] == "stress" {
+		if code := runStress(os.Args[3:]); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	cfg := loadConfig()
 	// Health module reads its own metrics.yaml first (merged over the default).
 	if err := metrics.LoadModuleOverride("features/health/metrics.yaml"); err != nil {
@@ -361,6 +383,113 @@ func runHealth() {
 	} else {
 		printHealthJSON(score)
 	}
+}
+
+func runStress(args []string) int {
+	if stressHelpRequested(args) {
+		printStressUsage()
+		return 0
+	}
+	if len(args) == 0 {
+		printStressUsage()
+		return 0
+	}
+	if args[0] != "run" {
+		fmt.Fprintf(os.Stderr, "health stress: unknown subcommand %q\n", args[0])
+		printStressUsage()
+		return 2
+	}
+	configPath, names, output, err := stressArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "health stress:", err)
+		return 2
+	}
+	manager := stress.NewManager(loadConfigPath(configPath).Health.Stress)
+	report, err := manager.Start(names)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "health stress:", err)
+		return 1
+	}
+	for report.Status == stress.StatusRunning {
+		time.Sleep(200 * time.Millisecond)
+		report, err = manager.Job(report.JobID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "health stress:", err)
+			return 1
+		}
+	}
+	if output == "table" {
+		printStressTable(report)
+	} else {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+	}
+	if report.Status != stress.StatusHealthy {
+		return 1
+	}
+	return 0
+}
+
+func stressHelpRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+func printStressUsage() {
+	fmt.Println("Usage:\n  catmonitor health stress run [--bench hpl,hpcg,stream] [-c config.yaml] [-o json|table]\n\nRun explicitly enabled Linux health stress benchmarks.\n\nOptions:\n  -b, --bench       Comma-separated benchmark names\n  -c, --config      CATMonitor configuration file path\n  -o, --output      json (default) or table\n  -h, --help        Show this help")
+}
+
+func stressArgs(args []string) (string, []string, string, error) {
+	configPath, output := platform.ConfigPath(), "json"
+	var names []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "run":
+		case "-c", "--config":
+			if i+1 >= len(args) {
+				return "", nil, "", fmt.Errorf("%s requires a path", args[i])
+			}
+			i++
+			configPath = args[i]
+		case "-o", "--output":
+			if i+1 >= len(args) {
+				return "", nil, "", fmt.Errorf("%s requires json or table", args[i])
+			}
+			i++
+			output = args[i]
+		case "--bench", "-b":
+			if i+1 >= len(args) {
+				return "", nil, "", fmt.Errorf("%s requires a comma-separated list", args[i])
+			}
+			i++
+			names = strings.Split(args[i], ",")
+		default:
+			return "", nil, "", fmt.Errorf("unknown argument %q", args[i])
+		}
+	}
+	if output != "json" && output != "table" {
+		return "", nil, "", fmt.Errorf("output must be json or table")
+	}
+	return configPath, names, output, nil
+}
+
+func printStressTable(report stress.Report) {
+	fmt.Printf("\nCATMonitor Stress Report  %s\n", report.HealthCondition)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Benchmark\tStatus\tDuration\tValues\tMessage")
+	for _, result := range report.Benchmarks {
+		values := make([]string, 0, len(result.Values))
+		for key, value := range result.Values {
+			values = append(values, fmt.Sprintf("%s=%.2f", key, value))
+		}
+		sort.Strings(values)
+		fmt.Fprintf(w, "%s\t%s\t%dms\t%s\t%s\n", result.Name, result.Status, result.DurationMS, strings.Join(values, ", "), result.Message)
+	}
+	w.Flush()
 }
 
 func runList() {
