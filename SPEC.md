@@ -46,11 +46,13 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 模块 | 功能 | 规格 |
 |------|------|------|
-| 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（14 包） + 指标采集目录 | [DESIGN.md](DESIGN.md) §1-2 |
+| 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（14 包） + 指标采集目录（含 feature-scope 白名单） | [DESIGN.md](DESIGN.md) §1-2 |
 | `features/health` | 健康度评估：消费采集指标，按部件评估器 + 权重自适应，输出总分/等级/扣分明细 | [HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) |
-| `features/web` | Web 仪表盘二进制：概览页 + 部件详情页 + 趋势 + 设备规格，REST API | [Web_SPEC.md](features/web/Web_SPEC.md) |
-| `features/dfee` | 能效监控 SPA：能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
+| `features/snapshot` | Snapshot 统一生产：daemon 唯一生产 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs），只读特性消费快照 | [DESIGN.md](DESIGN.md) §6 |
+| `features/web` | Web 仪表盘二进制：**只读消费** snapshot，概览页 + 部件详情页 + 趋势 + 设备规格，REST API | [Web_SPEC.md](features/web/Web_SPEC.md) |
+| `features/dfee` | 能效监控独立二进制：**只读消费** snapshot，能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
 | `features/exporter` | Prometheus 导出：CachingStorage 包装存储 + `/metrics` 端点 + 健康端点 | [exporter_SPEC.md](features/exporter/exporter_SPEC.md) |
+| `features/faultsub` | 故障订阅推送：NPU 故障判定 + HTTP Webhook 推送 + 订阅/快照/事件 REST API | [faultsub_SPEC.md](features/faultsub/faultsub_SPEC.md) |
 
 ---
 
@@ -117,6 +119,8 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 为统一管控"采哪些指标、按什么优先级、默认是否采集"，提供指标采集目录（`configs/metrics.yaml` 为默认目录，模块可用自有 `metrics.yaml` 按 name 覆盖合并）。默认策略：High/Medium + 静态身份指标默认采集，Low 诊断指标默认不采集。目录中缺失的指标默认放行，避免静默丢数据。
 
+**Feature-scoped 采集**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标（每个 feature 的 `metrics.yaml` 列出其需要的指标 name）。daemon 启动时加载各 feature 覆盖后，以 `SetFeatureScope` 取各 feature 列出指标的**并集**建立白名单；`features` 非空时，`metrics.Filter` 只保留白名单内且 `priority ≥ collection.min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 为空则退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 只采 dfee `metrics.yaml` 列出的指标并集，`features: [web, dfee]` 采 web∪dfee 并集。
+
 ---
 
 ## 5. 命令行功能
@@ -143,24 +147,26 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 ### 6.1 Web 仪表盘
 
-独立二进制 `catmonitor-web`，可视化单台服务器的健康度与各部件采集指标。与采集守护进程/CLI 解耦，以 `snapshot.json` 为读写边界。
+独立二进制 `catmonitor-web`，**只读消费** daemon 产出的 snapshot（全局 `snapshot.json` + per-component `snapshot_<comp>.json`），可视化单台服务器的健康度与各部件采集指标。不再自行采集——采集与 snapshot 生产统一由 daemon 完成。
 
 - **概览页**：整体健康度 + 设备规格面板 + 各部件状态 + 部件概览卡片（趋势 sparkline）
 - **部件详情页**：部件得分/扣分项 + 趋势面板 + 全部指标表
-- **REST API**：`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`
+- **REST API**（只读）：`GET /api/snapshot`（组装 global+per-comp）、`GET /api/collectors`、`GET /api/config`
+- **启动参数**：`-addr`（默认 `:9527`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）
 - **端口回退**：`:9527` 被占用时自动 +1 递增
 
 > 详见 [features/web/Web_SPEC.md](features/web/Web_SPEC.md)。
 
 ### 6.2 能效监控（dfee）
 
-`/dfee/` SPA，专门展示能效相关指标的实时图表。
+独立二进制 `catmonitor-dfee`（默认端口 `:9528`），**只读消费** daemon 产出的 snapshot，渲染 `/dfee/` SPA 展示能效相关指标的实时图表。
 
-- **能效指标过滤**：从全量指标过滤能效项，按部件分组
+- **能效指标过滤**：从 snapshot 指标过滤能效项，按部件分组
 - **CPU 利用率推导**：8 个原始 jiffies → 7 项利用率百分比（后端有状态 delta）
 - **网络字节差值**：累计值 → 采集间增量
 - **交互**：卡片拖拽重排 + 手柄缩放 + 虚线对齐辅助、多选下拉筛选、模块折叠
-- **解耦**：独立 Go package，只读 `snapshot.json`，不修改现有 web 业务代码
+- **解耦**：独立二进制（`features/dfee` package main），只读 snapshot，不修改 web 业务代码
+- **启动参数**：`-addr`（默认 `:9528`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）
 
 > 详见 [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md)。
 
@@ -204,11 +210,19 @@ storage:
 
 health:
   enabled: true
-  interval: 5s
   weight_scheme: auto     # auto | cpu_only | accelerated_8card | accelerated_4card
 
 collection:
   min_priority: low       # low (全采) | medium (跳过 Low) | high (仅 High)
+
+features: [dfee]          # feature-scope 白名单：各 feature metrics.yaml 并集；空 = 默认目录全集
+                          # 派生 per-component 采集 cadence C_comp = min(声明该 comp 的 feature interval)
+
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 off）
+  enabled: false          # off 时 daemon 不写 snapshot 文件，行为同前
+  dir: /var/lib/catmonitor/snapshot   # snapshot_<comp>.json + snapshot.json 目录
+
+# faultsub / straggler_output 为 opt-in 特性，默认 off，详见对应 features/*_SPEC.md
 ```
 
 ---

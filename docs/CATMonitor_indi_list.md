@@ -3,10 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.3.3 ｜ **更新日期**: 2026-07-28 ｜ **指标总数**: 204（High 24 / Medium 121 / Low 59）
+> **版本**: v0.3.3 ｜ **更新日期**: 2026-07-31 ｜ **指标总数**: 204（High 24 / Medium 121 / Low 59）
 > **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
-> **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。v0.3.3 起 `collection.min_priority`（low/medium/high）可按优先级阈值预过滤采集粒度。
-> **新增模块**：`features/dfee`（能效监控 25 张实时图表）+ `features/exporter`（Prometheus 导出 :9100/metrics）。
+> **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。v0.3.3 起 `collection.min_priority`（low/medium/high）按优先级阈值预过滤；v0.3.3 后续 `features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法。
+> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:9527）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表，只读消费 snapshot，:9528）+ `features/exporter`（Prometheus 导出 :9100/metrics）+ `features/faultsub`（故障订阅推送 :9101）。
 
 ---
 

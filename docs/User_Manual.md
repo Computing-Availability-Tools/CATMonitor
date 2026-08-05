@@ -44,24 +44,30 @@ curl -s http://localhost:9100/metrics | head # 抓取 Prometheus 指标
 ### 1.2 编译
 
 ```bash
-# 主守护进程二进制
-make build
-# 等价于
+# 一键构建 daemon + web + dfee 三个二进制
+make all
+
+# 分别构建
+make build          # daemon: bin/catmonitor（CANN DCMI 头存在时自动加 -tags dcmi）
+make web            # catmonitor-web: bin/catmonitor-web
+make dfee           # catmonitor-dfee: bin/catmonitor-dfee
+
+# 或直接 go build
 go build -o bin/catmonitor ./cmd/catmonitor
+go build -o bin/catmonitor-web ./features/web
+go build -o bin/catmonitor-dfee ./features/dfee
 
-# Web 仪表盘二进制
-go build -o features/web/bin/catmonitor-web ./features/web
-
-# NPU 服务器启用 DCMI CGo 采集
+# NPU 服务器强制启用 DCMI CGo 采集（make build 已自动探测，手动时需加 tag）
 go build -tags dcmi -o bin/catmonitor ./cmd/catmonitor
 
 # Windows 交叉编译
 GOOS=windows go build -o bin/catmonitor.exe ./cmd/catmonitor
-GOOS=windows go build -o features/web/bin/catmonitor-web.exe ./features/web
+GOOS=windows go build -o bin/catmonitor-web.exe ./features/web
+GOOS=windows go build -o bin/catmonitor-dfee.exe ./features/dfee
 ```
 
-> 默认构建排除 CGo（`dcmi_cgo.go` 在 `//go:build cgo && linux && dcmi` 后），无 CANN SDK 也能编译；NPU 的 DCMI 指标在无 `-tags dcmi` 时优雅降级。
-> `make build` 产物为 `bin/catmonitor`（Makefile 变量 `BIN=bin/catmonitor`）；Web 二进制需单独 `go build`（无 make 目标）。
+> 默认构建排除 CGo（`dcmi_cgo.go` 在 `//go:build cgo && linux && dcmi` 后），无 CANN SDK 也能编译；NPU 的 DCMI 指标在无 `-tags dcmi` 时优雅降级。`make build` 自动探测 `/usr/local/Ascend/driver/include/dcmi_interface_api.h`，存在则加 `-tags dcmi`（可用 `DCMITAG=` 强制关闭、`DCMITAG=-tags dcmi` 强制开启）。
+> 三个二进制产物均在 `bin/`（Makefile：`make all` = build + web + dfee）。
 
 ### 1.3 安装（Linux systemd）
 
@@ -98,12 +104,19 @@ storage:
   rotation: daily           # 按天轮转
 
 health:
-  enabled: true             # v0.3.3 起 daemon 不再读取（保留字段，当前不生效）
-  interval: 5s              # 同上，daemon 不再周期评估健康度
+  enabled: true             # v0.3.3 起 daemon 不再周期评估（保留字段）
   weight_scheme: auto      # 仅 `catmonitor health` CLI 使用：auto | cpu_only | accelerated_8card | accelerated_4card
 
 collection:
   min_priority: low        # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
+
+features: [dfee]          # feature-scope 白名单（各 feature metrics.yaml 并集；空 = 默认全集）；派生 per-comp cadence
+
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 off）
+  enabled: false          # off 时 daemon 不写 snapshot；on 时 web/dfee 须以只读消费者运行
+  dir: /var/lib/catmonitor/snapshot
+
+# faultsub / straggler_output 为 opt-in 特性，默认 off，详见对应 features/*_SPEC.md
 ```
 
 **字段用途**：
@@ -113,8 +126,10 @@ collection:
 | `server.type` | daemon / health | 服务器类型提示，`auto` 由实际采集指标自动判定 |
 | `collectors.*.enabled` / `.interval` | daemon | 各采集器开关与采集周期 |
 | `storage.*` | daemon | JSONL 数据目录、保留时长、轮转策略 |
-| `health.weight_scheme` | `health` CLI | 健康度权重方案；`enabled`/`interval` v0.3.3 起 daemon 不再使用 |
+| `health.weight_scheme` | `health` CLI | 健康度权重方案；`enabled` v0.3.3 起 daemon 不再周期评估 |
 | `collection.min_priority` | daemon / collect | 按优先级阈值预过滤采集粒度 |
+| `features` | daemon | feature-scope 白名单：各 feature `metrics.yaml` 并集；派生 per-component cadence `C_comp = min(feature interval)` |
+| `snapshot.enabled` / `.dir` | daemon | snapshot 生产开关与目录（on 时 web/dfee 只读消费） |
 
 ### 配置路径
 
@@ -242,35 +257,38 @@ daemon 启动后：
 
 ## 4. Web 仪表盘（catmonitor-web）
 
-独立的 Web 仪表盘二进制，可视化单机健康度与各部件指标。与采集守护进程/CLI 解耦，以 `features/web/data/snapshot.json` 为读写边界。
+独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标。不再自行采集——需先启动 daemon 并开启 `snapshot.enabled`。
 
 ### 4.1 启动
 
 ```bash
-# 仓库根目录运行（config.yaml 中 snapshot_path 为相对路径）
-./features/web/bin/catmonitor-web -config features/web/config.yaml
+# 先启动 daemon 并在 catmonitor.yaml 中开启 snapshot 生产：
+#   snapshot:
+#     enabled: true
+#     dir: /var/lib/catmonitor/snapshot
+catmonitor daemon
+
+# 再启动 web 只读消费者（-snapshot-dir 须与 daemon snapshot.dir 一致）
+catmonitor-web -addr :9527 -snapshot-dir /var/lib/catmonitor/snapshot
 # 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting"）
 ```
 
-> 端口 `:9527` 被占用时自动 +1 回退（`:9528`…）。
+> 端口 `:9527` 被占用时自动 +1 回退（`:9528`…）。能效监控改为独立二进制 `catmonitor-dfee`（见 §6），不再作为 web 子路由。
 
 ### 4.2 页面
 
 - **概览页**（`/`）：整体健康度（总分 + 进度条 + 等级）+ 设备规格面板（点击展开完整规格）+ 各部件状态 + 部件概览卡片（含趋势 sparkline）
-- **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（该部件全部历史序列 sparkline）+ 全部指标表
-- **能效监控**（`/dfee/`）：见 §6
+- **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（该部件全部历史序列 sparkline，数据来自 daemon 产出的 per-comp history）+ 全部指标表
 
-### 4.3 REST API
+### 4.3 REST API（只读）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/snapshot` | 最新快照（健康度 + 指标 + 历史 + 静态规格） |
-| GET | `/api/collectors` | 采集器注册表元数据 |
-| GET / POST | `/api/config` | 读取 / 更新刷新间隔（热生效 + 持久化到 `runtime.json`） |
-| POST | `/api/refresh` | 请求立即采集 |
-| GET | `/api/dfee` | 过滤+推导后的能效图表数据（见 §6） |
+| GET | `/api/snapshot` | 组装 global+per-comp 快照（健康度 + 指标 + 历史 + 静态规格） |
+| GET | `/api/collectors` | 采集器注册表元数据（取自 daemon snapshot） |
+| GET | `/api/config` | 当前配置（cadence + history_points，只读） |
 
-> 详细设计与扩展机制见 [features/web/Web_SPEC.md](../features/web/Web_SPEC.md)。
+> 重构删除 `POST /api/config`（间隔热改）与 `POST /api/refresh`（立即采集）——刷新间隔由 daemon cadence 决定。详细设计与扩展机制见 [features/web/Web_SPEC.md](../features/web/Web_SPEC.md)。
 
 ---
 
@@ -326,19 +344,28 @@ scrape_configs:
 
 ## 6. 能效监控（dfee）
 
-能效监控模块 `features/dfee` 提供 `/dfee/` SPA，专门展示能效相关指标的实时图表。
+能效监控独立二进制 `catmonitor-dfee`（`features/dfee` package main），**只读消费** daemon 产出的 snapshot，渲染能效相关指标的实时图表 SPA。
 
 ### 6.1 启动
 
-dfee 随 `catmonitor-web` 启动自动挂载（`features/web/server.go` 注册 `dfee.Register`）。访问 `http://localhost:9527/dfee/`。
+```bash
+# 先启动 daemon 并开启 snapshot 生产（同 §4.1）
+catmonitor daemon
+
+# 启动 dfee 独立二进制（-snapshot-dir 须与 daemon snapshot.dir 一致）
+catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
+# 浏览器打开 http://localhost:9528/dfee/（实际端口见启动日志 "dfee server starting"）
+```
+
+> 端口 `:9528` 被占用时自动 +1 回退。dfee 不再注册到 web 路由，独立进程运行。
 
 ### 6.2 功能
 
-- **能效指标过滤**：从全量指标中过滤能效相关指标（NPU 频率/利用率/温度/电压/ECC/带宽、CPU 利用率推导、内存/磁盘/网络/机箱能效项），按部件分组展示
+- **能效指标过滤**：从 snapshot 指标中过滤能效相关指标（NPU 频率/利用率/温度/电压/ECC/带宽、CPU 利用率推导、内存/磁盘/网络/机箱能效项），按部件分组展示
 - **CPU 利用率推导**：8 个原始 jiffies 累计值在后端推导为 7 项利用率百分比（有状态 delta）
 - **网络字节差值**：`rx/tx_bytes_total` 累计值转换为采集间增量
 - **交互**：图表卡片拖拽重排 + 右下角手柄缩放、虚线对齐辅助（3px 吸附）、多选下拉筛选（NPU/磁盘/网络）、模块折叠
-- **独立 SPA**：不修改现有 web 业务代码，只读 `snapshot.json`
+- **独立二进制**：`features/dfee` package main，只读 snapshot，不依赖 web 进程
 
 > API：`GET /api/dfee` 返回过滤+推导后的图表数据。详见 [features/dfee/dfee_SPEC.md](../features/dfee/dfee_SPEC.md)。
 

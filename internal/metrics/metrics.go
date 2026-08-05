@@ -11,14 +11,20 @@
 //     win) via LoadModuleOverride. Absent fields keep the default.
 //
 // Selection (whether a metric is collected):
-//   - priority is High/Medium OR static==true (core + static identity specs; Low
-//     diagnostic metrics stay off by default). A module override can opt in/out by
-//     overriding priority (module-first).
-//   - A metric absent from the catalog is allowed through (default-allow) so
-//     catalog drift can't silently drop data.
+//   - Unscoped (catmonitor.yaml features empty): a metric survives Filter when
+//     its priority is High/Medium OR static==true (Low diagnostics off by
+//     default); min_priority gates the pre-filter (AnyWanted skips sub-methods
+//     whose metrics are all below the threshold). Uncatalogued -> default-allow.
+//   - Scoped (features non-empty): SetFeatureScope builds a whitelist = the union
+//     of (component,name) listed across the enabled features' metrics.yaml. A
+//     metric survives only if listed by some feature AND priority >= min_priority
+//     (or static). Out-of-scope metrics are dropped regardless of priority, and
+//     AnyWanted skips sub-methods producing no in-scope metric — so e.g.
+//     features:[dfee] collects only dfee's listed metrics.
 //
-// interval is recorded per-component but is NOT wired to the scheduler in this
-// phase (collection stays per-collector at the existing cadence).
+// interval is recorded per-component; the daemon derives the collection cadence
+// (C_comp) from feature intervals (min across features), separately from this
+// selection gate.
 package metrics
 
 import (
@@ -26,6 +32,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -67,6 +74,60 @@ var (
 // 0 = Low (collect everything), 1 = Medium, 2 = High. Default 0 = backward compatible.
 var collectionThreshold int
 
+// scopeSet/scopeActive implement feature-scoped collection: when active
+// (catmonitor.yaml features non-empty), a metric is collected only if some
+// enabled feature lists it in its metrics.yaml (whitelist). Inactive (features
+// empty) falls back to the priority gate (High|Medium|Static, current behavior).
+// Set once at startup via SetFeatureScope; reads don't lock (matches the inst
+// pattern: writes only happen during loadConfig, before any collection starts).
+var (
+	scopeSet    map[string]bool
+	scopeActive bool
+)
+
+// inScope reports whether (component,name) is allowed by the feature scope.
+// When scope is inactive (features empty), everything is in scope (the priority
+// gate decides).
+func inScope(component, name string) bool {
+	if !scopeActive {
+		return true
+	}
+	return scopeSet[component+"\x00"+name]
+}
+
+// SetFeatureScope activates feature-scoped collection: a metric is collected
+// only if some enabled feature lists it (component+name) in its metrics.yaml.
+// paths are the feature metrics.yaml files; an absent file contributes nothing.
+// Empty paths (or no metrics listed anywhere) deactivates scope (falls back to
+// the unscoped priority gate). Must be called after Init.
+func SetFeatureScope(paths []string) {
+	mu.Lock()
+	defer mu.Unlock()
+	scopeSet = map[string]bool{}
+	scopeActive = false
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue // absent feature metrics.yaml -> no scope contribution
+		}
+		var f CatalogFile
+		if err := yaml.Unmarshal(data, &f); err != nil {
+			continue
+		}
+		for _, cc := range f.Components {
+			for _, sp := range cc.Metrics {
+				scopeSet[cc.Component+"\x00"+sp.Name] = true
+			}
+		}
+	}
+	if len(scopeSet) > 0 {
+		scopeActive = true
+	}
+}
+
 // priorityValue converts a priority string to a numeric value for comparison.
 func priorityValue(p string) int {
 	switch strings.ToLower(p) {
@@ -85,14 +146,17 @@ func SetCollectionThreshold(p string) {
 	collectionThreshold = priorityValue(p)
 }
 
-// IsWanted reports whether a metric should be collected based on its priority
-// and the collection threshold. Unknown metrics (not in catalog) are collected
-// by default to avoid catalog drift silently dropping data. Static metrics are
-// subject to the same threshold as dynamic metrics.
+// IsWanted reports whether a metric should be collected based on its priority,
+// the collection threshold, and (when active) the feature scope. Unknown
+// metrics (not in catalog) are collected by default to avoid catalog drift
+// silently dropping data — but only when in scope (scoped mode) or unscoped.
 func IsWanted(component, name string) bool {
 	c := Default()
 	if c == nil {
-		return true
+		return inScope(component, name)
+	}
+	if !inScope(component, name) {
+		return false // scoped + not listed by any enabled feature -> skip
 	}
 	m, ok := c.components[component]
 	if !ok {
@@ -101,6 +165,10 @@ func IsWanted(component, name string) bool {
 	sp, ok := m[name]
 	if !ok {
 		return true
+	}
+	if scopeActive {
+		// scoped: min_priority is the floor; statics always wanted
+		return priorityValue(sp.Priority) >= collectionThreshold || sp.Static
 	}
 	return priorityValue(sp.Priority) >= collectionThreshold
 }
@@ -123,6 +191,8 @@ func Init(paths ...string) error {
 	mu.Lock()
 	defer mu.Unlock()
 	inst = &Catalog{components: map[string]map[string]MetricSpec{}}
+	scopeSet = nil
+	scopeActive = false
 	for _, p := range paths {
 		if p == "" {
 			continue
@@ -203,20 +273,59 @@ func mergeSpec(base *MetricSpec, ov MetricSpec) {
 // "no selection" (default-allow everything).
 func Default() *Catalog { return inst }
 
-// Selected reports whether a metric should be collected under the resolved
-// catalog. Default-allow when the catalog is unset or the metric is unknown to
-// the catalog (catalog drift must not drop data).
+// ComponentIntervals reads a metrics catalog yaml and returns the per-component
+// interval declared in it, WITHOUT merging into the running singleton. This is
+// used by the daemon to derive the collection cadence (C_comp) from each
+// feature's metrics.yaml: take the min across features per component. (The
+// priority/selectivity merge via LoadModuleOverride is a separate concern — it
+// is last-wins, not min, so intervals must be parsed independently.) An absent
+// file or absent/invalid interval for a component yields no entry (the caller
+// falls back to catmonitor.yaml collectors.interval).
+func ComponentIntervals(path string) (map[string]time.Duration, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil // absent feature metrics.yaml -> no intervals
+	}
+	var f CatalogFile
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("metrics: parse intervals %s: %w", path, err)
+	}
+	out := map[string]time.Duration{}
+	for _, cc := range f.Components {
+		if cc.Interval == "" {
+			continue
+		}
+		d, err := time.ParseDuration(cc.Interval)
+		if err != nil || d <= 0 {
+			continue
+		}
+		out[cc.Component] = d
+	}
+	return out, nil
+}
+
+// Selected reports whether a metric should survive into the snapshot.
+// Unscoped (features empty): High|Medium|Static, default-allow uncatalogued
+// (catalog drift must not drop data). Scoped (features non-empty): only metrics
+// listed by an enabled feature AND with priority >= min_priority (or static)
+// survive; out-of-scope metrics are dropped regardless of priority.
 func (c *Catalog) Selected(component, name string) bool {
 	if c == nil {
-		return true
+		return inScope(component, name)
 	}
 	m, ok := c.components[component]
 	if !ok {
-		return true
+		return inScope(component, name)
 	}
 	sp, ok := m[name]
 	if !ok {
-		return true
+		return inScope(component, name)
+	}
+	if !inScope(component, name) {
+		return false
+	}
+	if scopeActive {
+		return priorityValue(sp.Priority) >= collectionThreshold || sp.Static
 	}
 	return sp.Priority == "High" || sp.Priority == "Medium" || sp.Static
 }

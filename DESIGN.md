@@ -63,6 +63,8 @@
 >
 > v0.3.3 新增 **采集粒度控制**：`collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集；`internal/metrics` 暴露 `SetCollectionThreshold`/`AnyWanted`，`internal/collector` 经 `SetWantedChecker` DI 注入，采集器在执行采集前调用 `collector.AnyWanted(component, names)` 判断是否有目标指标通过阈值，无则整组跳过（如 NPU static/per-device 阶段、CPU/Memory/Disk 子指标组），降低无谓开销。daemon 与 `runCollect` 启动时均装配。**daemon 移除周期健康检查 goroutine**（健康度评估改由 `catmonitor health` 子命令按需执行）。**web 退出清 snapshot**。修复 `npu_other.go` 非 linux 桩 `collectDevice` 签名未同步 `npuDevice` 致 Windows 交叉编译失败（v0.3.2 起遗留）。
 
+> **v0.3.3 后续重构（`feature/catmonitor` 合入，底座版本号不变）**：① snapshot 生产统一收归 daemon——新增 `features/snapshot` 包（`PerCompWriter` 按 per-component 写 `snapshot_<comp>.json` + `GlobalWriter` 维护全局 `snapshot.json`），web/dfee 转为**只读消费者**不再各自采集（web 删 `DataCollector`/`config.go`/`config.yaml`，改 `-addr`/`-snapshot-dir` flag；dfee 转独立二进制 `catmonitor-dfee` `package main`，`:9528`）。② **Feature-scoped 采集**：`features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法；并派生 per-component cadence `C_comp = min(feature interval)`、`C_global = min(C_comp)`。详见 §6 Web、§7 dfee、§1.7-7。
+
 ### 1.2 跨平台架构设计
 
 核心策略：**共享逻辑 + 平台数据源分离**，通过 Go 构建标签在编译时选择。
@@ -380,6 +382,7 @@ type Source interface {
 4. **Filter（选择策略）**：`priority ∈ {High,Medium} OR static==true` 默认采集；Low 诊断指标默认不采。**目录中缺失的指标默认放行**（default-allow），避免目录漂移静默丢数据。模块覆盖可通过改写 priority 单独 opt-in/out。
 5. **DI 注入**：`scheduler.SetFilter(catalog.Filter)` 由 `cmd/catmonitor` 启动时装配；`interval` 本期仅记录、不接 ticker（采集仍 per-collector 既有节拍）。
 6. **采集粒度预过滤（v0.3.3）**：`collection.min_priority`（low/medium/high）经 `metrics.SetCollectionThreshold` 设定阈值；`collector.SetWantedChecker(metrics.AnyWanted)` 把 `AnyWanted(component, names)` 注入采集核心。采集器在执行昂贵采集阶段前调用 `collector.AnyWanted` 判断该指标组是否有任一指标通过阈值，无则整组跳过（NPU static / per-device、CPU / Memory / Disk 子指标组等）。优先级值大小写不敏感。daemon 与 `runCollect` 启动时均装配。
+7. **Feature-scoped 白名单（v0.3.3 后续，`feature/catmonitor` 合入）**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标。daemon 加载各 feature `metrics.yaml` 覆盖后，以 `SetFeatureScope(并集)` 建立白名单。`features` 非空时 `Filter` 只保留白名单内且 `priority ≥ min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 空 → 退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 采 dfee 列出指标并集，`[web, dfee]` 采 web∪dfee。同时按 feature 声明的 interval 派生 per-component cadence `C_comp = min(声明该 comp 的 feature interval)`，`C_global = min(C_comp)`。
 
 #### 目录文件（YAML）
 
@@ -892,75 +895,87 @@ WantedBy=multi-user.target
 
 ## 6. Web 仪表盘设计
 
-> 详细规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)。本节描述架构、数据流与扩展机制。v0.3.0 由 `web/` 迁入 `features/web/`。
+> 详细规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)。本节描述架构、数据流与扩展机制。
+
+> **架构重构（v0.3.3 后续，`feature/catmonitor` 合入）**：snapshot 生产统一收归 daemon（新增 `features/snapshot` 包），web/dfee 转为**只读消费者**——不再各自采集，避免重复跑硬件。daemon 产出 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs），web/dfee 经 `-snapshot-dir` 指向同一目录只读消费。web 删除原 `DataCollector`/`config.go`/`config.yaml`，改命令行 flag（`-addr`/`-snapshot-dir`），`history_points` 固定 60，刷新间隔由 daemon cadence 决定。详见 §6.1-6.5 与 `features/snapshot/`。
 
 ### 6.1 模块定位与解耦
 
-`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**不新增 go.mod、不改主项目任何文件**。与 `cmd/catmonitor`、`internal/collectors`、`features/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**只读消费** daemon 产出的 snapshot。不再 blank-import 采集器、不再起采集 goroutine、不再调 `health.Evaluate`——采集、健康度评估、snapshot 生产全部由 daemon 完成。web 仅通过 `features/snapshot` 的 `ReadGlobal`/`ReadComp` 读 snapshot 文件，组装 `/api/snapshot` 响应。
 
 ### 6.2 目录结构
 
 ```
 features/web/
-├── main.go            # 入口：blank-import 采集器 + 起采集 goroutine + HTTP server + 信号处理 + 端口回退
+├── main.go            # 入口：解析 -addr/-snapshot-dir flag + HTTP server + 端口回退 + 信号处理
 ├── static.go          # //go:embed static，内嵌前端资源
-├── config.go          # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
-├── collector.go       # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
-├── snapshot.go        # Snapshot 结构（含 Specs 字段）+ 原子读写
-├── hwinfo.go          # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info），非注册采集器
-├── server.go          # HTTP 路由与处理函数
-├── config.yaml        # 默认配置
-├── metrics.yaml       # web 自有指标目录（启动时优先读取覆盖默认）
+├── server.go          # HTTP 路由与处理函数（只读：/api/snapshot 组装 global+per-comp）
+├── metrics.yaml       # web feature 指标目录（供 daemon LoadModuleOverride + SetFeatureScope 白名单）
 ├── static/
 │   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
 │   ├── style.css       # 浅色卡片式主题
 │   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 扩展 manifest
-└── data/              # 运行时数据（运行时生成，git 忽略）
-    ├── snapshot.json  # 采集 goroutine 写，HTTP 层读
-    └── runtime.json   # 界面调整的刷新间隔持久化
+└── (无 data/、无 collector.go、无 config.go —— snapshot 由 daemon 产，web 不再写本地文件)
 ```
+
+> 重构删除项：`collector.go`（DataCollector）、`config.go`（YAML 配置）、`config.yaml`、`collect_once_linux_test.go`；`hwinfo.go`/`snapshot.go` 迁至 `features/snapshot/`。
 
 ### 6.3 数据流与解耦边界
 
 ```
-  采集 goroutine (DataCollector)          HTTP server (net/http)
-    定时: 遍历注册表 → Collect()            静态页 + REST API
-         → health.Evaluate()                  读取 snapshot.json
-         → 原子写 snapshot.json                  ↑读（不调采集器）
-                  │写
-                  └──────── snapshot.json ────────┘
-                                  ↑热更新间隔
-                   浏览器（SPA：概览 + 各部件详情页）fetch /api/snapshot
+  daemon (cmd/catmonitor)                    catmonitor-web / catmonitor-dfee (只读消费者)
+    采集 → health.Evaluate                     HTTP server
+    → features/snapshot 写                      读取 snapshot.json + snapshot_<comp>.json
+       snapshot_<comp>.json + snapshot.json          ↑只读（不调采集器）
+              │写（原子 os.Rename）                        │
+              └────── snapshot.dir ──────────────────────┘
+   浏览器 fetch /api/snapshot (web) | /api/dfee (dfee)
 ```
 
-**解耦边界**：HTTP 层**只读** `snapshot.json`，**绝不直接调用采集器**；采集 goroutine 是 `snapshot.json` 的**唯一写者**（写临时文件 + `os.Rename` 原子写，读者永不会读到半截文件）。
+**解耦边界**：daemon 是 snapshot 的**唯一写者**（`features/snapshot` 原子写：临时文件 + `os.Rename`）；web/dfee 是**只读消费者**，绝不调用采集器、不写本地文件。刷新间隔由 daemon 的 per-component cadence（`C_comp = min(声明该 comp 的 feature interval)`）决定，前端按 `refresh_interval_ms` 轮询。
 
 ### 6.4 Snapshot 数据模型
 
-`Snapshot`（`snapshot.go`）是 HTTP 层唯一数据源，字段：
+snapshot 由 `features/snapshot` 包生产，分两层（均原子写：临时文件 + `os.Rename`）：
+
+**Per-component `snapshot_<comp>.json`**（`CompSnapshot`）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `timestamp` | time | 本次快照生成时间 |
-| `refresh_interval_ms` | int | 当前生效的采集周期（毫秒），供前端轮询对齐 |
-| `history_points` | int | 历史环形缓冲容量 |
-| `health` | `health.HealthScore` | 健康度结果（直接复用 `features/health` 序列化） |
-| `metrics` | `[]collector.Metric` | 本次采集的全部指标（复用 `internal/collector.Metric`） |
-| `history` | `map[string][]float64` | 趋势序列，key 形如 `<component>_<suffix>`，供详情页按部件前缀过滤 |
-| `specs` | `[]collector.Metric` | 静态设备规格（一次性身份信息），`omitempty`：无任何静态指标时不出现 |
+| `component` | string | 部件名（cpu/memory/disk/...） |
+| `timestamp` | time | 本次采集时间 |
+| `metrics` | `[]collector.Metric` | 该部件本次采集指标 |
+| `history` | `map[string][]float64` | 该部件趋势序列（环形，60 点） |
+| `specs` | `[]collector.Metric` | 该部件启动身份规格（gpu_info/disk_info 等，`omitempty`） |
 
-> `health` 与 `metrics` 直接使用主项目结构体 JSON tag，**不重新定义**，保证与采集器/健康度模块的契约一致。
+**Global `snapshot.json`**（`GlobalSnapshot`，web `/api/snapshot` 组装源）：
 
-### 6.5 DataCollector 采集与历史
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `session_id` | string | daemon 会话标识 |
+| `timestamp` | time | 全局快照时间 |
+| `refresh_interval_ms` | int | 全局 cadence（`C_global = min(C_comp)`），供前端轮询 |
+| `history_points` | int | 固定 60 |
+| `health` | `health.HealthScore` | 健康度结果（daemon 评估） |
+| `collectors` | — | 采集器元数据（驱动导航） |
+| `intervals` | — | 各部件 cadence |
+| `system_specs` | `[]collector.Metric` | 启动期硬件身份（device_model/os_info 等） |
 
-- `Run(ctx)`：立即采集一次，进入 `select` 循环：定时器到期 → 采集；`reload` 通道 → 重置定时器（间隔热更新）；`collectNow` 通道 → 立即采集；`ctx.Done` → 退出。
-- `collectOnce()`：遍历 `collector.DefaultRegistry.All()` → `Collect()` → `health.NewEvaluator(health.GetScheme("auto")).Evaluate()` → 组装 `Snapshot` → `WriteAtomic`。
-- **历史趋势**由可扩展的 `trackedSeries` spec 列表驱动（key 形如 `<component>_<suffix>`），环形缓冲每 key 保留最近 `history_points` 个点。当前跟踪 cpu_usage / cpu_load_average / memory_usage / memory_swap_usage / disk_space_usage 及 GPU/NPU 利用率/显存/温度。
-- **静态规格 stash**：CPU/内存采集器首周期产出一次静态指标后被抑制，Web 侧 `filterStatic` 提取并缓存到 `staticStash`，之后每周期重新注入快照。
+> web `handleSnapshot` 合并 global + 各 per-comp 的 metrics/history/specs 组装响应；`/api/collectors` 取 global.collectors；`/api/config` 取 global.intervals + history_points（只读）。
 
-### 6.6 硬件身份采集（hwinfo.go）
+### 6.5 Snapshot 生产与消费
 
-`main.go` 启动时起 goroutine 调 `collectHWSpecs()`（**非注册采集器**），收集跨部件身份指标：
+**生产（daemon 侧，`features/snapshot`）**：
+- `PerCompWriter`：`collector.Storage` 装饰器，每个采集批次将该部件 metrics + 环形 history + spec stash 原子写 `snapshot_<comp>.json`。
+- `GlobalWriter`：维护全局 `snapshot.json`（health/collectors/intervals/system_specs），cadence = `min(C_comp)`。
+- 启动期 `CollectHWSpecs` 一次性采集跨部件身份（device_model/os_info/gpu_info/npu_info/disk_info/net_info）分发到对应 writer 的 specs。
+- `snapshot.enabled=false` 时 daemon 不写 snapshot 文件，行为同前；`=true` 时 web/dfee 必须以只读消费者运行。
+
+**消费（web 侧）**：web 不再采集、不再维护历史——`history` 由 daemon 的 PerCompWriter 环形缓冲（60 点）产出，web 原样透传。原 `trackedSeries` spec 驱动的趋势序列迁移至 `features/snapshot/series.go`，由 daemon 侧维护。
+
+### 6.6 硬件身份采集（features/snapshot/hwinfo.go）
+
+`hwinfo.go` 由 `features/web/` 迁至 `features/snapshot/`，由 **daemon** 启动期调 `CollectHWSpecs()`（非注册采集器）一次性采集跨部件身份，分发到对应 PerCompWriter 的 specs：
 
 | metric name | component | 来源 |
 |-------------|-----------|------|
@@ -970,7 +985,7 @@ features/web/
 | `disk_info` | disk | /sys/block + smartctl 富化 |
 | `net_info` | network | /sys/class/net（跳过 lo） |
 
-外部命令缺失则降级（不报错），`/sys` 始终可用。结果经 `SetHWSpecs` 存入 `hwSpecs`（`hwMu` 保护），每周期合入 `specs = staticStash + hwSpecs`。
+外部命令缺失则降级（不报错），`/sys` 始终可用。结果分发后写入 per-comp `snapshot_<comp>.json` 的 `specs` 字段与 global `snapshot.json` 的 `system_specs`。
 
 ### 6.7 端口占用回退（main.go listenWithFallback）
 
@@ -982,38 +997,40 @@ features/web/
 
 ### 6.8 HTTP API 与前端设计
 
-- **路由**（`server.go`）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`、`/dfee/`（能效监控，见 §7）。详见 SPEC §9.7。
-- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline）+ 全部指标表。导航栏含「能效分析」入口（v0.3.1，跳转 `/dfee/`）。
+- **路由**（`server.go`，只读）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`（组装 global+per-comp）、`GET /api/collectors`、`GET /api/config`（只读）。**删除** `POST /api/config`（间隔热改）与 `POST /api/refresh`（立即采集）——刷新间隔由 daemon cadence 决定，web 不再控制；**删除** `/dfee/` 路由——dfee 转独立二进制 `catmonitor-dfee`（见 §7）。
+- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline，数据来自 daemon 产出的 per-comp history）+ 全部指标表。
 - **显示 manifest**（`app.js`）：`MANIFEST`（部件显示名/关键指标）、`SERIES_LABELS`（序列显示名）、`NAV_ORDER`（导航排序）、`SPEC_DEFS`/`LABEL_NAMES`（规格面板）。未登记部件/指标/序列均有通用回退，不会崩溃。
 
 ### 6.9 扩展机制
 
+> 重构后扩展入口变化：采集器注册、trackedSeries、staticMetricNames 全部上移至 daemon/snapshot 侧，web 仅消费。
+
 | 扩展需求 | 改动位置 | 自动部分 |
 |----------|----------|----------|
-| 新部件采集器 | `features/web/main.go`（blank import） | 导航/概览卡/详情页 |
+| 新部件采集器 | daemon `cmd/catmonitor/main.go`（注册，原有流程） | daemon 产 per-comp snapshot → web 导航/概览卡/详情页自动出现 |
 | 部件显示名/关键指标 | `features/web/static/app.js` MANIFEST | — |
-| 新趋势 sparkline | `features/web/collector.go` trackedSeries 加一行 | 详情页趋势面板 |
+| 新趋势 sparkline | `features/snapshot/series.go` trackedSeries 加一行 | daemon 写 per-comp history → web 详情页趋势面板 |
 | 趋势显示名 | `features/web/static/app.js` SERIES_LABELS | — |
-| 新静态身份指标（采集器侧） | 加入 `staticMetricNames` 即被 stash 进 `specs` | specs modal 自动渲染 |
+| 新静态身份指标 | `features/snapshot/hwinfo.go` 采集 + `staticMetricNames` | daemon 分发到 specs → web specs modal 自动渲染 |
 
-> **结论：一行 blank import 即可让新部件完整可用**；后续按需在 MANIFEST/trackedSeries 美化。`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端。
+> **结论：新部件采集器在 daemon 注册后，web 自动消费其 snapshot**；显示美化集中在 web 的 MANIFEST/SERIES_LABELS。`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端。
 
 ### 6.10 已知限制与后续预留
 
 1. **单机本地视图**：不含认证、不含多机聚合；如需多机，预留"多个 snapshot 源 + 概览聚合"。
 2. **轮询而非推送**：前端 `setInterval` 轮询 `/api/snapshot`；如需实时推送，预留 WebSocket/SSE（`snapshot.json` 解耦边界可直接复用）。
-3. **无持久化历史存储**：历史仅存内存环形缓冲（重启清空），未落盘；如需长期趋势，预留 JSONL 落盘。
+3. **无持久化历史存储**：历史由 daemon PerCompWriter 内存环形缓冲维护（60 点，重启清空），web 不持有历史仅透传；如需长期趋势，预留 JSONL 落盘。
 4. **指标展示优先级**：当前 metric 不携带优先级字段，概览关键指标靠 MANIFEST 人工指定；未来若主项目 Metric 增加优先级可改为自动选取。
 
 ---
 
-## 7. 能效监控模块设计（features/dfee，v0.3.1 新增，v0.3.2 增强）
+## 7. 能效监控模块设计（features/dfee，v0.3.1 新增，v0.3.2 增强，独立二进制化）
 
 > 详细规格见 [`features/dfee/dfee_SPEC.md`](features/dfee/dfee_SPEC.md)。本节描述架构、数据流与扩展机制。
 
 ### 7.1 模块定位与解耦
 
-`features/dfee/` 是与 `features/web` 同级的独立 Go package，**不修改现有 web 业务代码**（唯一改动：`features/web/server.go` 加 1 行 `dfee.Register(mux, ...)` 路由注册 + `features/web/main.go` 加 dfee metrics override 加载 + `features/web/static/app.js` 加 1 个导航入口）。dfee 从 `snapshot.json` 过滤能效指标，渲染分组实时图表。
+`features/dfee/` 转为**独立二进制 `catmonitor-dfee`**（`package main`，默认端口 `:9528`），与 `features/web` 同级、与 daemon 解耦。**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），不再注册到 web 路由、不再依赖 web 进程。启动参数 `-addr`/`-snapshot-dir`，端口占用自动 +1 回退（同 web 的 `listenWithFallback`）。
 
 > **v0.3.2 交互增强**：图表卡片**拖拽重排** + 右下角手柄**缩放**（`align-self: start` 使边框不跟随增长）+ 虚线**对齐辅助**（3px 吸附）；NPU/磁盘/网络模块**多选下拉筛选**（重构为通用筛选框架）；**模块折叠**（机箱 3 图同行）。NPU 图表改为单指标图布局（默认 4 行 3+2+2+2、gridCols 6 列、功耗电压首行），图例简化为 NPU 0~7。
 
@@ -1021,14 +1038,15 @@ features/web/
 
 ```
 features/dfee/
-├── dfee_SPEC.md               # 唯一设计+规格文档
+├── main.go                    # 入口（package main）：解析 -addr/-snapshot-dir + HTTP server + 端口回退 + 信号
+├── dfee_SPEC.md               # 设计+规格文档
 ├── energy_efficiency_metrics.md # 能效指标清单
-├── filter.go                  # 能效指标过滤 + 分组 + 通用筛选框架（v0.3.2 重构）
+├── filter.go                  # 能效指标过滤 + 分组 + 通用筛选框架
 ├── cpu_derive.go              # CPU 8 jiffies → 7 利用率推导（有状态）
 ├── net_derive.go              # 网络差值计算
-├── handler.go                 # HTTP handler：组装 /api/dfee 响应 + 静态文件
+├── handler.go                 # HTTP handler：组装 /api/dfee 响应 + 静态文件（Register(mux, dir)）
 ├── embed.go                   # //go:embed static
-├── metrics.yaml               # dfee 指标目录覆盖（CPU 8 个 Low → Medium + NPU Low→Medium）
+├── metrics.yaml               # dfee feature 指标目录（69 项，供 daemon LoadModuleOverride + SetFeatureScope）
 ├── static/
 │   ├── index.html             # 能效监控 SPA 页面
 │   ├── dfee.js                # 实时图表渲染 + 轮询 + 拖拽/缩放/筛选/折叠交互
@@ -1039,20 +1057,20 @@ features/dfee/
 ### 7.3 数据流与解耦边界
 
 ```
-采集层 (7 collectors, 不变)
-  → DataCollector.collectOnce() (不变)
-  → snapshot.json (不变, 159 指标)
+daemon (cmd/catmonitor)
+  采集 → health.Evaluate → features/snapshot 写
+       snapshot.json + snapshot_<comp>.json (per-comp cadence)
         │
         ├──────────────────────────────────────────┐
         ↓                                          ↓
-  GET /api/snapshot (现有, 不变)          GET /api/dfee (dfee 新增)
-  → 全量 159 指标                        → 过滤 74 能效指标
-  → 前端 SPA 概览/详情页                   → CPU 8 jiffies → 7 利用率推导
-                                         → 按小节分组 → 25 张图表数据
-                                         → 前端 Canvas 实时折线图
+  catmonitor-web (只读)                    catmonitor-dfee (只读, 独立二进制 :9528)
+  GET /api/snapshot (组装 global+per-comp)  GET /api/dfee (过滤能效指标)
+  → 前端 SPA 概览/详情页                    → CPU 8 jiffies → 7 利用率推导
+                                            → 按小节分组 → 25 张图表数据
+                                            → 前端 Canvas 实时折线图
 ```
 
-**解耦边界**：dfee 只读 `snapshot.json`（与 web HTTP 层同一数据源），**绝不直接调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。
+**解耦边界**：dfee 只读 snapshot（与 web 同一数据源，均由 daemon 生产），**绝不调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。
 
 ### 7.4 能效指标来源
 
@@ -1069,7 +1087,7 @@ features/dfee/
 
 ### 7.5 指标目录覆盖
 
-dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml` 将它们覆盖为 Medium，由 `features/web/main.go` 启动时经 `metrics.LoadModuleOverride` 加载，使它们通过 Filter 进入 snapshot.json。同时覆盖若干 NPU Low 指标为 Medium 以供能效图表展示。
+dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml`（69 项）将它们覆盖为 Medium 并列出 dfee 所需全部指标。**由 daemon** 启动时经 `metrics.LoadModuleOverride` 加载，并经 `SetFeatureScope`（dfee 列出指标的并集）建立白名单——`features: [dfee]` 时只采白名单内且 `priority ≥ min_priority` 的指标，写入 snapshot 供 dfee 消费。web 不再加载 dfee 的 metrics.yaml。
 
 ### 7.6 扩展机制
 
@@ -1077,8 +1095,8 @@ dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`
 |----------|----------|
 | 新增能效指标图表 | `features/dfee/filter.go` 分组定义加条目 + `dfee.js` 加图表 |
 | 新增 CPU 推导指标 | `features/dfee/cpu_derive.go` 加推导逻辑 |
-| 新增能效指标来源 | （采集器侧新增指标 + `features/dfee/metrics.yaml` 覆盖优先级） |
-| 导航入口 | `features/web/static/app.js` renderNav（已有） |
+| 新增能效指标来源 | （采集器侧新增指标 + `features/dfee/metrics.yaml` 覆盖优先级，daemon 加载 + scope） |
+| 导航/前端 | `features/dfee/static/`（独立 SPA，不再依赖 web app.js） |
 
 ---
 

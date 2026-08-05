@@ -1,36 +1,13 @@
-package dfee
+package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
-
-// ---- snapshot reader (self-contained, does not depend on web package) ----
-
-type snapshot struct {
-	SessionID       string             `json:"session_id"`
-	Timestamp       time.Time          `json:"timestamp"`
-	RefreshInterval int                `json:"refresh_interval_ms"`
-	Metrics         []collector.Metric `json:"metrics"`
-}
-
-func readSnapshot(path string) (*snapshot, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var s snapshot
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
 
 // ---- efficiency filter spec ----
 

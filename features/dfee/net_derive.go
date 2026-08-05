@@ -1,4 +1,4 @@
-package dfee
+package main
 
 import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
