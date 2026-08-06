@@ -115,6 +115,8 @@ components:
         priority: Medium
       - name: load_average
         priority: High
+      - name: online_core_num
+        priority: Medium
       - name: power
         priority: Medium
   - component: memory

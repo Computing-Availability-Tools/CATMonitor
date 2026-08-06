@@ -145,6 +145,8 @@ func mapNodeMetrics(metrics []collector.Metric) []promMetric {
 			out = append(out, mapNetwork(m)...)
 		case "disk":
 			out = append(out, mapDisk(m)...)
+		case "chassis":
+			out = append(out, mapChassis(m)...)
 		}
 	}
 	return out
@@ -252,6 +254,41 @@ func mapNetwork(m collector.Metric) []promMetric {
 			labels: map[string]string{"interface": iface},
 			value:  m.Value,
 			help:   "Network transmit bytes total", typ: "counter",
+		}}
+	}
+	return nil
+}
+
+// mapChassis maps chassis metrics to ipmi_* Prometheus format.
+func mapChassis(m collector.Metric) []promMetric {
+	switch m.Name {
+	case "power":
+		return []promMetric{{
+			name: "ipmi_power_w", value: m.Value,
+			help: "Chassis power draw", typ: "gauge",
+		}}
+	case "inlet_temp":
+		return []promMetric{{
+			name: "ipmi_inlet_temp_celsius", value: m.Value,
+			help: "Inlet temperature", typ: "gauge",
+		}}
+	case "outlet_temp":
+		return []promMetric{{
+			name: "ipmi_outlet_temp_celsius", value: m.Value,
+			help: "Outlet temperature", typ: "gauge",
+		}}
+	case "fan_power":
+		return []promMetric{{
+			name: "ipmi_fan_power_w", value: m.Value,
+			help: "Fan power draw", typ: "gauge",
+		}}
+	case "fan_speed":
+		fanID := "FAN" + m.Labels["fan"]
+		return []promMetric{{
+			name: "ipmi_fan_speed_rpm",
+			labels: map[string]string{"fan_id": fanID},
+			value:  m.Value,
+			help:   "Fan speed", typ: "gauge",
 		}}
 	}
 	return nil
