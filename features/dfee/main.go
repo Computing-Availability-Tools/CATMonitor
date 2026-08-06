@@ -23,7 +23,7 @@ func main() {
 	addr := flag.String("addr", ":9528", "listen address (port taken => auto +1)")
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
 	exporter := flag.String("exporter", "disabled", "enable Prometheus exporter: enabled|disabled")
-	exporterPort := flag.String("exporter_port", "9333", "exporter listen port")
+	exporterPort := flag.String("exporter-port", "9333", "exporter listen port")
 	device := flag.String("device", "", "NPU device filter (comma-separated, e.g. 0,1); empty = all")
 	dockerContainer := flag.String("docker-container", "", "docker container name for software version collection")
 	flag.Parse()
