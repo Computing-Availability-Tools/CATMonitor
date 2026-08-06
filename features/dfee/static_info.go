@@ -112,7 +112,7 @@ func collectCANNVersion(dockerContainer string) string {
 // collectPythonVersion runs `python -V` or `python3 -V`.
 // When dockerContainer is set, runs inside the container.
 func collectPythonVersion(dockerContainer string) string {
-	for _, py := range []string{"python", "python3"} {
+	for _, py := range []string{"python3", "python"} {
 		var out []byte
 		var err error
 		if dockerContainer != "" {
@@ -131,7 +131,7 @@ func collectPythonVersion(dockerContainer string) string {
 // collectPipPackage runs `pip list` (or pip3) and looks for a package name.
 // When dockerContainer is set, runs inside the container.
 func collectPipPackage(pkg, dockerContainer string) string {
-	for _, pip := range []string{"pip", "pip3"} {
+	for _, pip := range []string{"pip3", "pip"} {
 		var out []byte
 		var err error
 		if dockerContainer != "" {
@@ -302,6 +302,7 @@ func collectMemoryInfo() string {
 }
 
 // collectDiskInfo runs `lsblk -d -o NAME,SIZE -n` and formats as "name size, name size".
+// Uses strings.Fields to normalize variable whitespace between columns.
 func collectDiskInfo() string {
 	out, err := exec.Command("lsblk", "-d", "-o", "NAME,SIZE", "-n").Output()
 	if err != nil {
@@ -309,11 +310,10 @@ func collectDiskInfo() string {
 	}
 	var parts []string
 	for _, line := range strings.Split(string(out), "\n") {
-		l := strings.TrimSpace(line)
-		if l == "" {
-			continue
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			parts = append(parts, fields[0]+" "+fields[1])
 		}
-		parts = append(parts, l)
 	}
 	if len(parts) == 0 {
 		return ""
@@ -334,18 +334,32 @@ func collectGPUType() string {
 	return ""
 }
 
-// collectNPUChipName uses DSMI to get the chip name of the first NPU device.
+// collectNPUChipName parses `npu-smi info` output to extract the chip name
+// from the first data row after the "===" separator.
+// Output format:
+//   +======================+=================+...
+//   | 0     910B3          | OK              |...
+//   | 0                    | 0000:C1:00.0    |...
 func collectNPUChipName() string {
 	out, err := exec.Command("npu-smi", "info").Output()
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		l := strings.TrimSpace(line)
-		if strings.Contains(l, "Chip") && strings.Contains(l, "Name") {
-			parts := strings.SplitN(l, ":", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
+	lines := strings.Split(string(out), "\n")
+	foundSeparator := false
+	for _, line := range lines {
+		if strings.Contains(line, "===") {
+			foundSeparator = true
+			continue
+		}
+		if foundSeparator && strings.HasPrefix(strings.TrimSpace(line), "|") {
+			fields := strings.Split(line, "|")
+			if len(fields) >= 2 {
+				// fields[1] = " 0     910B3          "
+				parts := strings.Fields(fields[1])
+				if len(parts) >= 2 {
+					return parts[1]
+				}
 			}
 		}
 	}
@@ -353,29 +367,35 @@ func collectNPUChipName() string {
 }
 
 // collectPSUInfo runs `ipmitool fru print` and extracts PSU product names.
-// Matches all Product Name lines, deduplicates, formats as "Count*Name".
+// Collects all Product Name lines, counts occurrences of the first name,
+// formats as "Count*Name".
 func collectPSUInfo() string {
 	out, err := exec.Command("ipmitool", "fru", "print").Output()
 	if err != nil {
 		return ""
 	}
-	seen := map[string]bool{}
-	var names []string
+	var productNames []string
 	for _, line := range strings.Split(string(out), "\n") {
 		l := strings.TrimSpace(line)
 		if strings.Contains(l, "Product Name") {
 			parts := strings.SplitN(l, ":", 2)
 			if len(parts) == 2 {
 				name := strings.TrimSpace(parts[1])
-				if name != "" && !seen[name] {
-					seen[name] = true
-					names = append(names, name)
+				if name != "" {
+					productNames = append(productNames, name)
 				}
 			}
 		}
 	}
-	if len(names) == 0 {
+	if len(productNames) == 0 {
 		return ""
 	}
-	return strconv.Itoa(len(names)) + "*" + names[0]
+	firstName := productNames[0]
+	count := 0
+	for _, name := range productNames {
+		if name == firstName {
+			count++
+		}
+	}
+	return strconv.Itoa(count) + "*" + firstName
 }
