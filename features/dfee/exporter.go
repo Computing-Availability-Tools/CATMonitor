@@ -283,7 +283,7 @@ func mapChassis(m collector.Metric) []promMetric {
 			help: "Fan power draw", typ: "gauge",
 		}}
 	case "fan_speed":
-		fanID := "FAN" + m.Labels["fan"]
+		fanID := "FAN" + m.Labels["fan"] + " " + m.Labels["direction"]
 		return []promMetric{{
 			name: "ipmi_fan_speed_rpm",
 			labels: map[string]string{"fan_id": fanID},
