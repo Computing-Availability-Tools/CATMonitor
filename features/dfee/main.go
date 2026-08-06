@@ -26,6 +26,9 @@ func main() {
 	exporterPort := flag.String("exporter-port", "9333", "exporter listen port")
 	device := flag.String("device", "", "NPU device filter (comma-separated, e.g. 0,1); empty = all")
 	dockerContainer := flag.String("docker-container", "", "docker container name for software version collection")
+	csvEnabled := flag.String("csv", "disabled", "enable CSV output: enabled|disabled")
+	csvDir := flag.String("csv-dir", "/var/lib/catmonitor/csv", "CSV output directory")
+	csvInterval := flag.String("csv-interval", "10s", "CSV write interval")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -52,9 +55,10 @@ func main() {
 
 	// Start Prometheus exporter if enabled.
 	var exporterServer *http.Server
+	var exp *Exporter
 	if *exporter == "enabled" {
 		logger.Info("collecting static info for exporter...")
-		exp := NewExporter(*dir, *device, *dockerContainer)
+		exp = NewExporter(*dir, *device, *dockerContainer)
 		expMux := http.NewServeMux()
 		expMux.Handle("/metrics", exp)
 		exporterServer = &http.Server{Addr: ":" + *exporterPort, Handler: expMux}
@@ -66,6 +70,23 @@ func main() {
 		}()
 	}
 
+	// Start CSV writer if enabled.
+	var csvW *CSVWriter
+	if *csvEnabled == "enabled" {
+		if exp == nil {
+			exp = NewExporter(*dir, *device, *dockerContainer)
+		}
+		interval, err := time.ParseDuration(*csvInterval)
+		if err != nil || interval <= 0 {
+			interval = 10 * time.Second
+		}
+		csvW = NewCSVWriter(exp, *csvDir, interval)
+		go func() {
+			logger.Info("csv writer starting", "dir", *csvDir, "interval", interval)
+			csvW.Run(ctx)
+		}()
+	}
+
 	<-ctx.Done()
 	logger.Info("shutting down", "signal", ctx.Err())
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -73,6 +94,9 @@ func main() {
 	_ = httpServer.Shutdown(shutCtx)
 	if exporterServer != nil {
 		_ = exporterServer.Shutdown(shutCtx)
+	}
+	if csvW != nil {
+		csvW.Close()
 	}
 }
 
