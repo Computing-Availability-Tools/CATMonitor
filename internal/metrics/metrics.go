@@ -232,6 +232,96 @@ func LoadModuleOverride(path string) error {
 	return nil
 }
 
+// LoadFeatureOverrides loads multiple feature metrics.yaml files and applies
+// them to the default catalog with "higher priority wins" merge rule. When the
+// same metric is defined in multiple feature files, the one with the higher
+// priority takes effect (other fields are last-wins). Must be called after Init.
+func LoadFeatureOverrides(paths []string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if inst == nil {
+		return fmt.Errorf("metrics: LoadFeatureOverrides before Init")
+	}
+	type override struct {
+		priority string
+		cnName   string
+		unit     string
+		static   bool
+	}
+	overrides := map[string]override{}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var f CatalogFile
+		if err := yaml.Unmarshal(data, &f); err != nil {
+			return fmt.Errorf("metrics: parse feature override %s: %w", p, err)
+		}
+		for _, cc := range f.Components {
+			for _, sp := range cc.Metrics {
+				key := cc.Component + "\x00" + sp.Name
+				existing, ok := overrides[key]
+				if !ok {
+					overrides[key] = override{
+						priority: sp.Priority,
+						cnName:   sp.CnName,
+						unit:     sp.Unit,
+						static:   sp.Static,
+					}
+				} else {
+					if priorityValue(sp.Priority) > priorityValue(existing.priority) {
+						existing.priority = sp.Priority
+					}
+					if sp.CnName != "" {
+						existing.cnName = sp.CnName
+					}
+					if sp.Unit != "" {
+						existing.unit = sp.Unit
+					}
+					if sp.Static {
+						existing.static = true
+					}
+					overrides[key] = existing
+				}
+			}
+		}
+	}
+	for key, ov := range overrides {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		comp, name := parts[0], parts[1]
+		m, ok := inst.components[comp]
+		if !ok {
+			m = map[string]MetricSpec{}
+			inst.components[comp] = m
+		}
+		base, exists := m[name]
+		if !exists {
+			base = MetricSpec{Name: name}
+		}
+		if ov.priority != "" {
+			base.Priority = ov.priority
+		}
+		if ov.cnName != "" {
+			base.CnName = ov.cnName
+		}
+		if ov.unit != "" {
+			base.Unit = ov.unit
+		}
+		if ov.static {
+			base.Static = true
+		}
+		m[name] = base
+	}
+	return nil
+}
+
 // applyCatalog merges a CatalogFile's components into the catalog (later wins
 // by name, field-by-field for non-zero override values).
 func applyCatalog(c *Catalog, f CatalogFile) {
