@@ -393,6 +393,9 @@ func (m *Manager) runBenchmark(ctx context.Context, name string, timeoutOverride
 	outputText := output.String()
 	result.Output = outputText
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		if name == "npu_burn" {
+			return finish(StatusUnhealthy, "configured time limit reached before Ascend NPU Burn produced a complete validated result")
+		}
 		return finish(StatusTimeLimitReached, "configured time limit reached; benchmark stopped as planned (final performance values were not produced)")
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -547,7 +550,7 @@ func (m *Manager) selected(requested []string) ([]string, error) {
 
 func supportedBenchmark(name string) bool {
 	switch name {
-	case "stream", "hpl", "hpcg":
+	case "stream", "hpl", "hpcg", "npu_burn":
 		return true
 	default:
 		return false

@@ -17,6 +17,7 @@ func TestLoadTopLevelStressConfig(t *testing.T) {
   default_benchmarks: [stream]
   benchmarks:
     stream: { enabled: true, timeout: 1m }
+    npu_burn: { enabled: true, timeout: 30m }
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
@@ -27,6 +28,9 @@ func TestLoadTopLevelStressConfig(t *testing.T) {
 	}
 	if !cfg.Stress.Enabled || !cfg.Stress.WebEnabled || cfg.Stress.Benchmarks["stream"].Timeout != time.Minute {
 		t.Fatalf("unexpected stress config: %+v", cfg.Stress)
+	}
+	if !cfg.Stress.Benchmarks["npu_burn"].Enabled || cfg.Stress.Benchmarks["npu_burn"].Timeout != 30*time.Minute {
+		t.Fatalf("unexpected NPU Burn config: %+v", cfg.Stress.Benchmarks["npu_burn"])
 	}
 }
 

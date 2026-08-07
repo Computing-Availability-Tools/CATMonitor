@@ -39,6 +39,7 @@ curl -s http://localhost:9100/metrics | head # 抓取 Prometheus 指标
 
 - Go 1.21+
 - （可选）NPU 服务器：CANN SDK（`libdcmi.so`），用 `-tags dcmi` 启用 DCMI CGo 采集
+- （可选）NPU 可靠性压测：节点另行安装 Mulan PSL v2 的 Ascend NPU Burn 及其 PyTorch/torch_npu 依赖
 - （可选）`nvidia-smi` / `npu-smi` / `hccn_tool` / `ipmitool` / `smartctl`：对应采集器无该命令时优雅降级（返回空，不崩溃）
 
 ### 1.2 编译
@@ -117,6 +118,7 @@ stress:
     stream: { enabled: false, timeout: 1m }
     hpl: { enabled: false, timeout: 2h }
     hpcg: { enabled: false, result_dir: "", timeout: 3m }
+    npu_burn: { enabled: false, timeout: 30m }
 
 collection:
   min_priority: low        # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
@@ -278,10 +280,11 @@ Server Type:    accelerated
 catmonitor stress --help
 catmonitor stress -o table                  # 运行 YAML 的 default_benchmarks
 catmonitor stress --bench stream -o table   # 覆盖本次运行项目
+catmonitor stress --bench npu_burn -o table # Ascend NPU Burn（需节点安装和脚本适配）
 catmonitor stress -o json                   # 回显完整 JSON 报告
 ```
 
-stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。完整适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 需在节点按 Mulan PSL v2 单独安装，脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。完整适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 3.6 daemon — 守护进程
 

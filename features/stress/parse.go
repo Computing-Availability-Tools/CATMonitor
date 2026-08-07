@@ -19,6 +19,7 @@ var (
 	hplExplicitFailed = regexp.MustCompile(`(?im)\bFAILED\s*$`)
 	hpcgGFLOPS        = regexp.MustCompile(`HPCG result is VALID with a GFLOP/s rating of=\s*([0-9]+(?:\.[0-9]+)?)`)
 	hpcgTime          = regexp.MustCompile(`Results are valid but execution time \(sec\) is=\s*([0-9]+(?:\.[0-9]+)?)`)
+	npuBurnSummary    = regexp.MustCompile(`(?m)^CATMONITOR_NPU_BURN_SUMMARY devices=([0-9]+) cases=([0-9]+) passed=([0-9]+) failed=([0-9]+) errors=([0-9]+) case_time_seconds=([0-9]+(?:\.[0-9]+)?)\s*$`)
 )
 
 type fileSignature struct {
@@ -35,9 +36,34 @@ func parseBenchmark(name, output, resultDir string, hpcgBefore map[string]fileSi
 		return parseHPL(output)
 	case "hpcg":
 		return parseHPCG(output, resultDir, hpcgBefore)
+	case "npu_burn":
+		return parseNPUBurn(output)
 	default:
 		return nil, "", fmt.Errorf("unsupported benchmark %q", name)
 	}
+}
+
+func parseNPUBurn(output string) (map[string]float64, string, error) {
+	matches := npuBurnSummary.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return nil, "", fmt.Errorf("Ascend NPU Burn validated summary not found")
+	}
+	match := matches[len(matches)-1]
+	keys := []string{"device_count", "case_count", "passed_case_count", "failed_case_count", "error_count", "case_time_seconds"}
+	values := make(map[string]float64, len(keys))
+	for index, key := range keys {
+		value, err := strconv.ParseFloat(match[index+1], 64)
+		if err != nil {
+			return nil, "", fmt.Errorf("Ascend NPU Burn summary has invalid %s", key)
+		}
+		values[key] = value
+	}
+	if values["device_count"] < 1 || values["case_count"] < 1 ||
+		values["passed_case_count"] != values["case_count"] ||
+		values["failed_case_count"] != 0 || values["error_count"] != 0 {
+		return nil, "", fmt.Errorf("Ascend NPU Burn summary did not report a complete pass")
+	}
+	return values, "result_csv", nil
 }
 
 func parseStream(output string) (map[string]float64, string, error) {

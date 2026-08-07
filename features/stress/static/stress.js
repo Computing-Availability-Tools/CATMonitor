@@ -13,7 +13,8 @@ const byId = id => document.getElementById(id);
 const benchmarkInfo = {
   stream: {description: '验证持续内存带宽与数据搬运能力', family: 'Memory bandwidth'},
   hpl: {description: '验证高密度浮点计算与 MPI 运行能力', family: 'Dense compute'},
-  hpcg: {description: '验证内存、计算与通信的综合可靠性', family: 'System workload'}
+  hpcg: {description: '验证内存、计算与通信的综合可靠性', family: 'System workload'},
+  npu_burn: {description: '验证昇腾 NPU 高负载计算与 SDC 检测结果', family: 'Ascend NPU reliability'}
 };
 const statusInfo = {
   healthy: {label: '通过', cls: 'ok'},
@@ -35,7 +36,13 @@ const metricInfo = {
   time_seconds: {label: '基准计算时间', unit: 's'},
   n: {label: '问题规模 N', unit: ''},
   nb: {label: '块大小 NB', unit: ''},
-  process: {label: 'MPI 进程', unit: ''}
+  process: {label: 'MPI 进程', unit: ''},
+  device_count: {label: 'NPU 设备', unit: 'cards'},
+  case_count: {label: '用例结果', unit: 'cases'},
+  passed_case_count: {label: '通过用例', unit: 'cases'},
+  failed_case_count: {label: '失败用例', unit: 'cases'},
+  error_count: {label: '检测错误', unit: ''},
+  case_time_seconds: {label: '累计用例时间', unit: 's'}
 };
 const streamMetricOrder = ['copy_mb_s', 'scale_mb_s', 'add_mb_s', 'triad_mb_s'];
 const preflightLabels = {
@@ -442,8 +449,19 @@ function detailRows(item) {
     }
     if (Number.isFinite(values.process)) rows.push(['MPI 进程', metricValue(values.process)]);
   }
+  if (item.name === 'npu_burn') {
+    if (Number.isFinite(values.device_count)) rows.push(['NPU 设备', metricValue(values.device_count)]);
+    if (Number.isFinite(values.case_count)) rows.push(['结果行数', metricValue(values.case_count)]);
+    if (Number.isFinite(values.error_count)) rows.push(['检测错误', metricValue(values.error_count)]);
+    if (Number.isFinite(values.case_time_seconds)) {
+      rows.push(['累计用例时间', metricText(values.case_time_seconds, 's')]);
+    }
+  }
   if (item.source) {
-    rows.push(['结果来源', item.source === 'result_file' ? '结果文件' : '标准输出']);
+    const source = item.source === 'result_file'
+      ? '结果文件'
+      : (item.source === 'result_csv' ? 'NPU Burn CSV' : '标准输出');
+    rows.push(['结果来源', source]);
   }
   return rows;
 }
@@ -505,6 +523,25 @@ function appendMetricContent(card, item, jobID) {
       }
       card.append(section, metrics);
     }
+  }
+
+  if (item.name === 'npu_burn' && Number.isFinite(values.case_count)) {
+    const primary = document.createElement('div');
+    primary.className = 'primary-metric';
+    const label = document.createElement('span');
+    label.className = 'primary-metric-label';
+    label.textContent = 'NPU Burn 用例结果';
+    const line = document.createElement('div');
+    line.className = 'primary-metric-line';
+    const value = document.createElement('strong');
+    value.className = 'primary-metric-value';
+    value.textContent = metricValue(values.passed_case_count || 0) + ' / ' + metricValue(values.case_count);
+    const unit = document.createElement('span');
+    unit.className = 'primary-metric-unit';
+    unit.textContent = 'PASS';
+    line.append(value, unit);
+    primary.append(label, line);
+    card.appendChild(primary);
   }
 
   const details = detailRows(item);

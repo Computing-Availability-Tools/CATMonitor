@@ -35,6 +35,22 @@ HPCG_NY=32
 HPCG_NZ=32
 HPCG_RUNTIME_SECONDS=60
 
+# MindCluster Ascend NPU Burn is an external Mulan PSL v2 dependency. Install
+# it on the target node and configure its console script/workload here; the
+# third-party package is not bundled with CATMonitor. The current upstream
+# release rejects a caller-supplied existing --output directory, so default to
+# its own $HOME/.ascend_npu_burn/output path. Set NPU_BURN_USE_DEFAULT_OUTPUT
+# to false only after verifying that the installed version accepts --output.
+NPU_BURN_EXECUTABLE=""
+NPU_BURN_USE_DEFAULT_OUTPUT=true
+NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
+NPU_BURN_RUN_CASE=""
+NPU_BURN_GROUP=""
+NPU_BURN_DEVICE="all"
+NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
+NPU_BURN_EXEC_COUNT=1
+NPU_BURN_CHIP_GENERATION=""
+
 require_absolute_executable() {
     benchmark_name=$1
     executable=$2
@@ -465,6 +481,105 @@ describe_hpcg() {
     printf '}\n'
 }
 
+describe_npu_burn() {
+    failed=0
+    if ! is_positive_integer "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"; then failed=$((failed + 1)); fi
+    if ! is_positive_integer "$NPU_BURN_EXEC_COUNT"; then failed=$((failed + 1)); fi
+    if [ -z "$NPU_BURN_DEVICE" ]; then failed=$((failed + 1)); fi
+    case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
+        true|false) ;;
+        *) failed=$((failed + 1)) ;;
+    esac
+    npu_output_mode=tool_default
+    if [ "$NPU_BURN_USE_DEFAULT_OUTPUT" = false ]; then npu_output_mode=custom; fi
+    case "$NPU_BURN_CHIP_GENERATION" in
+        A3|A5) ;;
+        *) failed=$((failed + 1)) ;;
+    esac
+    if { [ -n "$NPU_BURN_RUN_CASE" ] && [ -n "$NPU_BURN_GROUP" ]; } ||
+       { [ -z "$NPU_BURN_RUN_CASE" ] && [ -z "$NPU_BURN_GROUP" ]; }; then
+        failed=$((failed + 1))
+    fi
+    npu_workload=$NPU_BURN_RUN_CASE
+    npu_selector=run_case
+    if [ -n "$NPU_BURN_GROUP" ]; then
+        npu_workload=$NPU_BURN_GROUP
+        npu_selector=group
+    fi
+    MPI_IMPLEMENTATION=none
+    MPI_VERSION=""
+    MPI_EXECUTABLE_ABI=none
+    MPI_STATUS=pass
+    MPI_MESSAGE="MPI is not used by Ascend NPU Burn"
+    printf '{"protocol_version":1,"benchmark":"npu_burn","parameters":['
+    emit_parameter executable "Executable" "$NPU_BURN_EXECUTABLE"
+    printf ','
+    emit_parameter output_mode "Output mode" "$npu_output_mode"
+    printf ','
+    emit_parameter selector "Workload selector" "$npu_selector"
+    printf ','
+    emit_parameter workload "Run case / group" "$npu_workload"
+    printf ','
+    emit_parameter devices "NPU devices" "$NPU_BURN_DEVICE"
+    printf ','
+    emit_parameter chip_generation "Chip generation" "$NPU_BURN_CHIP_GENERATION"
+    printf ','
+    emit_parameter sdc_detection "SDC detection" enabled
+    printf ','
+    emit_parameter internal_timeout "Per-case timeout" "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS" seconds
+    printf ','
+    emit_parameter execution_count "Execution count" "$NPU_BURN_EXEC_COUNT"
+    printf '],"resources":{"mpi_processes":0,"threads_per_process":0,"total_workers":0,"runtime_seconds":%s,"problem_size":' \
+        "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
+    json_string "$npu_workload"
+    printf '},"assets":['
+    if ! emit_asset executable "$NPU_BURN_EXECUTABLE" executable true; then failed=$((failed + 1)); fi
+    printf ','
+    if ! emit_asset output_directory "$NPU_BURN_OUTPUT_DIR" directory true; then failed=$((failed + 1)); fi
+    printf '],"mpi":'
+    emit_mpi false ""
+    printf ',"preflight":'
+    emit_preflight "$failed" 0
+    printf '}\n'
+}
+
+summarize_npu_burn_csv() {
+    result_file=$1
+    if [ ! -s "$result_file" ]; then
+        echo "Ascend NPU Burn result CSV is missing or empty: $result_file"
+        return 1
+    fi
+    summary=$(awk -F',' '
+        NR == 1 && $1 == "task" && $8 == "result" { header=1; next }
+        $1 == "task" && $8 == "result" { next }
+        NF < 8 { malformed=1; next }
+        {
+            cases++
+            devices[$2]=1
+            exetime += $6 + 0
+            errors += $7 + 0
+            if ($8 == "PASS" && ($7 + 0) == 0) passed++
+            else failed++
+        }
+        END {
+            for (device in devices) device_count++
+            if (!header || cases == 0 || malformed) exit 2
+            printf "CATMONITOR_NPU_BURN_SUMMARY devices=%d cases=%d passed=%d failed=%d errors=%d case_time_seconds=%.6f\n", \
+                device_count, cases, passed, failed, errors, exetime
+            if (failed > 0 || errors > 0) exit 3
+        }
+    ' "$result_file")
+    summary_status=$?
+    if [ -n "$summary" ]; then printf '%s\n' "$summary"; fi
+    case "$summary_status" in
+        0) return 0 ;;
+        2) echo "Ascend NPU Burn result CSV has an invalid schema or no result rows." ;;
+        3) echo "Ascend NPU Burn reported failed cases or SDC errors." ;;
+        *) echo "Ascend NPU Burn result CSV could not be parsed." ;;
+    esac
+    return 1
+}
+
 if [ "$#" -lt 1 ]; then
     echo "Insufficient number of parameters."
     exit 1
@@ -483,6 +598,7 @@ case "$benchmark_type" in
             stream) describe_stream ;;
             hpl) describe_hpl ;;
             hpcg) describe_hpcg ;;
+            npu_burn) describe_npu_burn ;;
             *) echo "Unknown benchmark for describe."; exit 1 ;;
         esac
         ;;
@@ -540,6 +656,57 @@ case "$benchmark_type" in
             --ny="$HPCG_NY" \
             --nz="$HPCG_NZ" \
             --rt="$HPCG_RUNTIME_SECONDS"
+        ;;
+    npu_burn)
+        if [ "$#" -ne 0 ]; then exit 1; fi
+        require_absolute_executable "Ascend NPU Burn" "$NPU_BURN_EXECUTABLE"
+        require_absolute_directory "Ascend NPU Burn output directory" "$NPU_BURN_OUTPUT_DIR"
+        require_positive_integer "NPU_BURN_INTERNAL_TIMEOUT_SECONDS" "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
+        require_positive_integer "NPU_BURN_EXEC_COUNT" "$NPU_BURN_EXEC_COUNT"
+        if [ -z "$NPU_BURN_DEVICE" ]; then
+            echo "NPU_BURN_DEVICE must not be empty."
+            exit 1
+        fi
+        case "$NPU_BURN_CHIP_GENERATION" in
+            A3|A5) ;;
+            *) echo "NPU_BURN_CHIP_GENERATION must be A3 or A5."; exit 1 ;;
+        esac
+        case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
+            true|false) ;;
+            *) echo "NPU_BURN_USE_DEFAULT_OUTPUT must be true or false."; exit 1 ;;
+        esac
+        if { [ -n "$NPU_BURN_RUN_CASE" ] && [ -n "$NPU_BURN_GROUP" ]; } ||
+           { [ -z "$NPU_BURN_RUN_CASE" ] && [ -z "$NPU_BURN_GROUP" ]; }; then
+            echo "Configure exactly one of NPU_BURN_RUN_CASE or NPU_BURN_GROUP."
+            exit 1
+        fi
+        npu_args=(
+            --device "$NPU_BURN_DEVICE"
+            --sdc_detect
+            --timeout "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
+            --exec_count "$NPU_BURN_EXEC_COUNT"
+            --chip_generation "$NPU_BURN_CHIP_GENERATION"
+        )
+        if [ "$NPU_BURN_USE_DEFAULT_OUTPUT" = false ]; then
+            npu_args+=(--output "$NPU_BURN_OUTPUT_DIR")
+        fi
+        if [ -n "$NPU_BURN_RUN_CASE" ]; then
+            npu_args+=(--run_case "$NPU_BURN_RUN_CASE")
+        else
+            npu_args+=(--group "$NPU_BURN_GROUP")
+        fi
+        npu_console_log=$(mktemp "${TMPDIR:-/tmp}/catmonitor-npu-burn.XXXXXX") || exit 1
+        trap 'rm -f "$npu_console_log"' EXIT
+        "$NPU_BURN_EXECUTABLE" "${npu_args[@]}" 2>&1 | tee "$npu_console_log"
+        npu_status=${PIPESTATUS[0]}
+        if [ "$npu_status" -ne 0 ]; then
+            exit "$npu_status"
+        fi
+        if grep -Eq '[|][[:space:]]*[0-9]+[[:space:]]*[|][[:space:]]*FAIL[[:space:]]*[|]' "$npu_console_log"; then
+            echo "Ascend NPU Burn global device summary reported failure."
+            exit 1
+        fi
+        summarize_npu_burn_csv "$NPU_BURN_OUTPUT_DIR/npu_burn_results.csv"
         ;;
     *)
         echo "Unknown parameter."

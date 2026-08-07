@@ -310,6 +310,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .stream-mark { background: #e8f8f0; }
 .hpl-mark { background: #eef4ff; }
 .hpcg-mark { background: #fff4e8; }
+.npu-burn-mark { background: #f2edff; }
 .coverage-mark::before, .coverage-mark::after { content: ""; position: absolute; }
 .stream-mark::before { inset: 9px 8px; border-left: 3px solid #12b76a; border-right: 3px solid #12b76a; transform: skew(-13deg); }
 .stream-mark::after { width: 3px; height: 19px; background: #6ce9a6; left: 16px; top: 8px; transform: skew(-13deg); }
@@ -317,6 +318,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .hpl-mark::after { width: 13px; height: 2px; background: #528bdf; left: 11px; top: 16px; box-shadow: 0 -5px #9dbaf0, 0 5px #9dbaf0; }
 .hpcg-mark::before { width: 20px; height: 20px; border-radius: 50%; border: 2px dashed #f79009; left: 6px; top: 6px; }
 .hpcg-mark::after { width: 7px; height: 7px; border-radius: 50%; background: #f79009; left: 14px; top: 14px; }
+.npu-burn-mark::before { width: 20px; height: 15px; border: 2px solid #7f56d9; border-radius: 5px; left: 6px; top: 9px; }
+.npu-burn-mark::after { width: 4px; height: 4px; border-radius: 50%; background: #7f56d9; left: 10px; top: 15px; box-shadow: 6px 0 #9e77ed, 12px 0 #7f56d9; }
 .result-rule { margin-top: 22px; padding: 15px; border-radius: 9px; background: #f8fafc; border: 1px solid var(--line); }
 .result-rule span { display: block; color: var(--muted); font-size: 11px; }
 .result-rule b { display: block; margin: 4px 0 6px; color: #067647; font-size: 15px; }

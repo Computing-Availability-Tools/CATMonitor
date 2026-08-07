@@ -36,7 +36,7 @@ type profileCacheEntry struct {
 // Describe returns the effective, read-only workload profile for a benchmark.
 // The dispatcher contract is:
 //
-//	bash benchmark_check.sh describe <stream|hpl|hpcg>
+//	bash benchmark_check.sh describe <stream|hpl|hpcg|npu_burn>
 //
 // It must write exactly one JSON object to stdout and must not launch a
 // benchmark. Results are cached briefly because the Web UI polls configuration.

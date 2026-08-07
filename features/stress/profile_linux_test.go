@@ -43,6 +43,42 @@ func TestDispatcherDescribeStreamIsJSONAndDoesNotLaunchWorkload(t *testing.T) {
 	}
 }
 
+func TestDispatcherDescribeAscendNPUBurnIsReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "launched")
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/sh\ntouch "+shellLiteral(marker)+"\n")
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_EXECUTABLE":               npuBurn,
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_GROUP":                    "group_basic",
+		"NPU_BURN_DEVICE":                   "0,1,2,3",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "300",
+		"NPU_BURN_EXEC_COUNT":               "1",
+		"NPU_BURN_CHIP_GENERATION":          "A3",
+	})
+	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile ExecutionProfile
+	if err := json.Unmarshal(output, &profile); err != nil {
+		t.Fatalf("describe output is not JSON: %v: %s", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("describe launched Ascend NPU Burn: %v", err)
+	}
+	if profile.Benchmark != "npu_burn" || profile.Preflight.Status != CheckPass ||
+		profile.Resources.RuntimeSeconds != 300 || profile.Resources.ProblemSize != "group_basic" ||
+		len(profile.Assets) != 2 || profile.MPI.Required {
+		t.Fatalf("unexpected Ascend NPU Burn profile: %+v", profile)
+	}
+}
+
 func TestDispatcherDescribeHPLDetectsMPIABIMismatch(t *testing.T) {
 	dir := t.TempDir()
 	hplDir := filepath.Join(dir, "hpl")

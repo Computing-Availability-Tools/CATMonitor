@@ -50,6 +50,8 @@ stress:
     hpl: { enabled: false, timeout: 2h }
     # Directory where this host's HPCG writes HPCG-Benchmark*.txt.
     hpcg: { enabled: false, result_dir: "", timeout: 3m }
+    # Ascend NPU Burn paths and workload parameters stay in benchmark_check.sh.
+    npu_burn: { enabled: false, timeout: 30m }
 
 collection:
   # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)

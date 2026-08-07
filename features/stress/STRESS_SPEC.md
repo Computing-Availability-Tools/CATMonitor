@@ -2,7 +2,7 @@
 
 ## 1. 范围与边界
 
-`features/stress` 提供显式触发的 STREAM、HPL 和 HPCG 压测。它是顶层 feature：
+`features/stress` 提供显式触发的 STREAM、HPL、HPCG 和 Ascend NPU Burn 压测。它是顶层 feature：
 
 - 不属于 `features/health`，不复用健康评分状态；
 - 不进入 `catmonitor daemon` 周期；
@@ -43,6 +43,7 @@ stress:
       enabled: true
       result_dir: /absolute/path/to/hpcg/results
       timeout: 3m
+    npu_burn: { enabled: true, timeout: 30m }
 ```
 
 `enabled` 控制整个特性；`web_enabled` 仅授权 Web 发起高负载作业，CLI 不依赖
@@ -52,7 +53,10 @@ stress:
 不复制 `stress:`，也不恢复已经移除的 Web 专用 YAML 配置。
 
 YAML 不接收 benchmark 可执行路径。具体执行器、环境变量、MPI/NUMA 参数和
-工作目录由节点 `benchmark_check.sh` 维护。HPCG 的 `result_dir` 仅供 Go
+工作目录由节点 `benchmark_check.sh` 维护。Ascend NPU Burn 的工具路径、结果
+目录、用例/组、设备列表、芯片代际和工具内部超时也只由节点脚本维护；当前上游
+版本使用其 `$HOME/.ascend_npu_burn/output` 默认目录，以避开有缺陷的自定义
+`--output` 校验。HPCG 的 `result_dir` 仅供 Go
 核验本次结果文件，不用于定位可执行文件。
 
 仓库内脚本模板必须能够直接适配单节点 MPICH/Hydra 或 OpenMPI：环境变量由
@@ -67,6 +71,7 @@ HPL/HPCG 的 launcher 必须分别与对应二进制的 MPI ABI 匹配；厂商�
 benchmark_check.sh describe stream
 benchmark_check.sh describe hpl
 benchmark_check.sh describe hpcg
+benchmark_check.sh describe npu_burn
 ```
 
 命令必须无 benchmark 副作用，只向 stdout 输出一个协议版本为 1 的 JSON
@@ -86,7 +91,7 @@ Manager 同时只运行一个作业，所选项目按顺序执行。Linux 使用
 状态语义：
 
 - `healthy`：命令自行成功结束，且必需结果解析成功；
-- `time_limit_reached`：配置窗口到达后按计划停止，属于通过，允许无性能值；
+- `time_limit_reached`：STREAM/HPL/HPCG 配置窗口到达后按计划停止，属于通过，允许无性能值；
 - `unhealthy`：命令提前失败，或正常退出后结果协议不完整；
 - `cancelled`：用户/服务关闭主动取消；
 - `unavailable`：配置或资产不可用；
@@ -112,6 +117,14 @@ HPL 正常完成时解析标准结果行中的 N、NB、P、Q、进程数、时�
 发现 residual failure 或独立 `FAILED` 必须失败。HPCG 正常完成必须找到本次
 新增或发生变化的 `HPCG-Benchmark*.txt`，文件声明结果 VALID，并能解析
 GFLOP/s 和执行时间；不得使用 stdout 或历史未变化文件替代。
+
+Ascend NPU Burn 以外部 Mulan PSL v2 软件包形式安装，CATMonitor 不再分发其源码
+或二进制。正常完成时，节点脚本必须读取工具本次生成的
+`npu_burn_results.csv`，验证存在至少一个设备和结果行、每行 `result=PASS` 且
+`err_count=0`，并拒绝全局设备汇总中的 `FAIL`，再输出 CATMonitor 规范化摘要。
+工具退出码 0 不能替代这两层校验。
+因为该工具用于 SDC/硬件错误检测，CATMonitor 外层时限到达但没有完整 CSV 时
+必须为 `unhealthy`，不得沿用其他三项的受控时限通过语义。
 
 ## 4. Web 契约
 
@@ -144,11 +157,13 @@ Web 只能选择 YAML 已启用且通过预检的项目，可为单次作业缩�
 HPL/HPCG 的 GFLOP/s 分别作为主指标，不得与问题规模、进程数或秒数混合归一化，
 也不得直接比较 HPL 与 HPCG。时间和运行参数使用独立详情区域。同一 benchmark
 存在至少两次历史性能值时可显示零基线趋势，但趋势不改变通过/失败状态。
+Ascend NPU Burn 显示设备数、结果行数、通过/失败数、错误数和累计用例时间，
+不将这些可靠性计数伪装成性能分数。
 
 ## 5. 验证要求
 
 自动化测试必须覆盖解析、按时限通过、取消、进程组清理、报告原子写入与错误、
 历史上限/排序/输出裁剪、防御性复制、跨进程锁、共享报告刷新、describe
 无副作用/严格 JSON/超时/旧版降级、资产和 MPI ABI 预检、profile 哈希持久化、
-Web 安全策略、CLI 退出码及独立 SPA 资源。Linux 执行单元测试、竞态检查和
+Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义及独立 SPA 资源。Linux 执行单元测试、竞态检查和
 构建；Windows 交叉构建。真实性能只在资产与拓扑匹配的 Linux 节点验收。

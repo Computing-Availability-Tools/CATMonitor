@@ -79,7 +79,7 @@ func helpRequested(args []string) bool {
 
 func printUsage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
-  catmonitor stress [--bench hpl,hpcg,stream] [-c config.yaml] [-o json|table]
+  catmonitor stress [--bench hpl,hpcg,stream,npu_burn] [-c config.yaml] [-o json|table]
 
 Run explicitly enabled Linux stress benchmarks.
 Without --bench, run default_benchmarks from the CATMonitor configuration.

@@ -14,7 +14,7 @@
 
 ## 1. 部署原则
 
-1. STREAM、HPL、HPCG 的绝对路径、环境变量、MPI/NUMA 参数都放在节点脚本中，
+1. STREAM、HPL、HPCG、Ascend NPU Burn 的绝对路径、环境变量、MPI/NUMA/NPU 参数都放在节点脚本中，
    不允许通过 Web 任意编辑。
 2. `/etc/catmonitor/benchmark_check.sh` 一旦通过实机验证，升级时不得用仓库模板
    直接覆盖。
@@ -128,10 +128,59 @@ install -m 0750 \
 - STREAM：执行器、`numactl` 和线程数；
 - HPL：工作目录、执行器、库目录、MPI launcher、进程数和线程数；
 - HPCG：工作目录、执行器、MPI launcher、进程数、线程数、网格和运行时长。
+- Ascend NPU Burn：安装后的 `npu-burn`、输出目录、用例或组、设备列表、工具
+  内部超时、执行次数和芯片代际。
 
 所有执行器、工作目录和 launcher 必须使用绝对路径。仓库模板的 HPL/HPCG
 命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的 `-np`；厂商专用绑核、通信和
 root 参数只能在验证过的节点部署副本中维护。
+
+### 4.1 安装 Ascend NPU Burn 外部依赖
+
+CATMonitor 不复制 `MindCluster-AscendNPUBurn` 源码或 wheel。目标节点需先安装
+匹配驱动、固件、CANN、PyTorch/torch_npu 和 Python 3.9–3.13，再按该项目文档
+构建并安装：
+
+```bash
+cd /absolute/path/to/MindCluster-AscendNPUBurn
+bash build/build.sh
+python3 -m pip install build/dist/ascend_npu_burn-*.whl
+
+command -v npu-burn
+npu-burn --version
+```
+
+项目以 Mulan PSL v2 发布，部署和再分发需保留其许可证及版权声明。为 CATMonitor
+创建独立结果目录，并确保运行 CATMonitor 的账户可写：
+
+```bash
+install -d -m 0750 "$HOME/.ascend_npu_burn/output"
+```
+
+在部署脚本顶部配置一套明确工作负载。下面仅为字段示例，A3/A5 用例必须以当前
+安装包 `ascend_npu_burn/config` 为准：
+
+```bash
+NPU_BURN_EXECUTABLE="/absolute/path/to/bin/npu-burn"
+NPU_BURN_USE_DEFAULT_OUTPUT=true
+NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
+NPU_BURN_RUN_CASE="quant_matmul" # 与 NPU_BURN_GROUP 二选一
+NPU_BURN_GROUP=""
+NPU_BURN_DEVICE="all"            # 或 0,1,2,3
+NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
+NPU_BURN_EXEC_COUNT=1
+NPU_BURN_CHIP_GENERATION="A3"    # A3 或 A5
+```
+
+脚本固定传入 `--sdc_detect`。`NPU_BURN_INTERNAL_TIMEOUT_SECONDS` 是工具内部的
+单用例时限；YAML 的 `benchmarks.npu_burn.timeout` 是 CATMonitor 整个作业的
+外层上限，必须覆盖所选全部用例、设备初始化和报告收尾时间。
+
+当前随本需求提供的 Ascend NPU Burn 源码会错误拒绝调用者传入的现有
+`--output` 目录，因此默认保持 `NPU_BURN_USE_DEFAULT_OUTPUT=true`：适配器不传
+`--output`，但仍从工具默认的 `$HOME/.ascend_npu_burn/output` 读取结果。CATMonitor
+CLI/Web 必须与安装和创建该目录时使用同一个系统账户。仅当后续安装版本已验证
+自定义 `--output` 可用时，才改成 `false` 并设置其他绝对目录。
 
 ## 5. 升级现有节点脚本
 
@@ -204,6 +253,7 @@ PY
 ```bash
 bash -n "$CANDIDATE"
 grep -nE '^(STREAM_|HPL_|HPCG_)' "$CANDIDATE"
+grep -nE '^NPU_BURN_' "$CANDIDATE"
 diff -u "$OLD_SCRIPT" "$CANDIDATE" | sed -n '1,260p' || true
 ```
 
@@ -222,10 +272,10 @@ fi
 
 ## 6. `describe` 无副作用预检
 
-candidate 必须先通过三项描述检查：
+启用的 benchmark 必须先通过描述检查；NPU 节点配置完成后共四项：
 
 ```bash
-for benchmark in stream hpl hpcg; do
+for benchmark in stream hpl hpcg npu_burn; do
   output="/tmp/catmonitor-describe-$benchmark.json"
   if ! "$CANDIDATE" describe "$benchmark" > "$output"; then
     echo "ERROR: describe $benchmark failed" >&2
@@ -255,7 +305,7 @@ ldd /absolute/path/to/xhpcg | grep -Ei 'mpi|mpich|open-rte|open-pal|pmix'
 
 ## 7. 原子切换与统一配置
 
-仅在 candidate 的三项 `describe` 都通过后切换。先停止旧 Web，再替换脚本和
+仅在 candidate 的所有已启用项目 `describe` 都通过后切换。先停止旧 Web，再替换脚本和
 候选二进制：
 
 ```bash
@@ -290,6 +340,9 @@ stress:
       enabled: true
       result_dir: /absolute/path/to/hpcg/results
       timeout: 3m
+    npu_burn:
+      enabled: true
+      timeout: 30m
 ```
 
 说明：
@@ -298,7 +351,7 @@ stress:
 - `web_enabled` 只授权 Web 提交，CLI 不依赖它；
 - `script_path` 指向节点部署副本；
 - `report_path` 同时派生 history 和跨进程锁；
-- STREAM/HPL/HPCG 的运行参数不写入 YAML；
+- STREAM/HPL/HPCG/Ascend NPU Burn 的运行参数不写入 YAML；
 - 只有 HPCG 需要 `result_dir`，用于读取本次生成或变化的结果文件；
 - Web 的单次超时只能缩短 YAML 上限，不会修改配置文件。
 
@@ -320,13 +373,13 @@ Linux 默认主配置为 `/etc/catmonitor/catmonitor.yaml`，因此常规部署�
 
 ```bash
 bash -n /etc/catmonitor/benchmark_check.sh
-for benchmark in stream hpl hpcg; do
+for benchmark in stream hpl hpcg npu_burn; do
   /etc/catmonitor/benchmark_check.sh describe "$benchmark" \
     | python3 -m json.tool
 done
 ```
 
-按 STREAM、HPCG、HPL 逐项运行；首次不要同时选择三项：
+按 STREAM、HPCG、HPL、NPU Burn 逐项运行；首次不要同时选择多项：
 
 ```bash
 cd "$CAT_ROOT"
@@ -336,6 +389,8 @@ cd "$CAT_ROOT"
 ./bin/catmonitor stress --bench hpcg -o table
 
 ./bin/catmonitor stress --bench hpl -o table
+
+./bin/catmonitor stress --bench npu_burn -o table
 ```
 
 需要机器可读输出时使用 `-o json`。表格中的成功状态显示为 `OK`，JSON 使用稳定
@@ -346,14 +401,14 @@ cd "$CAT_ROOT"
 ```bash
 python3 -m json.tool /var/lib/catmonitor/stress-latest.json
 python3 -m json.tool /var/lib/catmonitor/stress-history.json
-pgrep -af '[s]tream_omp|[x]hpl|[x]hpcg|[m]pirun|[n]umactl' || true
+pgrep -af '[s]tream_omp|[x]hpl|[x]hpcg|[n]pu-burn|ascend_npu_burn|[m]pirun|[n]umactl' || true
 ```
 
 正常结束、主动取消或达到时限后都不应残留 benchmark、MPI 或 NUMA 进程。
 
 ## 9. Web 与 Windows 隧道验收
 
-CLI 三项通过后，将主配置的 `stress.web_enabled` 改为 `true`，再启动 Web：
+CLI 启用项均通过后，将主配置的 `stress.web_enabled` 改为 `true`，再启动 Web：
 
 ```bash
 cd "$CAT_ROOT"
@@ -396,7 +451,7 @@ http://127.0.0.1:19527/stress/
 
 `report_path` 保存当前/最近作业。最终作业还会写入同目录的
 `stress-history.json`，按新到旧最多保留 100 条。`latest` 只显示一条是正常设计，
-历史页用于切换此前的 STREAM、HPL 和 HPCG 作业。
+历史页用于切换此前的 STREAM、HPL、HPCG 和 Ascend NPU Burn 作业。
 
 报告应保存：
 
@@ -411,7 +466,8 @@ http://127.0.0.1:19527/stress/
 - 脚本和输入资产哈希不变；
 - 实际配置哈希变化；
 - YAML 文件没有被修改；
-- 作业达到较短窗口且此前没有错误时，状态为 `time_limit_reached` 并按通过展示。
+- STREAM/HPL/HPCG 达到较短窗口且此前没有错误时，状态为 `time_limit_reached` 并按通过展示；
+- Ascend NPU Burn 未生成完整 PASS CSV 就达到外层时限时为 `unhealthy`。
 
 ## 11. CLI/Web 互斥验收
 
@@ -431,7 +487,7 @@ http://127.0.0.1:19527/stress/
 | 状态 | 含义 | 通过 |
 |---|---|---|
 | `healthy` | 命令成功且必需结果已解析 | 是 |
-| `time_limit_reached` | 达到配置窗口，停止前没有检测到错误 | 是 |
+| `time_limit_reached` | STREAM/HPL/HPCG 达到配置窗口，停止前没有检测到错误 | 是 |
 | `running` | 正在运行 | 未完成 |
 | `cancelled` | 用户主动取消 | 否 |
 | `unhealthy` | 命令、校验或解析失败 | 否 |
@@ -440,6 +496,12 @@ http://127.0.0.1:19527/stress/
 HPL、HPCG 和 STREAM 都允许以“受控运行窗口”工作。达到 CATMonitor 时限前没有
 检测到错误时，即使尚未产生 GFLOP/s 或 MB/s，也记录为通过；正常退出时则必须
 完成各自结果校验和必需指标解析，不设置性能阈值。
+
+Ascend NPU Burn 不采用上述时限通过规则。其上游进程可能在 CSV 含 FAIL 时仍
+返回 0，也可能把 worker 异常行从 CSV 中跳过，因此必须同时满足：命令正常结束、
+`npu_burn_results.csv` 至少包含一条结果、全部 `result=PASS`、全部
+`err_count=0`，并且全局设备汇总没有 `FAIL`。外层超时、空/损坏 CSV、FAIL、
+worker 异常或 SDC 错误均为 `unhealthy`。
 
 ## 13. 回滚
 
@@ -465,9 +527,9 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 
 - [ ] CLI 和 Web 在目标架构构建成功
 - [ ] 正式节点脚本位于源码目录外并通过 `bash -n`
-- [ ] 三项 `describe` 无副作用且无阻断性资产/ABI 错误
+- [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误
 - [ ] 主配置只有顶层 `stress:`，Web 默认读取平台路径且可显式覆盖
-- [ ] CLI 依次完成 STREAM、HPCG、HPL
+- [ ] CLI 依次完成 STREAM、HPCG、HPL、Ascend NPU Burn 启用项
 - [ ] JSON 报告、历史、profile 和配置哈希完整
 - [ ] 正常结束、取消和超时后无残留进程
 - [ ] Web 只监听回环地址并通过 SSH 隧道访问

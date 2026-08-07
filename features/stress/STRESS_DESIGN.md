@@ -35,7 +35,7 @@ CLI 的 `internal/config.Config` 拥有顶层 `Stress stress.Config`。新版 We
 
 ## 3. 执行与解析
 
-Manager 只把固定 benchmark 名称传给脚本。STREAM、HPL、HPCG 的绝对路径、
+Manager 只把固定 benchmark 名称传给脚本。STREAM、HPL、HPCG、Ascend NPU Burn 的绝对路径、
 环境、NUMA/MPI 参数及工作目录属于节点部署脚本。Linux 将 Bash 与子进程放入
 独立进程组，超时、取消及 Web 关闭时杀掉整个本地进程组。
 
@@ -56,7 +56,7 @@ benchmark 编译时的 MPI 实现匹配；确需绑核或传输调优时，只�
 脚本检查可执行文件、目录和输入文件，计算可用文件 SHA-256，并用 launcher
 `--version` 与 benchmark 动态链接信息识别 MPI 实现。明确 MPICH/OpenMPI
 不匹配为 fail；ABI 静态链接或无法识别为 warn。describe 不执行
-STREAM/xhpl/xhpcg，不创建结果文件，也不改变配置。
+STREAM/xhpl/xhpcg/npu-burn，不创建结果文件，也不改变配置。
 
 Go 将 YAML 的实际作业时限、HPCG 结果目录及脚本 SHA-256 合并进 profile，
 对规范化 JSON 计算 benchmark 配置哈希，再对所选 benchmark 哈希计算 Report
@@ -66,6 +66,17 @@ STREAM 从 stdout 解析 Copy、Scale、Add、Triad。HPL 校验标准结果和 
 状态。HPCG 在运行前记录结果文件大小、修改时间和 SHA-256，运行后只接受新增
 或内容/元数据发生变化的文件。三项在配置时间窗口到达且此前未报错时统一写
 `time_limit_reached`，不伪造最终 GFLOP/s。
+
+Ascend NPU Burn 由节点脚本调用外部 `npu-burn` console entry，并强制启用
+`--sdc_detect`。上游进程可能在结果含 FAIL 时仍返回 0，因此脚本在命令结束后
+用固定 CSV 前八列校验 `npu_burn_results.csv`，仅当所有结果行为 PASS 且错误数
+为 0，且工具全局设备汇总不存在 `FAIL` 时输出规范化摘要；Go 再严格解析摘要并
+保存设备数、用例数和累计用例时间。
+当前上游版本的自定义 `--output` 校验有缺陷，默认适配模式不传该参数，并从
+同一运行账户的 `$HOME/.ascend_npu_burn/output` 读取 CSV；开关仅用于兼容后续已
+验证修复的版本。
+NPU Burn 的 CATMonitor 外层超时为 `unhealthy`，不能产生
+`time_limit_reached`，避免把未完成的 SDC 检测误报为通过。
 
 ## 4. 互斥与可见性
 
@@ -93,6 +104,8 @@ SPA 左侧显示当前/最近作业和最近 100 个最终作业，右侧切换�
 仅在 Copy/Scale/Add/Triad 四个同单位指标内比较柱长；HPL/HPCG 将 GFLOP/s
 显示为独立主指标，计算时间、总耗时、N/NB/P/Q/进程数显示为详情。历史趋势只
 比较同一 benchmark 的同一指标，采用零基线，不承担阈值或健康状态语义。
+Ascend NPU Burn 使用通过用例数/总用例数作为可靠性摘要，并单独显示设备数、
+错误数和累计用例时间，不与 GFLOP/s 或 STREAM 带宽比较。
 
 项目选择区下方只读展示当前有效 profile：作业时限、MPI/线程资源、问题规模、
 脚本参数、资产状态、MPI ABI 和配置哈希。启动确认再次摘要资源规模。历史详情

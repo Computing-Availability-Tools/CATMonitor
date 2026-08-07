@@ -15,7 +15,9 @@ const (
 // Status is the stress job and benchmark execution state. A terminal
 // StatusHealthy means the command exited successfully and all required result
 // values were parsed. StatusTimeLimitReached also represents success: the
-// configured stress window intentionally ended before final values were emitted.
+// configured duration-driven stress window intentionally ended before final
+// values were emitted. Ascend NPU Burn requires a complete PASS/SDC result and
+// therefore treats an outer timeout as unhealthy instead.
 //
 // This type intentionally does not reuse health.HealthScore.Grade: a health
 // grade is a 0--100 hardware score, while Status is an explicit benchmark job
