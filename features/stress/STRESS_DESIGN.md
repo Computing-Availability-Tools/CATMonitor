@@ -39,6 +39,15 @@ Manager 只把固定 benchmark 名称传给脚本。STREAM、HPL、HPCG、Ascend
 环境、NUMA/MPI 参数及工作目录属于节点部署脚本。Linux 将 Bash 与子进程放入
 独立进程组，超时、取消及 Web 关闭时杀掉整个本地进程组。
 
+NPU Burn 不引入 Go container backend。管理员负责准备、固定和维护原生或容器
+环境，节点脚本负责调用。通用模板支持直接执行宿主机程序，也支持对已经运行的
+固定容器执行 `docker exec`；它只做只读 inspect/可执行性预检，不负责 pull、
+create、start、stop、kill 或 rm。容器镜像、设备、挂载、环境和命令不进入 YAML
+或 HTTP 请求。需要一次性 `docker run` 的节点只能在受控部署副本中固化完整命令。
+本地进程组清理不能天然证明容器内 exec 进程已退出，因此容器 profile 必须由
+管理员提供工具硬时限或容器侧清理机制，并在启用 Web 前完成取消/异常断开验收；
+CATMonitor 不把“本地 docker 客户端已退出”误当作该部署前置条件已经满足。
+
 仓库模板的 MPI 命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的 `-np`，线程
 变量在调用前由 Shell `export`。模板不携带 `-x`、`--map-by`、`--bind-to`、
 `-mca` 或 `--allow-run-as-root` 等厂商参数。部署者必须让 launcher 与
@@ -57,6 +66,9 @@ benchmark 编译时的 MPI 实现匹配；确需绑核或传输调优时，只�
 `--version` 与 benchmark 动态链接信息识别 MPI 实现。明确 MPICH/OpenMPI
 不匹配为 fail；ABI 静态链接或无法识别为 warn。describe 不执行
 STREAM/xhpl/xhpcg/npu-burn，不创建结果文件，也不改变配置。
+容器 NPU Burn 额外只读检查 runtime、容器运行态、实际镜像和容器内执行器，
+并把 backend、容器/镜像、CANN、torch_npu、SoC 等记录为 profile 参数；这些
+参数同样参与配置哈希，不构成可由 Web 修改的容器配置接口。
 
 Go 将 YAML 的实际作业时限、HPCG 结果目录及脚本 SHA-256 合并进 profile，
 对规范化 JSON 计算 benchmark 配置哈希，再对所选 benchmark 哈希计算 Report
@@ -67,11 +79,13 @@ STREAM 从 stdout 解析 Copy、Scale、Add、Triad。HPL 校验标准结果和 
 或内容/元数据发生变化的文件。三项在配置时间窗口到达且此前未报错时统一写
 `time_limit_reached`，不伪造最终 GFLOP/s。
 
-Ascend NPU Burn 由节点脚本调用外部 `npu-burn` console entry，并强制启用
+Ascend NPU Burn 由节点脚本在宿主机或管理员维护的容器中调用外部 `npu-burn`
+console entry，并强制启用
 `--sdc_detect`。上游进程可能在结果含 FAIL 时仍返回 0，因此脚本在命令结束后
 用固定 CSV 前八列校验 `npu_burn_results.csv`，仅当所有结果行为 PASS 且错误数
 为 0，且工具全局设备汇总不存在 `FAIL` 时输出规范化摘要；Go 再严格解析摘要并
-保存设备数、用例数和累计用例时间。
+保存设备数、用例数和累计用例时间。脚本还比较运行前后的文件时间/大小签名，
+拒绝工具退出 0 但没有更新 CSV 时误读历史 PASS 结果。
 当前上游版本的自定义 `--output` 校验有缺陷，默认适配模式不传该参数，并从
 同一运行账户的 `$HOME/.ascend_npu_burn/output` 读取 CSV；开关仅用于兼容后续已
 验证修复的版本。

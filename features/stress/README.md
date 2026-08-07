@@ -39,9 +39,12 @@ Web 入口为 `http://127.0.0.1:9527/stress/`。它拥有自己的嵌入式 SPA 
 使用同一种 MPI 实现，再在部署副本中增加该实现专用的绑核或通信参数。
 
 Ascend NPU Burn 是按 Mulan PSL v2 单独安装的外部工具，CATMonitor 不复制其
-源码或 wheel。节点脚本负责声明 `npu-burn` 绝对路径、用例/组、设备、芯片代际、
-内部超时和结果目录。当前上游版本默认从 `$HOME/.ascend_npu_burn/output` 读取结果，
-避免其自定义 `--output` 校验缺陷。CATMonitor 只接受本次 `npu_burn_results.csv` 中所有结果
+源码或 wheel，也不管理容器生命周期。节点管理员可在脚本中选择宿主机原生执行，
+或使用 `docker_exec` 调用一个已经运行且由管理员维护的固定容器；镜像、设备、挂载、
+环境和容器命令不进入 YAML/Web。`describe` 会把 backend、容器/镜像、CANN、
+torch_npu、SoC、芯片代际和用例作为只读 profile 参数展示并写入配置哈希。
+当前上游版本默认从 `$HOME/.ascend_npu_burn/output` 读取结果，避免其自定义
+`--output` 校验缺陷。CATMonitor 只接受本次 `npu_burn_results.csv` 中所有结果
 均为 `PASS`、`err_count=0` 且全局设备汇总无 `FAIL` 的完整报告；外层超时不作为
 NPU Burn 通过。
 

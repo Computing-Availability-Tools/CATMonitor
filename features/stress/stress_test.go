@@ -111,7 +111,14 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`HPCG_EXECUTABLE=""`,
 		`HPCG_MPI_LAUNCHER=""`,
 		`HPCG_MPI_PROCESSES=0`,
+		`NPU_BURN_BACKEND="native"`,
 		`NPU_BURN_EXECUTABLE=""`,
+		`NPU_BURN_CONTAINER_RUNTIME=""`,
+		`NPU_BURN_CONTAINER_NAME=""`,
+		`NPU_BURN_CONTAINER_IMAGE=""`,
+		`NPU_BURN_RUNTIME_CANN=""`,
+		`NPU_BURN_RUNTIME_TORCH_NPU=""`,
+		`NPU_BURN_SOC_MODEL=""`,
 		`NPU_BURN_USE_DEFAULT_OUTPUT=true`,
 		`NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"`,
 		`NPU_BURN_RUN_CASE=""`,
@@ -138,6 +145,7 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`describe_hpl`,
 		`describe_hpcg`,
 		`describe_npu_burn`,
+		`probe_npu_container`,
 		`summarize_npu_burn_csv`,
 		`--sdc_detect`,
 	} {
@@ -200,6 +208,48 @@ func TestBundledDispatcherValidatesAscendNPUBurnCSV(t *testing.T) {
 	}
 }
 
+func TestBundledDispatcherRunsAscendNPUBurnWithPreparedContainer(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("dispatcher execution is Linux-only")
+	}
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nmatmul,0,0,20,1,10.897049,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
+	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
+case "$1" in
+  inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
+  exec) shift 2; exec "$@" ;;
+  *) exit 98 ;;
+esac
+`)
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               npuBurn,
+		"NPU_BURN_CONTAINER_RUNTIME":        docker,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a2",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a2-cann83",
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "matmul",
+		"NPU_BURN_DEVICE":                   "0",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_EXEC_COUNT":               "1",
+		"NPU_BURN_CHIP_GENERATION":          "A2",
+	})
+	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
+	if err != nil {
+		t.Fatalf("prepared-container NPU Burn failed: %v: %s", err, output)
+	}
+	values, _, err := parseNPUBurn(string(output))
+	if err != nil || values["device_count"] != 1 || values["case_count"] != 1 ||
+		values["case_time_seconds"] != 10.897049 {
+		t.Fatalf("unexpected container NPU Burn output: err=%v values=%v output=%s", err, values, output)
+	}
+}
+
 func TestBundledDispatcherRejectsAscendNPUBurnFailureCSV(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("dispatcher execution is Linux-only")
@@ -223,6 +273,36 @@ func TestBundledDispatcherRejectsAscendNPUBurnFailureCSV(t *testing.T) {
 	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "reported failed cases or SDC errors") {
 		t.Fatalf("failed NPU Burn CSV must fail dispatcher: err=%v output=%s", err, output)
+	}
+}
+
+func TestBundledDispatcherRejectsStaleAscendNPUBurnCSV(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("dispatcher execution is Linux-only")
+	}
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resultFile := filepath.Join(outputDir, "npu_burn_results.csv")
+	if err := os.WriteFile(resultFile, []byte("task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\nmatmul,0,0,20,1,10,0,PASS,shape=old\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nexit 0\n")
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_EXECUTABLE":               npuBurn,
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "matmul",
+		"NPU_BURN_DEVICE":                   "0",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_EXEC_COUNT":               "1",
+		"NPU_BURN_CHIP_GENERATION":          "A2",
+	})
+	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "did not update its result CSV") {
+		t.Fatalf("stale NPU Burn result must fail: err=%v output=%s", err, output)
 	}
 }
 

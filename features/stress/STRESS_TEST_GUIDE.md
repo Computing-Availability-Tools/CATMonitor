@@ -128,18 +128,20 @@ install -m 0750 \
 - STREAM：执行器、`numactl` 和线程数；
 - HPL：工作目录、执行器、库目录、MPI launcher、进程数和线程数；
 - HPCG：工作目录、执行器、MPI launcher、进程数、线程数、网格和运行时长。
-- Ascend NPU Burn：安装后的 `npu-burn`、输出目录、用例或组、设备列表、工具
-  内部超时、执行次数和芯片代际。
+- Ascend NPU Burn：执行 backend、`npu-burn`、输出目录、用例或组、设备列表、
+  工具内部超时、执行次数和芯片代际；容器模式还声明固定容器和运行时元数据。
 
 所有执行器、工作目录和 launcher 必须使用绝对路径。仓库模板的 HPL/HPCG
 命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的 `-np`；厂商专用绑核、通信和
 root 参数只能在验证过的节点部署副本中维护。
 
-### 4.1 安装 Ascend NPU Burn 外部依赖
+### 4.1 准备 Ascend NPU Burn 外部环境
 
-CATMonitor 不复制 `MindCluster-AscendNPUBurn` 源码或 wheel。目标节点需先安装
-匹配驱动、固件、CANN、PyTorch/torch_npu 和 Python 3.9–3.13，再按该项目文档
-构建并安装：
+CATMonitor 不复制 `MindCluster-AscendNPUBurn` 源码或 wheel，也不安装或管理
+容器。目标节点管理员必须先准备与驱动、固件、CANN、PyTorch/torch_npu、SoC
+匹配且已经实测的固定环境。可选择以下两种模式。
+
+原生模式直接按上游文档构建并安装：
 
 ```bash
 cd /absolute/path/to/MindCluster-AscendNPUBurn
@@ -150,17 +152,24 @@ command -v npu-burn
 npu-burn --version
 ```
 
-项目以 Mulan PSL v2 发布，部署和再分发需保留其许可证及版权声明。为 CATMonitor
-创建独立结果目录，并确保运行 CATMonitor 的账户可写：
+容器模式推荐由管理员创建并保持一个固定容器运行，再由节点脚本执行
+`docker exec`。容器创建时的 image、device、volume、env 和启动命令属于节点
+部署资料，不写入 CATMonitor YAML，也不能由 Web 修改。CATMonitor 不会自动
+pull/start/stop/rm 容器。若节点必须使用一次性 `docker run`，只在
+`/etc/catmonitor/benchmark_check.sh` 部署副本中固化并审计完整命令。
+
+项目以 Mulan PSL v2 发布，部署和再分发需保留其许可证及版权声明。无论使用
+哪种模式，都要创建宿主机可读的独立结果目录；容器模式还必须将它挂载到容器，
+并保证工具生成的 CSV 能在相同宿主机路径读取：
 
 ```bash
 install -d -m 0750 "$HOME/.ascend_npu_burn/output"
 ```
 
-在部署脚本顶部配置一套明确工作负载。下面仅为字段示例，A3/A5 用例必须以当前
-安装包 `ascend_npu_burn/config` 为准：
+原生模式示例：
 
 ```bash
+NPU_BURN_BACKEND="native"
 NPU_BURN_EXECUTABLE="/absolute/path/to/bin/npu-burn"
 NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
@@ -169,18 +178,53 @@ NPU_BURN_GROUP=""
 NPU_BURN_DEVICE="all"            # 或 0,1,2,3
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
 NPU_BURN_EXEC_COUNT=1
-NPU_BURN_CHIP_GENERATION="A3"    # A3 或 A5
+NPU_BURN_CHIP_GENERATION="A3"    # A2、A3 或 A5
 ```
+
+管理员预先启动的固定容器示例：
+
+```bash
+NPU_BURN_BACKEND="docker_exec"
+NPU_BURN_CONTAINER_RUNTIME="/usr/bin/docker"
+NPU_BURN_CONTAINER_NAME="catmonitor-npuburn-a2"
+NPU_BURN_CONTAINER_IMAGE="catmonitor/npuburn:a2-cann83"
+NPU_BURN_RUNTIME_CANN="8.3.RC2"
+NPU_BURN_RUNTIME_TORCH_NPU="2.8.0"
+NPU_BURN_SOC_MODEL="Ascend 910B4"
+
+# 这是容器内绝对路径；describe 会用 docker exec test -x 预检。
+NPU_BURN_EXECUTABLE="/opt/npuburn/bin/npu-burn"
+NPU_BURN_USE_DEFAULT_OUTPUT=false
+NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
+NPU_BURN_RUN_CASE="matmul"
+NPU_BURN_GROUP=""
+NPU_BURN_DEVICE="0"
+NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
+NPU_BURN_EXEC_COUNT=1
+NPU_BURN_CHIP_GENERATION="A2"
+```
+
+`NPU_BURN_CONTAINER_IMAGE` 是声明的可复现镜像身份；运行容器的实际镜像不一致
+时预检失败。CANN、torch_npu 和 SoC 是管理员确认后的只读元数据，缺失时
+describe 返回 `warn`，但不会尝试在 Web 中安装或修复环境。仓库模板不包含任意
+Docker 参数输入，因此不会把宿主机控制权扩展给 Web 用户。
+
+`docker exec` 客户端被强制终止时，容器内进程是否同时退出由运行时和容器侧命令
+决定。管理员必须为 NPU Burn 配置确定的工具硬时限或容器侧清理机制，并在开启
+`web_enabled` 前实际测试正常结束、CATMonitor 外层超时、用户取消和 Web 进程
+异常退出四种路径；任一路径存在残留 NPU Burn 进程时不得开放 Web 触发。
 
 脚本固定传入 `--sdc_detect`。`NPU_BURN_INTERNAL_TIMEOUT_SECONDS` 是工具内部的
 单用例时限；YAML 的 `benchmarks.npu_burn.timeout` 是 CATMonitor 整个作业的
 外层上限，必须覆盖所选全部用例、设备初始化和报告收尾时间。
 
-当前随本需求提供的 Ascend NPU Burn 源码会错误拒绝调用者传入的现有
+部分 Ascend NPU Burn 版本会错误拒绝调用者传入的现有
 `--output` 目录，因此默认保持 `NPU_BURN_USE_DEFAULT_OUTPUT=true`：适配器不传
 `--output`，但仍从工具默认的 `$HOME/.ascend_npu_burn/output` 读取结果。CATMonitor
 CLI/Web 必须与安装和创建该目录时使用同一个系统账户。仅当后续安装版本已验证
-自定义 `--output` 可用时，才改成 `false` 并设置其他绝对目录。
+自定义 `--output` 可用时，才改成 `false` 并设置其他绝对目录。容器模式通常应
+使用已验证支持自定义输出目录的版本，并把该目录显式挂载到宿主机；否则无法
+可靠区分本次结果与容器内部历史文件。
 
 ## 5. 升级现有节点脚本
 
@@ -500,8 +544,9 @@ HPL、HPCG 和 STREAM 都允许以“受控运行窗口”工作。达到 CATMon
 Ascend NPU Burn 不采用上述时限通过规则。其上游进程可能在 CSV 含 FAIL 时仍
 返回 0，也可能把 worker 异常行从 CSV 中跳过，因此必须同时满足：命令正常结束、
 `npu_burn_results.csv` 至少包含一条结果、全部 `result=PASS`、全部
-`err_count=0`，并且全局设备汇总没有 `FAIL`。外层超时、空/损坏 CSV、FAIL、
-worker 异常或 SDC 错误均为 `unhealthy`。
+`err_count=0`、文件在本次命令期间确实更新，并且全局设备汇总没有 `FAIL`。
+外层超时、未变化的历史 CSV、空/损坏 CSV、FAIL、worker 异常或 SDC 错误均为
+`unhealthy`。
 
 ## 13. 回滚
 
@@ -530,6 +575,7 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误
 - [ ] 主配置只有顶层 `stress:`，Web 默认读取平台路径且可显式覆盖
 - [ ] CLI 依次完成 STREAM、HPCG、HPL、Ascend NPU Burn 启用项
+- [ ] 容器 NPU Burn 的正常结束、外层超时、取消和 Web 异常退出均无容器内残留进程
 - [ ] JSON 报告、历史、profile 和配置哈希完整
 - [ ] 正常结束、取消和超时后无残留进程
 - [ ] Web 只监听回环地址并通过 SSH 隧道访问

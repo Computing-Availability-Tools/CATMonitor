@@ -35,13 +35,23 @@ HPCG_NY=32
 HPCG_NZ=32
 HPCG_RUNTIME_SECONDS=60
 
-# MindCluster Ascend NPU Burn is an external Mulan PSL v2 dependency. Install
-# it on the target node and configure its console script/workload here; the
-# third-party package is not bundled with CATMonitor. The current upstream
-# release rejects a caller-supplied existing --output directory, so default to
-# its own $HOME/.ascend_npu_burn/output path. Set NPU_BURN_USE_DEFAULT_OUTPUT
-# to false only after verifying that the installed version accepts --output.
+# MindCluster Ascend NPU Burn is an external Mulan PSL v2 dependency. The node
+# administrator owns its native/container environment; CATMonitor only invokes
+# the fixed adapter below and parses its result. Container image/device/volume
+# settings intentionally do not enter CATMonitor YAML or Web requests.
+#
+# Supported template backends:
+#   native      - execute NPU_BURN_EXECUTABLE on the host.
+#   docker_exec - execute it in an already running, administrator-maintained
+#                 container. The result directory must be visible on the host.
+NPU_BURN_BACKEND="native"
 NPU_BURN_EXECUTABLE=""
+NPU_BURN_CONTAINER_RUNTIME=""
+NPU_BURN_CONTAINER_NAME=""
+NPU_BURN_CONTAINER_IMAGE=""
+NPU_BURN_RUNTIME_CANN=""
+NPU_BURN_RUNTIME_TORCH_NPU=""
+NPU_BURN_SOC_MODEL=""
 NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
 NPU_BURN_RUN_CASE=""
@@ -206,6 +216,62 @@ emit_asset() {
     fi
     printf '}'
     [ "$asset_status" = pass ] || [ "$asset_required" = false ]
+}
+
+# probe_npu_container performs read-only readiness checks for docker_exec. It
+# does not create, start, stop, or remove containers.
+probe_npu_container() {
+    NPU_CONTAINER_STATUS=fail
+    NPU_CONTAINER_MESSAGE="container backend is not configured"
+    NPU_CONTAINER_DETECTED_IMAGE=""
+    if [ ! -x "$NPU_BURN_CONTAINER_RUNTIME" ]; then
+        NPU_CONTAINER_MESSAGE="container runtime is unavailable"
+        return
+    fi
+    case "$NPU_BURN_CONTAINER_NAME" in
+        ''|-*|*[!A-Za-z0-9_.-]*)
+            NPU_CONTAINER_MESSAGE="container name is empty or invalid"
+            return
+            ;;
+    esac
+    container_probe=$(
+        "$NPU_BURN_CONTAINER_RUNTIME" inspect \
+            --format '{{.State.Running}}|{{.Config.Image}}' \
+            "$NPU_BURN_CONTAINER_NAME" 2>/dev/null
+    )
+    if [ $? -ne 0 ]; then
+        NPU_CONTAINER_MESSAGE="container is unavailable"
+        return
+    fi
+    container_running=${container_probe%%|*}
+    NPU_CONTAINER_DETECTED_IMAGE=${container_probe#*|}
+    if [ "$container_running" != true ]; then
+        NPU_CONTAINER_MESSAGE="container is not running"
+        return
+    fi
+    case "$NPU_BURN_EXECUTABLE" in
+        /*) ;;
+        *) NPU_CONTAINER_MESSAGE="container executable path is not absolute"; return ;;
+    esac
+    if ! "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME" \
+        /bin/sh -c 'test -x "$1"' catmonitor "$NPU_BURN_EXECUTABLE" \
+        >/dev/null 2>&1; then
+        NPU_CONTAINER_MESSAGE="container executable is unavailable"
+        return
+    fi
+    NPU_CONTAINER_STATUS=pass
+    NPU_CONTAINER_MESSAGE="running container and executable are available"
+}
+
+emit_npu_container_asset() {
+    printf '{"name":"container","path":'
+    json_string "$NPU_BURN_CONTAINER_NAME"
+    printf ',"kind":"container","required":true,"status":'
+    json_string "$NPU_CONTAINER_STATUS"
+    printf ',"message":'
+    json_string "$NPU_CONTAINER_MESSAGE"
+    printf '}'
+    [ "$NPU_CONTAINER_STATUS" = pass ]
 }
 
 probe_mpi() {
@@ -483,6 +549,27 @@ describe_hpcg() {
 
 describe_npu_burn() {
     failed=0
+    warned=0
+    case "$NPU_BURN_BACKEND" in
+        native) ;;
+        docker_exec)
+            probe_npu_container
+            if [ "$NPU_CONTAINER_STATUS" != pass ]; then failed=$((failed + 1)); fi
+            if [ -n "$NPU_BURN_CONTAINER_IMAGE" ] &&
+               [ -n "$NPU_CONTAINER_DETECTED_IMAGE" ] &&
+               [ "$NPU_BURN_CONTAINER_IMAGE" != "$NPU_CONTAINER_DETECTED_IMAGE" ]; then
+                failed=$((failed + 1))
+                NPU_CONTAINER_STATUS=fail
+                NPU_CONTAINER_MESSAGE="running image does not match the declared image"
+            fi
+            if [ -z "$NPU_BURN_RUNTIME_CANN" ] ||
+               [ -z "$NPU_BURN_RUNTIME_TORCH_NPU" ] ||
+               [ -z "$NPU_BURN_SOC_MODEL" ]; then
+                warned=$((warned + 1))
+            fi
+            ;;
+        *) failed=$((failed + 1)) ;;
+    esac
     if ! is_positive_integer "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"; then failed=$((failed + 1)); fi
     if ! is_positive_integer "$NPU_BURN_EXEC_COUNT"; then failed=$((failed + 1)); fi
     if [ -z "$NPU_BURN_DEVICE" ]; then failed=$((failed + 1)); fi
@@ -493,7 +580,7 @@ describe_npu_burn() {
     npu_output_mode=tool_default
     if [ "$NPU_BURN_USE_DEFAULT_OUTPUT" = false ]; then npu_output_mode=custom; fi
     case "$NPU_BURN_CHIP_GENERATION" in
-        A3|A5) ;;
+        A2|A3|A5) ;;
         *) failed=$((failed + 1)) ;;
     esac
     if { [ -n "$NPU_BURN_RUN_CASE" ] && [ -n "$NPU_BURN_GROUP" ]; } ||
@@ -512,7 +599,25 @@ describe_npu_burn() {
     MPI_STATUS=pass
     MPI_MESSAGE="MPI is not used by Ascend NPU Burn"
     printf '{"protocol_version":1,"benchmark":"npu_burn","parameters":['
+    emit_parameter backend "Execution backend" "$NPU_BURN_BACKEND"
+    printf ','
     emit_parameter executable "Executable" "$NPU_BURN_EXECUTABLE"
+    if [ "$NPU_BURN_BACKEND" = docker_exec ]; then
+        npu_container_image=$NPU_BURN_CONTAINER_IMAGE
+        if [ -z "$npu_container_image" ]; then
+            npu_container_image=$NPU_CONTAINER_DETECTED_IMAGE
+        fi
+        printf ','
+        emit_parameter container "Container" "$NPU_BURN_CONTAINER_NAME"
+        printf ','
+        emit_parameter image "Container image" "$npu_container_image"
+        printf ','
+        emit_parameter cann "CANN" "$NPU_BURN_RUNTIME_CANN"
+        printf ','
+        emit_parameter torch_npu "torch_npu" "$NPU_BURN_RUNTIME_TORCH_NPU"
+        printf ','
+        emit_parameter soc "NPU SoC" "$NPU_BURN_SOC_MODEL"
+    fi
     printf ','
     emit_parameter output_mode "Output mode" "$npu_output_mode"
     printf ','
@@ -533,13 +638,19 @@ describe_npu_burn() {
         "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
     json_string "$npu_workload"
     printf '},"assets":['
-    if ! emit_asset executable "$NPU_BURN_EXECUTABLE" executable true; then failed=$((failed + 1)); fi
+    if [ "$NPU_BURN_BACKEND" = docker_exec ]; then
+        if ! emit_asset container_runtime "$NPU_BURN_CONTAINER_RUNTIME" executable true; then failed=$((failed + 1)); fi
+        printf ','
+        if ! emit_npu_container_asset; then :; fi
+    else
+        if ! emit_asset executable "$NPU_BURN_EXECUTABLE" executable true; then failed=$((failed + 1)); fi
+    fi
     printf ','
     if ! emit_asset output_directory "$NPU_BURN_OUTPUT_DIR" directory true; then failed=$((failed + 1)); fi
     printf '],"mpi":'
     emit_mpi false ""
     printf ',"preflight":'
-    emit_preflight "$failed" 0
+    emit_preflight "$failed" "$warned"
     printf '}\n'
 }
 
@@ -659,7 +770,25 @@ case "$benchmark_type" in
         ;;
     npu_burn)
         if [ "$#" -ne 0 ]; then exit 1; fi
-        require_absolute_executable "Ascend NPU Burn" "$NPU_BURN_EXECUTABLE"
+        case "$NPU_BURN_BACKEND" in
+            native)
+                require_absolute_executable "Ascend NPU Burn" "$NPU_BURN_EXECUTABLE"
+                ;;
+            docker_exec)
+                require_absolute_executable "Ascend NPU Burn container runtime" "$NPU_BURN_CONTAINER_RUNTIME"
+                probe_npu_container
+                if [ "$NPU_CONTAINER_STATUS" != pass ]; then
+                    echo "Ascend NPU Burn container is not ready: $NPU_CONTAINER_MESSAGE"
+                    exit 1
+                fi
+                if [ -n "$NPU_BURN_CONTAINER_IMAGE" ] &&
+                   [ "$NPU_BURN_CONTAINER_IMAGE" != "$NPU_CONTAINER_DETECTED_IMAGE" ]; then
+                    echo "Ascend NPU Burn container image mismatch: expected $NPU_BURN_CONTAINER_IMAGE, got $NPU_CONTAINER_DETECTED_IMAGE"
+                    exit 1
+                fi
+                ;;
+            *) echo "NPU_BURN_BACKEND must be native or docker_exec."; exit 1 ;;
+        esac
         require_absolute_directory "Ascend NPU Burn output directory" "$NPU_BURN_OUTPUT_DIR"
         require_positive_integer "NPU_BURN_INTERNAL_TIMEOUT_SECONDS" "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
         require_positive_integer "NPU_BURN_EXEC_COUNT" "$NPU_BURN_EXEC_COUNT"
@@ -668,8 +797,8 @@ case "$benchmark_type" in
             exit 1
         fi
         case "$NPU_BURN_CHIP_GENERATION" in
-            A3|A5) ;;
-            *) echo "NPU_BURN_CHIP_GENERATION must be A3 or A5."; exit 1 ;;
+            A2|A3|A5) ;;
+            *) echo "NPU_BURN_CHIP_GENERATION must be A2, A3, or A5."; exit 1 ;;
         esac
         case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
             true|false) ;;
@@ -695,9 +824,21 @@ case "$benchmark_type" in
         else
             npu_args+=(--group "$NPU_BURN_GROUP")
         fi
+        npu_result_file="$NPU_BURN_OUTPUT_DIR/npu_burn_results.csv"
+        npu_result_signature_before=""
+        if [ -e "$npu_result_file" ]; then
+            npu_result_signature_before=$(stat -c '%y:%s' "$npu_result_file" 2>/dev/null)
+        fi
         npu_console_log=$(mktemp "${TMPDIR:-/tmp}/catmonitor-npu-burn.XXXXXX") || exit 1
         trap 'rm -f "$npu_console_log"' EXIT
-        "$NPU_BURN_EXECUTABLE" "${npu_args[@]}" 2>&1 | tee "$npu_console_log"
+        npu_command=("$NPU_BURN_EXECUTABLE" "${npu_args[@]}")
+        if [ "$NPU_BURN_BACKEND" = docker_exec ]; then
+            npu_command=(
+                "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME"
+                "${npu_command[@]}"
+            )
+        fi
+        "${npu_command[@]}" 2>&1 | tee "$npu_console_log"
         npu_status=${PIPESTATUS[0]}
         if [ "$npu_status" -ne 0 ]; then
             exit "$npu_status"
@@ -706,7 +847,13 @@ case "$benchmark_type" in
             echo "Ascend NPU Burn global device summary reported failure."
             exit 1
         fi
-        summarize_npu_burn_csv "$NPU_BURN_OUTPUT_DIR/npu_burn_results.csv"
+        npu_result_signature_after=$(stat -c '%y:%s' "$npu_result_file" 2>/dev/null)
+        if [ -n "$npu_result_signature_before" ] &&
+           [ "$npu_result_signature_before" = "$npu_result_signature_after" ]; then
+            echo "Ascend NPU Burn did not update its result CSV during this run."
+            exit 1
+        fi
+        summarize_npu_burn_csv "$npu_result_file"
         ;;
     *)
         echo "Unknown parameter."

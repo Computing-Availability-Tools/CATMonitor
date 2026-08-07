@@ -79,6 +79,65 @@ func TestDispatcherDescribeAscendNPUBurnIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestDispatcherDescribeAscendNPUBurnDockerExecProfile(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "launched")
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/sh\ntouch "+shellLiteral(marker)+"\n")
+	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
+case "$1" in
+  inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
+  exec)
+    shift 2
+    exec "$@"
+    ;;
+  *) exit 98 ;;
+esac
+`)
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               npuBurn,
+		"NPU_BURN_CONTAINER_RUNTIME":        docker,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a2",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a2-cann83",
+		"NPU_BURN_RUNTIME_CANN":             "8.3.RC2",
+		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.8.0",
+		"NPU_BURN_SOC_MODEL":                "Ascend 910B4",
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "matmul",
+		"NPU_BURN_DEVICE":                   "0",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_EXEC_COUNT":               "1",
+		"NPU_BURN_CHIP_GENERATION":          "A2",
+	})
+	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile ExecutionProfile
+	if err := json.Unmarshal(output, &profile); err != nil {
+		t.Fatalf("describe output is not JSON: %v: %s", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("describe launched Ascend NPU Burn: %v", err)
+	}
+	parameters := make(map[string]string, len(profile.Parameters))
+	for _, parameter := range profile.Parameters {
+		parameters[parameter.Key] = parameter.Value
+	}
+	if profile.Preflight.Status != CheckPass || len(profile.Assets) != 3 ||
+		parameters["backend"] != "docker_exec" ||
+		parameters["image"] != "catmonitor/npuburn:a2-cann83" ||
+		parameters["cann"] != "8.3.RC2" || parameters["torch_npu"] != "2.8.0" ||
+		parameters["soc"] != "Ascend 910B4" || parameters["chip_generation"] != "A2" {
+		t.Fatalf("unexpected container NPU Burn profile: %+v parameters=%v", profile, parameters)
+	}
+}
+
 func TestDispatcherDescribeHPLDetectsMPIABIMismatch(t *testing.T) {
 	dir := t.TempDir()
 	hplDir := filepath.Join(dir, "hpl")

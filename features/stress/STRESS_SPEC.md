@@ -53,11 +53,20 @@ stress:
 不复制 `stress:`，也不恢复已经移除的 Web 专用 YAML 配置。
 
 YAML 不接收 benchmark 可执行路径。具体执行器、环境变量、MPI/NUMA 参数和
-工作目录由节点 `benchmark_check.sh` 维护。Ascend NPU Burn 的工具路径、结果
-目录、用例/组、设备列表、芯片代际和工具内部超时也只由节点脚本维护；当前上游
+工作目录由节点 `benchmark_check.sh` 维护。Ascend NPU Burn 的执行 backend、
+工具路径、容器名/镜像元数据、运行时版本、结果目录、用例/组、设备列表、芯片
+代际和工具内部超时也只由节点脚本维护；当前上游
 版本使用其 `$HOME/.ascend_npu_burn/output` 默认目录，以避开有缺陷的自定义
 `--output` 校验。HPCG 的 `result_dir` 仅供 Go
 核验本次结果文件，不用于定位可执行文件。
+
+CATMonitor 不是容器环境管理器。第一版不在 Go 中抽象 container executor，
+不接收 image/device/volume/env/command，不创建、启动、停止或删除容器。仓库
+脚本模板支持 `native`，以及对管理员预先启动并维护的固定容器执行
+`docker_exec`；需要 `docker run` 的节点可在部署副本内固化已审计命令，但不得
+把任意容器参数暴露给 CLI 或 Web。
+容器适配必须自行提供可验证的硬时限和清理语义，确保 CATMonitor 取消或进程
+异常断开后容器内负载不会无限继续；不满足该条件的容器不得启用 Web 触发。
 
 仓库内脚本模板必须能够直接适配单节点 MPICH/Hydra 或 OpenMPI：环境变量由
 Shell `export`，MPI 启动仅使用两者共同支持的 `-np`。模板不得硬编码 `-x`、
@@ -80,6 +89,11 @@ benchmark_check.sh describe npu_burn
 MPI 等无法可靠识别的情况为 `warn`，不得误判为失败。CATMonitor 对 JSON
 字段、版本、benchmark 名和状态做严格校验。未声明协议的旧脚本使用基础预检
 兼容运行，但必须暴露 `unsupported` 警告。
+
+NPU Burn 的 profile 必须通过参数数组暴露实际 backend。容器模式还应暴露固定
+容器名、实际/声明镜像、CANN、torch_npu 和 SoC；缺少运行时元数据为 `warn`，
+容器不存在、未运行、镜像不匹配或容器内执行器不可用为 `fail`。describe 仅做
+inspect 和可执行性检查，不得启动 benchmark，也不得改变容器生命周期。
 
 ## 3. 作业、状态和报告
 
@@ -122,7 +136,8 @@ Ascend NPU Burn 以外部 Mulan PSL v2 软件包形式安装，CATMonitor 不再
 或二进制。正常完成时，节点脚本必须读取工具本次生成的
 `npu_burn_results.csv`，验证存在至少一个设备和结果行、每行 `result=PASS` 且
 `err_count=0`，并拒绝全局设备汇总中的 `FAIL`，再输出 CATMonitor 规范化摘要。
-工具退出码 0 不能替代这两层校验。
+结果文件必须在本次命令期间新增或更新，不能接受未变化的历史 PASS 文件；工具
+退出码 0 不能替代这些校验。
 因为该工具用于 SDC/硬件错误检测，CATMonitor 外层时限到达但没有完整 CSV 时
 必须为 `unhealthy`，不得沿用其他三项的受控时限通过语义。
 
@@ -166,4 +181,6 @@ Ascend NPU Burn 显示设备数、结果行数、通过/失败数、错误数和
 历史上限/排序/输出裁剪、防御性复制、跨进程锁、共享报告刷新、describe
 无副作用/严格 JSON/超时/旧版降级、资产和 MPI ABI 预检、profile 哈希持久化、
 Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义及独立 SPA 资源。Linux 执行单元测试、竞态检查和
-构建；Windows 交叉构建。真实性能只在资产与拓扑匹配的 Linux 节点验收。
+构建；Windows 交叉构建。容器节点还必须实测正常结束、外层超时、用户取消和
+Web 进程异常退出后的容器内残留进程。真实性能只在资产与拓扑匹配的 Linux
+节点验收。
