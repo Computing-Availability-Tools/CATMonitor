@@ -99,6 +99,22 @@ function shortHash(value) {
 function profileValue(value, fallback) {
   return value === undefined || value === null || value === '' ? (fallback || '--') : String(value);
 }
+function profileParameters(profile) {
+  const values = {};
+  for (const item of (profile && profile.parameters) || []) values[item.key] = item.value;
+  return values;
+}
+function npuDeploymentSummary(profile) {
+  const values = profileParameters(profile);
+  if (!values.backend) return '';
+  const parts = ['执行：' + values.backend];
+  if (values.container) parts.push('容器：' + values.container);
+  if (values.image) parts.push('镜像：' + values.image);
+  if (values.cann) parts.push('CANN：' + values.cann);
+  if (values.torch_npu) parts.push('torch_npu：' + values.torch_npu);
+  if (values.soc) parts.push('SoC：' + values.soc);
+  return parts.join(' · ');
+}
 function appendResource(container, label, value) {
   const item = document.createElement('div');
   item.className = 'resource-item';
@@ -145,7 +161,8 @@ function renderProfileBody(container, profile, timeoutOverride) {
     const check = document.createElement('span');
     check.className = 'profile-check ' + asset.status;
     check.title = asset.path + ' · ' + asset.message;
-    check.textContent = asset.name + ' · ' + (asset.status === 'pass' ? '可用' : '失败');
+    check.textContent = asset.name + ' · ' +
+      (asset.status === 'pass' ? '可用' : profileValue(asset.message, '失败'));
     checks.appendChild(check);
   }
   if (profile.mpi && profile.mpi.required) {
@@ -324,6 +341,18 @@ function renderConfig() {
     foot.append(family, asset);
 
     label.append(input, top, description, chart, foot);
+    if (item.name === 'npu_burn' && item.profile) {
+      const deployment = document.createElement('div');
+      deployment.className = 'benchmark-deployment';
+      deployment.textContent = npuDeploymentSummary(item.profile) || '执行环境信息不可用';
+      label.appendChild(deployment);
+    }
+    if (!available && item.message) {
+      const reason = document.createElement('div');
+      reason.className = 'benchmark-reason';
+      reason.textContent = item.message;
+      label.appendChild(reason);
+    }
     choices.appendChild(label);
   }
 

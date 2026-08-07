@@ -573,6 +573,7 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] CLI 和 Web 在目标架构构建成功
 - [ ] 正式节点脚本位于源码目录外并通过 `bash -n`
 - [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误
+- [ ] Docker/容器缺失时 CLI 与 Web 直接显示失败资产、路径和原因，禁用项不执行 describe
 - [ ] 主配置只有顶层 `stress:`，Web 默认读取平台路径且可显式覆盖
 - [ ] CLI 依次完成 STREAM、HPCG、HPL、Ascend NPU Burn 启用项
 - [ ] 容器 NPU Burn 的正常结束、外层超时、取消和 Web 异常退出均无容器内残留进程

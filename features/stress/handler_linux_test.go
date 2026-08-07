@@ -139,6 +139,49 @@ func TestHandlerOwnsStandaloneUIAndAPI(t *testing.T) {
 	}
 }
 
+func TestHandlerDoesNotDescribeDisabledBenchmark(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "described")
+	script := filepath.Join(dir, "benchmark_check.sh")
+	content := "#!/bin/bash\nCATMONITOR_STRESS_DESCRIBE_PROTOCOL=1\ntouch " + shellLiteral(marker) + "\nexit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{
+		Enabled: true, WebEnabled: true, ScriptPath: script,
+		ReportPath: filepath.Join(dir, "stress-latest.json"),
+		Benchmarks: map[string]BenchmarkConfig{
+			"npu_burn": {Enabled: false, Timeout: time.Minute},
+		},
+	})
+	mux := http.NewServeMux()
+	Register(mux, manager, "127.0.0.1:9527", slog.Default())
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body, status := handlerGet(t, server.Client(), server.URL+"/api/stress/config")
+	if status != http.StatusOK {
+		t.Fatalf("config status=%d body=%s", status, body)
+	}
+	var response struct {
+		Benchmarks []struct {
+			Available bool              `json:"available"`
+			Message   string            `json:"message"`
+			Profile   *ExecutionProfile `json:"profile"`
+		} `json:"benchmarks"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || len(response.Benchmarks) != 1 {
+		t.Fatalf("config response=%s err=%v", body, err)
+	}
+	item := response.Benchmarks[0]
+	if item.Available || item.Message != "benchmark is disabled in configuration" || item.Profile != nil {
+		t.Fatalf("unexpected disabled benchmark response: %+v", item)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("disabled benchmark triggered describe: %v", err)
+	}
+}
+
 func handlerMutation(t *testing.T, url, body string) *http.Request {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))

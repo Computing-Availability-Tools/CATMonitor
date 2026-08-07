@@ -126,6 +126,11 @@ Ascend NPU Burn 使用通过用例数/总用例数作为可靠性摘要，并单
 可展开查看当次 profile。前端没有配置写回、脚本编辑或任意参数输入；部署面
 仍由 SSH、配置管理或镜像构建负责。
 
+配置 API 对禁用项只返回禁用原因，不调用 describe。对已启用但预检失败的项，
+Manager 将失败资产、路径及消息汇总到 availability message；SPA 在禁用卡片中
+直接显示该消息，并为 NPU Burn 展示 backend、容器、镜像、CANN、torch_npu 和
+SoC 摘要。资产详情不依赖鼠标悬停。
+
 Web 写操作采用多层限制：显式双开关、Linux、回环监听、回环来源、JSON
 Content-Type、自定义动作头、同源校验、64 KiB 请求上限、未知字段拒绝。API
 只接受 benchmark 名称和单次缩短超时。

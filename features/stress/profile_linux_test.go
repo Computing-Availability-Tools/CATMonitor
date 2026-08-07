@@ -138,6 +138,43 @@ esac
 	}
 }
 
+func TestManagerAvailabilityReportsContainerPreflightFailures(t *testing.T) {
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	missingRuntime := filepath.Join(dir, "missing-docker")
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               "/opt/npuburn/bin/npu-burn",
+		"NPU_BURN_CONTAINER_RUNTIME":        missingRuntime,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a2",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a2-cann83",
+		"NPU_BURN_RUNTIME_CANN":             "8.3.RC2",
+		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.8.0",
+		"NPU_BURN_SOC_MODEL":                "Ascend 910B4",
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "matmul",
+		"NPU_BURN_DEVICE":                   "0",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_EXEC_COUNT":               "1",
+		"NPU_BURN_CHIP_GENERATION":          "A2",
+	})
+	manager := NewManager(Config{
+		Enabled: true, ScriptPath: script,
+		Benchmarks: map[string]BenchmarkConfig{
+			"npu_burn": {Enabled: true, Timeout: time.Minute},
+		},
+	})
+	available, message := manager.Availability("npu_burn")
+	if available || !strings.Contains(message, "container_runtime ("+missingRuntime+"): executable is unavailable") ||
+		!strings.Contains(message, "container (catmonitor-npuburn-a2): container runtime is unavailable") {
+		t.Fatalf("container failure was not explained: available=%v message=%q", available, message)
+	}
+}
+
 func TestDispatcherDescribeHPLDetectsMPIABIMismatch(t *testing.T) {
 	dir := t.TempDir()
 	hplDir := filepath.Join(dir, "hpl")

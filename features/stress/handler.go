@@ -90,13 +90,18 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	for name, item := range cfg.Benchmarks {
 		timeout := effectiveTimeout(item.Timeout)
 		available, message := h.manager.Availability(name)
-		profile, profileErr := h.manager.Describe(name)
 		response := benchmark{
 			Name: name, Enabled: item.Enabled, Available: available,
-			Message: message, TimeoutSeconds: int64(timeout / time.Second), Profile: profile,
+			Message: message, TimeoutSeconds: int64(timeout / time.Second),
 		}
-		if profileErr != nil {
-			response.ProfileError = profileErr.Error()
+		// Disabled features and benchmarks must not probe host executors or
+		// containers merely because a browser polls the read-only config API.
+		if cfg.Enabled && item.Enabled {
+			profile, profileErr := h.manager.Describe(name)
+			response.Profile = profile
+			if profileErr != nil {
+				response.ProfileError = profileErr.Error()
+			}
 		}
 		items = append(items, response)
 	}

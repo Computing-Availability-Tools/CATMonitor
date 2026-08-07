@@ -177,6 +177,32 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 	}
 }
 
+func TestStandaloneUIExposesDeploymentFailureDetails(t *testing.T) {
+	javascript, err := staticFiles.ReadFile("static/stress.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stylesheet, err := staticFiles.ReadFile("static/stress.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"benchmark-reason",
+		"benchmark-deployment",
+		"npuDeploymentSummary",
+		"profileValue(asset.message, '失败')",
+	} {
+		if !strings.Contains(string(javascript), required) {
+			t.Errorf("stress UI script does not expose %q", required)
+		}
+	}
+	for _, required := range []string{".benchmark-reason", ".benchmark-deployment"} {
+		if !strings.Contains(string(stylesheet), required) {
+			t.Errorf("stress UI stylesheet does not contain %q", required)
+		}
+	}
+}
+
 func TestBundledDispatcherValidatesAscendNPUBurnCSV(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("dispatcher execution is Linux-only")

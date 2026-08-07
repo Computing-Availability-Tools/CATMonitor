@@ -444,6 +444,9 @@ func (m *Manager) Availability(name string) (bool, string) {
 	if runtime.GOOS != "linux" {
 		return false, "stress execution is supported on Linux only"
 	}
+	if !m.cfg.Enabled {
+		return false, "stress testing is disabled"
+	}
 	if !supportedBenchmark(name) {
 		return false, "unsupported benchmark name"
 	}
@@ -466,12 +469,36 @@ func (m *Manager) Availability(name string) (bool, string) {
 	}
 	switch profile.Preflight.Status {
 	case CheckFail:
-		return false, profile.Preflight.Message
+		return false, failedPreflightMessage(profile)
 	case CheckWarn:
 		return true, profile.Preflight.Message
 	default:
 		return true, "deployment precheck passed"
 	}
+}
+
+func failedPreflightMessage(profile *ExecutionProfile) string {
+	if profile == nil {
+		return "deployment preflight failed"
+	}
+	reasons := make([]string, 0, len(profile.Assets)+1)
+	for _, asset := range profile.Assets {
+		if asset.Status != CheckFail {
+			continue
+		}
+		label := asset.Name
+		if asset.Path != "" {
+			label += " (" + asset.Path + ")"
+		}
+		reasons = append(reasons, label+": "+asset.Message)
+	}
+	if profile.MPI.Status == CheckFail {
+		reasons = append(reasons, "MPI: "+profile.MPI.Message)
+	}
+	if len(reasons) == 0 {
+		return profile.Preflight.Message
+	}
+	return "deployment preflight failed: " + strings.Join(reasons, "; ")
 }
 
 func (m *Manager) setBenchmark(name string, status Status, message string, values map[string]float64, source, output string, finished time.Time, complete bool) {

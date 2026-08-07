@@ -195,7 +195,7 @@ h2 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
 }
 .benchmark-card:hover:not(.disabled) { transform: translateY(-2px); border-color: #84adff; box-shadow: 0 8px 20px rgba(37,99,235,.1); }
 .benchmark-card.selected { border-color: var(--blue); background: #f5f9ff; box-shadow: 0 0 0 1px var(--blue); }
-.benchmark-card.disabled { cursor: not-allowed; opacity: .58; background: #f8fafc; }
+.benchmark-card.disabled { cursor: not-allowed; background: #f8fafc; }
 .benchmark-card input { position: absolute; opacity: 0; pointer-events: none; }
 .benchmark-top { display: flex; align-items: flex-start; justify-content: space-between; }
 .benchmark-name { font-size: 16px; font-weight: 760; text-transform: uppercase; }
@@ -218,6 +218,25 @@ h2 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
 .asset-state.ok { color: var(--green); }
 .asset-state.warn { color: var(--amber); }
 .asset-state.bad { color: var(--amber); }
+.benchmark-deployment {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed #d0d5dd;
+  color: #475467;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.benchmark-reason {
+  margin-top: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: #b42318;
+  background: #fef3f2;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 
 .profile-preview {
   margin-top: 18px;
