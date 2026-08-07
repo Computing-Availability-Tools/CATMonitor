@@ -40,7 +40,14 @@ docker/docker/build.sh npu
 docker/docker/build.sh generic
 ```
 
-> **NPU 镜像构建要求**：构建主机上必须安装 Ascend driver（含头文件和 libdcmi.so），路径默认为 `/usr/local/Ascend/driver`。
+### NPU 镜像构建说明
+
+NPU 镜像采用**两步构建**：
+
+1. **编译**：启动一个临时的 `golang:1.23-alpine` 容器，将宿主机的 Ascend driver 挂载进去（`-v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro`），在容器内用 CGo 编译 `catmonitor`（`-tags dcmi`）+ `dfee` + `web` 三个二进制。
+2. **打包**：将编译好的二进制 COPY 进 `alpine:latest` 运行时镜像。
+
+这种方式不需要在宿主机安装 Go，也不依赖 BuildKit，兼容旧版 Docker。
 
 ## 3. 启动服务
 
