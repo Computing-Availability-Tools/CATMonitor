@@ -247,13 +247,66 @@ docker run -d --name catmonitor --privileged \
   catmonitor-npu
 ```
 
-### 开启 faultsub
+### 开启 faultsub（故障订阅推送）
+
+faultsub 是 NPU 故障检测与推送机制，运行在 daemon 内部。开启后，daemon 周期性采集 NPU 指标时自动检测故障，并推送给已订阅的 webhook。
+
+**配置**：
 
 ```yaml
 faultsub:
   enabled: true
-  rest_addr: ":9101"
+  rest_addr: ":9101"            # REST API 监听地址
+  webhook_timeout: 5s           # webhook 推送超时
+  webhook_retry: 1             # 失败重试次数
+  event_buffer: 1024           # 事件环形缓冲区大小
+  defaults:
+    debounce_ms: 0             # 订阅去抖窗口（毫秒）
+    min_severity: "warning"    # 最低推送级别
+  rules:                       # 故障检测规则开关
+    card_drop: true            # NPU 掉卡
+    npu_health: true           # NPU 健康状态异常
+    npu_error_code: true       # NPU 错误码
+    hbm_uce: true              # HBM 不可纠正错误
+    ddr_uce: true              # DDR 不可纠正错误
+    roce_link_down: true      # RoCE 链路断开
+    driver_unhealthy: false   # 驱动不健康
 ```
+
+**REST API 端点**（端口 9101）：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/-/healthy` | 健康检查 |
+| GET | `/-/ready` | 就绪检查 |
+| GET | `/faultsub/types` | 支持的故障类型列表 |
+| GET | `/faultsub/snapshot` | 当前故障快照 |
+| GET | `/faultsub/events` | 最近事件列表 |
+| POST | `/faultsub/events` | 手动注入事件 |
+| POST | `/faultsub/subscriptions` | 创建 webhook 订阅 |
+| GET | `/faultsub/subscriptions` | 列出所有订阅 |
+| GET | `/faultsub/subscriptions/{id}` | 查询指定订阅 |
+| DELETE | `/faultsub/subscriptions/{id}` | 删除订阅 |
+
+**使用示例**：
+
+```bash
+# 创建 webhook 订阅（故障事件推送到指定 URL）
+curl -X POST http://localhost:9101/faultsub/subscriptions \
+  -H "Content-Type: application/json" \
+  -d '{"webhook_url": "http://my-fault-manager:8080/fault", "types": ["card_drop", "npu_health"]}'
+
+# 查看当前故障
+curl http://localhost:9101/faultsub/snapshot
+
+# 查看最近事件
+curl http://localhost:9101/faultsub/events
+
+# 列出所有订阅
+curl http://localhost:9101/faultsub/subscriptions
+```
+
+**前提**：daemon 容器需要 NPU 设备挂载（`--device /dev/davinci*`），否则故障检测无数据来源。
 
 ### 开启 straggler_output
 
