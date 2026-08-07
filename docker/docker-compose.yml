@@ -1,0 +1,65 @@
+version: "3.8"
+
+services:
+  # 1. daemon: collects metrics, writes snapshots, runs Prometheus exporter.
+  #    Also hosts faultsub REST API and straggler KPI output (if enabled).
+  catmonitor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.npu
+    privileged: true
+    # NPU devices — remove these lines on non-NPU environments
+    devices:
+      - /dev/davinci0
+      - /dev/davinci1
+    volumes:
+      # NPU driver — remove this line on non-NPU environments
+      - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
+      - snapshot:/var/lib/catmonitor/snapshot
+      - data:/var/lib/catmonitor/data
+      - straggler:/var/lib/catmonitor/straggler
+    ports:
+      - "9100:9100"    # Prometheus exporter
+      - "9101:9101"    # faultsub REST API (enable in config to use)
+    restart: unless-stopped
+
+  # 2. web: standalone read-only dashboard. Reads snapshots from daemon.
+  web:
+    image: catmonitor-npu
+    command: >
+      /usr/local/bin/web
+      -addr=:9527
+      -snapshot-dir=/var/lib/catmonitor/snapshot
+    volumes:
+      - snapshot:/var/lib/catmonitor/snapshot:ro
+    ports:
+      - "9527:9527"
+    depends_on:
+      - catmonitor
+    restart: unless-stopped
+
+  # 3. dfee: energy-efficiency SPA + Prometheus exporter + CSV output.
+  #    Reads snapshots from daemon.
+  dfee:
+    image: catmonitor-npu
+    command: >
+      /usr/local/bin/dfee
+      -addr=:9528
+      -exporter=enabled -exporter-port=9333
+      -csv=enabled -csv-dir=/var/lib/catmonitor/csv -csv-interval=10s
+      -snapshot-dir=/var/lib/catmonitor/snapshot
+    volumes:
+      - snapshot:/var/lib/catmonitor/snapshot:ro
+      - csv:/var/lib/catmonitor/csv
+    ports:
+      - "9528:9528"    # dfee SPA
+      - "9333:9333"    # dfee Prometheus exporter
+    depends_on:
+      - catmonitor
+    restart: unless-stopped
+
+volumes:
+  snapshot:    # daemon writes, web/dfee read
+  data:        # JSONL historical data
+  csv:         # dfee CSV output
+  straggler:   # straggler KPI files (optional)

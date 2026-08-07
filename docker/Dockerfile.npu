@@ -1,0 +1,30 @@
+FROM golang:1.23-alpine AS builder
+
+RUN apk add --no-cache gcc musl-dev
+
+WORKDIR /app
+COPY . .
+
+ENV CGO_ENABLED=1
+
+# CGo headers for DCMI are provided by the host driver mounted at build time.
+# The build.sh script passes these via --build-arg.
+ARG ASCEND_DRIVER_PATH=/usr/local/Ascend/driver
+ENV CGO_CFLAGS="-I${ASCEND_DRIVER_PATH}/include -w"
+ENV CGO_LDFLAGS="-L${ASCEND_DRIVER_PATH}/lib64/driver -ldcmi"
+
+RUN go build -tags dcmi -o /catmonitor ./cmd/catmonitor
+RUN go build -o /dfee ./features/dfee
+RUN go build -o /web ./features/web
+
+FROM alpine:latest
+
+RUN apk add --no-cache ipmitool smartmontools util-linux dmidecode
+
+COPY --from=builder /catmonitor /usr/local/bin/catmonitor
+COPY --from=builder /dfee /usr/local/bin/dfee
+COPY --from=builder /web /usr/local/bin/web
+COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
+
+ENTRYPOINT ["/usr/local/bin/catmonitor", "daemon", "--config", "/etc/catmonitor/catmonitor.yaml"]
