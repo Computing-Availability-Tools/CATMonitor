@@ -42,12 +42,12 @@ docker/docker/build.sh generic
 
 ### NPU 镜像构建说明
 
-NPU 镜像采用**两步构建**：
+NPU 镜像采用**两步构建**，且**必须使用 Debian（glibc）基础镜像**，因为 `libdcmi.so` 是 glibc 链接的，无法在 Alpine（musl libc）上运行：
 
-1. **编译**：启动一个临时的 `golang:1.23-alpine` 容器，将宿主机的 Ascend driver 挂载进去（`-v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro`），在容器内用 CGo 编译 `catmonitor`（`-tags dcmi`）+ `dfee` + `web` 三个二进制。
-2. **打包**：将编译好的二进制 COPY 进 `alpine:latest` 运行时镜像。
+1. **编译**：启动 `golang:1.23`（Debian/glibc）容器，挂载宿主机 Ascend driver，在容器内用 CGo 编译 `catmonitor`（`-tags dcmi`）+ `dfee` + `web`。
+2. **打包**：将编译好的二进制 COPY 进 `debian:bookworm-slim` 运行时镜像。
 
-这种方式不需要在宿主机安装 Go，也不依赖 BuildKit，兼容旧版 Docker。
+运行时需要设置 `LD_LIBRARY_PATH` 指向 driver 库目录（docker-compose.yml 已配置），让 glibc 动态链接器能找到 `libdcmi.so` 及其依赖。
 
 ## 3. 启动服务
 
@@ -223,15 +223,13 @@ docker rmi catmonitor-npu catmonitor-generic
 
 ## 10. 常见问题
 
-### Q: 构建失败，提示找不到 dcmi.h
+### Q: 构建失败，提示找不到 dcmi.h 或 GLIBC 符号
 
-NPU 镜像需要 Ascend driver 的头文件。确保构建主机上已安装 driver：
+NPU 镜像必须使用 Debian（glibc）基础镜像，不能用 Alpine（musl libc）。
 
-```bash
-ls /usr/local/Ascend/driver/include/dcmi.h
-```
-
-如果 driver 安装在其他路径，修改 `docker/build.sh` 中的 `ASCEND_DRIVER_PATH`。
+1. 确保构建主机上已安装 Ascend driver：`ls /usr/local/Ascend/driver/include/dcmi_interface_api.h`
+2. 确保使用 `build.sh` 而非手动 `docker build`（脚本会自动选择 `golang:1.23` + `debian:bookworm-slim`）
+3. 如果 driver 安装在其他路径，修改 `docker/build.sh` 中的 `DRIVER_PATH`
 
 ### Q: 容器内 ipmitool 报错 "Unable to open /dev/ipmi0"
 

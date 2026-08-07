@@ -34,14 +34,14 @@ case "$MODE" in
             -e CGO_ENABLED=1 \
             -e CGO_CFLAGS="-I/usr/local/Ascend/driver/include -w" \
             -e CGO_LDFLAGS="-L/usr/local/Ascend/driver/lib64/driver -ldcmi" \
-            golang:1.23-alpine \
-            sh -c 'apk add --no-cache gcc musl-dev >/dev/null && \
-                   go build -tags dcmi -o catmonitor ./cmd/catmonitor && \
+            -e GOPROXY=https://goproxy.cn,direct \
+            golang:1.23 \
+            sh -c 'go build -tags dcmi -o catmonitor ./cmd/catmonitor && \
                    go build -o dfee ./features/dfee && \
                    go build -o web ./features/web && \
                    echo "Compile done."'
 
-        echo "Step 2/2: Building runtime image..."
+        echo "Step 2/2: Building runtime image (debian/glibc)..."
         docker build \
             -f docker/Dockerfile.npu \
             -t catmonitor-npu \

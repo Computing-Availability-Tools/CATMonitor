@@ -18,6 +18,9 @@ services:
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler
+    # NPU runtime: libdcmi.so and its dependencies are in driver/lib64/driver
+    environment:
+      LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver
     ports:
       - "9100:9100"    # Prometheus exporter
       - "9101:9101"    # faultsub REST API (enable in config to use)

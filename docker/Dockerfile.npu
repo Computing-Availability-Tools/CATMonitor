@@ -1,9 +1,13 @@
 # Runtime-only image for NPU environment.
-# Binaries are pre-compiled by build.sh (inside a golang container with
-# the host driver mounted), so this Dockerfile just packages them.
-FROM alpine:latest
+# Uses Debian (glibc) because libdcmi.so is glibc-linked and cannot run on Alpine (musl).
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache ipmitool smartmontools util-linux dmidecode
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ipmitool \
+    smartmontools \
+    util-linux \
+    dmidecode \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY catmonitor /usr/local/bin/catmonitor
 COPY dfee /usr/local/bin/dfee
