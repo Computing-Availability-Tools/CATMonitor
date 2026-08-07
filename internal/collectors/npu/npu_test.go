@@ -34,7 +34,7 @@ func useTestdata(t *testing.T) {
 	mock := &dcmi.MockProvider{
 		CardListVal: []int{0, 1},
 		Temp:        map[[2]int]int{{0, 0}: 42, {0, 1}: 38},
-		Powers:      map[[2]int]int{{0, 0}: 65, {0, 1}: 60},
+		Powers:      map[[2]int]int{{0, 0}: 65, {0, 1}: 60},  // raw 0.1W units: 65 → 6.5W, 60 → 6.0W
 		Volts:       map[[2]int]uint{{0, 0}: 800, {0, 1}: 800},
 		Healths:     map[[2]int]uint{{0, 0}: 0, {0, 1}: 0},
 		Chips: map[[2]int]*dcmi.ChipInfo{{0, 0}: {
@@ -166,8 +166,8 @@ func TestCollectDevice(t *testing.T) {
 	if m := findMetric(metrics, "temperature"); m == nil || m.Value != 42 {
 		t.Errorf("temperature: expected 42, got %v", m)
 	}
-	if m := findMetric(metrics, "power_draw"); m == nil || m.Value != 65 {
-		t.Errorf("power_draw: expected 65, got %v", m)
+	if m := findMetric(metrics, "power_draw"); m == nil || m.Value != 6.5 {
+		t.Errorf("power_draw: expected 6.5 (650 raw / 10), got %v", m)
 	}
 	if m := findMetric(metrics, "health_status"); m == nil {
 		t.Error("missing health_status")
