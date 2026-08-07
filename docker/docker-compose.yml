@@ -42,7 +42,7 @@ services:
       - catmonitor
     restart: unless-stopped
 
-  # 3. dfee: energy-efficiency SPA + Prometheus exporter + CSV output.
+  # 3. dfee: energy-efficiency SPA + Prometheus exporter.
   #    Reads snapshots from daemon.
   dfee:
     image: catmonitor-npu
@@ -50,11 +50,9 @@ services:
       /usr/local/bin/dfee
       -addr=:9528
       -exporter=enabled -exporter-port=9333
-      -csv=enabled -csv-dir=/var/lib/catmonitor/csv -csv-interval=10s
       -snapshot-dir=/var/lib/catmonitor/snapshot
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
-      - csv:/var/lib/catmonitor/csv
     ports:
       - "9528:9528"    # dfee SPA
       - "9333:9333"    # dfee Prometheus exporter
@@ -65,5 +63,4 @@ services:
 volumes:
   snapshot:    # daemon writes, web/dfee read
   data:        # JSONL historical data
-  csv:         # dfee CSV output
   straggler:   # straggler KPI files (optional)

@@ -11,33 +11,28 @@ CATMonitor 容器化方案支持两种镜像：
 
 三个服务可以组合使用：
 
-| 服务 | 端口 | 功能 |
-|------|------|------|
+| 服务 | 容器端口 | 功能 |
+|------|---------|------|
 | `catmonitor` (daemon) | 9100, 9101 | 采集指标 + Prometheus 导出 + snapshot 写入 + faultsub |
 | `web` | 9527 | Web 仪表盘（读 snapshot） |
-| `dfee` | 9528, 9333 | 能效监控 SPA + Prometheus 导出 + CSV 落盘 |
+| `dfee` | 9528, 9333 | 能效监控 SPA + Prometheus 导出 |
 
-## 2. 构建镜像
+daemon 是 snapshot 唯一生产者；web/dfee 是只读消费者，不自行采集。三容器共享一个 snapshot 卷。
 
-### 自动检测构建（推荐）
+## 2. 构建
+
+### 构建镜像
 
 ```bash
 cd CATMonitor
-docker/docker/build.sh
+docker/docker/build.sh          # 自动检测 NPU driver
 ```
 
-脚本自动检测 `/usr/local/Ascend/driver` 是否存在：
-- 存在 → 构建 `catmonitor-npu` 镜像
-- 不存在 → 构建 `catmonitor-generic` 镜像
-
-### 手动指定
+或手动指定：
 
 ```bash
-# 强制构建 NPU 镜像
-docker/docker/build.sh npu
-
-# 强制构建通用镜像
-docker/docker/build.sh generic
+docker/docker/build.sh npu      # 强制 NPU 镜像
+docker/docker/build.sh generic  # 强制通用镜像
 ```
 
 ### NPU 镜像构建说明
@@ -47,7 +42,9 @@ NPU 镜像采用**两步构建**，且**必须使用 Debian（glibc）基础镜�
 1. **编译**：启动 `golang:1.23`（Debian/glibc）容器，挂载宿主机 Ascend driver，在容器内用 CGo 编译 `catmonitor`（`-tags dcmi`）+ `dfee` + `web`。
 2. **打包**：将编译好的二进制 COPY 进 `debian:bookworm-slim` 运行时镜像。
 
-运行时需要设置 `LD_LIBRARY_PATH` 指向 driver 和 nnae 库目录（docker-compose.yml 已配置），让 glibc 动态链接器能找到 `libdcmi.so`、`libc_sec.so`、`libmmpa.so` 等依赖：
+编译时 `CGO_LDFLAGS` 加 `-Wl,--allow-shlib-undefined`（`build.sh` 已配置），因为 Debian 的 `ld` 默认不递归解析共享库的传递依赖。
+
+运行时需要设置 `LD_LIBRARY_PATH` 指向 driver 和 nnae 库目录：
 
 ```
 LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64
@@ -55,11 +52,17 @@ LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/lat
 
 同时需要挂载 nnae 目录（`libc_sec.so` 和 `libmmpa.so` 在 nnae 而非 driver 中）。
 
-编译时 `CGO_LDFLAGS` 需要加 `-Wl,--allow-shlib-undefined`，因为 Debian 的 `ld` 默认不递归解析共享库的传递依赖（`build.sh` 已配置）。
+### Dockerfile 说明
 
-## 3. 启动服务
+| 文件 | 用途 |
+|------|------|
+| `Dockerfile.npu` | NPU 运行时镜像（debian + 预编译二进制） |
+| `Dockerfile.generic` | 通用镜像（多阶段，golang 编译 + alpine 运行时） |
+| `catmonitor.yaml` | 容器版配置（打包在镜像中） |
 
-### 方式一：docker compose 一键启动（推荐）
+## 3. 启动
+
+### 方式一：Docker Compose 一键启动（推荐）
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d
@@ -67,67 +70,125 @@ docker compose -f docker/docker-compose.yml up -d
 
 启动全部三个容器：daemon + web + dfee。
 
-### 方式二：只启动 daemon + dfee（跳过 web）
+#### 只启动部分服务
 
 ```bash
+# daemon + dfee（跳过 web）
 docker compose -f docker/docker-compose.yml up -d catmonitor dfee
+
+# 只启动 daemon
+docker compose -f docker/docker-compose.yml up -d catmonitor
 ```
 
-### 方式三：单独运行 dfee 容器（daemon 在宿主机或其他容器运行）
+### 方式二：手动 docker run（无 compose 或 Docker 18.09）
+
+#### 步骤 1：创建卷
 
 ```bash
-docker run -d --name dfee \
+docker volume create cm-snapshot cm-data
+```
+
+#### 步骤 2：启动 daemon
+
+```bash
+docker run -d --name catmonitor --privileged \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+  -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
+  -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64 \
+  --device /dev/davinci0 \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot \
+  -v cm-data:/var/lib/catmonitor/data \
+  -p 9100:9100 \
+  catmonitor-npu
+```
+
+> NPU 环境专用参数：
+> - `--device /dev/davinci0`：按实际卡号调整，`ls /dev/davinci*` 查看
+> - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae`：挂载驱动
+> - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so 及其依赖
+>
+> 非 NPU 环境去掉以上三行，镜像名改为 `catmonitor-generic`。
+
+#### 步骤 3：等待首次采集（6-9 秒）
+
+```bash
+docker exec catmonitor ls /var/lib/catmonitor/snapshot
+# 预期：snapshot.json + snapshot_cpu.json + snapshot_npu.json + ...
+```
+
+#### 步骤 4：启动 web
+
+```bash
+docker run -d --name catmonitor-web --entrypoint /usr/local/bin/web \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -p 9527:9527 \
+  catmonitor-npu -snapshot-dir /var/lib/catmonitor/snapshot
+```
+
+> `--entrypoint /usr/local/bin/web` 覆盖镜像默认的 daemon 入口。
+
+#### 步骤 5：启动 dfee
+
+```bash
+docker run -d --name catmonitor-dfee --entrypoint /usr/local/bin/dfee \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -p 9528:9528 -p 9333:9333 \
+  catmonitor-npu -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot
+```
+
+### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
+
+```bash
+docker run -d --name dfee --entrypoint /usr/local/bin/dfee \
   -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
-  -v /var/lib/catmonitor/csv:/var/lib/catmonitor/csv \
   -p 9528:9528 -p 9333:9333 \
   catmonitor-npu \
-  /usr/local/bin/dfee \
-  -exporter=enabled -exporter-port=9333 \
-  -csv=enabled -csv-dir=/var/lib/catmonitor/csv \
-  -snapshot-dir=/var/lib/catmonitor/snapshot
+  -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
-## 4. 验证
+## 4. 端口说明
+
+| 容器端口 | 服务 | 端点 |
+|---------|------|------|
+| 9100 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
+| 9101 | faultsub REST API（可选） | `/faultsub/events` 等 |
+| 9527 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
+| 9528 | dfee SPA | `/`、`/dfee/` |
+| 9333 | dfee Prometheus exporter | `/metrics`（node_*/ipmi_*/static_*） |
+
+如需自定义端口映射（如映射到不同主机端口）：
 
 ```bash
-# daemon Prometheus exporter
-curl http://localhost:9100/metrics
-
-# web 仪表盘
-curl -s http://localhost:9527/ | head -5
-
-# dfee SPA
-curl -s http://localhost:9528/ | head -5
-
-# dfee Prometheus exporter
-curl http://localhost:9333/metrics
-
-# 查看 CSV 文件
-ls /var/lib/docker/volumes/*csv/_data/
-
-# 查看容器日志
-docker compose -f docker/docker-compose.yml logs -f catmonitor
-docker compose -f docker/docker-compose.yml logs -f dfee
+docker run -d --name catmonitor --privileged \
+  -p 4900:9100 \
+  ...其他参数...
+  catmonitor-npu
 ```
 
-## 5. NPU 环境配置
+## 5. 验证
+
+```bash
+# daemon
+curl http://localhost:9100/-/healthy           # 200
+curl http://localhost:9100/metrics | grep npu    # NPU 指标
+
+# web
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9527/   # 200
+curl -s http://localhost:9527/api/snapshot | head -c 120           # JSON
+
+# dfee
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9528/   # 200
+curl -s http://localhost:9333/metrics | grep node_load1           # 能效指标
+```
+
+## 6. NPU 环境配置
 
 ### 设备挂载
 
-`docker-compose.yml` 中默认挂载了 NPU 设备和驱动：
-
-```yaml
-devices:
-  - /dev/davinci0
-  - /dev/davinci1
-volumes:
-  - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
-```
-
-根据实际 NPU 卡数调整 `devices` 列表。可通过以下命令查看可用设备：
+根据实际 NPU 卡数调整 `--device` 或 compose 中的 `devices`：
 
 ```bash
-ls /dev/davinci*
+ls /dev/davinci*    # 查看可用设备
 ```
 
 ### 权限
@@ -139,37 +200,54 @@ ls /dev/davinci*
 - `/proc`、`/sys`（系统指标）
 - SMBIOS（dmidecode）
 
-后续可逐步收紧为 `--device` + `--cap-add`。
+### 运行时库依赖
 
-## 6. 非 NPU 环境（通用环境）
+`libdcmi.so` 是 glibc 链接的，运行时需要：
+- 挂载 `/usr/local/Ascend/driver`（libdcmi.so 本体）
+- 挂载 `/usr/local/Ascend/nnae`（libc_sec.so、libmmpa.so 依赖）
+- 设置 `LD_LIBRARY_PATH` 指向两个库目录
 
-如果不需要 NPU 指标采集，使用通用镜像：
+## 7. 非 NPU 环境
 
 ```bash
 # 构建
 docker/docker/build.sh generic
 
-# 启动（docker-compose.yml 中删除 devices 和 driver volume）
-docker compose -f docker/docker-compose.yml up -d
+# 启动（不需要 driver/nnae 挂载、device、LD_LIBRARY_PATH）
+docker run -d --name catmonitor --privileged \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot \
+  -v cm-data:/var/lib/catmonitor/data \
+  -p 9100:9100 \
+  catmonitor-generic
+
+docker run -d --name catmonitor-web --entrypoint /usr/local/bin/web \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -p 9527:9527 \
+  catmonitor-generic -snapshot-dir /var/lib/catmonitor/snapshot
+
+docker run -d --name catmonitor-dfee --entrypoint /usr/local/bin/dfee \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -p 9528:9528 -p 9333:9333 \
+  catmonitor-generic -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
-如果使用 docker-compose，需要将 `dockerfile` 改为 `Dockerfile.generic`，并删除 NPU 相关的 `devices` 和 `volumes` 配置。
+如果使用 docker-compose，修改 `docker-compose.yml`：
+1. `dockerfile` 改为 `Dockerfile.generic`
+2. `image` 改为 `catmonitor-generic`
+3. 删除 `devices`、NPU driver/nnae `volumes`、`LD_LIBRARY_PATH`
 
-## 7. 配置修改
+## 8. 配置修改
 
-### 修改采集配置
-
-编辑 `docker/catmonitor.yaml`（打包在镜像中），或挂载自定义配置：
+### 挂载自定义配置
 
 ```bash
-docker run -d --name catmonitor \
+docker run -d --name catmonitor --privileged \
   -v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
   ...其他参数...
+  catmonitor-npu
 ```
 
 ### 开启 faultsub
-
-编辑配置：
 
 ```yaml
 faultsub:
@@ -178,8 +256,6 @@ faultsub:
 ```
 
 ### 开启 straggler_output
-
-编辑配置：
 
 ```yaml
 straggler_output:
@@ -194,42 +270,35 @@ collection:
   min_priority: low      # low(全采) | medium(跳过Low) | high(只采High)
 ```
 
-## 8. 数据卷说明
+## 9. 数据卷说明
 
 | Volume | 写入方 | 读取方 | 内容 |
 |--------|--------|--------|------|
-| `snapshot` | daemon | web, dfee | snapshot.json + snapshot_*.json |
-| `data` | daemon | — | JSONL 历史数据 |
-| `csv` | dfee | — | CSV 落盘文件 |
-| `straggler` | daemon | — | straggler KPI 文件 |
+| `cm-snapshot` | daemon | web, dfee | snapshot.json + snapshot_*.json |
+| `cm-data` | daemon | — | JSONL 历史数据 |
+| `cm-straggler` | daemon | — | straggler KPI 文件（可选） |
 
-查看数据：
-
-```bash
-# snapshot 文件
-docker compose -f docker/docker-compose.yml exec catmonitor ls /var/lib/catmonitor/snapshot/
-
-# CSV 文件
-docker compose -f docker/docker-compose.yml exec dfee ls /var/lib/catmonitor/csv/
-
-# JSONL 历史数据
-docker compose -f docker/docker-compose.yml exec catmonitor ls /var/lib/catmonitor/data/
-```
-
-## 9. 停止与清理
+## 10. 停止与清理
 
 ```bash
-# 停止所有容器
-docker compose -f docker/docker-compose.yml down
+# 停止全部容器
+docker rm -f catmonitor catmonitor-web catmonitor-dfee
 
-# 停止并删除数据卷
-docker compose -f docker/docker-compose.yml down -v
+# 清理数据卷（保留数据则跳过）
+docker volume rm cm-snapshot cm-data
 
 # 删除镜像
 docker rmi catmonitor-npu catmonitor-generic
 ```
 
-## 10. 常见问题
+## 11. 启动顺序
+
+1. **先启动 daemon**（snapshot 生产者），等待 6-9 秒完成首次采集
+2. **后启动 web/dfee**（snapshot 消费者），snapshot 就绪后即有数据
+
+web/dfee 可在任意时刻拉起，只要 snapshot 已存在就有数据。若 snapshot 尚未就绪，web/dfee 返回 503，自动重试即可。
+
+## 12. 常见问题
 
 ### Q: 构建失败，提示找不到 dcmi.h 或 GLIBC 符号
 
@@ -249,25 +318,36 @@ sudo modprobe ipmi_si
 ls /dev/ipmi0
 ```
 
-### Q: dfee 容器输出 "snapshot not ready"
+### Q: daemon 容器报 "libc_sec.so: cannot open shared object file"
 
-daemon 尚未完成首次采集。等待 5-10 秒后重试。如果持续报错，检查 daemon 容器日志：
+需要挂载 nnae 目录并设置 LD_LIBRARY_PATH：
 
 ```bash
-docker compose -f docker/docker-compose.yml logs catmonitor
+-v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
+-e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64
+```
+
+### Q: dfee/web 容器输出 "snapshot not ready"
+
+daemon 尚未完成首次采集。等待 6-9 秒后重试。检查 snapshot 是否已生成：
+
+```bash
+docker exec catmonitor ls /var/lib/catmonitor/snapshot/
 ```
 
 ### Q: NPU 指标为空
 
 1. 确认使用了 `catmonitor-npu` 镜像（不是 generic）
-2. 确认 `/dev/davinci*` 设备已挂载
-3. 确认 `/usr/local/Ascend/driver` 已挂载
-4. 检查 daemon 日志是否有 DCMI 错误
+2. 确认 `--device /dev/davinci*` 设备已挂载
+3. 确认 driver + nnae 已挂载 + `LD_LIBRARY_PATH` 已设置
+4. 检查 daemon 日志：`docker logs catmonitor`
 
-### Q: 如何在非 NPU 环境使用 docker-compose
+### Q: docker build 时 apt-get 很慢
 
-修改 `docker/docker-compose.yml`：
-1. `dockerfile` 改为 `docker/Dockerfile.generic`
-2. 删除 `devices` 列表
-3. 删除 NPU driver 的 `volumes` 挂载
-4. `image` 标签改为 `catmonitor-generic`
+Dockerfile.npu 默认用 Debian 官方源。如遇网络慢，在 Dockerfile 的 RUN 行前加清华镜像源：
+
+```dockerfile
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ipmitool smartmontools util-linux dmidecode && rm -rf /var/lib/apt/lists/*
+```
