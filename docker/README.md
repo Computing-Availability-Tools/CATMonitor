@@ -47,7 +47,15 @@ NPU 镜像采用**两步构建**，且**必须使用 Debian（glibc）基础镜�
 1. **编译**：启动 `golang:1.23`（Debian/glibc）容器，挂载宿主机 Ascend driver，在容器内用 CGo 编译 `catmonitor`（`-tags dcmi`）+ `dfee` + `web`。
 2. **打包**：将编译好的二进制 COPY 进 `debian:bookworm-slim` 运行时镜像。
 
-运行时需要设置 `LD_LIBRARY_PATH` 指向 driver 库目录（docker-compose.yml 已配置），让 glibc 动态链接器能找到 `libdcmi.so` 及其依赖。
+运行时需要设置 `LD_LIBRARY_PATH` 指向 driver 和 nnae 库目录（docker-compose.yml 已配置），让 glibc 动态链接器能找到 `libdcmi.so`、`libc_sec.so`、`libmmpa.so` 等依赖：
+
+```
+LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64
+```
+
+同时需要挂载 nnae 目录（`libc_sec.so` 和 `libmmpa.so` 在 nnae 而非 driver 中）。
+
+编译时 `CGO_LDFLAGS` 需要加 `-Wl,--allow-shlib-undefined`，因为 Debian 的 `ld` 默认不递归解析共享库的传递依赖（`build.sh` 已配置）。
 
 ## 3. 启动服务
 

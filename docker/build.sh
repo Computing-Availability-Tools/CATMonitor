@@ -33,7 +33,7 @@ case "$MODE" in
             -w /app \
             -e CGO_ENABLED=1 \
             -e CGO_CFLAGS="-I/usr/local/Ascend/driver/include -w" \
-            -e CGO_LDFLAGS="-L/usr/local/Ascend/driver/lib64/driver -ldcmi" \
+            -e CGO_LDFLAGS="-L/usr/local/Ascend/driver/lib64/driver -ldcmi -Wl,--allow-shlib-undefined" \
             -e GOPROXY=https://goproxy.cn,direct \
             golang:1.23 \
             sh -c 'go build -tags dcmi -o catmonitor ./cmd/catmonitor && \
