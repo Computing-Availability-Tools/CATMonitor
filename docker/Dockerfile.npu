@@ -1,0 +1,18 @@
+# Runtime-only image for NPU environment.
+# Uses Debian (glibc) because libdcmi.so is glibc-linked and cannot run on Alpine (musl).
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ipmitool \
+    smartmontools \
+    util-linux \
+    dmidecode \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY catmonitor /usr/local/bin/catmonitor
+COPY dfee /usr/local/bin/dfee
+COPY web /usr/local/bin/web
+COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
+
+ENTRYPOINT ["/usr/local/bin/catmonitor", "daemon", "--config", "/etc/catmonitor/catmonitor.yaml"]
