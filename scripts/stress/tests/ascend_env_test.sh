@@ -119,6 +119,7 @@ EOF
 chmod 0755 "$TEST_ROOT/tools/python3"
 (
     export PATH="$TEST_ROOT/tools:$PATH"
+    export CATMONITOR_ASCEND_ENV_ROOT="$CANN_ROOT"
     export CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED="$CANN_ROOT/cann-9.0.1/set_env.sh"
     source "$HELPER"
     catmonitor_ascend_build_preflight
@@ -126,7 +127,23 @@ chmod 0755 "$TEST_ROOT/tools/python3"
 assert_contains "$TEST_ROOT/preflight-pass.log" 'CATMONITOR_PREFLIGHT_TBE=PASS'
 assert_contains "$TEST_ROOT/preflight-pass.log" 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=false'
 
+# A fixture-local driver directory must be reported as present without reading
+# the real host /usr/local/Ascend tree.
+DRIVER_ROOT="$TEST_ROOT/preflight-driver-layout"
+write_env "$DRIVER_ROOT/cann-9.0.1/set_env.sh" cann-9.0.1
+install -d -m 0755 "$DRIVER_ROOT/driver"
+(
+    export PATH="$TEST_ROOT/tools:$PATH"
+    export CATMONITOR_ASCEND_ENV_ROOT="$DRIVER_ROOT"
+    export CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED="$DRIVER_ROOT/cann-9.0.1/set_env.sh"
+    source "$HELPER"
+    catmonitor_ascend_build_preflight
+) >"$TEST_ROOT/preflight-driver.log"
+assert_contains "$TEST_ROOT/preflight-driver.log" \
+    'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=true'
+
 if PATH="$TEST_ROOT/tools:$PATH" FAKE_PREFLIGHT_FAIL=hal \
+    CATMONITOR_ASCEND_ENV_ROOT="$CANN_ROOT" \
     CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED="$CANN_ROOT/cann-9.0.1/set_env.sh" \
     bash -c 'source "$1"; catmonitor_ascend_build_preflight' _ "$HELPER" \
     >"$TEST_ROOT/preflight-fail.log" 2>&1; then
