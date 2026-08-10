@@ -8,14 +8,17 @@
 ## 0. 快速上手（60 秒）
 
 ```bash
-make build                                    # 编译 ./bin/catmonitor
-./bin/catmonitor daemon &                    # 启动守护进程（采集 + Prometheus :9100）
-curl -s http://localhost:9100/metrics | head # 抓取 Prometheus 指标
-./bin/catmonitor health                      # 一次性健康检查
-./bin/catmonitor collect -o table | head     # 一次性指标采集
+make all                                       # 编译 catmonitor + web + dfee 三二进制
+./bin/catmonitor daemon &                      # 启动守护进程（采集 + Prometheus :9100 + snapshot 生产）
+curl -s http://localhost:9100/metrics | head   # 抓取 Prometheus 指标（catmonitor_* 命名）
+./bin/catmonitor-dfee -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot &  # dfee + :9333 exporter（node_*/dsmi_*）
+curl -s http://localhost:9333/metrics | head   # 抓取 node_exporter 风格指标
+./bin/catmonitor health                        # 一次性健康检查
+./bin/catmonitor collect -o table | head       # 一次性指标采集
 ```
 
-> Web 仪表盘（可选）：`go build -o features/web/bin/catmonitor-web ./features/web && ./features/web/bin/catmonitor-web`，浏览器打开 http://localhost:9527。
+> Web 仪表盘（可选）：`./bin/catmonitor-web -snapshot-dir /var/lib/catmonitor/snapshot`，浏览器打开 http://localhost:9527。
+> 容器化部署（可选）：`docker/docker/build.sh && docker compose -f docker/docker-compose.yml up -d`，详见 [§12](#12-容器化部署) 与 [docker/README.md](../docker/README.md)。
 
 ## 目录
 
@@ -23,13 +26,14 @@ curl -s http://localhost:9100/metrics | head # 抓取 Prometheus 指标
 - [2. 配置](#2-配置)
 - [3. 命令行](#3-命令行)（含 [常用场景速查](#常用场景速查)）
 - [4. Web 仪表盘](#4-web-仪表盘catmonitor-web)
-- [5. Prometheus 导出](#5-prometheus-导出exporter)
+- [5. Prometheus 导出](#5-prometheus-导出exporter)（含 [§5.5 dfee 独立 exporter :9333](#55-dfee-独立-prometheus-exporter9333)）
 - [6. 能效监控（dfee）](#6-能效监控dfee)
 - [7. 健康度评分](#7-健康度评分)
 - [8. 数据格式](#8-数据格式)
 - [9. 无硬件环境的优雅降级](#9-无硬件环境的优雅降级)
 - [10. 扩展](#10-扩展)
 - [11. 排错与常见问题](#11-排错与常见问题)
+- [12. 容器化部署](#12-容器化部署)
 
 ---
 
@@ -108,12 +112,12 @@ health:
   weight_scheme: auto      # 仅 `catmonitor health` CLI 使用：auto | cpu_only | accelerated_8card | accelerated_4card
 
 collection:
-  min_priority: low        # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
+  min_priority: medium     # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 
-features: [dfee]          # feature-scope 白名单（各 feature metrics.yaml 并集；空 = 默认全集）；派生 per-comp cadence
+features: [web, dfee]      # feature-scope 白名单（各 feature metrics.yaml 并集；空 = 默认全集）；派生 per-comp cadence
 
-snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 off）
-  enabled: false          # off 时 daemon 不写 snapshot；on 时 web/dfee 须以只读消费者运行
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 on）
+  enabled: true           # off 时 daemon 不写 snapshot；on 时 web/dfee 须以只读消费者运行
   dir: /var/lib/catmonitor/snapshot
 
 faultsub:                 # 故障订阅推送（默认 off）；详见 features/faultsub/faultsub_SPEC.md
@@ -362,6 +366,32 @@ scrape_configs:
 
 > 原理：`exporter.CachingStorage` 实现 `collector.Storage` 接口，包装在 JSONLStorage 外——一次采集同时落盘 JSONL + 更新内存缓存（原子替换），HTTP 层从缓存读取转 Prometheus 文本。详见 [features/exporter/exporter_SPEC.md](../features/exporter/exporter_SPEC.md)。
 
+### 5.5 dfee 独立 Prometheus exporter（:9333）
+
+除 daemon 的 `:9100/metrics`（`catmonitor_*` 命名）外，dfee 二进制另内置独立 exporter，输出对齐 node_exporter/dsmi 风格的命名，与 daemon 导出互不冲突。由 `-exporter=enabled` 开启：
+
+```bash
+$ catmonitor-dfee -addr :9528 -exporter=enabled -exporter-port=9333 -snapshot-dir /var/lib/catmonitor/snapshot
+$ curl http://localhost:9333/metrics
+node_cpu_seconds_total{mode="user"} 948021
+node_memory_MemTotal_bytes 2163847168
+node_network_receive_bytes_total{interface="eth0"} 32629770
+node_disk_read_sectors_total{device="sda"} 9472
+dsmi_power_w{npu_id="0"} 89.5
+ipmi_power_w 1848
+static_hardware_info{cpu_info="1*Intel(R) Core(TM) i5-7200U",disk_info="sda 356.9M",...} 1
+static_software_info{os_version="Ubuntu 26.04 LTS",python_version="3.14.4",...} 1
+```
+
+| 前缀 | 来源 | 说明 |
+|------|------|------|
+| `node_*` | snapshot CPU/内存/网络/磁盘 | 对齐 node_exporter 命名（`node_cpu_seconds_total`/`node_memory_*_bytes`/`node_network_*_bytes_total`/`node_disk_*`/`node_load*`/`node_cpu_cores_online`） |
+| `dsmi_*` | snapshot NPU | 对齐 dsmi 命名（`dsmi_power_w`/`dsmi_voltage_mv`/`dsmi_aicore_utilization_percent` 等） |
+| `ipmi_*` | snapshot chassis | 机箱环境（`ipmi_power_w`/`ipmi_inlet_temp_celsius`/`ipmi_fan_speed_rpm`） |
+| `static_*` | 启动时采集 | 一次性硬件/软件身份（`static_hardware_info`/`static_software_info`，value=1，信息在 labels） |
+
+> 磁盘指标由 `supplementDiskStats` 直接读 `/proc/diskstats` 补 snapshot 未覆盖设备。静态信息经 `ipmitool`/`lscpu`/`dmidecode`/`npu-smi`/`nvidia-smi`/`pip`/`nvcc` 等命令采集，无对应工具时对应 label 为空（优雅降级）。可选 `-device 0,1` 过滤 NPU 设备，`-docker-container <name>` 在容器内采集软件版本。
+
 ---
 
 ## 6. 能效监控（dfee）
@@ -377,9 +407,23 @@ catmonitor daemon
 # 启动 dfee 独立二进制（-snapshot-dir 须与 daemon snapshot.dir 一致）
 catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 # 浏览器打开 http://localhost:9528/dfee/（实际端口见启动日志 "dfee server starting"）
+
+# 启动 dfee 并开启 Prometheus exporter（:9333/metrics，详见 §5.5）
+catmonitor-dfee -addr :9528 -exporter=enabled -exporter-port=9333 -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
 > 端口 `:9528` 被占用时自动 +1 回退。dfee 不再注册到 web 路由，独立进程运行。
+
+**启动参数**：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `-addr` | `:9528` | SPA 监听地址 |
+| `-snapshot-dir` | `/var/lib/catmonitor/snapshot` | daemon snapshot 目录（须一致） |
+| `-exporter` | `disabled` | Prometheus exporter 开关：`enabled`/`disabled` |
+| `-exporter-port` | `9333` | exporter 监听端口（输出 `node_*`/`dsmi_*`/`ipmi_*`/`static_*`，见 §5.5） |
+| `-device` | 空（全部） | NPU 设备过滤（逗号分隔，如 `0,1`） |
+| `-docker-container` | 空 | docker 容器名，用于在容器内采集软件版本 |
 
 ### 6.2 功能
 
@@ -387,6 +431,8 @@ catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 - **CPU 利用率推导**：8 个原始 jiffies 累计值在后端推导为 7 项利用率百分比（有状态 delta）
 - **网络字节差值**：`rx/tx_bytes_total` 累计值转换为采集间增量
 - **交互**：图表卡片拖拽重排 + 右下角手柄缩放、虚线对齐辅助（3px 吸附）、多选下拉筛选（NPU/磁盘/网络）、模块折叠
+- **Prometheus exporter**：`-exporter=enabled` 时启动 `:9333/metrics`，将 snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*`（详见 §5.5），零外部库依赖
+- **静态信息采集**：启动时一次性采集硬件/软件身份（OS/NPU 驱动/CANN/Python/PyTorch/vLLM 等），无工具时优雅降级
 - **独立二进制**：`features/dfee` package main，只读 snapshot，不依赖 web 进程
 
 > API：`GET /api/dfee` 返回过滤+推导后的图表数据。详见 [features/dfee/dfee_SPEC.md](../features/dfee/dfee_SPEC.md)。
@@ -476,5 +522,50 @@ catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 | `health` 评分与 web 不一致 | CLI 因 `npu_num` 指标判 `accelerated`、web 据真实硬件判 `cpu_only`，口径不同（已知项） |
 | DCMI/NPU CGo 编译失败 | `dcmi_cgo.go` 在 `-tags dcmi` 后，需真机 CANN SDK；默认构建排除即可 |
 | 健康度无 `health_*.jsonl` 文件 | v0.3.3 起 daemon 不再落盘健康度；用 `catmonitor health -o json >> health.jsonl` 自行持久化 |
+| dfee exporter `:9333` 无 dsmi/ipmi 数据 | 无 NPU/IPMI 硬件时优雅降级为空，符合预期；`static_*` 仍采集（命令可用字段有值，否则空） |
+| dfee `static_software_info` 字段全空 | 软件采集依赖 `python3`/`pip`/`nvcc`/`npu-smi` 等命令；容器内可用 `-docker-container <name>` 经 `docker exec` 采集 |
 
 > 无 NPU/GPU 环境的系统测试结果见 [docs/test_report.md](test_report.md)。
+
+---
+
+## 12. 容器化部署
+
+CATMonitor 提供容器化方案，支持 NPU 与通用两种镜像。完整文档见 [docker/README.md](../docker/README.md)。
+
+### 12.1 镜像类型
+
+| 镜像 | 适用环境 | 说明 |
+|------|---------|------|
+| `catmonitor-npu` | 有 Ascend NPU | Debian/glibc 两步构建（golang 容器挂载 driver 编译 + debian 运行时打包），链接 `libdcmi.so`，采集 120 项 NPU 指标 |
+| `catmonitor-generic` | 无 NPU（纯 CPU/GPU） | alpine 多阶段构建，纯 Go 编译，不依赖 NPU 驱动 |
+
+### 12.2 构建与启动
+
+```bash
+cd CATMonitor
+docker/docker/build.sh            # 自动检测 NPU driver（有则 npu，无则 generic）
+docker/docker/build.sh npu         # 强制 NPU 镜像
+docker/docker/build.sh generic    # 强制通用镜像
+
+# Docker Compose 一键启动 daemon + web + dfee 三服务
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### 12.3 端口
+
+| 容器端口 | 服务 | 端点 |
+|---------|------|------|
+| 9100 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
+| 9101 | faultsub REST API（配置开启） | `/faultsub/*` |
+| 9527 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
+| 9528 | dfee SPA | `/`、`/api/dfee` |
+| 9333 | dfee Prometheus exporter | `/metrics`（`node_*`/`dsmi_*`/`ipmi_*`/`static_*`） |
+
+### 12.4 NPU 环境注意事项
+
+- NPU 镜像**必须用 Debian（glibc）**，alpine（musl libc）与 `libdcmi.so` 不兼容
+- 需挂载 `/usr/local/Ascend/driver` + `/usr/local/Ascend/nnae` 并设置 `LD_LIBRARY_PATH`
+- `--device /dev/davinci*` 挂载 NPU 设备，`--privileged` 访问 ipmitool/dmidecode/smartctl
+
+> 构建细节、docker run 手动启动、故障排查等完整内容见 [docker/README.md](../docker/README.md)。

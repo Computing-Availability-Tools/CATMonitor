@@ -4,6 +4,41 @@
 
 ---
 
+## v0.3.4
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.4 |
+| 发布时间 | 2026-08-10 |
+| 发布人 | opencode |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (b0d0bf1) → main（合并 feature/wyx/add-metrics 全部后续提交） |
+
+### 变更摘要
+
+- **dfee Prometheus exporter（核心特性）**：`features/dfee` 新增独立 Prometheus exporter（`-exporter=enabled` 启动 `:9333/metrics`），将 snapshot 映射为 `node_*`（CPU/内存/网络/磁盘，对齐 node_exporter 命名）/ `dsmi_*`（NPU，对齐 dsmi 命名）/ `ipmi_*`（机箱）/ `static_hardware_info`+`static_software_info`（启动时一次性采集的硬件/软件身份）格式；`supplementDiskStats` 直读 `/proc/diskstats` 补 snapshot 未覆盖设备；零外部 prometheus 库依赖（自实现文本 exposition + label 转义）
+- **静态软硬件信息采集**：`features/dfee/static_info.go` 启动时经 `ipmitool`/`lscpu`/`dmidecode`/`lsblk`/`npu-smi`/`nvidia-smi`/`nvcc`/`pip` 等命令采集硬件型号与软件版本（OS/NPU 驱动/CANN/Python/PyTorch/vLLM 等），无对应工具或权限时优雅降级为空；支持 `-docker-container` 经 `docker exec` 在容器内采集软件版本
+- **`LoadFeatureOverrides` higher-priority-wins 合并**：`internal/metrics` 新增 `LoadFeatureOverrides(paths)`，一次性加载全部 feature `metrics.yaml`，同名指标取高优先级、字段后写覆盖，替代 `cmd/catmonitor` 中逐个 `LoadModuleOverride` 循环
+- **Disk 新增 4 项累计 raw counters**：`internal/collectors/disk/disk_linux.go` 新增 `collectRawCounters`，从 `/proc/diskstats` 输出 `read_sectors_total`/`written_sectors_total`/`read_time_total`/`write_time_total`（Medium，累计计数器，不差分）；`configs/metrics.yaml` 补登 `read_latency`/`write_latency` + 上述 4 项
+- **GPU 新增 `memory_detail`**：`configs/metrics.yaml` 新增 `memory_detail`（显存明细，Medium，按 field=total/used 输出 MB）
+- **容器化方案**：新增 `docker/` 目录——`Dockerfile.npu`（Debian/glibc 两步构建：golang 容器挂载 driver 编译 + debian 运行时打包，链接 `libdcmi.so`）+ `Dockerfile.generic`（alpine 多阶段，纯 Go）+ `build.sh`（自动检测 driver）+ `docker-compose.yml`（daemon+web+dfee 三服务编排）+ `docker/catmonitor.yaml` + `README.md`（406 行完整文档）
+- **bug 修复**：① faultsub `FaultStorage.Ready()` 改用 `written` 标志（健康 NPU 无故障时 snapshot 为空但已采集，`/-/ready` 不再误报 503）；② NPU `power_draw` 单位修正（DCMI 返回 0.1W，`/10.0` 转 W，测试用例同步 65→6.5W）；③ IPMI `cacheDir` 由相对路径 `features/web/data` 改绝对路径 `/var/lib/catmonitor`，消除工作目录依赖
+- **配置默认值变更**：`configs/catmonitor.yaml` 默认 `collection.min_priority: low→medium`、`features: [dfee]→[web, dfee]`、`snapshot.enabled: false→true`；`.gitignore` `loc_configs/→local_configs/` + 新增 `**/ipmi_sensor_map.json`
+- **文档**：README/SPEC/DESIGN/User_Manual/indi_list 5 文档全面同步合并后代码（+237/-59 行）：指标总数 205→210、dfee exporter :9333、容器化、disk raw counters、LoadFeatureOverrides higher-wins、bug 修复说明、配置默认值、版本演进表加 v0.3.3 后续条目
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.4`；指标总数 205→210（Disk +4 / GPU +1）
+- **测试**：`go vet ./...` 零告警；三二进制构建全成功（catmonitor 10.4MB / web 8.5MB / dfee 8.6MB）；`go test ./...` 27 包全 ok（含新增 dfee exporter/faultsub healthy ready/npu power_draw 单位测试）；端到端 5 端点验证通过（`:9100/metrics` 239 行 41 TYPE、`:9101/faultsub` CRUD 200/201/400、`:9527` web 200、`:9528` dfee 200、`:9333/metrics` 135 行 `node_*`/`static_*` 输出正常）；daemon 日志无 error/warn/panic
+
+### 已知限制
+
+1. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `-tags dcmi` 后，本机无 CANN SDK 无法编译，需在真 NPU 服务器验证
+2. **GPU/NPU/Chassis 无真机**：系统测试仅验证优雅降级路径（空数据 / 计数 0 / 不崩溃），真实指标采集与 dfee exporter 的 `dsmi_*`/`ipmi_*` 输出需在配备对应硬件的机器复测
+3. **dfee static_info 命令依赖**：`static_hardware_info`/`static_software_info` 依赖 `ipmitool`/`dmidecode`/`npu-smi`/`nvidia-smi`/`pip`/`nvcc` 等命令，容器环境需 `--privileged` + 安装对应工具，缺失时对应 label 为空（降级而非报错）
+4. **NPU 镜像须 Debian/glibc**：`libdcmi.so` 为 glibc 链接，alpine（musl libc）不兼容；`docker-compose.yml` 默认按 NPU 环境配置，非 NPU 环境需改 `Dockerfile.generic` 并删除 driver/nnae 挂载
+5. **`-c` 短 flag 死代码**（继承 v0.3.3）：`cmd/catmonitor` 的 `c` 短 flag 值被丢弃，须用 `-config` 长形式
+6. **server_type 判定口径不一致**（继承 v0.3.3）：`catmonitor health` CLI 判 `accelerated`、web/dfee 端判 `cpu_only`，建议后续统一
+
+---
+
 ## v0.3.3
 
 | 项目 | 说明 |
