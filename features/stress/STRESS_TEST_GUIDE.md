@@ -138,26 +138,35 @@ make test-stress-build
 
 ### 2.2 Ascend NPU Burn 镜像构建
 
-仓库不内置 MindCluster AscendNPUBurn 源码。管理员应从批准来源取得并固定源码
-版本，独立核对哈希和 Mulan PSL v2 许可证，再选择与目标节点驱动、CANN 和
-torch_npu 匹配的已审批基础镜像。构建器不联网选择版本，也不负责修复不匹配的
-软件栈。
+仓库已经在 `third_party/ascend_npu_burn/source` 内置经过审计的固定
+MindCluster AscendNPUBurn 上游源码。`UPSTREAM`、`UPSTREAM.md` 和
+`SOURCE_SHA256SUMS` 记录 repository、revision、Git tree、归档/逐文件哈希及
+Mulan PSL v2 许可证边界。标准构建不需要再次下载源码或传 `--source`。
+
+管理员只需选择与目标节点驱动、CANN 和 torch_npu 匹配的已审批基础镜像，并先
+用 `docker pull` 或 `docker load` 使它存在于本机。构建器不会联网选择基础镜像，
+也不负责修复不匹配的软件栈：
+
+```bash
+BASE_IMAGE=registry.example/ascend/cann-pytorch:approved
+docker pull "$BASE_IMAGE"  # 离线环境改用 docker load -i /path/to/image.tar
+docker image inspect "$BASE_IMAGE" >/dev/null
+```
 
 A3 首次 candidate 必须先使用无补丁 profile：
 
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
-  --source /data/src/MindCluster-AscendNPUBurn \
-  --base-image registry.example/ascend/cann-pytorch:approved \
+  --base-image "$BASE_IMAGE" \
   --image catmonitor/npuburn:a3-candidate \
   --compat-profile none \
   --docker-bin /usr/bin/docker \
   --build-root /var/tmp/catmonitor-npu-burn-build
 ```
 
-构建输入的 `build/build.sh` 必须为 LF，源码树不得包含符号链接；`build-root`
-必须是专用绝对目录且不能包含空白。已有目标镜像或 manifest 默认拒绝覆盖，确认
-替换同一 candidate 时显式增加 `--force`。
+构建器先核对内置逐文件哈希、元数据 schema、必需文件、LF 和符号链接；
+`build-root` 必须是专用绝对目录且不能包含空白。已有目标镜像或 manifest 默认
+拒绝覆盖，确认替换同一 candidate 时显式增加 `--force`。
 
 构建只执行以下动作：
 
@@ -185,8 +194,9 @@ docker image inspect \
   catmonitor/npuburn:a3-candidate
 ```
 
-manifest 中应看到原始/补丁后源码、Dockerfile、entrypoint 的 SHA-256，目标镜像
-ID/摘要、架构、`compatibility.profile=none`，以及
+manifest 中应看到 `source.origin=bundled`、固定上游 repository/revision、来源
+元数据和逐文件清单哈希、原始/补丁后源码、Dockerfile、entrypoint 的 SHA-256，
+基础/目标镜像 ID 与摘要、架构、`compatibility.profile=none`，以及
 `validation.npu_workload_run=false`。这只能证明镜像构建完成，不能证明 A3 驱动
 ABI、设备健康或压测结果。
 
@@ -195,15 +205,30 @@ ABI、设备健康或压测结果。
 
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
-  --source /data/src/MindCluster-AscendNPUBurn \
-  --base-image registry.example/ascend/cann-pytorch:approved \
+  --base-image "$BASE_IMAGE" \
   --image catmonitor/npuburn:a3-candidate-fix1 \
   --compat-profile a3-fix1 \
-  --patch /data/patches/a3-fix1.patch
+  --patch scripts/stress/patches/ascend_npu_burn/a3-fix1.patch
 ```
 
 命名 profile 必须至少带一个 `--patch`，`none` 禁止带补丁。构建器先 dry-run，
 再只修改临时源码快照；原始源码不会被写回。A2 上验证过的补丁不能默认带到 A3。
+当前仓库没有预置 A2/A3 兼容补丁；不得在没有真实故障、审计和实机验收的情况下
+虚构补丁。
+
+仅做上游升级或开发验证时，可显式覆盖来源；这不是发布构建的常规用法：
+
+```bash
+sudo bash scripts/stress/build_npu_burn_image.sh \
+  --source /data/src/ascend_npu_burn/source \
+  --source-metadata /data/src/ascend_npu_burn/UPSTREAM \
+  --base-image "$BASE_IMAGE" \
+  --image catmonitor/npuburn:development \
+  --compat-profile none
+```
+
+覆盖来源也必须提供满足 `UPSTREAM` schema 的来源元数据；manifest 会把它记录为
+`source.origin=override`，避免与正式 bundled 构建混淆。
 
 只运行构建器模拟 Docker/DFX 测试：
 
@@ -221,13 +246,30 @@ Git 工作树和 ZIP 解压目录都可以使用。先显式设置路径，不�
 ```bash
 REPO_ROOT=/path/to/CATHelper
 CAT_ROOT="$REPO_ROOT/CATMonitor"
-GO_BIN=/path/to/go
+GO_BIN=${GO_BIN:-/opt/catmonitor/toolchains/go1.25.1/bin/go}
 
 test -f "$CAT_ROOT/go.mod"
 test -f "$CAT_ROOT/features/stress/benchmark_check.sh"
+test -x "$GO_BIN"
+"$GO_BIN" version
 grep -q 'CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1' \
   "$CAT_ROOT/features/stress/benchmark_check.sh"
 ```
+
+当前 `go.mod` 要求 Go 1.23.4 或更高版本。若上述输出仍是系统默认的 Go 1.21.9，
+不要继续构建；它会报 `go.mod requires go >= 1.23.4`。节点已经安装 Go 1.25.1
+时，应保持 `GO_BIN=/opt/catmonitor/toolchains/go1.25.1/bin/go`，或者显式调整 PATH：
+
+```bash
+export PATH="/opt/catmonitor/toolchains/go1.25.1/bin:$PATH"
+hash -r
+command -v go
+go version
+GO_BIN=$(command -v go)
+```
+
+`GOTOOLCHAIN=local` 的含义是禁止自动下载或切换工具链，并不会把旧 Go 升级为
+1.25.1。因此后续命令始终调用 `"$GO_BIN"`，不能写成未确认版本的裸 `go`。
 
 若不知道 ZIP 的实际层级，可先定位唯一模板：
 
@@ -300,17 +342,17 @@ install -m 0750 \
 命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的 `-np`；厂商专用绑核、通信和
 root 参数只能在验证过的节点部署副本中维护。
 
-### 4.1 准备 Ascend NPU Burn 外部环境
+### 4.1 准备 Ascend NPU Burn 运行环境
 
-CATMonitor 仓库不内置 `MindCluster-AscendNPUBurn` 源码或 wheel，运行时也不
-创建或管理容器。目标节点管理员必须先准备与驱动、固件、CANN、
-PyTorch/torch_npu、SoC 匹配且已经实测的固定环境。可选择以下两种模式；容器
-镜像可按 2.2 节由管理员从另行取得的源码构建。
+CATMonitor 内置固定 `MindCluster-AscendNPUBurn` 源码，但不内置 wheel、CANN、
+PyTorch/torch_npu、驱动、基础镜像或运行结果，运行时也不创建或管理容器。目标
+节点管理员必须先准备与驱动、固件、CANN、PyTorch/torch_npu、SoC 匹配且已经
+实测的固定环境。可选择以下两种模式；容器镜像按 2.2 节从内置源码构建。
 
 原生模式直接按上游文档构建并安装：
 
 ```bash
-cd /absolute/path/to/MindCluster-AscendNPUBurn
+cd "$CAT_ROOT/third_party/ascend_npu_burn/source"
 bash build/build.sh
 python3 -m pip install build/dist/ascend_npu_burn-*.whl
 
@@ -789,7 +831,8 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 ## 14. 最终验收清单
 
 - [ ] CLI 和 Web 在目标架构构建成功
-- [ ] NPU 镜像从已审批源码/基础镜像构建，manifest 与镜像标签/ID一致且未运行 NPU 负载
+- [ ] NPU 内置源码通过逐文件哈希校验，来源 revision/许可证记录完整
+- [ ] NPU 镜像从内置源码和已审批本地基础镜像构建，manifest 与镜像标签/ID一致且未运行 NPU 负载
 - [ ] A3 首次构建使用 `compat-profile=none`；任何补丁都有命名 profile、审计文件和哈希
 - [ ] 正式节点脚本位于源码目录外并通过 `bash -n`
 - [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误

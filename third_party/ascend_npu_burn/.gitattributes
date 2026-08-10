@@ -1,0 +1,4 @@
+source/** -text
+SOURCE_SHA256SUMS text eol=lf
+UPSTREAM text eol=lf
+UPSTREAM.md text eol=lf

@@ -38,8 +38,11 @@ Web 入口为 `http://127.0.0.1:9527/stress/`。它拥有自己的嵌入式 SPA 
 `-np`，并依赖已 `export` 的线程变量。部署时应先确认 launcher 与 benchmark
 使用同一种 MPI 实现，再在部署副本中增加该实现专用的绑核或通信参数。
 
-Ascend NPU Burn 是按 Mulan PSL v2 单独获取的外部工具；仓库不内置其源码或
-wheel，也不管理容器生命周期。节点管理员可在脚本中选择宿主机原生执行，
+Ascend NPU Burn 源码以固定上游修订版内置在
+`third_party/ascend_npu_burn/source`，并继续遵循 Mulan PSL v2；来源、Git
+revision、归档哈希和逐文件哈希记录在同目录的 `UPSTREAM*` 与
+`SOURCE_SHA256SUMS`。CATMonitor 不内置 CANN、PyTorch/torch_npu、驱动或基础
+镜像，也不管理容器生命周期。节点管理员可在脚本中选择宿主机原生执行，
 或使用 `docker_exec` 调用一个已经运行且由管理员维护的固定容器；镜像、设备、挂载、
 环境和容器命令不进入 YAML/Web。`describe` 会把 backend、容器/镜像、CANN、
 torch_npu、SoC、芯片代际和用例作为只读 profile 参数展示并写入配置哈希。
@@ -50,14 +53,15 @@ NPU Burn 通过。
 
 ## NPU Burn 镜像构建
 
-仓库提供管理员工具 `scripts/stress/build_npu_burn_image.sh`，从另行取得并审批的
-MindCluster AscendNPUBurn 源码和 CANN/torch_npu 基础镜像构建可追溯镜像。
+仓库提供管理员工具 `scripts/stress/build_npu_burn_image.sh`，默认从仓库内固定的
+MindCluster AscendNPUBurn 源码和管理员批准的本地 CANN/torch_npu 基础镜像构建
+可追溯镜像。管理员无需再下载或传入 NPU Burn 源码；`--source` 与
+`--source-metadata` 只供上游升级、开发或兼容性验证覆盖使用。
 A3 首次候选使用 `--compat-profile none`；只有实际兼容故障确认后，才用命名
 profile 和显式审计补丁构建，不会默认带入 A2 修改。
 
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
-  --source /data/src/MindCluster-AscendNPUBurn \
   --base-image registry.example/ascend/cann-pytorch:approved \
   --image catmonitor/npuburn:a3-candidate \
   --compat-profile none
@@ -65,7 +69,8 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 
 构建只执行 wheel 构建/安装、Python import 和 `npu-burn --version`，不映射
 NPU、不创建运行容器，也不执行 NPU 压测。生成的
-`npu-burn-image-manifest.json` 记录源码/模板哈希、镜像 ID/摘要和兼容 profile；
+`npu-burn-image-manifest.json` 记录源码来源、上游 revision、逐文件校验清单、
+兼容补丁、基础/目标镜像 ID 与摘要、模板哈希和兼容 profile；
 管理员仍需创建固定容器并在 A3 上完成 describe、单卡 smoke 和正式验收。
 
 ## CPU 压测资产构建

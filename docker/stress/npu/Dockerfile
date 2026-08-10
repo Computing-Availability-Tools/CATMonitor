@@ -4,12 +4,18 @@ FROM ${BASE_IMAGE}
 ARG SOURCE_SHA256
 ARG PATCHED_SOURCE_SHA256
 ARG COMPAT_PROFILE=none
+ARG SOURCE_ORIGIN
+ARG UPSTREAM_REPOSITORY
+ARG UPSTREAM_REVISION
 
 LABEL org.opencontainers.image.title="CATMonitor Ascend NPU Burn runtime" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
       io.catmonitor.npu-burn.source-sha256="${SOURCE_SHA256}" \
       io.catmonitor.npu-burn.patched-source-sha256="${PATCHED_SOURCE_SHA256}" \
-      io.catmonitor.npu-burn.compat-profile="${COMPAT_PROFILE}"
+      io.catmonitor.npu-burn.compat-profile="${COMPAT_PROFILE}" \
+      io.catmonitor.npu-burn.source-origin="${SOURCE_ORIGIN}" \
+      io.catmonitor.npu-burn.upstream-repository="${UPSTREAM_REPOSITORY}" \
+      io.catmonitor.npu-burn.upstream-revision="${UPSTREAM_REVISION}"
 
 ENV HOME=/opt/catmonitor/npuburn-home
 

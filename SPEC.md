@@ -29,7 +29,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 约束 |
 |------|------|
-| 开发语言 | Go 1.21+ |
+| 开发语言 | Go 1.23.4+（以 `go.mod` 为准） |
 | 目标平台 | Linux / Windows |
 | 运行模式 | 常驻守护进程 |
 | 配置文件 | YAML |

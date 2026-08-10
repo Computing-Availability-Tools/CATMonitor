@@ -57,21 +57,24 @@ NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是�
 ```text
 管理员镜像构建期                         A3 节点部署期                 用户运行期
 build_npu_burn_image.sh                 固定管理员容器                catmonitor stress
-  ├─ 已审批上游源码                       ├─ device/volume/env            ├─ 选择 npu_burn
+  ├─ 仓库固定上游源码                     ├─ device/volume/env            ├─ 选择 npu_burn
   ├─ CANN/torch_npu 基础镜像              ├─ benchmark_check.sh            ├─ 互斥、超时与取消
   ├─ 可选显式兼容补丁                      ├─ describe 当前 runtime         └─ CSV/SDC 校验
   ├─ import/version 校验                  └─ docker exec
   └─ image manifest
 ```
 
-`scripts/stress/build_npu_burn_image.sh` 将源码复制到专用临时上下文后再应用显式
+`scripts/stress/build_npu_burn_image.sh` 默认读取
+`third_party/ascend_npu_burn/source`，先校验固定上游元数据和逐文件哈希，再将源码
+复制到专用临时上下文后应用显式
 补丁。`compat-profile=none` 不打补丁，是 A3 初次构建路径；命名 profile 只是
 补丁身份，不会自动推断 SoC 或软件栈。Docker build 只编译、安装并检查 import/
 version，不挂载 NPU，也不运行算子。构建器只调用 image inspect/build，固定容器
 的创建、设备、挂载和运行仍完全属于管理员部署面。
 
-镜像标签和 manifest 同时记录原始/补丁后源码哈希、profile、模板哈希、基础镜像
-声明、目标镜像 ID/摘要与架构。它们用于确认“构建了什么”，不能证明宿主机驱动、
+镜像标签和 manifest 同时记录 bundled/override 来源、上游 repository/revision、
+原始/补丁后源码及补丁哈希、profile、模板哈希、基础镜像 ID/摘要、目标镜像
+ID/摘要与架构。它们用于确认“构建了什么”，不能证明宿主机驱动、
 设备健康或正式 NPU Burn 结果；这些事实必须在 A3 candidate 上由 describe 和
 分级实机验收确认。
 

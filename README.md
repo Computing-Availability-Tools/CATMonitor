@@ -37,18 +37,22 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 选型 |
 |------|------|
-| 语言 | Go 1.21+ |
+| 语言 | Go 1.23.4+（以 `go.mod` 为准） |
 | 平台 | Linux / Windows |
 | 输出 | 本地文件 (JSONL) + Prometheus 文本 (`/metrics`) |
 | 配置 | YAML |
-| 外部依赖 | Go 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 采集经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`；可选 NPU 压测由管理员另行取得 Mulan PSL v2 的 Ascend NPU Burn，可原生安装或用仓库管理员工具构建镜像 |
+| 外部依赖 | Go 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 采集经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`；可选 NPU 压测源码按 Mulan PSL v2 固定在 `third_party/ascend_npu_burn`，管理员另行准备匹配的 CANN/torch_npu 环境或基础镜像 |
 | Web/导出 | Go 标准库 `net/http` + `//go:embed` 内嵌前端，无构建步骤 |
 
 ## 快速开始
 
 ```bash
 # 编译（daemon + web + dfee 三个二进制）
+go version             # 必须为 Go 1.23.4 或更高版本
 make all               # 或分别 make build / make web / make dfee
+
+# 节点存在多个 Go 版本时，显式指定已安装的新工具链
+make all GO=/opt/catmonitor/toolchains/go1.25.1/bin/go
 
 # 配置（Linux）：开启 snapshot 生产以供 web/dfee 只读消费
 cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
@@ -74,6 +78,8 @@ catmonitor list
 STREAM/HPL/HPCG 不随仓库分发二进制。Linux 管理员可用
 `scripts/stress/build_cpu_benchmarks.sh` 从任意源码位置构建并生成可追溯 manifest；
 参数、安装和验收步骤见 [stress 指南](features/stress/STRESS_TEST_GUIDE.md)。
+Ascend NPU Burn 源码随仓库固定，标准镜像构建无需 `--source`，但管理员必须先
+准备并加载与目标节点匹配的 CANN/torch_npu 基础镜像。
 
 > 完整安装、配置、命令、Web 仪表盘、dfee 能效监控、Prometheus 接入与示例见 [使用手册](docs/User_Manual.md)。
 

@@ -35,10 +35,11 @@ HPCG_NY=32
 HPCG_NZ=32
 HPCG_RUNTIME_SECONDS=60
 
-# MindCluster Ascend NPU Burn is an external Mulan PSL v2 dependency. The node
-# administrator owns its native/container environment; CATMonitor only invokes
-# the fixed adapter below and parses its result. Container image/device/volume
-# settings intentionally do not enter CATMonitor YAML or Web requests.
+# MindCluster Ascend NPU Burn source is vendored under its Mulan PSL v2 license.
+# The node administrator still owns the native/container runtime environment;
+# CATMonitor only invokes the fixed adapter below and parses its result.
+# Container image/device/volume settings intentionally do not enter CATMonitor
+# YAML or Web requests.
 #
 # Supported template backends:
 #   native      - execute NPU_BURN_EXECUTABLE on the host.

@@ -45,11 +45,18 @@ STREAM 编译规模、`--only`、`--skip` 和 `--force`。
 ### 1.2 NPU Burn 镜像构建契约
 
 仓库必须提供独立的 Linux 管理员入口
-`scripts/stress/build_npu_burn_image.sh`，从管理员提供的
-MindCluster AscendNPUBurn 源码和已审批的 CANN/torch_npu 基础镜像构建目标
-镜像。构建器必须接收 `--source`、`--base-image`、`--image`，并支持显式
-`--docker-bin`、`--compat-profile`、可重复的 `--patch`、`--build-root`、
-`--manifest` 和 `--force`。
+`scripts/stress/build_npu_burn_image.sh`，从仓库内固定的 MindCluster
+AscendNPUBurn 上游源码和管理员已审批、已拉取或加载到本地的 CANN/torch_npu
+基础镜像构建目标镜像。标准构建必须只要求 `--base-image` 和 `--image`；
+`--source` 与 `--source-metadata` 只作为上游升级、开发和兼容性验证的显式覆盖
+入口。构建器还必须支持 `--docker-bin`、`--compat-profile`、可重复的 `--patch`、
+`--build-root`、`--manifest` 和 `--force`。
+
+内置源码必须位于 `third_party/ascend_npu_burn/source`，保留上游许可证，并用
+机器可读 `UPSTREAM`、审计说明和逐文件 SHA-256 清单固定 repository、revision、
+Git tree、归档哈希及许可证。源码必须与所记录上游修订版一致，CATMonitor 的兼容
+修改不得直接混入该目录。CANN、PyTorch/torch_npu、驱动、基础镜像、wheel、构建
+产物和运行结果不得随该第三方源码目录分发。
 
 首个 A3 候选必须使用 `--compat-profile none`，不能默认继承 A2 兼容修改。
 `none` 不接受补丁；任何其他安全命名 profile 必须同时提供至少一个经过审计的
@@ -64,10 +71,12 @@ NPU 负载。管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配
 构建器必须：
 
 - 默认拒绝覆盖已有目标镜像或 manifest，显式 `--force` 方可替换；
-- 校验上游必需文件、LF 脚本、无符号链接的源码输入和 Docker daemon；
-- 在镜像标签中记录原始/补丁后源码 SHA-256 和兼容 profile，并在构建后回读校验；
+- 校验内置来源元数据 schema、逐文件 SHA-256、上游必需文件、LF 脚本、无符号
+  链接的源码输入、Docker daemon 以及基础镜像已在本地存在；
+- 在镜像标签中记录来源类型、上游 repository/revision、原始/补丁后源码 SHA-256
+  和兼容 profile，并在构建后回读校验；
 - 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint、Docker
-  版本、基础/目标镜像、镜像 ID/摘要、OS/架构以及“未执行 NPU 负载”的事实；
+  版本、基础镜像 ID/摘要、目标镜像 ID/摘要、OS/架构以及“未执行 NPU 负载”的事实；
 - 将上游 Mulan PSL v2 许可证随镜像保留。
 
 镜像 manifest 是构建时供应链记录，不代替 A3 节点上的 `describe npu_burn`、
@@ -192,8 +201,9 @@ HPL 正常完成时解析标准结果行中的 N、NB、P、Q、进程数、时�
 新增或发生变化的 `HPCG-Benchmark*.txt`，文件声明结果 VALID，并能解析
 GFLOP/s 和执行时间；不得使用 stdout 或历史未变化文件替代。
 
-Ascend NPU Burn 以外部 Mulan PSL v2 软件包形式提供；仓库不内置其源码、wheel
-或二进制，管理员可原生安装，或用仓库的镜像构建器处理另行取得并审批的源码。
+Ascend NPU Burn 源码以 Mulan PSL v2 第三方组件形式固定在仓库中；仓库不内置
+其 wheel、运行二进制、CANN、torch_npu、驱动或基础镜像。管理员可从该固定源码
+原生安装，或用仓库镜像构建器结合已审批基础镜像构建运行环境。
 正常完成时，节点脚本必须读取工具本次生成的
 `npu_burn_results.csv`，验证存在至少一个设备和结果行、每行 `result=PASS` 且
 `err_count=0`，并拒绝全局设备汇总中的 `FAIL`，再输出 CATMonitor 规范化摘要。
@@ -251,6 +261,7 @@ Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义�
 Web 进程异常退出后的容器内残留进程。真实性能只在资产与拓扑匹配的 Linux
 节点验收。
 
-构建工具测试还必须覆盖 CPU 三项事务安装，以及 NPU 镜像无补丁/显式补丁、
-源码不变、拒绝覆盖、输入/标签失败、manifest JSON 和禁止 Docker 容器生命
+构建工具测试还必须覆盖 CPU 三项事务安装，以及 NPU 镜像默认内置来源、开发
+覆盖来源、来源元数据缺失/非法、逐文件篡改、无补丁/显式补丁、源码不变、拒绝
+覆盖、输入/标签失败、manifest JSON 和禁止 Docker 容器生命
 周期操作。模拟 Docker 测试不能替代真实基础镜像构建或 A3 NPU 实机验收。

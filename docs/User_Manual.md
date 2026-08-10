@@ -37,35 +37,45 @@ curl -s http://localhost:9100/metrics | head # 抓取 Prometheus 指标
 
 ### 1.1 依赖
 
-- Go 1.21+
+- Go 1.23.4+（以 `go.mod` 为准；系统同时安装多个版本时必须明确选择满足要求的工具链）
 - （可选）NPU 服务器：CANN SDK（`libdcmi.so`），用 `-tags dcmi` 启用 DCMI CGo 采集
-- （可选）NPU 可靠性压测：节点另行安装 Mulan PSL v2 的 Ascend NPU Burn 及其 PyTorch/torch_npu 依赖
+- （可选）NPU 可靠性压测：仓库已包含 Mulan PSL v2 的固定 Ascend NPU Burn 源码；节点管理员另行准备匹配的 CANN、PyTorch/torch_npu 和驱动环境或基础镜像
 - （可选）`nvidia-smi` / `npu-smi` / `hccn_tool` / `ipmitool` / `smartctl`：对应采集器无该命令时优雅降级（返回空，不崩溃）
 
 ### 1.2 编译
 
 ```bash
+# 先确认实际使用的工具链；不能只确认系统中“安装过”新 Go
+GO_BIN=${GO_BIN:-/opt/catmonitor/toolchains/go1.25.1/bin/go}
+test -x "$GO_BIN"
+"$GO_BIN" version
+mkdir -p bin
+
 # 一键构建 daemon + web + dfee 三个二进制
-make all
+make all GO="$GO_BIN"
 
 # 分别构建
-make build          # daemon: bin/catmonitor（CANN DCMI 头存在时自动加 -tags dcmi）
-make web            # catmonitor-web: bin/catmonitor-web
-make dfee           # catmonitor-dfee: bin/catmonitor-dfee
+make build GO="$GO_BIN"  # daemon: bin/catmonitor（CANN DCMI 头存在时自动加 -tags dcmi）
+make web GO="$GO_BIN"    # catmonitor-web: bin/catmonitor-web
+make dfee GO="$GO_BIN"   # catmonitor-dfee: bin/catmonitor-dfee
 
 # 或直接 go build
-go build -o bin/catmonitor ./cmd/catmonitor
-go build -o bin/catmonitor-web ./features/web
-go build -o bin/catmonitor-dfee ./features/dfee
+GOTOOLCHAIN=local "$GO_BIN" build -o bin/catmonitor ./cmd/catmonitor
+GOTOOLCHAIN=local "$GO_BIN" build -o bin/catmonitor-web ./features/web
+GOTOOLCHAIN=local "$GO_BIN" build -o bin/catmonitor-dfee ./features/dfee
 
 # NPU 服务器强制启用 DCMI CGo 采集（make build 已自动探测，手动时需加 tag）
-go build -tags dcmi -o bin/catmonitor ./cmd/catmonitor
+GOTOOLCHAIN=local "$GO_BIN" build -tags dcmi -o bin/catmonitor ./cmd/catmonitor
 
 # Windows 交叉编译
-GOOS=windows go build -o bin/catmonitor.exe ./cmd/catmonitor
-GOOS=windows go build -o bin/catmonitor-web.exe ./features/web
-GOOS=windows go build -o bin/catmonitor-dfee.exe ./features/dfee
+GOOS=windows GOTOOLCHAIN=local "$GO_BIN" build -o bin/catmonitor.exe ./cmd/catmonitor
+GOOS=windows GOTOOLCHAIN=local "$GO_BIN" build -o bin/catmonitor-web.exe ./features/web
+GOOS=windows GOTOOLCHAIN=local "$GO_BIN" build -o bin/catmonitor-dfee.exe ./features/dfee
 ```
+
+`GOTOOLCHAIN=local` 不会下载或升级 Go，它只要求使用当前被调用的 `go` 二进制。
+因此系统默认 `go` 为 1.21.9 时，`GOTOOLCHAIN=local go build` 仍会失败；必须显式
+调用满足 `go.mod` 要求的 `GO_BIN`，或先把对应 `bin` 目录放到 `PATH` 最前面。
 
 > 默认构建排除 CGo（`dcmi_cgo.go` 在 `//go:build cgo && linux && dcmi` 后），无 CANN SDK 也能编译；NPU 的 DCMI 指标在无 `-tags dcmi` 时优雅降级。`make build` 自动探测 `/usr/local/Ascend/driver/include/dcmi_interface_api.h`，存在则加 `-tags dcmi`（可用 `DCMITAG=` 强制关闭、`DCMITAG=-tags dcmi` 强制开启）。
 > 三个二进制产物均在 `bin/`（Makefile：`make all` = build + web + dfee）。
@@ -284,7 +294,7 @@ catmonitor stress --bench npu_burn -o table # Ascend NPU Burn（需节点安装�
 catmonitor stress -o json                   # 回显完整 JSON 报告
 ```
 
-stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 需在节点按 Mulan PSL v2 单独安装，脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。完整适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 固定源码随仓库提供，管理员只需准备匹配的原生依赖或 CANN/torch_npu 基础镜像并构建运行环境；脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。完整构建、适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 3.6 daemon — 守护进程
 

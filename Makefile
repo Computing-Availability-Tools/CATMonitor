@@ -1,7 +1,7 @@
 .PHONY: all build test test-verbose test-coverage test-stress-build \
 	test-stress-build-cpu test-stress-build-npu lint clean web dfee
 
-GO=go
+GO ?= go
 BIN=bin/catmonitor
 
 # DCMI (Ascend NPU) collection: auto-detect the CANN DCMI header and add
@@ -19,12 +19,15 @@ all: build web dfee
 
 build:
 	@echo "build daemon (dcmi: $(if $(DCMITAG),on,off))"
+	@mkdir -p bin
 	$(GO) build $(DCMITAG) -o $(BIN) ./cmd/catmonitor
 
 web:
+	@mkdir -p bin
 	$(GO) build -o bin/catmonitor-web ./features/web
 
 dfee:
+	@mkdir -p bin
 	$(GO) build -o bin/catmonitor-dfee ./features/dfee
 
 test:

@@ -9,8 +9,13 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd -P)
 DOCKERFILE_TEMPLATE="$REPO_ROOT/docker/stress/npu/Dockerfile"
 ENTRYPOINT_TEMPLATE="$REPO_ROOT/docker/stress/npu/entrypoint.sh"
+BUNDLED_SOURCE="$REPO_ROOT/third_party/ascend_npu_burn/source"
+BUNDLED_METADATA="$REPO_ROOT/third_party/ascend_npu_burn/UPSTREAM"
 
-SOURCE_ROOT=
+SOURCE_ROOT="$BUNDLED_SOURCE"
+SOURCE_ORIGIN=bundled
+SOURCE_METADATA_PATH="$BUNDLED_METADATA"
+SOURCE_METADATA_EXPLICIT=false
 BASE_IMAGE=
 TARGET_IMAGE=
 DOCKER_BIN=
@@ -25,9 +30,14 @@ usage() {
 Usage: build_npu_burn_image.sh [OPTIONS]
 
 Required:
-  --source PATH             MindCluster-AscendNPUBurn source directory
   --base-image IMAGE        Administrator-approved CANN/torch_npu base image
   --image IMAGE             Output image name and tag
+
+Source controls:
+  --source PATH             Override the bundled NPU Burn source for upstream
+                            update, development or compatibility testing only
+  --source-metadata PATH    UPSTREAM metadata for --source (default: UPSTREAM
+                            next to the override source directory)
 
 Build controls:
   --docker-bin PATH         Docker-compatible CLI (default: docker from PATH)
@@ -41,6 +51,7 @@ Build controls:
   -h, --help                Show this help
 
 Profile rules:
+  * Normal release builds use the source bundled under third_party/.
   * "none" accepts no patches and is the initial A3 profile.
   * Any other safe profile name requires at least one explicit --patch.
   * Patches are applied only to the isolated source snapshot, never in place.
@@ -61,7 +72,8 @@ require_value() {
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --source) require_value "$@"; SOURCE_ROOT=$2; shift 2 ;;
+        --source) require_value "$@"; SOURCE_ROOT=$2; SOURCE_ORIGIN=override; shift 2 ;;
+        --source-metadata) require_value "$@"; SOURCE_METADATA_PATH=$2; SOURCE_METADATA_EXPLICIT=true; shift 2 ;;
         --base-image) require_value "$@"; BASE_IMAGE=$2; shift 2 ;;
         --image) require_value "$@"; TARGET_IMAGE=$2; shift 2 ;;
         --docker-bin) require_value "$@"; DOCKER_BIN=$2; shift 2 ;;
@@ -75,9 +87,11 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-[ -n "$SOURCE_ROOT" ] || die "--source is required"
 [ -n "$BASE_IMAGE" ] || die "--base-image is required"
 [ -n "$TARGET_IMAGE" ] || die "--image is required"
+if [ "$SOURCE_ORIGIN" = bundled ] && [ "$SOURCE_METADATA_EXPLICIT" = true ]; then
+    die "--source-metadata is only valid with --source"
+fi
 case "$BASE_IMAGE" in
     -*|*[!A-Za-z0-9._/@:-]*) die "--base-image contains unsupported characters" ;;
 esac
@@ -97,14 +111,21 @@ case "$COMPAT_PROFILE" in
         ;;
 esac
 
-for tool in readlink install mktemp tar sha256sum find grep date; do
+for tool in readlink install mktemp tar sha256sum find grep date awk wc; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
 done
 [ "${#PATCH_FILES[@]}" -eq 0 ] || command -v patch >/dev/null 2>&1 || \
     die "required tool is unavailable: patch"
 
-SOURCE_ROOT=$(readlink -f -- "$SOURCE_ROOT")
+SOURCE_ROOT=$(readlink -m -- "$SOURCE_ROOT")
 [ -d "$SOURCE_ROOT" ] || die "source directory is unavailable"
+if [ "$SOURCE_ORIGIN" = override ] && [ "$SOURCE_METADATA_EXPLICIT" != true ]; then
+    SOURCE_METADATA_PATH="$(dirname -- "$SOURCE_ROOT")/UPSTREAM"
+fi
+SOURCE_METADATA_PATH=$(readlink -m -- "$SOURCE_METADATA_PATH")
+[ -f "$SOURCE_METADATA_PATH" ] || \
+    die "upstream metadata is unavailable; use --source-metadata with an override source"
+[ ! -L "$SOURCE_METADATA_PATH" ] || die "upstream metadata must not be a symbolic link"
 for required in build/build.sh build/setup.py ascend_npu_burn/npu_burn.py LICENSE.md; do
     [ -f "$SOURCE_ROOT/$required" ] || die "source is missing required file: $required"
 done
@@ -115,8 +136,71 @@ if grep -q $'\r' "$SOURCE_ROOT/build/build.sh"; then
     die "source build/build.sh must use LF line endings"
 fi
 
+metadata_value() {
+    local key=$1
+    awk -v key="$key" '
+        index($0, key "=") == 1 {
+            count++
+            value=substr($0, length(key) + 2)
+        }
+        END {
+            if (count != 1 || value == "") exit 1
+            print value
+        }
+    ' "$SOURCE_METADATA_PATH"
+}
+
+UPSTREAM_SCHEMA_VERSION=$(metadata_value schema_version) || die "upstream metadata has invalid schema_version"
+UPSTREAM_REPOSITORY=$(metadata_value repository) || die "upstream metadata has invalid repository"
+UPSTREAM_REVISION=$(metadata_value revision) || die "upstream metadata has invalid revision"
+UPSTREAM_TREE=$(metadata_value tree) || die "upstream metadata has invalid tree"
+UPSTREAM_TAG_CONTEXT=$(metadata_value tag_context) || die "upstream metadata has invalid tag_context"
+UPSTREAM_SYNC_DATE=$(metadata_value sync_date) || die "upstream metadata has invalid sync_date"
+UPSTREAM_ARCHIVE_SHA256=$(metadata_value archive_sha256) || die "upstream metadata has invalid archive_sha256"
+UPSTREAM_SOURCE_MANIFEST_SHA256=$(metadata_value source_manifest_sha256) || \
+    die "upstream metadata has invalid source_manifest_sha256"
+UPSTREAM_LICENSE=$(metadata_value license) || die "upstream metadata has invalid license"
+UPSTREAM_DIRECT_MODIFICATIONS=$(metadata_value direct_modifications) || \
+    die "upstream metadata has invalid direct_modifications"
+
+[ "$UPSTREAM_SCHEMA_VERSION" = 1 ] || die "unsupported upstream metadata schema_version: $UPSTREAM_SCHEMA_VERSION"
+case "$UPSTREAM_REVISION:$UPSTREAM_TREE" in
+    *[!0-9a-f:]*)
+        die "upstream revision and tree must be lowercase 40-character Git object IDs"
+        ;;
+esac
+[ "${#UPSTREAM_REVISION}" -eq 40 ] && [ "${#UPSTREAM_TREE}" -eq 40 ] || \
+    die "upstream revision and tree must be lowercase 40-character Git object IDs"
+case "$UPSTREAM_ARCHIVE_SHA256:$UPSTREAM_SOURCE_MANIFEST_SHA256" in
+    *[!0-9a-f:]*)
+        die "upstream SHA-256 metadata is invalid"
+        ;;
+esac
+[ "${#UPSTREAM_ARCHIVE_SHA256}" -eq 64 ] && \
+    [ "${#UPSTREAM_SOURCE_MANIFEST_SHA256}" -eq 64 ] || \
+    die "upstream SHA-256 metadata is invalid"
+case "$UPSTREAM_DIRECT_MODIFICATIONS" in true|false) ;; *) die "upstream direct_modifications must be true or false" ;; esac
+
+if [ "$SOURCE_ORIGIN" = bundled ]; then
+    SOURCE_MANIFEST_PATH="$(dirname -- "$SOURCE_METADATA_PATH")/SOURCE_SHA256SUMS"
+    [ -f "$SOURCE_MANIFEST_PATH" ] || die "bundled source checksum manifest is unavailable"
+    [ "$(sha256sum -- "$SOURCE_MANIFEST_PATH" | awk '{print $1}')" = "$UPSTREAM_SOURCE_MANIFEST_SHA256" ] || \
+        die "bundled source checksum manifest does not match upstream metadata"
+    (
+        cd "$SOURCE_ROOT"
+        sha256sum --check --strict "$SOURCE_MANIFEST_PATH" >/dev/null
+    ) || die "bundled source does not match SOURCE_SHA256SUMS"
+    EXPECTED_SOURCE_FILE_COUNT=$(grep -Ec '^[0-9a-f]{64}  \./' "$SOURCE_MANIFEST_PATH")
+    ACTUAL_SOURCE_FILE_COUNT=$(find "$SOURCE_ROOT" -type f | wc -l | awk '{print $1}')
+    [ "$EXPECTED_SOURCE_FILE_COUNT" -gt 0 ] && \
+        [ "$ACTUAL_SOURCE_FILE_COUNT" -eq "$EXPECTED_SOURCE_FILE_COUNT" ] || \
+        die "bundled source file set does not match SOURCE_SHA256SUMS"
+    [ "$UPSTREAM_DIRECT_MODIFICATIONS" = false ] || \
+        die "bundled upstream metadata must declare direct_modifications=false"
+fi
+
 for index in "${!PATCH_FILES[@]}"; do
-    PATCH_FILES[$index]=$(readlink -f -- "${PATCH_FILES[$index]}")
+    PATCH_FILES[$index]=$(readlink -m -- "${PATCH_FILES[$index]}")
     [ -f "${PATCH_FILES[$index]}" ] || die "patch file is unavailable: ${PATCH_FILES[$index]}"
 done
 
@@ -151,6 +235,9 @@ fi
 
 DOCKER_VERSION=$("$DOCKER_BIN" version --format '{{.Server.Version}}' 2>&1) || \
     die "docker daemon is unavailable: $DOCKER_VERSION"
+BASE_IMAGE_ID=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$BASE_IMAGE" 2>/dev/null) || \
+    die "base image is unavailable locally; pull or load the approved image first: $BASE_IMAGE"
+BASE_IMAGE_DIGESTS=$("$DOCKER_BIN" image inspect --format '{{join .RepoDigests ","}}' "$BASE_IMAGE")
 if "$DOCKER_BIN" image inspect "$TARGET_IMAGE" >/dev/null 2>&1; then
     [ "$FORCE" = true ] || die "image already exists; use --force to replace its tag: $TARGET_IMAGE"
 fi
@@ -214,6 +301,8 @@ ENTRYPOINT_SHA256=$(sha256_file "$ENTRYPOINT_TEMPLATE")
 
 printf '==> building Ascend NPU Burn image %s\n' "$TARGET_IMAGE"
 printf '    source: %s\n' "$SOURCE_ROOT"
+printf '    source origin: %s\n' "$SOURCE_ORIGIN"
+printf '    upstream revision: %s\n' "$UPSTREAM_REVISION"
 printf '    base image: %s\n' "$BASE_IMAGE"
 printf '    compatibility profile: %s\n' "$COMPAT_PROFILE"
 "$DOCKER_BIN" build \
@@ -223,6 +312,9 @@ printf '    compatibility profile: %s\n' "$COMPAT_PROFILE"
     --build-arg "SOURCE_SHA256=$SOURCE_SHA256" \
     --build-arg "PATCHED_SOURCE_SHA256=$PATCHED_SOURCE_SHA256" \
     --build-arg "COMPAT_PROFILE=$COMPAT_PROFILE" \
+    --build-arg "SOURCE_ORIGIN=$SOURCE_ORIGIN" \
+    --build-arg "UPSTREAM_REPOSITORY=$UPSTREAM_REPOSITORY" \
+    --build-arg "UPSTREAM_REVISION=$UPSTREAM_REVISION" \
     "$CONTEXT"
 
 IMAGE_ID=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$TARGET_IMAGE")
@@ -233,9 +325,15 @@ IMAGE_DIGESTS=$("$DOCKER_BIN" image inspect --format '{{join .RepoDigests ","}}'
 LABEL_SOURCE=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.source-sha256"}}' "$TARGET_IMAGE")
 LABEL_PATCHED=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.patched-source-sha256"}}' "$TARGET_IMAGE")
 LABEL_PROFILE=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.compat-profile"}}' "$TARGET_IMAGE")
+LABEL_ORIGIN=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.source-origin"}}' "$TARGET_IMAGE")
+LABEL_REPOSITORY=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.upstream-repository"}}' "$TARGET_IMAGE")
+LABEL_REVISION=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.upstream-revision"}}' "$TARGET_IMAGE")
 [ "$LABEL_SOURCE" = "$SOURCE_SHA256" ] || die "built image source label does not match the staged source"
 [ "$LABEL_PATCHED" = "$PATCHED_SOURCE_SHA256" ] || die "built image patched-source label does not match"
 [ "$LABEL_PROFILE" = "$COMPAT_PROFILE" ] || die "built image compatibility label does not match"
+[ "$LABEL_ORIGIN" = "$SOURCE_ORIGIN" ] || die "built image source-origin label does not match"
+[ "$LABEL_REPOSITORY" = "$UPSTREAM_REPOSITORY" ] || die "built image upstream repository label does not match"
+[ "$LABEL_REVISION" = "$UPSTREAM_REVISION" ] || die "built image upstream revision label does not match"
 
 json_escape() {
     local value=${1-}
@@ -254,8 +352,20 @@ json_string() {
 install -d -m 0755 "$(dirname -- "$MANIFEST_PATH")"
 MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
 {
-    printf '{"schema_version":"1","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf ',"builder":"build_npu_burn_image.sh","source":{"path":'; json_string "$SOURCE_ROOT"
+    printf '{"schema_version":"2","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf ',"builder":"build_npu_burn_image.sh","source":{"origin":'; json_string "$SOURCE_ORIGIN"
+    printf ',"path":'; json_string "$SOURCE_ROOT"
+    printf ',"metadata_path":'; json_string "$SOURCE_METADATA_PATH"
+    printf ',"metadata_schema_version":'; json_string "$UPSTREAM_SCHEMA_VERSION"
+    printf ',"upstream_repository":'; json_string "$UPSTREAM_REPOSITORY"
+    printf ',"upstream_revision":'; json_string "$UPSTREAM_REVISION"
+    printf ',"upstream_tree":'; json_string "$UPSTREAM_TREE"
+    printf ',"upstream_tag_context":'; json_string "$UPSTREAM_TAG_CONTEXT"
+    printf ',"upstream_sync_date":'; json_string "$UPSTREAM_SYNC_DATE"
+    printf ',"upstream_archive_sha256":'; json_string "$UPSTREAM_ARCHIVE_SHA256"
+    printf ',"source_manifest_sha256":'; json_string "$UPSTREAM_SOURCE_MANIFEST_SHA256"
+    printf ',"license":'; json_string "$UPSTREAM_LICENSE"
+    printf ',"direct_modifications":%s' "$UPSTREAM_DIRECT_MODIFICATIONS"
     printf ',"sha256":'; json_string "$SOURCE_SHA256"
     printf ',"patched_sha256":'; json_string "$PATCHED_SOURCE_SHA256"; printf '}'
     printf ',"compatibility":{"profile":'; json_string "$COMPAT_PROFILE"
@@ -272,6 +382,8 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"server_version":'; json_string "$DOCKER_VERSION"; printf '}'
     printf ',"image":{"name":'; json_string "$TARGET_IMAGE"
     printf ',"base":'; json_string "$BASE_IMAGE"
+    printf ',"base_id":'; json_string "$BASE_IMAGE_ID"
+    printf ',"base_repo_digests":'; json_string "$BASE_IMAGE_DIGESTS"
     printf ',"id":'; json_string "$IMAGE_ID"
     printf ',"repo_digests":'; json_string "$IMAGE_DIGESTS"
     printf ',"os":'; json_string "$IMAGE_OS"

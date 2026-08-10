@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "quant_matmul": {
+        "seq": 2,
+        "run_count": 100,
+        "dtype": ["int32", "int8"],
+        "M": 4096,
+        "K": 4096,
+        "N": 4096
+      }
+    }
+  ]
+}

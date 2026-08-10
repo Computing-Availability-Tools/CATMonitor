@@ -11,9 +11,10 @@
 - CLI/Web 共享原子报告、最近 100 次历史和 Linux 跨进程锁；支持单次缩短超时、作业取消、进程组回收及 profile、资产和配置哈希追溯。
 - 节点执行器、MPI/NUMA 参数继续由源码目录外的 `benchmark_check.sh` 管理；Web 不提供脚本、路径或任意参数编辑。
 - 第一版只支持 Linux 单机执行；Windows 保证构建并返回 `unsupported`，暂不支持 OSU 和多节点 MPI。
-- Ascend NPU Burn 作为 Mulan PSL v2 外部依赖由管理员单独取得，可原生安装或构建固定容器镜像；接入校验本次 CSV 的 PASS/FAIL 与 SDC 错误数，不能只依赖工具退出码，未完成即超时不判为通过。
+- Ascend NPU Burn 源码按 Mulan PSL v2 以固定上游 revision、许可证和逐文件哈希随仓库提供；CANN、torch_npu、驱动和基础镜像仍由管理员按节点环境准备。接入校验本次 CSV 的 PASS/FAIL 与 SDC 错误数，不能只依赖工具退出码，未完成即超时不判为通过。
 - 新增 Linux 管理员 CPU benchmark 构建工具：支持从任意位置构建 STREAM/HPL/HPCG、显式选择 GCC/MPI/OpenBLAS、精确应用 HPCG OpenMP 兼容补丁，并输出含工具链与资产哈希的 build manifest；构建、节点适配和运行保持分离。
-- 新增 Ascend NPU Burn 管理员镜像构建工具：从已审批源码和 CANN/torch_npu 基础镜像构建，A3 默认使用无补丁 profile，可选兼容补丁只作用于隔离快照；构建仅校验 import/version，不运行 NPU 负载，并输出镜像 ID、摘要与源码/模板哈希 manifest。
+- 新增 Ascend NPU Burn 管理员镜像构建工具：默认使用仓库固定源码和管理员批准的本地 CANN/torch_npu 基础镜像；A3 默认使用无补丁 profile，可选兼容补丁只作用于隔离快照；构建仅校验 import/version，不运行 NPU 负载，并输出来源 revision、基础/目标镜像 ID、摘要与源码/补丁/模板哈希 manifest。
+- 构建文档与 `go.mod` 统一要求 Go 1.23.4+；Makefile 支持通过 `GO=/absolute/path/to/go` 显式选择节点工具链并自动创建 `bin/`，避免系统默认旧 Go 与 `GOTOOLCHAIN=local` 组合导致误用。
 
 ---
 
