@@ -121,6 +121,24 @@ func TestFaultStorageReady(t *testing.T) {
 	}
 }
 
+func TestFaultStorageReadyHealthy(t *testing.T) {
+	fs, _ := newTestStorage()
+	if fs.Ready() {
+		t.Error("expected not ready before any write")
+	}
+	// Write healthy metrics (no faults) — should still mark as ready
+	fs.Write([]collector.Metric{
+		mkNPU("health_status", 1, map[string]string{"npu_id": "0", "status": "OK"}),
+		mkNPU("card_drop", 0, map[string]string{"npu_id": "0"}),
+	})
+	if !fs.Ready() {
+		t.Error("expected ready after a healthy write")
+	}
+	if len(fs.Snapshot()) != 0 {
+		t.Error("snapshot should be empty (no faults) but Ready should be true")
+	}
+}
+
 func TestFaultStorageConcurrent(t *testing.T) {
 	fs, _ := newTestStorage()
 	var wg sync.WaitGroup
