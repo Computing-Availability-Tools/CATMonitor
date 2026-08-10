@@ -39,7 +39,7 @@ health:
 
 collection:
   # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)
-  min_priority: low
+  min_priority: medium
 
 # Enabled features. For each name the daemon loads features/<name>/metrics.yaml
 # (priority overrides — unions the metrics each feature needs so they survive
@@ -47,7 +47,7 @@ collection:
 # min across the listed features' declared intervals (falling back to
 # collectors.<name>.interval for components no feature declares). Empty = use the
 # default catalog (configs/metrics.yaml) + collectors.interval only.
-features: [dfee]
+features: [web, dfee]
 
 # Fault subscription & push mechanism (features/faultsub). Default off; enable
 # to let external fault managers (e.g. EEP) subscribe to NPU fault events via
@@ -85,5 +85,5 @@ straggler_output:
 # daemon is the sole snapshot producer; web must run as a read-only consumer
 # (no self-collection). See features/snapshot/.
 snapshot:
-  enabled: false
+  enabled: true
   dir: /var/lib/catmonitor/snapshot   # directory for snapshot_<comp>.json + snapshot.json

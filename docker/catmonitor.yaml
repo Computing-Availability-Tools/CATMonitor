@@ -1,0 +1,46 @@
+collectors:
+  chassis:
+    enabled: true
+    interval: 3s
+  cpu:
+    enabled: true
+    interval: 3s
+  memory:
+    enabled: true
+    interval: 3s
+  disk:
+    enabled: true
+    interval: 5s
+  gpu:
+    enabled: true
+    interval: 3s
+  npu:
+    enabled: true
+    interval: 3s
+  network:
+    enabled: true
+    interval: 3s
+
+storage:
+  data_dir: /var/lib/catmonitor/data
+  max_file_age: 168h
+  rotation: daily
+
+collection:
+  min_priority: medium
+
+features: [web, dfee]
+
+snapshot:
+  enabled: true
+  dir: /var/lib/catmonitor/snapshot
+
+faultsub:
+  enabled: false
+  rest_addr: ":9101"
+
+straggler_output:
+  enabled: false
+  data_dir: /var/lib/catmonitor/straggler
+  retention: 360h
+  flush_interval: 60s

@@ -21,6 +21,7 @@ type FaultStorage struct {
 	dispatcher *Dispatcher
 	mu         sync.RWMutex
 	snapshot   map[string]FaultEvent // npu_id -> latest active (non-recovered) fault
+	written    bool                  // at least one Write has occurred
 	logger     *slog.Logger
 }
 
@@ -45,6 +46,9 @@ func (s *FaultStorage) Write(metrics []collector.Metric) error {
 	if err := s.inner.Write(metrics); err != nil {
 		s.logger.Error("faultsub: inner storage write failed", "error", err)
 	}
+	s.mu.Lock()
+	s.written = true
+	s.mu.Unlock()
 	events := s.detector.Detect(metrics)
 	for _, ev := range events {
 		s.updateSnapshot(ev)
@@ -80,10 +84,10 @@ func (s *FaultStorage) Snapshot() map[string]FaultEvent {
 	return out
 }
 
-// Ready reports whether at least one Write has populated the detector state
-// (i.e. the daemon has done a collection cycle). Used by /-/ready.
+// Ready reports whether at least one Write has occurred (i.e. the daemon has
+// done a collection cycle). Used by /-/ready.
 func (s *FaultStorage) Ready() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.snapshot) > 0
+	return s.written
 }
