@@ -50,7 +50,7 @@ AscendNPUBurn 上游源码和管理员已审批、已拉取或加载到本地的
 基础镜像构建目标镜像。标准构建必须只要求 `--base-image` 和 `--image`；
 `--source` 与 `--source-metadata` 只作为上游升级、开发和兼容性验证的显式覆盖
 入口。构建器还必须支持 `--docker-bin`、`--compat-profile`、可重复的 `--patch`、
-`--build-root`、`--manifest` 和 `--force`。
+`--build-root`、`--manifest`、`--force` 和可选的 `--ascend-env-script`。
 
 内置源码必须位于 `third_party/ascend_npu_burn/source`，保留上游许可证，并用
 机器可读 `UPSTREAM`、审计说明和逐文件 SHA-256 清单固定 repository、revision、
@@ -63,9 +63,16 @@ Git tree、归档哈希及许可证。源码必须与所记录上游修订版一
 补丁。补丁只能应用到隔离的源码快照，不能修改调用者的原始源码目录。仓库不
 内置未经 A3 实机失败证明所必需的 A3 专用补丁。
 
-镜像构建只允许完成源码构建、wheel 安装、Python import 和
-`npu-burn --version` 检查；不得映射 NPU 设备、创建或运行容器，也不得执行
-NPU 负载。管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配，以及后续固定
+基础镜像必须包含构建所需的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE。
+构建必须使用 Bash 显式 source 已发现的 CANN 环境，不得依赖登录 shell、
+profile 或默认关闭 torch backend autoload。发现顺序为：显式 override、
+`ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash`、唯一的
+`cann-*/set_env.sh`。多个 versioned 路径必须拒绝并要求显式 override。
+
+镜像构建只允许完成 HAL/import 预检、源码构建、wheel 安装、NPU Burn
+import 和 `npu-burn --version` 检查；不得映射 NPU 设备、创建或运行容器，也不得
+执行 NPU 负载。构建期不要求 `/usr/local/Ascend/driver`、`npu-smi` 或设备存在。
+管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配，以及后续固定
 容器的 device、volume、env 和生命周期。
 
 构建器必须：
@@ -73,10 +80,14 @@ NPU 负载。管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配
 - 默认拒绝覆盖已有目标镜像或 manifest，显式 `--force` 方可替换；
 - 校验内置来源元数据 schema、逐文件 SHA-256、上游必需文件、LF 脚本、无符号
   链接的源码输入、Docker daemon 以及基础镜像已在本地存在；
+- 在 wheel 构建前确认 `libascend_hal.so` 可解析，torch、torch_npu 和 TBE
+  可 import；`npu-smi` 的警告不得在 Python 返回码为 0 时被判为失败；
 - 在镜像标签中记录来源类型、上游 repository/revision、原始/补丁后源码 SHA-256
   和兼容 profile，并在构建后回读校验；
-- 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint、Docker
-  版本、基础镜像 ID/摘要、目标镜像 ID/摘要、OS/架构以及“未执行 NPU 负载”的事实；
+- 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint/
+  Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
+  CANN 版本、HAL/import/wheel/version 校验、构建期 driver 存在性以及
+  “未执行 NPU 负载”的事实；
 - 将上游 Mulan PSL v2 许可证随镜像保留。
 
 镜像 manifest 是构建时供应链记录，不代替 A3 节点上的 `describe npu_burn`、

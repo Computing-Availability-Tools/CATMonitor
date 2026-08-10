@@ -9,6 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd -P)
 DOCKERFILE_TEMPLATE="$REPO_ROOT/docker/stress/npu/Dockerfile"
 ENTRYPOINT_TEMPLATE="$REPO_ROOT/docker/stress/npu/entrypoint.sh"
+ASCEND_ENV_TEMPLATE="$REPO_ROOT/docker/stress/npu/ascend_env.sh"
 BUNDLED_SOURCE="$REPO_ROOT/third_party/ascend_npu_burn/source"
 BUNDLED_METADATA="$REPO_ROOT/third_party/ascend_npu_burn/UPSTREAM"
 
@@ -19,6 +20,7 @@ SOURCE_METADATA_EXPLICIT=false
 BASE_IMAGE=
 TARGET_IMAGE=
 DOCKER_BIN=
+ASCEND_ENV_SCRIPT_OVERRIDE=${ASCEND_ENV_SCRIPT:-}
 COMPAT_PROFILE=none
 BUILD_ROOT=/var/tmp/catmonitor-npu-burn-build
 MANIFEST_PATH=
@@ -41,6 +43,8 @@ Source controls:
 
 Build controls:
   --docker-bin PATH         Docker-compatible CLI (default: docker from PATH)
+  --ascend-env-script PATH  Explicit CANN env script path inside the base image
+                            (default: deterministic auto-discovery)
   --compat-profile NAME     Compatibility identity (default: none)
   --patch PATH              Apply an audited -p1 patch; repeatable
   --build-root PATH         Isolated build parent
@@ -77,6 +81,7 @@ while [ "$#" -gt 0 ]; do
         --base-image) require_value "$@"; BASE_IMAGE=$2; shift 2 ;;
         --image) require_value "$@"; TARGET_IMAGE=$2; shift 2 ;;
         --docker-bin) require_value "$@"; DOCKER_BIN=$2; shift 2 ;;
+        --ascend-env-script) require_value "$@"; ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
         --compat-profile) require_value "$@"; COMPAT_PROFILE=$2; shift 2 ;;
         --patch) require_value "$@"; PATCH_FILES+=("$2"); shift 2 ;;
         --build-root) require_value "$@"; BUILD_ROOT=$2; shift 2 ;;
@@ -98,6 +103,15 @@ esac
 case "$TARGET_IMAGE" in
     -*|*@*|*[!A-Za-z0-9._/:-]*) die "--image must be a name/tag, not a digest or option" ;;
 esac
+if [ -n "$ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
+    case "$ASCEND_ENV_SCRIPT_OVERRIDE" in
+        /*) ;;
+        *) die "--ascend-env-script must be an absolute path inside the base image" ;;
+    esac
+    case "$ASCEND_ENV_SCRIPT_OVERRIDE" in
+        *$'\n'*|*$'\r'*|*$'\t'*) die "--ascend-env-script contains unsupported whitespace" ;;
+    esac
+fi
 case "$COMPAT_PROFILE" in
     none)
         [ "${#PATCH_FILES[@]}" -eq 0 ] || die "compat profile none does not accept --patch"
@@ -111,7 +125,7 @@ case "$COMPAT_PROFILE" in
         ;;
 esac
 
-for tool in readlink install mktemp tar sha256sum find grep date awk wc; do
+for tool in readlink install mktemp tar sha256sum find grep date awk wc tee; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
 done
 [ "${#PATCH_FILES[@]}" -eq 0 ] || command -v patch >/dev/null 2>&1 || \
@@ -229,9 +243,12 @@ case "$MANIFEST_PATH" in "$SOURCE_ROOT"|"$SOURCE_ROOT"/*) die "--manifest cannot
 
 [ -f "$DOCKERFILE_TEMPLATE" ] || die "Dockerfile template is unavailable"
 [ -f "$ENTRYPOINT_TEMPLATE" ] || die "entrypoint template is unavailable"
-if grep -q $'\r' "$ENTRYPOINT_TEMPLATE"; then
-    die "entrypoint template must use LF line endings"
-fi
+[ -f "$ASCEND_ENV_TEMPLATE" ] || die "Ascend environment helper template is unavailable"
+for shell_template in "$ENTRYPOINT_TEMPLATE" "$ASCEND_ENV_TEMPLATE"; do
+    if grep -q $'\r' "$shell_template"; then
+        die "shell template must use LF line endings: $shell_template"
+    fi
+done
 
 DOCKER_VERSION=$("$DOCKER_BIN" version --format '{{.Server.Version}}' 2>&1) || \
     die "docker daemon is unavailable: $DOCKER_VERSION"
@@ -296,15 +313,25 @@ PATCHED_SOURCE_SHA256=$(hash_tree "$STAGED_SOURCE")
 
 install -m 0644 "$DOCKERFILE_TEMPLATE" "$CONTEXT/Dockerfile"
 install -m 0755 "$ENTRYPOINT_TEMPLATE" "$CONTEXT/entrypoint.sh"
+install -m 0644 "$ASCEND_ENV_TEMPLATE" "$CONTEXT/ascend_env.sh"
 DOCKERFILE_SHA256=$(sha256_file "$DOCKERFILE_TEMPLATE")
 ENTRYPOINT_SHA256=$(sha256_file "$ENTRYPOINT_TEMPLATE")
+ASCEND_ENV_SHA256=$(sha256_file "$ASCEND_ENV_TEMPLATE")
+BUILD_VALIDATION_NONCE="$(date -u +%s)-$$"
+DOCKER_BUILD_LOG="$RUN_ROOT/docker-build.log"
 
 printf '==> building Ascend NPU Burn image %s\n' "$TARGET_IMAGE"
 printf '    source: %s\n' "$SOURCE_ROOT"
 printf '    source origin: %s\n' "$SOURCE_ORIGIN"
 printf '    upstream revision: %s\n' "$UPSTREAM_REVISION"
 printf '    base image: %s\n' "$BASE_IMAGE"
+if [ -n "$ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
+    printf '    Ascend env override: %s\n' "$ASCEND_ENV_SCRIPT_OVERRIDE"
+else
+    printf '    Ascend env: deterministic auto-discovery\n'
+fi
 printf '    compatibility profile: %s\n' "$COMPAT_PROFILE"
+set +e
 "$DOCKER_BIN" build \
     --file "$CONTEXT/Dockerfile" \
     --tag "$TARGET_IMAGE" \
@@ -315,7 +342,42 @@ printf '    compatibility profile: %s\n' "$COMPAT_PROFILE"
     --build-arg "SOURCE_ORIGIN=$SOURCE_ORIGIN" \
     --build-arg "UPSTREAM_REPOSITORY=$UPSTREAM_REPOSITORY" \
     --build-arg "UPSTREAM_REVISION=$UPSTREAM_REVISION" \
-    "$CONTEXT"
+    --build-arg "ASCEND_ENV_SCRIPT=$ASCEND_ENV_SCRIPT_OVERRIDE" \
+    --build-arg "BUILD_VALIDATION_NONCE=$BUILD_VALIDATION_NONCE" \
+    "$CONTEXT" 2>&1 | tee "$DOCKER_BUILD_LOG"
+DOCKER_BUILD_STATUS=${PIPESTATUS[0]}
+set -e
+[ "$DOCKER_BUILD_STATUS" -eq 0 ] || \
+    die "Docker image build failed during Ascend environment initialization, preflight, or wheel build"
+
+build_marker() {
+    local key=$1
+    awk -v marker="$key=" '
+        index($0, marker) {
+            value=substr($0, index($0, marker) + length(marker))
+        }
+        END {
+            sub(/[[:space:]]+$/, "", value)
+            if (value == "") exit 1
+            print value
+        }
+    ' "$DOCKER_BUILD_LOG"
+}
+
+ASCEND_ENV_SCRIPT_SELECTED=$(build_marker CATMONITOR_ASCEND_ENV_SCRIPT) || \
+    die "Docker build did not report the selected Ascend environment script"
+CANN_VERSION=$(build_marker CATMONITOR_CANN_VERSION) || \
+    die "Docker build did not report the CANN version"
+DRIVER_MOUNT_PRESENT_AT_BUILD=$(build_marker CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD) || \
+    die "Docker build did not report build-time driver presence"
+for marker in LIBASCEND_HAL TORCH TORCH_NPU TBE; do
+    [ "$(build_marker "CATMONITOR_PREFLIGHT_$marker")" = PASS ] || \
+        die "Docker build did not pass the $marker preflight"
+done
+case "$DRIVER_MOUNT_PRESENT_AT_BUILD" in
+    true|false) ;;
+    *) die "Docker build reported invalid driver presence" ;;
+esac
 
 IMAGE_ID=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$TARGET_IMAGE")
 IMAGE_OS=$("$DOCKER_BIN" image inspect --format '{{.Os}}' "$TARGET_IMAGE")
@@ -352,7 +414,7 @@ json_string() {
 install -d -m 0755 "$(dirname -- "$MANIFEST_PATH")"
 MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
 {
-    printf '{"schema_version":"2","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"schema_version":"3","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf ',"builder":"build_npu_burn_image.sh","source":{"origin":'; json_string "$SOURCE_ORIGIN"
     printf ',"path":'; json_string "$SOURCE_ROOT"
     printf ',"metadata_path":'; json_string "$SOURCE_METADATA_PATH"
@@ -377,7 +439,8 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     done
     printf ']}'
     printf ',"templates":{"dockerfile_sha256":'; json_string "$DOCKERFILE_SHA256"
-    printf ',"entrypoint_sha256":'; json_string "$ENTRYPOINT_SHA256"; printf '}'
+    printf ',"entrypoint_sha256":'; json_string "$ENTRYPOINT_SHA256"
+    printf ',"ascend_env_sha256":'; json_string "$ASCEND_ENV_SHA256"; printf '}'
     printf ',"docker":{"path":'; json_string "$DOCKER_BIN"
     printf ',"server_version":'; json_string "$DOCKER_VERSION"; printf '}'
     printf ',"image":{"name":'; json_string "$TARGET_IMAGE"
@@ -389,7 +452,13 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"os":'; json_string "$IMAGE_OS"
     printf ',"architecture":'; json_string "$IMAGE_ARCH"
     printf ',"created":'; json_string "$IMAGE_CREATED"; printf '}'
-    printf ',"validation":{"python_import":true,"version_command":true,"npu_workload_run":false}'
+    printf ',"runtime":{"ascend_env_script":'; json_string "$ASCEND_ENV_SCRIPT_SELECTED"
+    printf ',"cann_version":'; json_string "$CANN_VERSION"; printf '}'
+    printf ',"validation":{"libascend_hal_resolved":true'
+    printf ',"torch_import":true,"torch_npu_import":true,"tbe_import":true'
+    printf ',"wheel_build":true,"wheel_install":true,"ascend_npu_burn_import":true'
+    printf ',"version_command":true,"driver_mount_present_at_build":%s' "$DRIVER_MOUNT_PRESENT_AT_BUILD"
+    printf ',"npu_workload_run":false}'
     printf '}\n'
 } >"$MANIFEST_TEMP"
 chmod 0640 "$MANIFEST_TEMP"

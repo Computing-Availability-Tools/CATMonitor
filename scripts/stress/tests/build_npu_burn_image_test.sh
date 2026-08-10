@@ -124,6 +124,7 @@ case "${1-}" in
                         SOURCE_ORIGIN=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/origin" ;;
                         UPSTREAM_REPOSITORY=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/repository" ;;
                         UPSTREAM_REVISION=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/revision" ;;
+                        ASCEND_ENV_SCRIPT=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/ascend-env-override" ;;
                     esac
                     shift 2
                     ;;
@@ -132,9 +133,25 @@ case "${1-}" in
         done
         [ -f "$dockerfile" ]
         [ -f "$context/entrypoint.sh" ]
+        [ -f "$context/ascend_env.sh" ]
         [ -f "$context/source/LICENSE.md" ]
         cp "$context/source/ascend_npu_burn/npu_burn.py" "$FAKE_DOCKER_ROOT/context-npu-burn.py"
         cp "$context/source/README.md" "$FAKE_DOCKER_ROOT/context-readme.md" 2>/dev/null || true
+        selected_env=$(cat "$FAKE_DOCKER_ROOT/ascend-env-override")
+        if [ -z "$selected_env" ]; then selected_env=/usr/local/Ascend/cann-9.0.1/set_env.sh; fi
+        printf 'Using Ascend environment:\n%s\n' "$selected_env"
+        printf 'CATMONITOR_ASCEND_ENV_SCRIPT=%s\n' "$selected_env"
+        printf 'CATMONITOR_CANN_VERSION=9.0.1\n'
+        printf 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=false\n'
+        if [ "${FAKE_DOCKER_BUILD_FAIL-}" = hal ]; then
+            printf 'ERROR: Ascend build environment preflight failed\n' >&2
+            printf 'libascend_hal:\n  unresolved: fixture failure\n' >&2
+            exit 70
+        fi
+        printf 'CATMONITOR_PREFLIGHT_LIBASCEND_HAL=PASS\n'
+        printf 'CATMONITOR_PREFLIGHT_TORCH=PASS\n'
+        printf 'CATMONITOR_PREFLIGHT_TORCH_NPU=PASS\n'
+        printf 'CATMONITOR_PREFLIGHT_TBE=PASS\n'
         printf '%s\n' "$image" >"$FAKE_DOCKER_ROOT/image"
         printf 'Successfully built fixture-image-id\n'
         ;;
@@ -154,6 +171,14 @@ assert_fails "$TEST_ROOT/space-build-root.log" \
     --docker-bin "$TEST_ROOT/tools/docker" \
     --build-root "$BUILD_ROOT"
 assert_contains "$TEST_ROOT/space-build-root.log" '--build-root cannot contain whitespace'
+
+assert_fails "$TEST_ROOT/relative-ascend-env.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --ascend-env-script relative/set_env.sh
+assert_contains "$TEST_ROOT/relative-ascend-env.log" '--ascend-env-script must be an absolute path'
 
 assert_fails "$TEST_ROOT/missing-base-image.log" \
     bash "$BUILD_SCRIPT" \
@@ -178,12 +203,18 @@ bash "$BUILD_SCRIPT" \
     fail 'bundled source tree was modified'
 [ -f "$MANIFEST" ] || fail 'manifest was not created'
 python3 -m json.tool "$MANIFEST" >/dev/null
-assert_contains "$MANIFEST" '"schema_version":"2"'
+assert_contains "$MANIFEST" '"schema_version":"3"'
 assert_contains "$MANIFEST" '"origin":"bundled"'
 assert_contains "$MANIFEST" '"upstream_revision":"381028b688a70e881d97477d7fa1ae8f2a26288e"'
 assert_contains "$MANIFEST" '"profile":"none"'
 assert_contains "$MANIFEST" '"base_id":"sha256:fixture-base-image-id"'
 assert_contains "$MANIFEST" '"architecture":"arm64"'
+assert_contains "$MANIFEST" '"ascend_env_script":"/usr/local/Ascend/cann-9.0.1/set_env.sh"'
+assert_contains "$MANIFEST" '"cann_version":"9.0.1"'
+assert_contains "$MANIFEST" '"libascend_hal_resolved":true'
+assert_contains "$MANIFEST" '"torch_npu_import":true'
+assert_contains "$MANIFEST" '"tbe_import":true'
+assert_contains "$MANIFEST" '"driver_mount_present_at_build":false'
 assert_contains "$MANIFEST" '"npu_workload_run":false'
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'argparse'
 
@@ -230,10 +261,12 @@ bash "$BUILD_SCRIPT" \
     --base-image registry.example/ascend:override \
     --image catmonitor/npuburn:override-test \
     --docker-bin "$TEST_ROOT/tools/docker" \
+    --ascend-env-script /opt/ascend/custom/set_env.sh \
     --build-root "$OVERRIDE_ROOT"
 assert_contains "$OVERRIDE_MANIFEST" '"origin":"override"'
 assert_contains "$OVERRIDE_MANIFEST" '"upstream_repository":"https://example.invalid/override.git"'
 assert_contains "$OVERRIDE_MANIFEST" '"upstream_revision":"1111111111111111111111111111111111111111"'
+assert_contains "$OVERRIDE_MANIFEST" '"ascend_env_script":"/opt/ascend/custom/set_env.sh"'
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'ORIGINAL_PROFILE'
 
 cat >"$TEST_ROOT/custom-test.patch" <<'EOF'
@@ -384,6 +417,22 @@ assert_fails "$TEST_ROOT/symlink.log" \
     --docker-bin "$TEST_ROOT/tools/docker"
 assert_contains "$TEST_ROOT/symlink.log" 'must not contain symbolic links'
 
+PREFLIGHT_FAIL_ROOT="$TEST_ROOT/preflight-fail-build"
+export FAKE_DOCKER_BUILD_FAIL=hal
+assert_fails "$TEST_ROOT/preflight-build-fail.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image base:test \
+    --image catmonitor/npuburn:preflight-fail \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$PREFLIGHT_FAIL_ROOT"
+unset FAKE_DOCKER_BUILD_FAIL
+assert_contains "$TEST_ROOT/preflight-build-fail.log" 'Ascend build environment preflight failed'
+assert_contains "$TEST_ROOT/preflight-build-fail.log" 'libascend_hal:'
+assert_contains "$TEST_ROOT/preflight-build-fail.log" \
+    'Docker image build failed during Ascend environment initialization, preflight, or wheel build'
+[ ! -e "$PREFLIGHT_FAIL_ROOT/manifests/npu-burn-image-manifest.json" ] || \
+    fail 'failed build-time preflight published a manifest'
+
 BAD_LABEL_ROOT="$TEST_ROOT/bad-label-build"
 export FAKE_BAD_LABEL=source
 assert_fails "$TEST_ROOT/bad-label.log" \
@@ -402,9 +451,22 @@ assert_contains "$TEST_ROOT/bad-label.log" 'source label does not match'
 if grep -Eq '^(run|create|start|stop|rm|exec)([[:space:]]|$)' "$FAKE_DOCKER_ROOT/calls.log"; then
     fail 'image builder invoked a container lifecycle or execution operation'
 fi
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" "python3 -c 'import torch; import torch_npu; import ascend_npu_burn'"
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'SHELL ["/bin/bash", "-c"]'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${ASCEND_ENV_SCRIPT}'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_source_ascend_env'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_build_preflight'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" "python3 -c 'import ascend_npu_burn'"
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'pip install --no-cache-dir --no-deps'
+if grep -Fq 'TORCH_DEVICE_BACKEND_AUTOLOAD' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
+    fail 'Dockerfile must not disable torch backend autoload'
+fi
+if grep -Fq 'test -d /usr/local/Ascend/driver' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
+    fail 'Dockerfile must not require a build-time driver mount'
+fi
+PREFLIGHT_LINE=$(grep -n 'catmonitor_ascend_build_preflight' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+WHEEL_BUILD_LINE=$(grep -n 'bash build/build.sh' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+[ "$PREFLIGHT_LINE" -lt "$WHEEL_BUILD_LINE" ] || fail 'Ascend preflight must run before wheel build'
 if grep -Eq '(^|[[:space:]])(npu-smi|npu-burn)([[:space:]]|$)' \
     "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'Dockerfile must not execute an NPU workload'
@@ -417,7 +479,15 @@ cat >"$TEST_ROOT/tools/npu-burn" <<'EOF'
 printf '%s\n' "$*" >"$ENTRYPOINT_LOG"
 EOF
 chmod 0755 "$TEST_ROOT/tools/npu-burn"
-PATH="$TEST_ROOT/tools:$PATH" bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version
+ENTRY_ASCEND_ROOT="$TEST_ROOT/entrypoint-ascend"
+install -d -m 0755 "$ENTRY_ASCEND_ROOT/cann-9.0.1"
+cat >"$ENTRY_ASCEND_ROOT/cann-9.0.1/set_env.sh" <<'EOF'
+export CATMONITOR_ENTRYPOINT_ENV_SOURCED=true
+EOF
+CATMONITOR_ASCEND_ENV_ROOT="$ENTRY_ASCEND_ROOT" \
+CATMONITOR_ASCEND_ENV_HELPER="$REPO_ROOT/docker/stress/npu/ascend_env.sh" \
+PATH="$TEST_ROOT/tools:$PATH" \
+    bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version
 assert_contains "$ENTRYPOINT_LOG" '--version'
 
 printf 'PASS: build_npu_burn_image.sh\n'

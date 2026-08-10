@@ -45,6 +45,7 @@ test-stress-build-cpu:
 	bash scripts/stress/tests/build_cpu_benchmarks_test.sh
 
 test-stress-build-npu:
+	bash scripts/stress/tests/ascend_env_test.sh
 	bash scripts/stress/tests/build_npu_burn_image_test.sh
 
 lint:

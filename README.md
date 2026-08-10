@@ -79,7 +79,10 @@ STREAM/HPL/HPCG 不随仓库分发二进制。Linux 管理员可用
 `scripts/stress/build_cpu_benchmarks.sh` 从任意源码位置构建并生成可追溯 manifest；
 参数、安装和验收步骤见 [stress 指南](features/stress/STRESS_TEST_GUIDE.md)。
 Ascend NPU Burn 源码随仓库固定，标准镜像构建无需 `--source`，但管理员必须先
-准备并加载与目标节点匹配的 CANN/torch_npu 基础镜像。
+准备并加载与目标节点匹配、且含 CANN toolkit/devlib、torch_npu 和 TBE
+的基础镜像。构建器显式初始化 CANN 环境并在 wheel 前做 HAL/import 预检；
+镜像构建不需要宿主机 driver mount 或 NPU 设备，真正 driver/device 验证留在
+固定容器和 `describe npu_burn` 阶段。
 
 > 完整安装、配置、命令、Web 仪表盘、dfee 能效监控、Prometheus 接入与示例见 [使用手册](docs/User_Manual.md)。
 

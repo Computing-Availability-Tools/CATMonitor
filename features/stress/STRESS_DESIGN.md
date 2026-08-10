@@ -60,7 +60,8 @@ build_npu_burn_image.sh                 固定管理员容器                cat
   ├─ 仓库固定上游源码                     ├─ device/volume/env            ├─ 选择 npu_burn
   ├─ CANN/torch_npu 基础镜像              ├─ benchmark_check.sh            ├─ 互斥、超时与取消
   ├─ 可选显式兼容补丁                      ├─ describe 当前 runtime         └─ CSV/SDC 校验
-  ├─ import/version 校验                  └─ docker exec
+  ├─ CANN 环境发现与构建预检              └─ docker exec
+  ├─ wheel/import/version 校验
   └─ image manifest
 ```
 
@@ -68,13 +69,20 @@ build_npu_burn_image.sh                 固定管理员容器                cat
 `third_party/ascend_npu_burn/source`，先校验固定上游元数据和逐文件哈希，再将源码
 复制到专用临时上下文后应用显式
 补丁。`compat-profile=none` 不打补丁，是 A3 初次构建路径；命名 profile 只是
-补丁身份，不会自动推断 SoC 或软件栈。Docker build 只编译、安装并检查 import/
-version，不挂载 NPU，也不运行算子。构建器只调用 image inspect/build，固定容器
+补丁身份，不会自动推断 SoC 或软件栈。Docker build 使用 Bash 显式发现并
+source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 路径，
+最后仅接受唯一的 `cann-*/set_env.sh`；多版本不静默选择。在 wheel 构建前，
+它验证 `libascend_hal.so` 解析及 torch、torch_npu、TBE import，然后构建、
+安装并检查 NPU Burn import/version。它不依赖登录 shell/profile，不设置
+`TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求构建期存在宿主机 driver、`npu-smi`
+或 NPU 设备。构建器只调用 image inspect/build，固定容器
 的创建、设备、挂载和运行仍完全属于管理员部署面。
 
 镜像标签和 manifest 同时记录 bundled/override 来源、上游 repository/revision、
 原始/补丁后源码及补丁哈希、profile、模板哈希、基础镜像 ID/摘要、目标镜像
-ID/摘要与架构。它们用于确认“构建了什么”，不能证明宿主机驱动、
+ID/摘要与架构，以及实际 Ascend 环境脚本、CANN 版本、HAL/import 预检和
+构建期 driver 是否存在。`driver_mount_present_at_build=false` 是允许的事实，不是
+失败状态。manifest 用于确认“构建了什么”，不能证明宿主机驱动、
 设备健康或正式 NPU Burn 结果；这些事实必须在 A3 candidate 上由 describe 和
 分级实机验收确认。
 

@@ -60,6 +60,11 @@ MindCluster AscendNPUBurn 源码和管理员批准的本地 CANN/torch_npu 基�
 A3 首次候选使用 `--compat-profile none`；只有实际兼容故障确认后，才用命名
 profile 和显式审计补丁构建，不会默认带入 A2 修改。
 
+基础镜像必须包含可用于构建的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE。
+构建器会显式发现并 source CANN 环境，依次支持
+`ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash` 和唯一的
+`cann-*/set_env.sh`；多版本歧义时必须用 `--ascend-env-script` 指定镜像内绝对路径。
+
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
   --base-image registry.example/ascend/cann-pytorch:approved \
@@ -67,11 +72,14 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
   --compat-profile none
 ```
 
-构建只执行 wheel 构建/安装、Python import 和 `npu-burn --version`，不映射
-NPU、不创建运行容器，也不执行 NPU 压测。生成的
+构建会在 wheel 之前检查 `libascend_hal.so`、torch、torch_npu 和 TBE，再执行
+wheel 构建/安装、`ascend_npu_burn` import 与 `npu-burn --version`。它不要求
+`/usr/local/Ascend/driver`、`npu-smi` 或 NPU 设备，不创建运行容器，也不执行 NPU
+压测。生成的
 `npu-burn-image-manifest.json` 记录源码来源、上游 revision、逐文件校验清单、
-兼容补丁、基础/目标镜像 ID 与摘要、模板哈希和兼容 profile；
-管理员仍需创建固定容器并在 A3 上完成 describe、单卡 smoke 和正式验收。
+兼容补丁、基础/目标镜像 ID 与摘要、模板哈希、实际 CANN 环境、预检结果和兼容
+profile。真正的驱动、设备与 ABI 验证仍由管理员固定容器、`describe npu_burn`、
+单卡 smoke 和正式验收完成。
 
 ## CPU 压测资产构建
 

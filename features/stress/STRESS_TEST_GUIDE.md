@@ -143,7 +143,8 @@ MindCluster AscendNPUBurn 上游源码。`UPSTREAM`、`UPSTREAM.md` 和
 `SOURCE_SHA256SUMS` 记录 repository、revision、Git tree、归档/逐文件哈希及
 Mulan PSL v2 许可证边界。标准构建不需要再次下载源码或传 `--source`。
 
-管理员只需选择与目标节点驱动、CANN 和 torch_npu 匹配的已审批基础镜像，并先
+管理员只需选择与目标节点驱动、CANN 和 torch_npu 匹配的已审批基础镜像。
+基础镜像必须包含可用于构建的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE，并先
 用 `docker pull` 或 `docker load` 使它存在于本机。构建器不会联网选择基础镜像，
 也不负责修复不匹配的软件栈：
 
@@ -168,16 +169,33 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 `build-root` 必须是专用绝对目录且不能包含空白。已有目标镜像或 manifest 默认
 拒绝覆盖，确认替换同一 candidate 时显式增加 `--force`。
 
+构建器默认按确定顺序查找 CANN 环境：
+
+1. 显式 `--ascend-env-script` 指定的镜像内绝对路径；
+2. `/usr/local/Ascend/ascend-toolkit/set_env.sh`；
+3. `/usr/local/Ascend/ascend-toolkit/latest/bin/setenv.bash`；
+4. 唯一的 `/usr/local/Ascend/cann-*/set_env.sh`。
+
+若有多个 `cann-*` 且无 canonical 路径，构建会明确失败，不会选取
+字典序首项。例如已确认实际环境为 CANN 9.0.1 时可增加：
+
+```bash
+--ascend-env-script /usr/local/Ascend/cann-9.0.1/set_env.sh
+```
+
 构建只执行以下动作：
 
 ```text
-隔离复制源码 → build/build.sh → 安装唯一 wheel
-             → import torch/torch_npu/ascend_npu_burn
-             → npu-burn --version → 校验镜像标签 → 写 manifest
+隔离复制源码 → 发现并 source CANN 环境
+             → libascend_hal + torch/torch_npu/TBE 预检
+             → build/build.sh → 安装唯一 wheel
+             → import ascend_npu_burn → npu-burn --version
+             → 校验镜像标签 → 写 manifest
 ```
 
 它不会调用 `docker run/create/start/stop/rm`，不会映射 NPU，也不会运行矩阵或
-SDC 负载。默认 manifest 位于：
+SDC 负载。构建期允许 `/usr/local/Ascend/driver` 不存在，`npu-smi` 不可用时的
+警告也不是失败，只要 HAL 可解析且 Python 预检返回 0。默认 manifest 位于：
 
 ```text
 /var/tmp/catmonitor-npu-burn-build/manifests/npu-burn-image-manifest.json
@@ -195,10 +213,15 @@ docker image inspect \
 ```
 
 manifest 中应看到 `source.origin=bundled`、固定上游 repository/revision、来源
-元数据和逐文件清单哈希、原始/补丁后源码、Dockerfile、entrypoint 的 SHA-256，
-基础/目标镜像 ID 与摘要、架构、`compatibility.profile=none`，以及
-`validation.npu_workload_run=false`。这只能证明镜像构建完成，不能证明 A3 驱动
-ABI、设备健康或压测结果。
+元数据和逐文件清单哈希、原始/补丁后源码、Dockerfile、entrypoint、
+Ascend helper 的 SHA-256，基础/目标镜像身份、架构和
+`compatibility.profile=none`。还应看到 `runtime.ascend_env_script`、
+`runtime.cann_version`、HAL/torch/torch_npu/TBE/wheel/version 验证结果、
+`validation.driver_mount_present_at_build` 以及
+`validation.npu_workload_run=false`。`driver_mount_present_at_build=false` 是合法的构建记录。
+这些信息只能证明镜像软件栈和包构建完成，不能证明 A3 驱动 ABI、
+设备健康或压测结果。真正 driver/device 验证在管理员固定容器和
+`benchmark_check.sh describe npu_burn` 阶段完成。
 
 如果且仅如果无补丁构建或 A3 smoke 暴露了明确兼容问题，先形成最小审计补丁，再
 用命名 profile 构建：
