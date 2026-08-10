@@ -37,8 +37,8 @@ case "$MODE" in
             -e GOPROXY=https://goproxy.cn,direct \
             golang:1.23 \
             sh -c 'go build -tags dcmi -o catmonitor ./cmd/catmonitor && \
-                   go build -o dfee ./features/dfee && \
-                   go build -o web ./features/web && \
+                   CGO_ENABLED=0 go build -o dfee ./features/dfee && \
+                   CGO_ENABLED=0 go build -o web ./features/web && \
                    echo "Compile done."'
 
         echo "Step 2/2: Building runtime image (debian/glibc)..."
