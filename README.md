@@ -41,7 +41,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 | 平台 | Linux / Windows |
 | 输出 | 本地文件 (JSONL) + Prometheus 文本 (`/metrics`) |
 | 配置 | YAML |
-| 外部依赖 | Go 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 采集经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`；可选 NPU 压测由节点另装 Mulan PSL v2 的 Ascend NPU Burn |
+| 外部依赖 | Go 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 采集经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`；可选 NPU 压测由管理员另行取得 Mulan PSL v2 的 Ascend NPU Burn，可原生安装或用仓库管理员工具构建镜像 |
 | Web/导出 | Go 标准库 `net/http` + `//go:embed` 内嵌前端，无构建步骤 |
 
 ## 快速开始
@@ -70,6 +70,10 @@ catmonitor health -o table
 catmonitor stress -o table
 catmonitor list
 ```
+
+STREAM/HPL/HPCG 不随仓库分发二进制。Linux 管理员可用
+`scripts/stress/build_cpu_benchmarks.sh` 从任意源码位置构建并生成可追溯 manifest；
+参数、安装和验收步骤见 [stress 指南](features/stress/STRESS_TEST_GUIDE.md)。
 
 > 完整安装、配置、命令、Web 仪表盘、dfee 能效监控、Prometheus 接入与示例见 [使用手册](docs/User_Manual.md)。
 

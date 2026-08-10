@@ -38,8 +38,8 @@ Web 入口为 `http://127.0.0.1:9527/stress/`。它拥有自己的嵌入式 SPA 
 `-np`，并依赖已 `export` 的线程变量。部署时应先确认 launcher 与 benchmark
 使用同一种 MPI 实现，再在部署副本中增加该实现专用的绑核或通信参数。
 
-Ascend NPU Burn 是按 Mulan PSL v2 单独安装的外部工具，CATMonitor 不复制其
-源码或 wheel，也不管理容器生命周期。节点管理员可在脚本中选择宿主机原生执行，
+Ascend NPU Burn 是按 Mulan PSL v2 单独获取的外部工具；仓库不内置其源码或
+wheel，也不管理容器生命周期。节点管理员可在脚本中选择宿主机原生执行，
 或使用 `docker_exec` 调用一个已经运行且由管理员维护的固定容器；镜像、设备、挂载、
 环境和容器命令不进入 YAML/Web。`describe` 会把 backend、容器/镜像、CANN、
 torch_npu、SoC、芯片代际和用例作为只读 profile 参数展示并写入配置哈希。
@@ -48,10 +48,58 @@ torch_npu、SoC、芯片代际和用例作为只读 profile 参数展示并写�
 均为 `PASS`、`err_count=0` 且全局设备汇总无 `FAIL` 的完整报告；外层超时不作为
 NPU Burn 通过。
 
+## NPU Burn 镜像构建
+
+仓库提供管理员工具 `scripts/stress/build_npu_burn_image.sh`，从另行取得并审批的
+MindCluster AscendNPUBurn 源码和 CANN/torch_npu 基础镜像构建可追溯镜像。
+A3 首次候选使用 `--compat-profile none`；只有实际兼容故障确认后，才用命名
+profile 和显式审计补丁构建，不会默认带入 A2 修改。
+
+```bash
+sudo bash scripts/stress/build_npu_burn_image.sh \
+  --source /data/src/MindCluster-AscendNPUBurn \
+  --base-image registry.example/ascend/cann-pytorch:approved \
+  --image catmonitor/npuburn:a3-candidate \
+  --compat-profile none
+```
+
+构建只执行 wheel 构建/安装、Python import 和 `npu-burn --version`，不映射
+NPU、不创建运行容器，也不执行 NPU 压测。生成的
+`npu-burn-image-manifest.json` 记录源码/模板哈希、镜像 ID/摘要和兼容 profile；
+管理员仍需创建固定容器并在 A3 上完成 describe、单卡 smoke 和正式验收。
+
+## CPU 压测资产构建
+
+仓库提供管理员工具 `scripts/stress/build_cpu_benchmarks.sh`，用于从任意位置的
+STREAM 源文件、HPL/HPCG 源码包以及管理员提供的 `HPL.dat`、`hpcg.dat` 构建
+并安装原生运行资产。它支持显式选择 GCC、MPI 和 OpenBLAS，默认将资产安装到
+`/opt/catmonitor/benchmarks/runtime`，并在相邻的 `manifests` 目录生成
+`build-manifest.json`。脚本不会修改 CATMonitor YAML、不会覆盖节点
+`benchmark_check.sh`，也不会执行完整 HPL/HPCG 压测。
+
+```bash
+sudo bash scripts/stress/build_cpu_benchmarks.sh \
+  --stream-src /path/to/stream.c \
+  --hpl-src /path/to/hpl-2.3.tar.gz \
+  --hpl-dat /path/to/HPL.dat \
+  --hpcg-src /path/to/hpcg-3.1.tar.gz \
+  --hpcg-dat /path/to/hpcg.dat \
+  --mpicc /absolute/path/to/mpicc \
+  --mpicxx /absolute/path/to/mpicxx \
+  --mpirun /absolute/path/to/mpirun \
+  --openblas-include /absolute/path/to/openblas/include \
+  --openblas-lib /absolute/path/to/openblas/lib
+```
+
+构建完成后，管理员仍需把已安装的绝对路径和实际运行规模写入源码目录外的
+`/etc/catmonitor/benchmark_check.sh`，再执行逐项 `describe` 和实机验收。构建
+manifest 记录编译时事实；`describe` 报告当前节点事实，两者职责不同。完整参数、
+增量构建、覆盖策略和验收步骤见 [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)。
+
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [STRESS_SPEC.md](STRESS_SPEC.md) | 功能、配置、状态、CLI 与 API 契约 |
 | [STRESS_DESIGN.md](STRESS_DESIGN.md) | 包边界、执行、互斥、持久化和 Web 设计 |
-| [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md) | 构建、新装/升级、candidate 迁移、实机验收与回滚 |
+| [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md) | CPU/NPU 资产构建、新装/升级、candidate 迁移、实机验收与回滚 |

@@ -1,4 +1,5 @@
-.PHONY: all build test test-verbose test-coverage lint clean web dfee
+.PHONY: all build test test-verbose test-coverage test-stress-build \
+	test-stress-build-cpu test-stress-build-npu lint clean web dfee
 
 GO=go
 BIN=bin/catmonitor
@@ -34,6 +35,14 @@ test-verbose:
 
 test-coverage:
 	$(GO) test -cover ./...
+
+test-stress-build: test-stress-build-cpu test-stress-build-npu
+
+test-stress-build-cpu:
+	bash scripts/stress/tests/build_cpu_benchmarks_test.sh
+
+test-stress-build-npu:
+	bash scripts/stress/tests/build_npu_burn_image_test.sh
 
 lint:
 	$(GO) vet ./...

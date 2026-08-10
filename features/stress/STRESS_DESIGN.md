@@ -21,6 +21,60 @@ Manager 并调用 `stress.Register`；它不恢复进程内采集、Web YAML 或
 格式；`cmd/catmonitor/main.go` 只分发顶层 `stress` 命令。子包可以依赖
 `internal/config` 与父级 `stress`，避免让父级领域包反向依赖主配置而形成循环依赖。
 
+### 1.1 构建、节点适配与执行分层
+
+CPU benchmark 的源码构建不属于 Go feature 或节点运行适配器：
+
+```text
+管理员构建期                          节点部署期                  用户运行期
+build_cpu_benchmarks.sh              benchmark_check.sh         catmonitor stress
+  ├─ STREAM/HPL/HPCG 源码              ├─ 绝对资产路径             ├─ 选择固定 benchmark
+  ├─ GCC/MPI/OpenBLAS                  ├─ MPI/NUMA/线程 profile     ├─ 互斥、超时与取消
+  ├─ 安装 runtime 资产                 ├─ describe 当前节点事实     └─ 解析与保存报告
+  └─ build-manifest.json               └─ execute
+```
+
+`scripts/stress/build_cpu_benchmarks.sh` 只接受管理员明确提供的源码、配置、工具链和
+安装位置。它在专用临时目录完成构建和短 smoke，所有选中项目验证通过后才安装；
+已有目标默认拒绝覆盖，只有显式 `--force` 才替换。它不修改 `/etc`、不生成
+`HPL.dat`/`hpcg.dat`、不写运行 profile，也不执行完整 HPL/HPCG 作业。
+
+HPL 使用仓库中的 `scripts/stress/templates/Make.HPL.CATMonitor`，构建脚本只替换
+ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。HPCG 从独立 build 目录执行
+`configure`，并仅对已知 `ComputeResidual.cpp` OpenMP 行做幂等精确补丁。旧版
+`default(none)` pragma 缺少 `n` 时补入；当前源码在非 `default(none)` pragma
+中显式列出预定共享变量 `n` 时移除，以兼容 GCC 7.3；两种补丁后的布局再次输入
+时保持不变。未知源码布局直接失败，不能宽泛改写。
+
+构建清单位于 `$(dirname output-root)/manifests/build-manifest.json`。每项记录源码、
+二进制和输入配置 SHA-256、编译参数、工具链/MPI 身份、动态链接检查及 HPCG 补丁
+状态。分项构建会保留其他已安装项目的可信 manifest 片段。manifest 是构建时事实；
+运行期 `describe` 仍以当前文件、动态库、launcher 和节点资源为准，不用静态清单
+替代实时预检。
+
+NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是镜像：
+
+```text
+管理员镜像构建期                         A3 节点部署期                 用户运行期
+build_npu_burn_image.sh                 固定管理员容器                catmonitor stress
+  ├─ 已审批上游源码                       ├─ device/volume/env            ├─ 选择 npu_burn
+  ├─ CANN/torch_npu 基础镜像              ├─ benchmark_check.sh            ├─ 互斥、超时与取消
+  ├─ 可选显式兼容补丁                      ├─ describe 当前 runtime         └─ CSV/SDC 校验
+  ├─ import/version 校验                  └─ docker exec
+  └─ image manifest
+```
+
+`scripts/stress/build_npu_burn_image.sh` 将源码复制到专用临时上下文后再应用显式
+补丁。`compat-profile=none` 不打补丁，是 A3 初次构建路径；命名 profile 只是
+补丁身份，不会自动推断 SoC 或软件栈。Docker build 只编译、安装并检查 import/
+version，不挂载 NPU，也不运行算子。构建器只调用 image inspect/build，固定容器
+的创建、设备、挂载和运行仍完全属于管理员部署面。
+
+镜像标签和 manifest 同时记录原始/补丁后源码哈希、profile、模板哈希、基础镜像
+声明、目标镜像 ID/摘要与架构。它们用于确认“构建了什么”，不能证明宿主机驱动、
+设备健康或正式 NPU Burn 结果；这些事实必须在 A3 candidate 上由 describe 和
+分级实机验收确认。
+
 ## 2. 配置所有权
 
 CLI 的 `internal/config.Config` 拥有顶层 `Stress stress.Config`。新版 Web

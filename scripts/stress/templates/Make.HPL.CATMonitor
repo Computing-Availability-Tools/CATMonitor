@@ -1,0 +1,46 @@
+# HPL 2.3 build template for CATMonitor-managed benchmark assets.
+#
+# build_cpu_benchmarks.sh replaces only the six @...@ values below. Runtime
+# process counts, thread counts, binding and transport options do not belong in
+# this file; they remain in the deployed benchmark_check.sh host adapter.
+
+SHELL        = /bin/sh
+
+CD           = cd
+CP           = cp
+LN_S         = ln -s
+MKDIR        = mkdir -p
+RM           = /bin/rm -f
+TOUCH        = touch
+
+ARCH         = @ARCH@
+TOPdir       = @TOPDIR@
+INCdir       = $(TOPdir)/include
+BINdir       = $(TOPdir)/bin/$(ARCH)
+LIBdir       = $(TOPdir)/lib/$(ARCH)
+HPLlib       = $(LIBdir)/libhpl.a
+
+# MPI include and link flags are supplied by the selected mpicc wrapper.
+MPinc        =
+MPlib        =
+
+LAdir        =
+LAinc        = @LAINC@
+LAlib        = @LALIB@
+
+F2CDEFS      = -DAdd__ -DF77_INTEGER=int -DStringSunStyle
+HPL_INCLUDES = -I$(INCdir) -I$(INCdir)/$(ARCH) $(LAinc) $(MPinc)
+HPL_LIBS     = $(HPLlib) $(LAlib) $(MPlib)
+HPL_OPTS     = -DHPL_CALL_CBLAS
+HPL_DEFS     = $(F2CDEFS) $(HPL_OPTS) $(HPL_INCLUDES)
+
+CC           = @CC@
+CCNOOPT      = $(HPL_DEFS)
+CCFLAGS      = $(HPL_DEFS) -O3 -fopenmp -funroll-loops
+
+LINKER       = @LINKER@
+LINKFLAGS    = $(CCFLAGS)
+
+ARCHIVER     = ar
+ARFLAGS      = r
+RANLIB       = ranlib

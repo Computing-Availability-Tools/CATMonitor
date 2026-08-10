@@ -33,6 +33,9 @@
 
 ```bash
 bash -n features/stress/benchmark_check.sh
+bash -n scripts/stress/build_cpu_benchmarks.sh
+bash -n scripts/stress/build_npu_burn_image.sh
+make test-stress-build
 gofmt -w features/stress features/stress/cli
 go test ./features/stress/... ./features/web ./cmd/catmonitor ./internal/config
 go test -race ./features/stress/... ./features/web
@@ -48,6 +51,168 @@ GOOS=windows GOARCH=amd64 go build ./cmd/catmonitor ./features/web
 ```
 
 Windows 产物仅用于确认项目可构建；可靠性压测执行仍只支持 Linux。
+
+### 2.1 CPU benchmark 从源码构建
+
+从上游官方来源获取并固定版本，下载、审批和归档由节点管理员负责：
+
+- STREAM：<https://github.com/jeffhammond/STREAM/blob/master/stream.c>
+- HPL：<https://netlib.org/benchmark/hpl/hpl-2.3.tar.gz>
+- HPCG：<https://github.com/hpcg-benchmark/hpcg>（使用与节点验证一致的 3.1 源码包）
+
+生产环境应在构建前独立校验下载物哈希；构建 manifest 会记录实际输入哈希，但不
+替代供应链审批，也不会自动联网下载源码。
+
+构建和运行必须分开。管理员只在资产准备或升级时执行：
+
+```bash
+sudo bash scripts/stress/build_cpu_benchmarks.sh \
+  --stream-src /data/packages/stream.c \
+  --hpl-src /data/packages/hpl-2.3.tar.gz \
+  --hpl-dat /data/profiles/HPL.dat \
+  --hpcg-src /mnt/software/hpcg-3.1.tar.gz \
+  --hpcg-dat /data/profiles/hpcg.dat \
+  --cc /absolute/toolchain/bin/gcc \
+  --cxx /absolute/toolchain/bin/g++ \
+  --mpicc /absolute/mpi/bin/mpicc \
+  --mpicxx /absolute/mpi/bin/mpicxx \
+  --mpirun /absolute/mpi/bin/mpirun \
+  --openblas-include /absolute/openblas/include \
+  --openblas-lib /absolute/openblas/lib \
+  --output-root /opt/catmonitor/benchmarks/runtime
+```
+
+源码和配置无需复制到固定 `packages` 目录，五个输入可以位于完全不同的文件系统。
+未显式提供编译器时脚本从 `PATH` 查找通用名称，但生产构建建议传入绝对路径并保留
+manifest。`--only stream`、`--only hpl`、`--only hpcg` 可单项重建，`--skip`
+可排除项目；已有选中资产默认阻止覆盖，确认替换时显式使用 `--force`。
+
+源码包中的 Linux 脚本必须保留 LF 行尾。若下载和中转发生在 Windows，优先使用
+`git archive` 从 Git 对象生成 tar 包，不要直接把经 `core.autocrlf` 转换的工作树
+打包；受传输系统扩展名限制时可以临时改名为 `*.zip.1`，远端核对 SHA-256 后再改回
+`.tar.gz`。`configure` 出现 `$'\r': command not found` 表示归档已混入 CRLF，应该
+重新制作源码包，而不是在生产构建中宽泛改写第三方文件。
+
+默认 STREAM 数组为 80000000、重复次数为 10，短 smoke 会使用 4 个 OpenMP
+线程和 `numactl --interleave=all`，节点应预留约 1.8 GiB 数组内存。可在低资源的
+构建验证环境用 `--stream-array-size` 和 `--stream-ntimes` 缩小，但发布资产必须
+记录实际值。HPL/HPCG 构建阶段不会启动完整压测；`HPL.dat` 和 `hpcg.dat` 必须由
+管理员按节点规模准备，脚本不会自动生成。
+
+构建后检查：
+
+```bash
+test -x /opt/catmonitor/benchmarks/runtime/stream/stream_omp
+test -x /opt/catmonitor/benchmarks/runtime/hpl/xhpl
+test -f /opt/catmonitor/benchmarks/runtime/hpl/HPL.dat
+test -x /opt/catmonitor/benchmarks/runtime/hpcg/xhpcg
+test -f /opt/catmonitor/benchmarks/runtime/hpcg/hpcg.dat
+
+python3 -m json.tool \
+  /opt/catmonitor/benchmarks/manifests/build-manifest.json
+```
+
+没有 Python 时可用 `jq .` 或直接审阅 JSON。重点确认 architecture、`mpicc -show`、
+`mpicxx -show`、`mpirun --version`、源码/二进制/配置 SHA-256、STREAM 编译参数和
+`openmp_patch_applied`。旧版 HPCG 的 `default(none)` pragma 缺少 `n` 时脚本精确
+补入；当前源码的非 `default(none)` pragma 显式列出预定共享变量 `n` 时精确移除，
+以兼容 GCC 7.3。输入已经是相应兼容布局时不重复修改，并记录
+`openmp_patch_applied=false`。源码不包含任一已知布局时必须失败，不能用宽泛
+`sed` 继续。
+
+仓库模拟测试不会执行真实 benchmark：
+
+```bash
+make test-stress-build
+```
+
+测试覆盖任意源路径、三项安装、分项强制替换、manifest 保留、HPCG 精确补丁拒绝
+和归档路径穿越拒绝。它不替代目标 Linux 的真实 GCC/MPI/OpenBLAS 构建验收。
+
+构建完成不等于可运行。下一步仍需按本指南后续章节把资产绝对路径、MPI/NUMA/
+线程规模写入 `/etc/catmonitor/benchmark_check.sh`，再执行 `describe` 和逐项实测。
+
+该工具面向节点本地构建，不表示 CATMonitor 仓库分发第三方源码或二进制。若后续
+把 STREAM/HPL/HPCG 二进制纳入安装包或镜像，发布流程必须另行核对各上游许可证、
+版权声明和二进制再分发义务，并补充对应 third-party notices。
+
+### 2.2 Ascend NPU Burn 镜像构建
+
+仓库不内置 MindCluster AscendNPUBurn 源码。管理员应从批准来源取得并固定源码
+版本，独立核对哈希和 Mulan PSL v2 许可证，再选择与目标节点驱动、CANN 和
+torch_npu 匹配的已审批基础镜像。构建器不联网选择版本，也不负责修复不匹配的
+软件栈。
+
+A3 首次 candidate 必须先使用无补丁 profile：
+
+```bash
+sudo bash scripts/stress/build_npu_burn_image.sh \
+  --source /data/src/MindCluster-AscendNPUBurn \
+  --base-image registry.example/ascend/cann-pytorch:approved \
+  --image catmonitor/npuburn:a3-candidate \
+  --compat-profile none \
+  --docker-bin /usr/bin/docker \
+  --build-root /var/tmp/catmonitor-npu-burn-build
+```
+
+构建输入的 `build/build.sh` 必须为 LF，源码树不得包含符号链接；`build-root`
+必须是专用绝对目录且不能包含空白。已有目标镜像或 manifest 默认拒绝覆盖，确认
+替换同一 candidate 时显式增加 `--force`。
+
+构建只执行以下动作：
+
+```text
+隔离复制源码 → build/build.sh → 安装唯一 wheel
+             → import torch/torch_npu/ascend_npu_burn
+             → npu-burn --version → 校验镜像标签 → 写 manifest
+```
+
+它不会调用 `docker run/create/start/stop/rm`，不会映射 NPU，也不会运行矩阵或
+SDC 负载。默认 manifest 位于：
+
+```text
+/var/tmp/catmonitor-npu-burn-build/manifests/npu-burn-image-manifest.json
+```
+
+检查构建身份：
+
+```bash
+python3 -m json.tool \
+  /var/tmp/catmonitor-npu-burn-build/manifests/npu-burn-image-manifest.json
+
+docker image inspect \
+  --format '{{.Id}} {{.Architecture}} {{json .RepoDigests}}' \
+  catmonitor/npuburn:a3-candidate
+```
+
+manifest 中应看到原始/补丁后源码、Dockerfile、entrypoint 的 SHA-256，目标镜像
+ID/摘要、架构、`compatibility.profile=none`，以及
+`validation.npu_workload_run=false`。这只能证明镜像构建完成，不能证明 A3 驱动
+ABI、设备健康或压测结果。
+
+如果且仅如果无补丁构建或 A3 smoke 暴露了明确兼容问题，先形成最小审计补丁，再
+用命名 profile 构建：
+
+```bash
+sudo bash scripts/stress/build_npu_burn_image.sh \
+  --source /data/src/MindCluster-AscendNPUBurn \
+  --base-image registry.example/ascend/cann-pytorch:approved \
+  --image catmonitor/npuburn:a3-candidate-fix1 \
+  --compat-profile a3-fix1 \
+  --patch /data/patches/a3-fix1.patch
+```
+
+命名 profile 必须至少带一个 `--patch`，`none` 禁止带补丁。构建器先 dry-run，
+再只修改临时源码快照；原始源码不会被写回。A2 上验证过的补丁不能默认带到 A3。
+
+只运行构建器模拟 Docker/DFX 测试：
+
+```bash
+make test-stress-build-npu
+```
+
+该测试不需要 Docker daemon，也不执行第三方构建或 NPU 负载。真实镜像仍必须在
+具备匹配基础镜像和 Docker daemon 的 Linux 构建节点完成。
 
 ## 3. 定位源码并构建候选二进制
 
@@ -137,9 +302,10 @@ root 参数只能在验证过的节点部署副本中维护。
 
 ### 4.1 准备 Ascend NPU Burn 外部环境
 
-CATMonitor 不复制 `MindCluster-AscendNPUBurn` 源码或 wheel，也不安装或管理
-容器。目标节点管理员必须先准备与驱动、固件、CANN、PyTorch/torch_npu、SoC
-匹配且已经实测的固定环境。可选择以下两种模式。
+CATMonitor 仓库不内置 `MindCluster-AscendNPUBurn` 源码或 wheel，运行时也不
+创建或管理容器。目标节点管理员必须先准备与驱动、固件、CANN、
+PyTorch/torch_npu、SoC 匹配且已经实测的固定环境。可选择以下两种模式；容器
+镜像可按 2.2 节由管理员从另行取得的源码构建。
 
 原生模式直接按上游文档构建并安装：
 
@@ -166,6 +332,27 @@ pull/start/stop/rm 容器。若节点必须使用一次性 `docker run`，只在
 install -d -m 0750 "$HOME/.ascend_npu_burn/output"
 ```
 
+A3 节点已有 STREAM/HPL/HPCG 时，不要为了接入 NPU Burn 先重编 CPU 三项。
+保留当前已验证资产和 MPI 参数，只生成新的 CATMonitor/脚本 candidate，并对
+三项重新执行 `describe`；镜像构建和 NPU 验收独立推进。
+
+仓库镜像的默认 HOME 是 `/opt/catmonitor/npuburn-home`，entrypoint
+`/usr/local/bin/catmonitor-npu-burn` 会初始化可用的 CANN 环境。为绕开当前
+上游自定义 `--output` 校验缺陷，推荐将宿主机结果目录挂到容器默认输出目录：
+
+```bash
+install -d -m 0750 /var/lib/catmonitor/npu-burn-output
+
+docker run -d \
+  --name catmonitor-npuburn-a3 \
+  <管理员已审计的 A3 device/driver/env 参数> \
+  --mount type=bind,src=/var/lib/catmonitor/npu-burn-output,dst=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output \
+  catmonitor/npuburn:a3-candidate
+```
+
+尖括号一行不是可直接复制的通用参数：A3 设备和宿主机驱动挂载必须使用该站点
+已审批的容器启动方式。CATMonitor 不生成、保存或从 Web 接收这些高权限参数。
+
 原生模式示例：
 
 ```bash
@@ -181,27 +368,27 @@ NPU_BURN_EXEC_COUNT=1
 NPU_BURN_CHIP_GENERATION="A3"    # A2、A3 或 A5
 ```
 
-管理员预先启动的固定容器示例：
+管理员预先启动的 A3 固定容器对应脚本示例：
 
 ```bash
 NPU_BURN_BACKEND="docker_exec"
 NPU_BURN_CONTAINER_RUNTIME="/usr/bin/docker"
-NPU_BURN_CONTAINER_NAME="catmonitor-npuburn-a2"
-NPU_BURN_CONTAINER_IMAGE="catmonitor/npuburn:a2-cann83"
-NPU_BURN_RUNTIME_CANN="8.3.RC2"
-NPU_BURN_RUNTIME_TORCH_NPU="2.8.0"
-NPU_BURN_SOC_MODEL="Ascend 910B4"
+NPU_BURN_CONTAINER_NAME="catmonitor-npuburn-a3"
+NPU_BURN_CONTAINER_IMAGE="catmonitor/npuburn:a3-candidate"
+NPU_BURN_RUNTIME_CANN="<管理员确认的实际版本>"
+NPU_BURN_RUNTIME_TORCH_NPU="<管理员确认的实际版本>"
+NPU_BURN_SOC_MODEL="<实际 A3 SoC>"
 
 # 这是容器内绝对路径；describe 会用 docker exec test -x 预检。
-NPU_BURN_EXECUTABLE="/opt/npuburn/bin/npu-burn"
-NPU_BURN_USE_DEFAULT_OUTPUT=false
+NPU_BURN_EXECUTABLE="/usr/local/bin/catmonitor-npu-burn"
+NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
 NPU_BURN_RUN_CASE="matmul"
 NPU_BURN_GROUP=""
 NPU_BURN_DEVICE="0"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
 NPU_BURN_EXEC_COUNT=1
-NPU_BURN_CHIP_GENERATION="A2"
+NPU_BURN_CHIP_GENERATION="A3"
 ```
 
 `NPU_BURN_CONTAINER_IMAGE` 是声明的可复现镜像身份；运行容器的实际镜像不一致
@@ -347,6 +534,23 @@ ldd /absolute/path/to/xhpcg | grep -Ei 'mpi|mpich|open-rte|open-pal|pmix'
 /absolute/path/to/mpirun --version
 ```
 
+A3 的 NPU 预检还要人工交叉核对实际 runtime，不能只填写声明值：
+
+```bash
+docker inspect catmonitor-npuburn-a3 \
+  --format '{{.State.Running}} {{.Config.Image}} {{.Image}}'
+docker exec catmonitor-npuburn-a3 \
+  /usr/local/bin/catmonitor-npu-burn --version
+docker exec catmonitor-npuburn-a3 python3 -c \
+  'import torch, torch_npu; print(torch.__version__); print(torch_npu.__version__)'
+npu-smi info
+```
+
+镜像名/ID应与构建 manifest 对应，CANN/torch_npu 与基础镜像和宿主机驱动兼容，
+SoC、`NPU_BURN_CHIP_GENERATION=A3`、设备列表、结果目录挂载和 NPU 健康状态必须
+一致。`describe npu_burn` 的资产失败不能用声明字段掩盖；只有无法静态确认且已
+人工核对的兼容信息可以保留为 `warn`。
+
 ## 7. 原子切换与统一配置
 
 仅在 candidate 的所有已启用项目 `describe` 都通过后切换。先停止旧 Web，再替换脚本和
@@ -436,6 +640,20 @@ cd "$CAT_ROOT"
 
 ./bin/catmonitor stress --bench npu_burn -o table
 ```
+
+A3 首次验收按三级推进，不要直接在全部设备运行长作业：
+
+1. 在固定容器内完成单卡 runtime smoke，验证 Docker、CANN、PyTorch、
+   torch_npu 和设备访问；这一步由管理员按已审批 A3 环境执行，不经过 Web。
+2. 将部署脚本临时设为单设备、`NPU_BURN_RUN_CASE="matmul"`、较短内部时限和
+   `NPU_BURN_EXEC_COUNT=1`，通过 CLI 运行，要求本次 CSV 全部 PASS、
+   `err_count=0` 且无残留进程。
+3. 短测通过后才切换到经过评审的正式 A3 用例/profile、设备范围和执行次数，
+   再做 CLI、取消/超时清理和 Web acceptance。
+
+矩阵 shape 属于镜像内已审批的 NPU Burn 用例配置，不进入 CATMonitor YAML，也
+不允许在 Web 任意编辑。需要 1024 smoke 或 4096 正式 profile 时，应先检查镜像
+内实际配置和构建 manifest，不能仅凭用例名称假定资源规模。
 
 需要机器可读输出时使用 `-o json`。表格中的成功状态显示为 `OK`，JSON 使用稳定
 内部状态 `healthy`，二者语义相同。
@@ -571,6 +789,8 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 ## 14. 最终验收清单
 
 - [ ] CLI 和 Web 在目标架构构建成功
+- [ ] NPU 镜像从已审批源码/基础镜像构建，manifest 与镜像标签/ID一致且未运行 NPU 负载
+- [ ] A3 首次构建使用 `compat-profile=none`；任何补丁都有命名 profile、审计文件和哈希
 - [ ] 正式节点脚本位于源码目录外并通过 `bash -n`
 - [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误
 - [ ] Docker/容器缺失时 CLI 与 Web 直接显示失败资产、路径和原因，禁用项不执行 describe
@@ -590,11 +810,13 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 ```text
 备份
 → 临时目录构建 CLI/Web
+→ 构建/核验 NPU Burn candidate 镜像（不运行 NPU）
+→ 管理员创建固定容器并检查实际 runtime/NPU
 → 新模板生成 candidate
 → 迁移节点变量
 → candidate describe
 → 原子切换
-→ CLI：STREAM → HPCG → HPL
+→ CLI：STREAM → HPCG → HPL → NPU 单卡短测 → NPU 正式验收
 → 检查 report/history/profile/hash
 → 启动 Web
 → 验证页面、单次超时与跨进程互斥

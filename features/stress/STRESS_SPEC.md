@@ -13,6 +13,66 @@
 第一版仅在 Linux 执行。Windows 必须可构建，执行时返回 `unsupported`。OSU、
 任意 benchmark 名称及多节点 MPI 实机能力均不在第一版支持范围。
 
+### 1.1 CPU 资产构建契约
+
+仓库必须提供独立的 Linux 管理员构建入口
+`scripts/stress/build_cpu_benchmarks.sh`。它支持从彼此无关的任意可读路径接收
+STREAM 源文件、HPL/HPCG 源码 tar 包、`HPL.dat` 和 `hpcg.dat`，并支持显式
+指定 output/build root、C/C++/MPI 工具链、OpenBLAS include/lib、并发数、
+STREAM 编译规模、`--only`、`--skip` 和 `--force`。
+
+默认安装根为 `/opt/catmonitor/benchmarks/runtime`，默认临时构建父目录为
+`/var/tmp/catmonitor-stress-build`，默认并发为 `min(nproc, 16)`；STREAM 默认
+`STREAM_ARRAY_SIZE=80000000`、`NTIMES=10`，但都必须允许覆盖。线程数、MPI
+进程数、HPCG 网格/时长等运行 profile 不得进入构建参数。
+
+构建入口必须满足：
+
+- 不安装系统软件，不修改 CATMonitor YAML 或部署脚本，不构建容器；
+- 不自动生成或调优 `HPL.dat`/`hpcg.dat`，只复制并计算哈希；
+- HPL 从全新解压目录直接构建，首次构建前不运行 `make clean`；
+- HPCG 从独立 build 目录 configure，只对已知 OpenMP 源码布局做幂等精确补丁：
+  旧 `default(none)` 布局缺少 `n` 时补入，当前非 `default(none)` 布局显式列出
+  预定共享变量 `n` 时移除；两种已兼容布局不重复修改；
+- STREAM 完成短实际 smoke；HPL/HPCG 只完成二进制及动态依赖检查，不运行完整压测；
+- 默认拒绝覆盖已有选中资产，显式 `--force` 方可替换；
+- 生成 schema 化 `build-manifest.json`，记录架构、工具链/MPI 输出、源码/配置/
+  二进制 SHA-256、编译参数、动态依赖检查和补丁状态。
+
+构建清单不能代替 `benchmark_check.sh describe`：前者是构建时事实，后者必须继续
+报告当前节点上的实际资产、ABI、资源规模和运行 profile。
+
+### 1.2 NPU Burn 镜像构建契约
+
+仓库必须提供独立的 Linux 管理员入口
+`scripts/stress/build_npu_burn_image.sh`，从管理员提供的
+MindCluster AscendNPUBurn 源码和已审批的 CANN/torch_npu 基础镜像构建目标
+镜像。构建器必须接收 `--source`、`--base-image`、`--image`，并支持显式
+`--docker-bin`、`--compat-profile`、可重复的 `--patch`、`--build-root`、
+`--manifest` 和 `--force`。
+
+首个 A3 候选必须使用 `--compat-profile none`，不能默认继承 A2 兼容修改。
+`none` 不接受补丁；任何其他安全命名 profile 必须同时提供至少一个经过审计的
+补丁。补丁只能应用到隔离的源码快照，不能修改调用者的原始源码目录。仓库不
+内置未经 A3 实机失败证明所必需的 A3 专用补丁。
+
+镜像构建只允许完成源码构建、wheel 安装、Python import 和
+`npu-burn --version` 检查；不得映射 NPU 设备、创建或运行容器，也不得执行
+NPU 负载。管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配，以及后续固定
+容器的 device、volume、env 和生命周期。
+
+构建器必须：
+
+- 默认拒绝覆盖已有目标镜像或 manifest，显式 `--force` 方可替换；
+- 校验上游必需文件、LF 脚本、无符号链接的源码输入和 Docker daemon；
+- 在镜像标签中记录原始/补丁后源码 SHA-256 和兼容 profile，并在构建后回读校验；
+- 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint、Docker
+  版本、基础/目标镜像、镜像 ID/摘要、OS/架构以及“未执行 NPU 负载”的事实；
+- 将上游 Mulan PSL v2 许可证随镜像保留。
+
+镜像 manifest 是构建时供应链记录，不代替 A3 节点上的 `describe npu_burn`、
+runtime smoke、短 NPU Burn 和正式 acceptance。
+
 ## 2. CLI 与配置
 
 规范命令为：
@@ -132,8 +192,9 @@ HPL 正常完成时解析标准结果行中的 N、NB、P、Q、进程数、时�
 新增或发生变化的 `HPCG-Benchmark*.txt`，文件声明结果 VALID，并能解析
 GFLOP/s 和执行时间；不得使用 stdout 或历史未变化文件替代。
 
-Ascend NPU Burn 以外部 Mulan PSL v2 软件包形式安装，CATMonitor 不再分发其源码
-或二进制。正常完成时，节点脚本必须读取工具本次生成的
+Ascend NPU Burn 以外部 Mulan PSL v2 软件包形式提供；仓库不内置其源码、wheel
+或二进制，管理员可原生安装，或用仓库的镜像构建器处理另行取得并审批的源码。
+正常完成时，节点脚本必须读取工具本次生成的
 `npu_burn_results.csv`，验证存在至少一个设备和结果行、每行 `result=PASS` 且
 `err_count=0`，并拒绝全局设备汇总中的 `FAIL`，再输出 CATMonitor 规范化摘要。
 结果文件必须在本次命令期间新增或更新，不能接受未变化的历史 PASS 文件；工具
@@ -189,3 +250,7 @@ Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义�
 构建；Windows 交叉构建。容器节点还必须实测正常结束、外层超时、用户取消和
 Web 进程异常退出后的容器内残留进程。真实性能只在资产与拓扑匹配的 Linux
 节点验收。
+
+构建工具测试还必须覆盖 CPU 三项事务安装，以及 NPU 镜像无补丁/显式补丁、
+源码不变、拒绝覆盖、输入/标签失败、manifest JSON 和禁止 Docker 容器生命
+周期操作。模拟 Docker 测试不能替代真实基础镜像构建或 A3 NPU 实机验收。
