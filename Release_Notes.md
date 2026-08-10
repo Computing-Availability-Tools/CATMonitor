@@ -10,7 +10,7 @@
 |------|------|
 | 版本号 | v0.3.4 |
 | 发布时间 | 2026-08-10 |
-| 发布人 | opencode |
+| 发布人 | sunnytao |
 | 平台支持 | Linux (x86_64), Windows (x86_64) |
 | 合并来源 | feature/wyx/add-metrics (b0d0bf1) → main（合并 feature/wyx/add-metrics 全部后续提交） |
 
