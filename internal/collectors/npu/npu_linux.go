@@ -509,7 +509,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	// --- Command-based metrics (npu_smi / hccn_tool) ---
 
 	// 5.66-5.67, 5.71-5.72 net/pcie bandwidth (hccn_tool)
-	if bw, err := hccn_tool.Default().Bandwidth(devID); err == nil && bw != nil {
+	if bw, err := hccn_tool.Default().Bandwidth(card); err == nil && bw != nil {
 		metrics = append(metrics,
 			collector.Metric{Component: "npu", Name: "net_tx_bandwidth", Value: bw.NetTX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "tx"}, Timestamp: now},
 			collector.Metric{Component: "npu", Name: "net_rx_bandwidth", Value: bw.NetRX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "rx"}, Timestamp: now},
@@ -518,15 +518,15 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 		)
 	}
 	// 5.69 roce_speed_status, 5.70 roce_link_health
-	if speed, err := hccn_tool.Default().Speed(devID); err == nil && speed != "" {
+	if speed, err := hccn_tool.Default().Speed(card); err == nil && speed != "" {
 		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_speed_status", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(card), "roce_speed": speed}, Timestamp: now})
 	}
-	if link, err := hccn_tool.Default().Link(devID); err == nil && link != "" {
+	if link, err := hccn_tool.Default().Link(card); err == nil && link != "" {
 		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_link_health", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(card), "roce_link": link}, Timestamp: now})
 	}
 
 	// 5.73-5.74 hccs bandwidth (npu-smi -t hccs-bw)
-	if bw, err := npu_smi.Default().HccsBandwidth(devID); err == nil && bw != nil {
+	if bw, err := npu_smi.Default().HccsBandwidth(card); err == nil && bw != nil {
 		metrics = append(metrics,
 			collector.Metric{Component: "npu", Name: "hccs_tx_bandwidth", Value: bw.TxMB, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "tx"}, Timestamp: now},
 			collector.Metric{Component: "npu", Name: "hccs_rx_bandwidth", Value: bw.RxMB, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "rx"}, Timestamp: now},
@@ -534,7 +534,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	}
 
 	// 5.75-6.19 hccn_tool statistics (45 metrics: MAC/ROCE/NIC packet counters)
-	if stats, err := hccn_tool.Default().Statistics(devID); err == nil {
+	if stats, err := hccn_tool.Default().Statistics(card); err == nil {
 		for name, val := range stats {
 			unit := "个"
 			if strings.Contains(name, "_oct_") {
