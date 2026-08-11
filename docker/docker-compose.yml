@@ -13,15 +13,16 @@ services:
       - /dev/davinci0
       - /dev/davinci1
     volumes:
-      # NPU driver + nnae libs — remove these lines on non-NPU environments
+      # NPU driver + nnae + toolkit — remove these lines on non-NPU environments
       - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
       - /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro
+      - /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler
-    # NPU runtime: libdcmi.so in driver/lib64, libc_sec.so/libmmpa.so in nnae/latest/lib64
+    # NPU runtime: libdcmi.so and its dependencies span driver/common/toolkit/nnae
     environment:
-      LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64
+      LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
     ports:
       - "9100:9100"    # Prometheus exporter
       - "9101:9101"    # faultsub REST API (enable in config to use)
