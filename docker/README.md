@@ -95,8 +95,8 @@ docker volume create cm-data
 docker run -d --name catmonitor --privileged \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
+  -v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
-  --device /dev/davinci0 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
   -p 9100:9100 \
@@ -104,9 +104,9 @@ docker run -d --name catmonitor --privileged \
 ```
 
 > NPU 环境专用参数：
-> - `--device /dev/davinci0`：按实际卡号调整，`ls /dev/davinci*` 查看
-> - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动及依赖库
+> - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
 > - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
+> - `--privileged` 已包含 NPU 设备访问权限，无需额外 `--device`
 >
 > 非 NPU 环境去掉以上三行，镜像名改为 `catmonitor-generic`。
 
@@ -186,11 +186,20 @@ curl -s http://localhost:9333/metrics | grep node_load1           # 能效指标
 
 ### 设备挂载
 
-根据实际 NPU 卡数调整 `--device` 或 compose 中的 `devices`：
+`--privileged` 模式下容器自动获得所有设备访问权限（包括 `/dev/davinci*`、`/dev/ipmi0`、`/dev/sd*`），无需额外 `--device`。
+
+如需收紧权限（不用 `--privileged`），可以改为：
 
 ```bash
-ls /dev/davinci*    # 查看可用设备
+docker run -d --name catmonitor \
+  --device /dev/davinci0 \
+  --device /dev/davinci_manager \
+  --device /dev/ipmi0 \
+  --cap-add SYS_ADMIN \
+  ...其他参数...
 ```
+
+按实际设备调整，`ls /dev/davinci*` 查看可用设备。
 
 ### 权限
 
@@ -308,7 +317,7 @@ curl http://localhost:9101/faultsub/events
 curl http://localhost:9101/faultsub/subscriptions
 ```
 
-**前提**：daemon 容器需要 NPU 设备挂载（`--device /dev/davinci*`），否则故障检测无数据来源。
+**前提**：daemon 容器需要 `--privileged` 模式（已包含 NPU 设备访问），否则故障检测无数据来源。
 
 ### 开启 straggler_output
 
@@ -394,9 +403,8 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot/
 ### Q: NPU 指标为空
 
 1. 确认使用了 `catmonitor-npu` 镜像（不是 generic）
-2. 确认 `--device /dev/davinci*` 设备已挂载
-3. 确认 driver + nnae + toolkit 已挂载 + `LD_LIBRARY_PATH` 已设置
-4. 检查 daemon 日志：`docker logs catmonitor`
+2. 确认 driver + nnae + toolkit 已挂载 + `LD_LIBRARY_PATH` 已设置
+3. 检查 daemon 日志：`docker logs catmonitor`
 
 ### Q: docker build 时 apt-get 很慢
 
