@@ -92,25 +92,22 @@ docker volume create cm-data
 #### 步骤 2：启动 daemon
 
 ```bash
-docker run -d --name catmonitor --privileged \
+docker run -d --name catmonitor --privileged --network host \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
   -v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
-  -p 9100:9100 \
   catmonitor-npu
 ```
 
 > NPU 环境专用参数：
-> - `--network host`：共享宿主机网络命名空间（必须，否则网卡信息错误）
 > - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
 > - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
 > - `--privileged` 已包含 NPU 设备访问权限，无需额外 `--device`
 >
 > 非 NPU 环境去掉 driver/nnae/toolkit/LD_LIBRARY_PATH 三行，镜像名改为 `catmonitor-generic`。
-> `--network host` 仍然建议保留（读真实网卡）。
 
 #### 步骤 3：等待首次采集（6-9 秒）
 
@@ -122,31 +119,28 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot
 #### 步骤 4：启动 web
 
 ```bash
-docker run -d --name catmonitor-web --entrypoint /usr/local/bin/web \
+docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  -p 9527:9527 \
   catmonitor-npu -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
-> `--entrypoint /usr/local/bin/web` 覆盖镜像默认的 daemon 入口。
+> `--network host` 后不需要 `-p` 端口映射，容器直接用宿主机网络栈。
 
 #### 步骤 5：启动 dfee
 
 ```bash
-docker run -d --name catmonitor-dfee --entrypoint /usr/local/bin/dfee \
+docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  -p 9528:9528 -p 9333:9333 \
-  catmonitor-npu -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot
+  catmonitor-npu -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
 ### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
 
 ```bash
-docker run -d --name dfee --entrypoint /usr/local/bin/dfee \
+docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
   -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
-  -p 9528:9528 -p 9333:9333 \
   catmonitor-npu \
-  -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot
+  -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
 ## 4. 端口说明
@@ -161,8 +155,7 @@ docker run -d --name dfee --entrypoint /usr/local/bin/dfee \
 如需自定义端口映射（如映射到不同主机端口）：
 
 ```bash
-docker run -d --name catmonitor --privileged \
-  -p 4900:9100 \
+docker run -d --name catmonitor --privileged --network host \
   ...其他参数...
   catmonitor-npu
 ```
@@ -211,16 +204,6 @@ docker run -d --name catmonitor \
 - `/proc`、`/sys`（系统指标）
 - SMBIOS（dmidecode）
 
-### 网络模式
-
-**必须使用 `--network host`**（daemon 容器），否则容器内 `/sys/class/net/` 只显示虚拟网卡 eth0，web 仪表盘的网卡信息会显示错误。
-
-`--network host` 后容器直接使用宿主机网络栈：
-- 不需要 `-p` 端口映射，容器内端口直接是宿主机端口
-- 能读到宿主机真实网卡（enp125s0f1 等）和真实 MAC 地址
-
-web 和 dfee 容器也建议加 `--network host`，避免端口映射冲突。
-
 ### 运行时库依赖
 
 `libdcmi.so` 是 glibc 链接的，运行时需要：
@@ -236,21 +219,18 @@ web 和 dfee 容器也建议加 `--network host`，避免端口映射冲突。
 docker/docker/build.sh generic
 
 # 启动（不需要 driver/nnae 挂载、device、LD_LIBRARY_PATH）
-docker run -d --name catmonitor --privileged \
+docker run -d --name catmonitor --privileged --network host \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
-  -p 9100:9100 \
   catmonitor-generic
 
-docker run -d --name catmonitor-web --entrypoint /usr/local/bin/web \
+docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  -p 9527:9527 \
   catmonitor-generic -snapshot-dir /var/lib/catmonitor/snapshot
 
-docker run -d --name catmonitor-dfee --entrypoint /usr/local/bin/dfee \
+docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  -p 9528:9528 -p 9333:9333 \
-  catmonitor-generic -exporter=enabled -snapshot-dir /var/lib/catmonitor/snapshot
+  catmonitor-generic -snapshot-dir /var/lib/catmonitor/snapshot
 ```
 
 如果使用 docker-compose，修改 `docker-compose.yml`：
@@ -263,7 +243,7 @@ docker run -d --name catmonitor-dfee --entrypoint /usr/local/bin/dfee \
 ### 挂载自定义配置
 
 ```bash
-docker run -d --name catmonitor --privileged \
+docker run -d --name catmonitor --privileged --network host \
   -v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
   ...其他参数...
   catmonitor-npu
