@@ -188,14 +188,15 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 ```text
 隔离复制源码 → 发现并 source CANN 环境
              → libascend_hal + torch/torch_npu/TBE 预检
-             → build/build.sh → 安装唯一 wheel
-             → import ascend_npu_burn → npu-burn --version
+             → build/build.sh → 离线强制重装唯一 wheel
+             → import ascend_npu_burn/custom_ops → npu-burn --version
              → 校验镜像标签 → 写 manifest
 ```
 
 它不会调用 `docker run/create/start/stop/rm`，不会映射 NPU，也不会运行矩阵或
 SDC 负载。构建期允许 `/usr/local/Ascend/driver` 不存在，`npu-smi` 不可用时的
-警告也不是失败，只要 HAL 可解析且 Python 预检返回 0。默认 manifest 位于：
+警告也不是失败，只要 HAL 可解析且 Python 预检返回 0。Docker RUN
+使用无网络模式，pip 只安装本轮 wheel，不需要配置 PyPI 代理。默认 manifest 位于：
 
 ```text
 /var/tmp/catmonitor-npu-burn-build/manifests/npu-burn-image-manifest.json
@@ -217,6 +218,8 @@ manifest 中应看到 `source.origin=bundled`、固定上游 repository/revision
 Ascend helper 的 SHA-256，基础/目标镜像身份、架构和
 `compatibility.profile=none`。还应看到 `runtime.ascend_env_script`、
 `runtime.cann_version`、HAL/torch/torch_npu/TBE/wheel/version 验证结果、
+`wheel.filename`、`wheel.sha256`、安装版本/路径、
+`wheel.force_installed=true`、`wheel.network_access=false`、custom ops import，
 `validation.driver_mount_present_at_build` 以及
 `validation.npu_workload_run=false`。`driver_mount_present_at_build=false` 是合法的构建记录。
 这些信息只能证明镜像软件栈和包构建完成，不能证明 A3 驱动 ABI、

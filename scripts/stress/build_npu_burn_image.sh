@@ -335,6 +335,7 @@ set +e
 "$DOCKER_BIN" build \
     --file "$CONTEXT/Dockerfile" \
     --tag "$TARGET_IMAGE" \
+    --network none \
     --build-arg "BASE_IMAGE=$BASE_IMAGE" \
     --build-arg "SOURCE_SHA256=$SOURCE_SHA256" \
     --build-arg "PATCHED_SOURCE_SHA256=$PATCHED_SOURCE_SHA256" \
@@ -348,7 +349,7 @@ set +e
 DOCKER_BUILD_STATUS=${PIPESTATUS[0]}
 set -e
 [ "$DOCKER_BUILD_STATUS" -eq 0 ] || \
-    die "Docker image build failed during Ascend environment initialization, preflight, or wheel build"
+    die "Docker image build failed during Ascend initialization, wheel build/install, or package validation"
 
 build_marker() {
     local key=$1
@@ -374,6 +375,27 @@ for marker in LIBASCEND_HAL TORCH TORCH_NPU TBE; do
     [ "$(build_marker "CATMONITOR_PREFLIGHT_$marker")" = PASS ] || \
         die "Docker build did not pass the $marker preflight"
 done
+WHEEL_FILENAME=$(build_marker CATMONITOR_WHEEL_FILENAME) || \
+    die "Docker build did not report the wheel filename"
+WHEEL_SHA256=$(build_marker CATMONITOR_WHEEL_SHA256) || \
+    die "Docker build did not report the wheel SHA-256"
+PACKAGE_VERSION=$(build_marker CATMONITOR_PACKAGE_VERSION) || \
+    die "Docker build did not report the installed package version"
+PACKAGE_FILE=$(build_marker CATMONITOR_PACKAGE_FILE) || \
+    die "Docker build did not report the installed package path"
+[ "$(build_marker CATMONITOR_CUSTOM_OPS_IMPORT)" = PASS ] || \
+    die "Docker build did not pass the custom ops import validation"
+case "$WHEEL_FILENAME" in
+    ""|*/*|*\\*) die "Docker build reported an invalid wheel filename" ;;
+esac
+case "$WHEEL_SHA256" in
+    *[!0-9A-Fa-f]*|"") die "Docker build reported an invalid wheel SHA-256" ;;
+esac
+[ "${#WHEEL_SHA256}" -eq 64 ] || die "Docker build reported an invalid wheel SHA-256 length"
+case "$PACKAGE_FILE" in
+    /*) ;;
+    *) die "Docker build reported a non-absolute installed package path" ;;
+esac
 case "$DRIVER_MOUNT_PRESENT_AT_BUILD" in
     true|false) ;;
     *) die "Docker build reported invalid driver presence" ;;
@@ -414,7 +436,7 @@ json_string() {
 install -d -m 0755 "$(dirname -- "$MANIFEST_PATH")"
 MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
 {
-    printf '{"schema_version":"3","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"schema_version":"4","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf ',"builder":"build_npu_burn_image.sh","source":{"origin":'; json_string "$SOURCE_ORIGIN"
     printf ',"path":'; json_string "$SOURCE_ROOT"
     printf ',"metadata_path":'; json_string "$SOURCE_METADATA_PATH"
@@ -454,9 +476,15 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"created":'; json_string "$IMAGE_CREATED"; printf '}'
     printf ',"runtime":{"ascend_env_script":'; json_string "$ASCEND_ENV_SCRIPT_SELECTED"
     printf ',"cann_version":'; json_string "$CANN_VERSION"; printf '}'
+    printf ',"wheel":{"filename":'; json_string "$WHEEL_FILENAME"
+    printf ',"sha256":'; json_string "${WHEEL_SHA256,,}"
+    printf ',"installed_version":'; json_string "$PACKAGE_VERSION"
+    printf ',"installed_package_file":'; json_string "$PACKAGE_FILE"
+    printf ',"force_installed":true,"network_access":false}'
     printf ',"validation":{"libascend_hal_resolved":true'
     printf ',"torch_import":true,"torch_npu_import":true,"tbe_import":true'
     printf ',"wheel_build":true,"wheel_install":true,"ascend_npu_burn_import":true'
+    printf ',"custom_ops_import":true'
     printf ',"version_command":true,"driver_mount_present_at_build":%s' "$DRIVER_MOUNT_PRESENT_AT_BUILD"
     printf ',"npu_workload_run":false}'
     printf '}\n'

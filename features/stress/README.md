@@ -73,11 +73,14 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 ```
 
 构建会在 wheel 之前检查 `libascend_hal.so`、torch、torch_npu 和 TBE，再执行
-wheel 构建/安装、`ascend_npu_burn` import 与 `npu-burn --version`。它不要求
+wheel 构建、纯本地强制重装、`ascend_npu_burn`/custom ops import 与
+`npu-burn --version`。安装使用 `--no-index --no-deps --force-reinstall`，即使
+基础镜像存在同版本包，最终镜像也必须使用本轮固定源码生成的 wheel。它不要求
 `/usr/local/Ascend/driver`、`npu-smi` 或 NPU 设备，不创建运行容器，也不执行 NPU
 压测。生成的
 `npu-burn-image-manifest.json` 记录源码来源、上游 revision、逐文件校验清单、
-兼容补丁、基础/目标镜像 ID 与摘要、模板哈希、实际 CANN 环境、预检结果和兼容
+兼容补丁、基础/目标镜像 ID 与摘要、模板哈希、实际 CANN 环境、wheel
+文件名/哈希/安装位置、预检结果和兼容
 profile。真正的驱动、设备与 ABI 验证仍由管理员固定容器、`describe npu_burn`、
 单卡 smoke 和正式验收完成。
 

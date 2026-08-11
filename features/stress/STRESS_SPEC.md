@@ -82,11 +82,18 @@ import 和 `npu-burn --version` 检查；不得映射 NPU 设备、创建或运�
   链接的源码输入、Docker daemon 以及基础镜像已在本地存在；
 - 在 wheel 构建前确认 `libascend_hal.so` 可解析，torch、torch_npu 和 TBE
   可 import；`npu-smi` 的警告不得在 Python 返回码为 0 时被判为失败；
+- Docker build 的 RUN 阶段默认无网络；必须用
+  `--no-index --no-deps --force-reinstall` 安装本轮唯一 wheel，禁止因基础
+  镜像已安装同版本而跳过。基础镜像缺少构建依赖时必须失败，不得
+  联网补齐；
+- 分离预检、wheel 构建、wheel 安装与 package/runtime 验证 layer，使
+  native wheel 在仅最终验证变更时可复用缓存；
 - 在镜像标签中记录来源类型、上游 repository/revision、原始/补丁后源码 SHA-256
   和兼容 profile，并在构建后回读校验；
 - 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint/
   Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
-  CANN 版本、HAL/import/wheel/version 校验、构建期 driver 存在性以及
+  CANN 版本、wheel 文件名/SHA-256/安装版本与路径、离线强制重装事实、
+  HAL/import/custom ops/wheel/version 校验、构建期 driver 存在性以及
   “未执行 NPU 负载”的事实；
 - 将上游 Mulan PSL v2 许可证随镜像保留。
 

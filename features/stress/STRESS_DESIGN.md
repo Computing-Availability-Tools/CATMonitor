@@ -73,14 +73,19 @@ build_npu_burn_image.sh                 固定管理员容器                cat
 source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 路径，
 最后仅接受唯一的 `cann-*/set_env.sh`；多版本不静默选择。在 wheel 构建前，
 它验证 `libascend_hal.so` 解析及 torch、torch_npu、TBE import，然后构建、
-安装并检查 NPU Burn import/version。它不依赖登录 shell/profile，不设置
+安装并检查 NPU Burn import/version。Dockerfile 将预检、native wheel 构建、
+本地 wheel 安装和最终验证拆成独立 layer；最终 layer 用 nonce 重跑只读
+预检并输出 manifest marker，而高成本 C++ 编译与安装 layer 可复用缓存。
+安装通过 `--no-index --no-deps --force-reinstall` 确保无网络且不会被基础镜像
+中的同版本包跳过。它不依赖登录 shell/profile，不设置
 `TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求构建期存在宿主机 driver、`npu-smi`
 或 NPU 设备。构建器只调用 image inspect/build，固定容器
 的创建、设备、挂载和运行仍完全属于管理员部署面。
 
 镜像标签和 manifest 同时记录 bundled/override 来源、上游 repository/revision、
 原始/补丁后源码及补丁哈希、profile、模板哈希、基础镜像 ID/摘要、目标镜像
-ID/摘要与架构，以及实际 Ascend 环境脚本、CANN 版本、HAL/import 预检和
+ID/摘要与架构，以及实际 Ascend 环境脚本、CANN 版本、wheel 文件名/
+SHA-256/安装包位置、HAL/import 预检和
 构建期 driver 是否存在。`driver_mount_present_at_build=false` 是允许的事实，不是
 失败状态。manifest 用于确认“构建了什么”，不能证明宿主机驱动、
 设备健康或正式 NPU Burn 结果；这些事实必须在 A3 candidate 上由 describe 和

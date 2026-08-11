@@ -116,6 +116,7 @@ case "${1-}" in
             case "$1" in
                 --file) dockerfile=$2; shift 2 ;;
                 --tag) image=$2; shift 2 ;;
+                --network) [ "$2" = none ]; printf '%s\n' "$2" >"$FAKE_DOCKER_ROOT/network"; shift 2 ;;
                 --build-arg)
                     case "$2" in
                         SOURCE_SHA256=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/source-sha" ;;
@@ -152,6 +153,11 @@ case "${1-}" in
         printf 'CATMONITOR_PREFLIGHT_TORCH=PASS\n'
         printf 'CATMONITOR_PREFLIGHT_TORCH_NPU=PASS\n'
         printf 'CATMONITOR_PREFLIGHT_TBE=PASS\n'
+        printf 'CATMONITOR_WHEEL_FILENAME=ascend_npu_burn-26.1.0+torch.2.10.0-cp312-cp312-linux_aarch64.whl\n'
+        printf 'CATMONITOR_WHEEL_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+        printf 'CATMONITOR_PACKAGE_VERSION=26.1.0+torch.2.10.0\n'
+        printf 'CATMONITOR_PACKAGE_FILE=/usr/local/lib/python3.12/site-packages/ascend_npu_burn/__init__.py\n'
+        printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'
         printf '%s\n' "$image" >"$FAKE_DOCKER_ROOT/image"
         printf 'Successfully built fixture-image-id\n'
         ;;
@@ -203,7 +209,7 @@ bash "$BUILD_SCRIPT" \
     fail 'bundled source tree was modified'
 [ -f "$MANIFEST" ] || fail 'manifest was not created'
 python3 -m json.tool "$MANIFEST" >/dev/null
-assert_contains "$MANIFEST" '"schema_version":"3"'
+assert_contains "$MANIFEST" '"schema_version":"4"'
 assert_contains "$MANIFEST" '"origin":"bundled"'
 assert_contains "$MANIFEST" '"upstream_revision":"381028b688a70e881d97477d7fa1ae8f2a26288e"'
 assert_contains "$MANIFEST" '"profile":"none"'
@@ -214,8 +220,15 @@ assert_contains "$MANIFEST" '"cann_version":"9.0.1"'
 assert_contains "$MANIFEST" '"libascend_hal_resolved":true'
 assert_contains "$MANIFEST" '"torch_npu_import":true'
 assert_contains "$MANIFEST" '"tbe_import":true'
+assert_contains "$MANIFEST" '"filename":"ascend_npu_burn-26.1.0+torch.2.10.0-cp312-cp312-linux_aarch64.whl"'
+assert_contains "$MANIFEST" '"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+assert_contains "$MANIFEST" '"installed_version":"26.1.0+torch.2.10.0"'
+assert_contains "$MANIFEST" '"force_installed":true'
+assert_contains "$MANIFEST" '"network_access":false'
+assert_contains "$MANIFEST" '"custom_ops_import":true'
 assert_contains "$MANIFEST" '"driver_mount_present_at_build":false'
 assert_contains "$MANIFEST" '"npu_workload_run":false'
+assert_contains "$FAKE_DOCKER_ROOT/network" 'none'
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'argparse'
 
 assert_fails "$TEST_ROOT/no-force.log" \
@@ -429,7 +442,7 @@ unset FAKE_DOCKER_BUILD_FAIL
 assert_contains "$TEST_ROOT/preflight-build-fail.log" 'Ascend build environment preflight failed'
 assert_contains "$TEST_ROOT/preflight-build-fail.log" 'libascend_hal:'
 assert_contains "$TEST_ROOT/preflight-build-fail.log" \
-    'Docker image build failed during Ascend environment initialization, preflight, or wheel build'
+    'Docker image build failed during Ascend initialization, wheel build/install, or package validation'
 [ ! -e "$PREFLIGHT_FAIL_ROOT/manifests/npu-burn-image-manifest.json" ] || \
     fail 'failed build-time preflight published a manifest'
 
@@ -455,18 +468,29 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'SHELL ["/bin/bash", "
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${ASCEND_ENV_SCRIPT}'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_source_ascend_env'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_build_preflight'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" "python3 -c 'import ascend_npu_burn'"
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'pip install --no-cache-dir --no-deps'
+NORMALIZED_DOCKERFILE=$(tr '\n' ' ' <"$REPO_ROOT/docker/stress/npu/Dockerfile")
+printf '%s\n' "$NORMALIZED_DOCKERFILE" | grep -Eq \
+    'python3 -m pip install .*--no-index .*--no-cache-dir .*--no-deps .*--force-reinstall .*"\$1"' || \
+    fail 'local wheel install must be offline and force reinstall the built wheel'
+assert_contains "$BUILD_SCRIPT" '--network none'
 if grep -Fq 'TORCH_DEVICE_BACKEND_AUTOLOAD' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'Dockerfile must not disable torch backend autoload'
 fi
 if grep -Fq 'test -d /usr/local/Ascend/driver' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'Dockerfile must not require a build-time driver mount'
 fi
-PREFLIGHT_LINE=$(grep -n 'catmonitor_ascend_build_preflight' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+PREFLIGHT_LINE=$(grep -n 'catmonitor_ascend_build_preflight' "$REPO_ROOT/docker/stress/npu/Dockerfile" | head -n 1 | cut -d: -f1)
 WHEEL_BUILD_LINE=$(grep -n 'bash build/build.sh' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+WHEEL_INSTALL_LINE=$(grep -n -- '--force-reinstall' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+PACKAGE_VALIDATE_LINE=$(grep -n 'CATMONITOR_PACKAGE_VERSION' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
 [ "$PREFLIGHT_LINE" -lt "$WHEEL_BUILD_LINE" ] || fail 'Ascend preflight must run before wheel build'
+[ "$WHEEL_BUILD_LINE" -lt "$WHEEL_INSTALL_LINE" ] || fail 'wheel build and install must use separate ordered layers'
+[ "$WHEEL_INSTALL_LINE" -lt "$PACKAGE_VALIDATE_LINE" ] || fail 'package validation must follow wheel installation'
+[ "$(grep -c '^RUN set -euo pipefail' "$REPO_ROOT/docker/stress/npu/Dockerfile")" -ge 5 ] || \
+    fail 'Dockerfile must keep preparation, preflight, wheel build, install, and validation layers separate'
 if grep -Eq '(^|[[:space:]])(npu-smi|npu-burn)([[:space:]]|$)' \
     "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'Dockerfile must not execute an NPU workload'
@@ -479,6 +503,29 @@ cat >"$TEST_ROOT/tools/npu-burn" <<'EOF'
 printf '%s\n' "$*" >"$ENTRYPOINT_LOG"
 EOF
 chmod 0755 "$TEST_ROOT/tools/npu-burn"
+
+if CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/missing-helper.sh" \
+    PATH="$TEST_ROOT/tools:$PATH" \
+    bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version \
+    >"$TEST_ROOT/entrypoint-missing-helper.log" 2>&1; then
+    fail 'entrypoint unexpectedly accepted a missing Ascend helper'
+fi
+assert_contains "$TEST_ROOT/entrypoint-missing-helper.log" 'Ascend environment helper is missing'
+
+cat >"$TEST_ROOT/bad-ascend-helper.sh" <<'EOF'
+return 19
+EOF
+if CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/bad-ascend-helper.sh" \
+    PATH="$TEST_ROOT/tools:$PATH" \
+    bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version \
+    >"$TEST_ROOT/entrypoint-bad-helper.log" 2>&1; then
+    fail 'entrypoint unexpectedly accepted a failing Ascend helper'
+fi
+assert_contains "$TEST_ROOT/entrypoint-bad-helper.log" 'failed to source Ascend environment helper:'
+if grep -Eq '(^|[[:space:]])-r([[:space:]]|$)' "$REPO_ROOT/docker/stress/npu/entrypoint.sh"; then
+    fail 'entrypoint must not require test -r for the Ascend helper'
+fi
+
 ENTRY_ASCEND_ROOT="$TEST_ROOT/entrypoint-ascend"
 install -d -m 0755 "$ENTRY_ASCEND_ROOT/cann-9.0.1"
 cat >"$ENTRY_ASCEND_ROOT/cann-9.0.1/set_env.sh" <<'EOF'
