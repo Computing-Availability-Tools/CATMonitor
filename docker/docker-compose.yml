@@ -19,6 +19,9 @@ services:
       - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
       - /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro
       - /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro
+      # NPU command-line tools (installed by driver to host system paths)
+      - /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro
+      - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler

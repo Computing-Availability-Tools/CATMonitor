@@ -96,6 +96,8 @@ docker run -d --name catmonitor --privileged --network host \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
   -v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
+  -v /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro \
+  -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
@@ -104,10 +106,11 @@ docker run -d --name catmonitor --privileged --network host \
 
 > NPU 环境专用参数：
 > - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
+> - `-v /usr/bin/hccn_tool` + `-v /usr/local/sbin/npu-smi`：挂载 NPU 命令行工具（driver 安装到宿主机系统路径，不在 Ascend 目录下）
 > - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
 > - `--privileged` 已包含 NPU 设备访问权限，无需额外 `--device`
 >
-> 非 NPU 环境去掉 driver/nnae/toolkit/LD_LIBRARY_PATH 三行，镜像名改为 `catmonitor-generic`。
+> 非 NPU 环境去掉 driver/nnae/toolkit/hccn_tool/npu-smi/LD_LIBRARY_PATH，镜像名改为 `catmonitor-generic`。
 
 #### 步骤 3：等待首次采集（6-9 秒）
 
@@ -395,7 +398,8 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot/
 
 1. 确认使用了 `catmonitor-npu` 镜像（不是 generic）
 2. 确认 driver + nnae + toolkit 已挂载 + `LD_LIBRARY_PATH` 已设置
-3. 检查 daemon 日志：`docker logs catmonitor`
+3. 确认 `hccn_tool` 和 `npu-smi` 已挂载（driver 安装到宿主机 `/usr/bin` 和 `/usr/local/sbin`，不在 Ascend 目录下）
+4. 检查 daemon 日志：`docker logs catmonitor`
 
 ### Q: Web 仪表盘只显示 eth0，MAC 地址相同
 
