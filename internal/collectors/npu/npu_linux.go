@@ -470,14 +470,14 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	// --- 5.55-5.58 HBM ECC (delta) ---
 	if src.Available() {
 		if ecc, err := src.EccInfo(card, devID, devTypeHBM); err == nil && ecc != nil {
-			c.emitEccMetrics(&metrics, devID, "hbm", ecc, now)
+			c.emitEccMetrics(&metrics, card, "hbm", ecc, now)
 		}
 	}
 
 	// --- 5.59-5.62 DDR ECC (delta) ---
 	if src.Available() {
 		if ecc, err := src.EccInfo(card, devID, devTypeDDR); err == nil && ecc != nil {
-			c.emitEccMetrics(&metrics, devID, "ddr", ecc, now)
+			c.emitEccMetrics(&metrics, card, "ddr", ecc, now)
 		}
 	}
 
@@ -501,7 +501,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 			}
 			metrics = append(metrics, collector.Metric{
 				Component: "npu", Name: "roce_link_status", Value: float64(v), Unit: "",
-				Labels: map[string]string{"npu_id": strconv.Itoa(devID), "status": statusStr}, Timestamp: now,
+				Labels: map[string]string{"npu_id": strconv.Itoa(card), "status": statusStr}, Timestamp: now,
 			})
 		}
 	}
@@ -511,25 +511,25 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	// 5.66-5.67, 5.71-5.72 net/pcie bandwidth (hccn_tool)
 	if bw, err := hccn_tool.Default().Bandwidth(devID); err == nil && bw != nil {
 		metrics = append(metrics,
-			collector.Metric{Component: "npu", Name: "net_tx_bandwidth", Value: bw.NetTX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "direction": "tx"}, Timestamp: now},
-			collector.Metric{Component: "npu", Name: "net_rx_bandwidth", Value: bw.NetRX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "direction": "rx"}, Timestamp: now},
-			collector.Metric{Component: "npu", Name: "pcie_tx_bandwidth", Value: bw.PcieTX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "direction": "tx"}, Timestamp: now},
-			collector.Metric{Component: "npu", Name: "pcie_rx_bandwidth", Value: bw.PcieRX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "direction": "rx"}, Timestamp: now},
+			collector.Metric{Component: "npu", Name: "net_tx_bandwidth", Value: bw.NetTX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "tx"}, Timestamp: now},
+			collector.Metric{Component: "npu", Name: "net_rx_bandwidth", Value: bw.NetRX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "rx"}, Timestamp: now},
+			collector.Metric{Component: "npu", Name: "pcie_tx_bandwidth", Value: bw.PcieTX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "tx"}, Timestamp: now},
+			collector.Metric{Component: "npu", Name: "pcie_rx_bandwidth", Value: bw.PcieRX, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "rx"}, Timestamp: now},
 		)
 	}
 	// 5.69 roce_speed_status, 5.70 roce_link_health
 	if speed, err := hccn_tool.Default().Speed(devID); err == nil && speed != "" {
-		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_speed_status", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "roce_speed": speed}, Timestamp: now})
+		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_speed_status", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(card), "roce_speed": speed}, Timestamp: now})
 	}
 	if link, err := hccn_tool.Default().Link(devID); err == nil && link != "" {
-		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_link_health", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "roce_link": link}, Timestamp: now})
+		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_link_health", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(card), "roce_link": link}, Timestamp: now})
 	}
 
 	// 5.73-5.74 hccs bandwidth (npu-smi -t hccs-bw)
 	if bw, err := npu_smi.Default().HccsBandwidth(devID); err == nil && bw != nil {
 		metrics = append(metrics,
-			collector.Metric{Component: "npu", Name: "hccs_tx_bandwidth", Value: bw.TxMB, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "direction": "tx"}, Timestamp: now},
-			collector.Metric{Component: "npu", Name: "hccs_rx_bandwidth", Value: bw.RxMB, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(devID), "direction": "rx"}, Timestamp: now},
+			collector.Metric{Component: "npu", Name: "hccs_tx_bandwidth", Value: bw.TxMB, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "tx"}, Timestamp: now},
+			collector.Metric{Component: "npu", Name: "hccs_rx_bandwidth", Value: bw.RxMB, Unit: "MB/s", Labels: map[string]string{"npu_id": strconv.Itoa(card), "direction": "rx"}, Timestamp: now},
 		)
 	}
 
@@ -552,11 +552,11 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 
 // emitEccMetrics emits 4 ECC metrics (single/double errors + isolated pages)
 // for a device+type. Error counts are delta-based (cumulative → per-cycle).
-func (c *NPUCollector) emitEccMetrics(metrics *[]collector.Metric, devID int, devType string, ecc *dcmi.EccInfo, now time.Time) {
+func (c *NPUCollector) emitEccMetrics(metrics *[]collector.Metric, cardID int, devType string, ecc *dcmi.EccInfo, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	id := strconv.Itoa(devID)
+	id := strconv.Itoa(cardID)
 
 	// single_bit errors (delta)
 	singleKey := id + ":" + devType + ":single"

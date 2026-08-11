@@ -44,13 +44,13 @@ NPU 镜像采用**两步构建**，且**必须使用 Debian（glibc）基础镜�
 
 编译时 `CGO_LDFLAGS` 加 `-Wl,--allow-shlib-undefined`（`build.sh` 已配置），因为 Debian 的 `ld` 默认不递归解析共享库的传递依赖。
 
-运行时需要设置 `LD_LIBRARY_PATH` 指向 driver 和 nnae 库目录：
+运行时需要设置 `LD_LIBRARY_PATH` 指向 driver、common、toolkit 和 nnae 库目录：
 
 ```
-LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64
+LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
 ```
 
-同时需要挂载 nnae 目录（`libc_sec.so` 和 `libmmpa.so` 在 nnae 而非 driver 中）。
+同时需要挂载 driver、nnae 和 toolkit 目录（`libdcmi.so`、`libc_sec.so`、`libmmpa.so` 等分布在不同目录中）。
 
 ### Dockerfile 说明
 
@@ -85,7 +85,8 @@ docker compose -f docker/docker-compose.yml up -d catmonitor
 #### 步骤 1：创建卷
 
 ```bash
-docker volume create cm-snapshot cm-data
+docker volume create cm-snapshot
+docker volume create cm-data
 ```
 
 #### 步骤 2：启动 daemon
@@ -94,7 +95,7 @@ docker volume create cm-snapshot cm-data
 docker run -d --name catmonitor --privileged \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
-  -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64 \
+  -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   --device /dev/davinci0 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
@@ -104,8 +105,8 @@ docker run -d --name catmonitor --privileged \
 
 > NPU 环境专用参数：
 > - `--device /dev/davinci0`：按实际卡号调整，`ls /dev/davinci*` 查看
-> - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae`：挂载驱动
-> - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so 及其依赖
+> - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动及依赖库
+> - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
 >
 > 非 NPU 环境去掉以上三行，镜像名改为 `catmonitor-generic`。
 
@@ -205,7 +206,8 @@ ls /dev/davinci*    # 查看可用设备
 `libdcmi.so` 是 glibc 链接的，运行时需要：
 - 挂载 `/usr/local/Ascend/driver`（libdcmi.so 本体）
 - 挂载 `/usr/local/Ascend/nnae`（libc_sec.so、libmmpa.so 依赖）
-- 设置 `LD_LIBRARY_PATH` 指向两个库目录
+- 挂载 `/usr/local/Ascend/ascend-toolkit`（toolkit 库）
+- 设置 `LD_LIBRARY_PATH` 指向四个库目录
 
 ## 7. 非 NPU 环境
 
@@ -234,7 +236,7 @@ docker run -d --name catmonitor-dfee --entrypoint /usr/local/bin/dfee \
 如果使用 docker-compose，修改 `docker-compose.yml`：
 1. `dockerfile` 改为 `Dockerfile.generic`
 2. `image` 改为 `catmonitor-generic`
-3. 删除 `devices`、NPU driver/nnae `volumes`、`LD_LIBRARY_PATH`
+3. 删除 `devices`、NPU driver/nnae/toolkit `volumes`、`LD_LIBRARY_PATH`
 
 ## 8. 配置修改
 
@@ -373,11 +375,12 @@ ls /dev/ipmi0
 
 ### Q: daemon 容器报 "libc_sec.so: cannot open shared object file"
 
-需要挂载 nnae 目录并设置 LD_LIBRARY_PATH：
+需要挂载 nnae 和 toolkit 目录并设置完整 LD_LIBRARY_PATH：
 
 ```bash
 -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
--e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnae/latest/lib64
+-v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
+-e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
 ```
 
 ### Q: dfee/web 容器输出 "snapshot not ready"
@@ -392,7 +395,7 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot/
 
 1. 确认使用了 `catmonitor-npu` 镜像（不是 generic）
 2. 确认 `--device /dev/davinci*` 设备已挂载
-3. 确认 driver + nnae 已挂载 + `LD_LIBRARY_PATH` 已设置
+3. 确认 driver + nnae + toolkit 已挂载 + `LD_LIBRARY_PATH` 已设置
 4. 检查 daemon 日志：`docker logs catmonitor`
 
 ### Q: docker build 时 apt-get 很慢
