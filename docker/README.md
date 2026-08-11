@@ -152,10 +152,9 @@ docker run -d --name dfee --entrypoint /usr/local/bin/dfee \
 | 容器端口 | 服务 | 端点 |
 |---------|------|------|
 | 9100 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
-| 9101 | faultsub REST API（可选） | `/faultsub/events` 等 |
+| `9101` | faultsub REST API（可选） | `/faultsub/events` 等 |
 | 9527 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
 | 9528 | dfee SPA | `/`、`/dfee/` |
-| 9333 | dfee Prometheus exporter | `/metrics`（node_*/ipmi_*/static_*） |
 
 如需自定义端口映射（如映射到不同主机端口）：
 

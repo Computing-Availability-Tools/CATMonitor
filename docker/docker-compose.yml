@@ -44,20 +44,17 @@ services:
       - catmonitor
     restart: unless-stopped
 
-  # 3. dfee: energy-efficiency SPA + Prometheus exporter.
-  #    Reads snapshots from daemon.
+  # 3. dfee: energy-efficiency SPA + API. Reads snapshots from daemon.
   dfee:
     image: catmonitor-npu
     command: >
       /usr/local/bin/dfee
       -addr=:9528
-      -exporter=enabled -exporter-port=9333
       -snapshot-dir=/var/lib/catmonitor/snapshot
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
     ports:
       - "9528:9528"    # dfee SPA
-      - "9333:9333"    # dfee Prometheus exporter
     depends_on:
       - catmonitor
     restart: unless-stopped
