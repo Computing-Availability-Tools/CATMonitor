@@ -20,6 +20,10 @@ assert_contains() {
     grep -Fq -- "$2" "$1" || fail "$1 does not contain: $2"
 }
 
+if grep -Eq '(^|[[:space:]])-r([[:space:]]|$)' "$HELPER"; then
+    fail 'Ascend environment discovery must not require test -r'
+fi
+
 write_env() {
     local path=$1
     local identity=$2
@@ -91,6 +95,15 @@ if CATMONITOR_ASCEND_ENV_ROOT="$EMPTY_ROOT" bash -c 'source "$1"; catmonitor_sou
 fi
 assert_contains "$TEST_ROOT/empty.log" 'no supported Ascend environment initialization script found'
 
+if ASCEND_ENV_SCRIPT="$EMPTY_ROOT/missing-set_env.sh" \
+    CATMONITOR_ASCEND_ENV_ROOT="$EMPTY_ROOT" \
+    bash -c 'source "$1"; catmonitor_source_ascend_env' _ "$HELPER" \
+    >"$TEST_ROOT/missing-override.log" 2>&1; then
+    fail 'missing explicit Ascend environment unexpectedly succeeded'
+fi
+assert_contains "$TEST_ROOT/missing-override.log" \
+    'explicit Ascend environment script is not a regular file'
+
 MULTI_ROOT="$TEST_ROOT/multiple-layout"
 write_env "$MULTI_ROOT/cann-8.3/set_env.sh" cann-8.3
 write_env "$MULTI_ROOT/cann-9.0.1/set_env.sh" cann-9.0.1
@@ -100,6 +113,20 @@ if CATMONITOR_ASCEND_ENV_ROOT="$MULTI_ROOT" bash -c 'source "$1"; catmonitor_sou
 fi
 assert_contains "$TEST_ROOT/multiple.log" 'multiple Ascend CANN environment scripts were found'
 assert_contains "$TEST_ROOT/multiple.log" 'set ASCEND_ENV_SCRIPT explicitly'
+
+# Candidate discovery uses file identity; source is the final usability check.
+BAD_SOURCE_ROOT="$TEST_ROOT/bad-source-layout"
+install -d -m 0755 "$BAD_SOURCE_ROOT/cann-9.0.1"
+cat >"$BAD_SOURCE_ROOT/cann-9.0.1/set_env.sh" <<'EOF'
+return 23
+EOF
+if CATMONITOR_ASCEND_ENV_ROOT="$BAD_SOURCE_ROOT" \
+    bash -c 'source "$1"; catmonitor_source_ascend_env' _ "$HELPER" \
+    >"$TEST_ROOT/bad-source.log" 2>&1; then
+    fail 'failing Ascend environment source unexpectedly succeeded'
+fi
+assert_contains "$TEST_ROOT/bad-source.log" 'failed to source Ascend environment script:'
+assert_contains "$TEST_ROOT/bad-source.log" "$BAD_SOURCE_ROOT/cann-9.0.1/set_env.sh"
 
 # Build-time preflight is independent of /usr/local/Ascend/driver. A failing
 # HAL/import check propagates before wheel build.

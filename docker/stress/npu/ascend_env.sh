@@ -5,6 +5,7 @@ catmonitor_find_ascend_env() {
     local root=${CATMONITOR_ASCEND_ENV_ROOT:-/usr/local/Ascend}
     local override=${ASCEND_ENV_SCRIPT:-}
     local canonical
+    local candidate
     local -a discovered=()
 
     if [ -n "$override" ]; then
@@ -15,8 +16,8 @@ catmonitor_find_ascend_env() {
                 return 1
                 ;;
         esac
-        if [ ! -f "$override" ] || [ ! -r "$override" ]; then
-            printf 'ERROR: explicit Ascend environment script is unavailable: %s\n' "$override" >&2
+        if [ ! -f "$override" ]; then
+            printf 'ERROR: explicit Ascend environment script is not a regular file: %s\n' "$override" >&2
             return 1
         fi
         printf '%s\n' "$override"
@@ -27,17 +28,21 @@ catmonitor_find_ascend_env() {
         "$root/ascend-toolkit/set_env.sh" \
         "$root/ascend-toolkit/latest/bin/setenv.bash"
     do
-        if [ -f "$canonical" ] && [ -r "$canonical" ]; then
+        if [ -f "$canonical" ]; then
             printf '%s\n' "$canonical"
             return 0
         fi
     done
 
     shopt -s nullglob
-    discovered=("$root"/cann-*/set_env.sh)
+    for candidate in "$root"/cann-*/set_env.sh; do
+        if [ -f "$candidate" ]; then
+            discovered+=("$candidate")
+        fi
+    done
     shopt -u nullglob
 
-    if [ "${#discovered[@]}" -eq 1 ] && [ -f "${discovered[0]}" ] && [ -r "${discovered[0]}" ]; then
+    if [ "${#discovered[@]}" -eq 1 ]; then
         printf '%s\n' "${discovered[0]}"
         return 0
     fi
@@ -94,13 +99,16 @@ catmonitor_source_ascend_env() {
         *u*) nounset_was_enabled=true; set +u ;;
     esac
     # shellcheck disable=SC1090
-    source "$selected"
-    source_status=$?
+    if source "$selected"; then
+        source_status=0
+    else
+        source_status=$?
+    fi
     if [ "$nounset_was_enabled" = true ]; then
         set -u
     fi
     if [ "$source_status" -ne 0 ]; then
-        printf 'ERROR: failed to initialize the Ascend environment: %s\n' "$selected" >&2
+        printf 'ERROR: failed to source Ascend environment script:\n%s\n' "$selected" >&2
         return "$source_status"
     fi
 
