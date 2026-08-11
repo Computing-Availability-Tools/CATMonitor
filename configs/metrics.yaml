@@ -1000,8 +1000,18 @@ components:
         priority: Medium
         unit: "个"
         static: false
-      - name: roce_new_pkt_rty
+      - name: roce_new_pkt_rty_num
         cn_name: "ROCE重传报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_fcs_err_pkt_num
+        cn_name: "MAC层FCS校验错误包数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_ecn_db_num
+        cn_name: "RoCE ECN标记丢弃计数"
         priority: Medium
         unit: "个"
         static: false
