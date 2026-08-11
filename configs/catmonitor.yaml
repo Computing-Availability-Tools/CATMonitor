@@ -54,7 +54,7 @@ features: [web, dfee]
 # HTTP webhook and a REST API. See features/faultsub/faultsub_SPEC.md.
 faultsub:
   enabled: false
-  rest_addr: ":9101"            # subscription REST API listen address
+  rest_addr: ":19321"           # subscription REST API listen address
   webhook_timeout: 5s          # per-request webhook push timeout
   webhook_retry: 1              # failed-webhook retry count
   event_buffer: 1024           # recent-event ring buffer (GET /faultsub/events)

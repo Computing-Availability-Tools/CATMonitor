@@ -280,7 +280,7 @@ func runDaemon() {
 	scheduler.SetFilter(metrics.Filter)
 
 	// Prometheus exporter endpoint
-	go exporter.ServeMetrics(":9100", cacheStore, logger)
+	go exporter.ServeMetrics(":19320", cacheStore, logger)
 
 	scheduler.Start(ctx, collectorCfgs)
 

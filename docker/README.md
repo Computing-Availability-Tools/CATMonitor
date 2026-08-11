@@ -13,9 +13,9 @@ CATMonitor 容器化方案支持两种镜像：
 
 | 服务 | 容器端口 | 功能 |
 |------|---------|------|
-| `catmonitor` (daemon) | 9100, 9101 | 采集指标 + Prometheus 导出 + snapshot 写入 + faultsub |
-| `web` | 9527 | Web 仪表盘（读 snapshot） |
-| `dfee` | 9528, 9333 | 能效监控 SPA + Prometheus 导出 |
+| `catmonitor` (daemon) | 19320, 19321 | 采集指标 + Prometheus 导出 + snapshot 写入 + faultsub |
+| `web` | 19322 | Web 仪表盘（读 snapshot） |
+| `dfee` | 19323 | 能效监控 SPA |
 
 daemon 是 snapshot 唯一生产者；web/dfee 是只读消费者，不自行采集。三容器共享一个 snapshot 卷。
 
@@ -147,10 +147,10 @@ docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
 
 | 容器端口 | 服务 | 端点 |
 |---------|------|------|
-| 9100 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
-| `9101` | faultsub REST API（可选） | `/faultsub/events` 等 |
-| 9527 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
-| 9528 | dfee SPA | `/`、`/dfee/` |
+| 19320 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
+| 19321 | faultsub REST API（可选） | `/faultsub/events` 等 |
+| 19322 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
+| 19323 | dfee SPA | `/`、`/dfee/` |
 
 如需自定义端口映射（如映射到不同主机端口）：
 
@@ -164,16 +164,16 @@ docker run -d --name catmonitor --privileged --network host \
 
 ```bash
 # daemon
-curl http://localhost:9100/-/healthy           # 200
-curl http://localhost:9100/metrics | grep npu    # NPU 指标
+curl http://localhost:19320/-/healthy           # 200
+curl http://localhost:19320/metrics | grep npu    # NPU 指标
 
 # web
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9527/   # 200
-curl -s http://localhost:9527/api/snapshot | head -c 120           # JSON
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19322/   # 200
+curl -s http://localhost:19322/api/snapshot | head -c 120           # JSON
 
 # dfee
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9528/   # 200
-curl -s http://localhost:9333/metrics | grep node_load1           # 能效指标
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19323/   # 200
+curl -s http://localhost:19323/api/dfee | head -c 120           # dfee API
 ```
 
 ## 6. NPU 环境配置
@@ -258,7 +258,7 @@ faultsub 是 NPU 故障检测与推送机制，运行在 daemon 内部。开启�
 ```yaml
 faultsub:
   enabled: true
-  rest_addr: ":9101"            # REST API 监听地址
+  rest_addr: ":19321"           # REST API 监听地址
   webhook_timeout: 5s           # webhook 推送超时
   webhook_retry: 1             # 失败重试次数
   event_buffer: 1024           # 事件环形缓冲区大小
@@ -275,7 +275,7 @@ faultsub:
     driver_unhealthy: false   # 驱动不健康
 ```
 
-**REST API 端点**（端口 9101）：
+**REST API 端点**（端口 19321）：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -294,18 +294,18 @@ faultsub:
 
 ```bash
 # 创建 webhook 订阅（故障事件推送到指定 URL）
-curl -X POST http://localhost:9101/faultsub/subscriptions \
+curl -X POST http://localhost:19321/faultsub/subscriptions \
   -H "Content-Type: application/json" \
   -d '{"webhook_url": "http://my-fault-manager:8080/fault", "types": ["card_drop", "npu_health"]}'
 
 # 查看当前故障
-curl http://localhost:9101/faultsub/snapshot
+curl http://localhost:19321/faultsub/snapshot
 
 # 查看最近事件
-curl http://localhost:9101/faultsub/events
+curl http://localhost:19321/faultsub/events
 
 # 列出所有订阅
-curl http://localhost:9101/faultsub/subscriptions
+curl http://localhost:19321/faultsub/subscriptions
 ```
 
 **前提**：daemon 容器需要 `--privileged` 模式（已包含 NPU 设备访问），否则故障检测无数据来源。
