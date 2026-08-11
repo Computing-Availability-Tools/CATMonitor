@@ -104,11 +104,13 @@ docker run -d --name catmonitor --privileged \
 ```
 
 > NPU 环境专用参数：
+> - `--network host`：共享宿主机网络命名空间（必须，否则网卡信息错误）
 > - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
 > - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
 > - `--privileged` 已包含 NPU 设备访问权限，无需额外 `--device`
 >
-> 非 NPU 环境去掉以上三行，镜像名改为 `catmonitor-generic`。
+> 非 NPU 环境去掉 driver/nnae/toolkit/LD_LIBRARY_PATH 三行，镜像名改为 `catmonitor-generic`。
+> `--network host` 仍然建议保留（读真实网卡）。
 
 #### 步骤 3：等待首次采集（6-9 秒）
 
@@ -208,6 +210,16 @@ docker run -d --name catmonitor \
 - `/dev/davinci*`（NPU DCMI）
 - `/proc`、`/sys`（系统指标）
 - SMBIOS（dmidecode）
+
+### 网络模式
+
+**必须使用 `--network host`**（daemon 容器），否则容器内 `/sys/class/net/` 只显示虚拟网卡 eth0，web 仪表盘的网卡信息会显示错误。
+
+`--network host` 后容器直接使用宿主机网络栈：
+- 不需要 `-p` 端口映射，容器内端口直接是宿主机端口
+- 能读到宿主机真实网卡（enp125s0f1 等）和真实 MAC 地址
+
+web 和 dfee 容器也建议加 `--network host`，避免端口映射冲突。
 
 ### 运行时库依赖
 
@@ -404,6 +416,10 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot/
 1. 确认使用了 `catmonitor-npu` 镜像（不是 generic）
 2. 确认 driver + nnae + toolkit 已挂载 + `LD_LIBRARY_PATH` 已设置
 3. 检查 daemon 日志：`docker logs catmonitor`
+
+### Q: Web 仪表盘只显示 eth0，MAC 地址相同
+
+daemon 容器未使用 `--network host`，容器有自己的网络命名空间，`/sys/class/net/` 只显示虚拟网卡。加 `--network host` 重启 daemon 即可。
 
 ### Q: docker build 时 apt-get 很慢
 

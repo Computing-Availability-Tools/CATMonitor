@@ -8,6 +8,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.npu
     privileged: true
+    network: host              # share host network namespace (see real NICs in /sys/class/net)
     # --privileged already grants access to all devices (including /dev/davinci*).
     # To use tighter security instead, replace privileged with:
     #   devices:
@@ -25,13 +26,14 @@ services:
     environment:
       LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
     ports:
-      - "9100:9100"    # Prometheus exporter
+      - "9100:9100"    # Prometheus exporter (ignored with network: host, uses host port directly)
       - "9101:9101"    # faultsub REST API (enable in config to use)
     restart: unless-stopped
 
   # 2. web: standalone read-only dashboard. Reads snapshots from daemon.
   web:
     image: catmonitor-npu
+    network: host
     command: >
       /usr/local/bin/web
       -addr=:9527
@@ -39,7 +41,7 @@ services:
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
     ports:
-      - "9527:9527"
+      - "9527:9527"    # (ignored with network: host)
     depends_on:
       - catmonitor
     restart: unless-stopped
@@ -47,6 +49,7 @@ services:
   # 3. dfee: energy-efficiency SPA + API. Reads snapshots from daemon.
   dfee:
     image: catmonitor-npu
+    network: host
     command: >
       /usr/local/bin/dfee
       -addr=:9528
@@ -54,7 +57,7 @@ services:
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
     ports:
-      - "9528:9528"    # dfee SPA
+      - "9528:9528"    # (ignored with network: host)
     depends_on:
       - catmonitor
     restart: unless-stopped
