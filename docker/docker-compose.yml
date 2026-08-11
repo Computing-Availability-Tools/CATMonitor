@@ -8,10 +8,11 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.npu
     privileged: true
-    # NPU devices — remove these lines on non-NPU environments
-    devices:
-      - /dev/davinci0
-      - /dev/davinci1
+    # --privileged already grants access to all devices (including /dev/davinci*).
+    # To use tighter security instead, replace privileged with:
+    #   devices:
+    #     - /dev/davinci0
+    #     - /dev/davinci_manager
     volumes:
       # NPU driver + nnae + toolkit — remove these lines on non-NPU environments
       - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
