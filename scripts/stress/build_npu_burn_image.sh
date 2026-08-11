@@ -21,6 +21,7 @@ BASE_IMAGE=
 TARGET_IMAGE=
 DOCKER_BIN=
 ASCEND_ENV_SCRIPT_OVERRIDE=${ASCEND_ENV_SCRIPT:-}
+BUILD_DRIVER_LIB_DIR=
 COMPAT_PROFILE=none
 BUILD_ROOT=/var/tmp/catmonitor-npu-burn-build
 MANIFEST_PATH=
@@ -45,6 +46,10 @@ Build controls:
   --docker-bin PATH         Docker-compatible CLI (default: docker from PATH)
   --ascend-env-script PATH  Explicit CANN env script path inside the base image
                             (default: deterministic auto-discovery)
+  --build-driver-lib-dir PATH
+                            Optional host Ascend driver lib64 directory used
+                            only by the disposable builder stage; it is never
+                            copied into the final runtime image
   --compat-profile NAME     Compatibility identity (default: none)
   --patch PATH              Apply an audited -p1 patch; repeatable
   --build-root PATH         Isolated build parent
@@ -82,6 +87,7 @@ while [ "$#" -gt 0 ]; do
         --image) require_value "$@"; TARGET_IMAGE=$2; shift 2 ;;
         --docker-bin) require_value "$@"; DOCKER_BIN=$2; shift 2 ;;
         --ascend-env-script) require_value "$@"; ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
+        --build-driver-lib-dir) require_value "$@"; BUILD_DRIVER_LIB_DIR=$2; shift 2 ;;
         --compat-profile) require_value "$@"; COMPAT_PROFILE=$2; shift 2 ;;
         --patch) require_value "$@"; PATCH_FILES+=("$2"); shift 2 ;;
         --build-root) require_value "$@"; BUILD_ROOT=$2; shift 2 ;;
@@ -111,6 +117,22 @@ if [ -n "$ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
     case "$ASCEND_ENV_SCRIPT_OVERRIDE" in
         *$'\n'*|*$'\r'*|*$'\t'*) die "--ascend-env-script contains unsupported whitespace" ;;
     esac
+fi
+if [ -n "$BUILD_DRIVER_LIB_DIR" ]; then
+    case "$BUILD_DRIVER_LIB_DIR" in
+        /*) ;;
+        *) die "--build-driver-lib-dir must be an absolute path on the build host" ;;
+    esac
+    BUILD_DRIVER_LIB_DIR=$(readlink -f -- "$BUILD_DRIVER_LIB_DIR") || \
+        die "build driver lib directory is unavailable"
+    [ -d "$BUILD_DRIVER_LIB_DIR" ] || die "build driver lib directory is unavailable"
+    case "$BUILD_DRIVER_LIB_DIR" in
+        /|/usr|/usr/local|/usr/local/Ascend|/usr/local/Ascend/driver)
+            die "--build-driver-lib-dir must name the dedicated driver lib64 directory"
+            ;;
+    esac
+    find -L "$BUILD_DRIVER_LIB_DIR" -maxdepth 3 -name 'libascend_hal.so*' -print -quit | grep -q . || \
+        die "build driver lib directory does not contain libascend_hal.so"
 fi
 case "$COMPAT_PROFILE" in
     none)
@@ -271,7 +293,8 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 CONTEXT="$RUN_ROOT/context"
 STAGED_SOURCE="$CONTEXT/source"
-install -d -m 0755 "$STAGED_SOURCE"
+STAGED_BUILD_DRIVER="$CONTEXT/build-driver-lib64"
+install -d -m 0755 "$STAGED_SOURCE" "$STAGED_BUILD_DRIVER"
 
 # Copy a clean source snapshot. Generated wheels, VCS metadata and Python/C++
 # cache products are not accepted as source inputs.
@@ -295,6 +318,17 @@ hash_tree() {
             --numeric-owner -cf - .
     ) | sha256sum | awk '{print $1}'
 }
+
+BUILD_DRIVER_INJECTED=false
+BUILD_DRIVER_SHA256=
+if [ -n "$BUILD_DRIVER_LIB_DIR" ]; then
+    (
+        cd "$BUILD_DRIVER_LIB_DIR"
+        tar -cf - .
+    ) | tar --no-same-owner --no-same-permissions -xf - -C "$STAGED_BUILD_DRIVER"
+    BUILD_DRIVER_INJECTED=true
+    BUILD_DRIVER_SHA256=$(hash_tree "$STAGED_BUILD_DRIVER")
+fi
 
 sha256_file() {
     sha256sum -- "$1" | awk '{print $1}'
@@ -325,6 +359,11 @@ printf '    source: %s\n' "$SOURCE_ROOT"
 printf '    source origin: %s\n' "$SOURCE_ORIGIN"
 printf '    upstream revision: %s\n' "$UPSTREAM_REVISION"
 printf '    base image: %s\n' "$BASE_IMAGE"
+if [ "$BUILD_DRIVER_INJECTED" = true ]; then
+    printf '    build-only driver lib64: %s\n' "$BUILD_DRIVER_LIB_DIR"
+else
+    printf '    build-only driver lib64: not staged\n'
+fi
 if [ -n "$ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
     printf '    Ascend env override: %s\n' "$ASCEND_ENV_SCRIPT_OVERRIDE"
 else
@@ -400,6 +439,9 @@ case "$DRIVER_MOUNT_PRESENT_AT_BUILD" in
     true|false) ;;
     *) die "Docker build reported invalid driver presence" ;;
 esac
+if [ "$BUILD_DRIVER_INJECTED" = true ] && [ "$DRIVER_MOUNT_PRESENT_AT_BUILD" != true ]; then
+    die "Docker build did not detect the staged build-only driver libraries"
+fi
 
 IMAGE_ID=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$TARGET_IMAGE")
 IMAGE_OS=$("$DOCKER_BIN" image inspect --format '{{.Os}}' "$TARGET_IMAGE")
@@ -436,7 +478,7 @@ json_string() {
 install -d -m 0755 "$(dirname -- "$MANIFEST_PATH")"
 MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
 {
-    printf '{"schema_version":"4","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"schema_version":"5","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf ',"builder":"build_npu_burn_image.sh","source":{"origin":'; json_string "$SOURCE_ORIGIN"
     printf ',"path":'; json_string "$SOURCE_ROOT"
     printf ',"metadata_path":'; json_string "$SOURCE_METADATA_PATH"
@@ -476,6 +518,10 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"created":'; json_string "$IMAGE_CREATED"; printf '}'
     printf ',"runtime":{"ascend_env_script":'; json_string "$ASCEND_ENV_SCRIPT_SELECTED"
     printf ',"cann_version":'; json_string "$CANN_VERSION"; printf '}'
+    printf ',"build_driver":{"injected":%s' "$BUILD_DRIVER_INJECTED"
+    printf ',"source_path":'; json_string "$BUILD_DRIVER_LIB_DIR"
+    printf ',"sha256":'; json_string "$BUILD_DRIVER_SHA256"
+    printf ',"included_in_final_image":false}'
     printf ',"wheel":{"filename":'; json_string "$WHEEL_FILENAME"
     printf ',"sha256":'; json_string "${WHEEL_SHA256,,}"
     printf ',"installed_version":'; json_string "$PACKAGE_VERSION"

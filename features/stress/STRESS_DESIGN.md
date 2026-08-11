@@ -78,15 +78,17 @@ source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 
 预检并输出 manifest marker，而高成本 C++ 编译与安装 layer 可复用缓存。
 安装通过 `--no-index --no-deps --force-reinstall` 确保无网络且不会被基础镜像
 中的同版本包跳过。它不依赖登录 shell/profile，不设置
-`TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求构建期存在宿主机 driver、`npu-smi`
-或 NPU 设备。构建器只调用 image inspect/build，固定容器
+`TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求 `npu-smi` 或 NPU 设备。基础镜像
+不自带 HAL 时，可显式把宿主机 driver `lib64` 暂存到 builder stage；最终 stage
+重新从原基础镜像开始，只复制已验证 wheel、入口和许可证，不携带宿主机驱动。
+构建器只调用 image inspect/build，固定容器
 的创建、设备、挂载和运行仍完全属于管理员部署面。
 
 镜像标签和 manifest 同时记录 bundled/override 来源、上游 repository/revision、
 原始/补丁后源码及补丁哈希、profile、模板哈希、基础镜像 ID/摘要、目标镜像
 ID/摘要与架构，以及实际 Ascend 环境脚本、CANN 版本、wheel 文件名/
-SHA-256/安装包位置、HAL/import 预检和
-构建期 driver 是否存在。`driver_mount_present_at_build=false` 是允许的事实，不是
+SHA-256/安装包位置、HAL/import 预检、构建期 driver 是否注入及其哈希。
+`driver_mount_present_at_build=false` 是允许的事实，不是
 失败状态。manifest 用于确认“构建了什么”，不能证明宿主机驱动、
 设备健康或正式 NPU Burn 结果；这些事实必须在 A3 candidate 上由 describe 和
 分级实机验收确认。

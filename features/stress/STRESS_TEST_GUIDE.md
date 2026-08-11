@@ -165,6 +165,25 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
   --build-root /var/tmp/catmonitor-npu-burn-build
 ```
 
+A2/CANN 8.3 基础镜像需要宿主机 driver 才能 import torch_npu 时，使用仓库已审计
+profile：
+
+```bash
+sudo bash scripts/stress/build_npu_burn_image.sh \
+  --base-image quay.io/ascend/vllm-ascend:v0.12.0rc1 \
+  --image catmonitor/npuburn:a2-cann83 \
+  --compat-profile a2-cann83 \
+  --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
+  --build-driver-lib-dir /usr/local/Ascend/driver/lib64 \
+  --docker-bin /usr/bin/docker \
+  --build-root /var/tmp/catmonitor-npu-burn-build-a2
+```
+
+`--build-driver-lib-dir` 必须是宿主机专用 `lib64` 绝对目录且包含
+`libascend_hal.so`。目录只复制到 disposable builder stage；最终 stage 从原始
+base image 重建，不包含宿主机 driver。不要把 `/usr/local/Ascend/driver` 上层目录
+或 NPU 设备传给镜像构建器。
+
 构建器先核对内置逐文件哈希、元数据 schema、必需文件、LF 和符号链接；
 `build-root` 必须是专用绝对目录且不能包含空白。已有目标镜像或 manifest 默认
 拒绝覆盖，确认替换同一 candidate 时显式增加 `--force`。
@@ -194,7 +213,8 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 ```
 
 它不会调用 `docker run/create/start/stop/rm`，不会映射 NPU，也不会运行矩阵或
-SDC 负载。构建期允许 `/usr/local/Ascend/driver` 不存在，`npu-smi` 不可用时的
+SDC 负载。自带 HAL 的基础镜像允许宿主机 `/usr/local/Ascend/driver` 不存在；需要
+宿主机 driver 的基础镜像必须显式使用 build-only 输入。`npu-smi` 不可用时的
 警告也不是失败，只要 HAL 可解析且 Python 预检返回 0。Docker RUN
 使用无网络模式，pip 只安装本轮 wheel，不需要配置 PyPI 代理。默认 manifest 位于：
 
@@ -220,6 +240,7 @@ Ascend helper 的 SHA-256，基础/目标镜像身份、架构和
 `runtime.cann_version`、HAL/torch/torch_npu/TBE/wheel/version 验证结果、
 `wheel.filename`、`wheel.sha256`、安装版本/路径、
 `wheel.force_installed=true`、`wheel.network_access=false`、custom ops import，
+`build_driver.injected/source_path/sha256/included_in_final_image`、
 `validation.driver_mount_present_at_build` 以及
 `validation.npu_workload_run=false`。`driver_mount_present_at_build=false` 是合法的构建记录。
 这些信息只能证明镜像软件栈和包构建完成，不能证明 A3 驱动 ABI、
@@ -238,9 +259,9 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 ```
 
 命名 profile 必须至少带一个 `--patch`，`none` 禁止带补丁。构建器先 dry-run，
-再只修改临时源码快照；原始源码不会被写回。A2 上验证过的补丁不能默认带到 A3。
-当前仓库没有预置 A2/A3 兼容补丁；不得在没有真实故障、审计和实机验收的情况下
-虚构补丁。
+再只修改临时源码快照；原始源码不会被写回。A2 上验证过的 `a2-cann83.patch`
+不能默认带到 A3。仓库没有预置 A3 兼容补丁；不得在没有真实故障、审计和实机
+验收的情况下虚构补丁。
 
 仅做上游升级或开发验证时，可显式覆盖来源；这不是发布构建的常规用法：
 

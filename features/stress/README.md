@@ -72,6 +72,23 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
   --compat-profile none
 ```
 
+Ascend 910B4（A2）、CANN 8.3.RC2、torch/torch_npu 2.8 使用已审计的
+`a2-cann83` profile。若基础镜像依赖宿主机驱动库才能完成 import，可将
+driver `lib64` 作为仅构建阶段输入：
+
+```bash
+sudo bash scripts/stress/build_npu_burn_image.sh \
+  --base-image quay.io/ascend/vllm-ascend:v0.12.0rc1 \
+  --image catmonitor/npuburn:a2-cann83 \
+  --compat-profile a2-cann83 \
+  --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
+  --build-driver-lib-dir /usr/local/Ascend/driver/lib64
+```
+
+构建采用多阶段镜像：宿主机驱动只进入 disposable builder，用于 HAL、torch_npu、
+custom ops 和 wheel 验证；最终运行镜像从原始基础镜像重新开始，不包含这份驱动输入。
+manifest 会记录 driver 输入哈希以及 `included_in_final_image=false`。
+
 构建会在 wheel 之前检查 `libascend_hal.so`、torch、torch_npu 和 TBE，再执行
 wheel 构建、纯本地强制重装、`ascend_npu_burn`/custom ops import 与
 `npu-burn --version`。安装使用 `--no-index --no-deps --force-reinstall`，即使

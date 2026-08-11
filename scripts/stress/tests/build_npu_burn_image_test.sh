@@ -28,6 +28,14 @@ assert_fails() {
     fi
 }
 
+DOCKERFILE="$REPO_ROOT/docker/stress/npu/Dockerfile"
+wheel_install_line=$(grep -nF '# C. Replace any same-version package' "$DOCKERFILE" | cut -d: -f1)
+validation_nonce_line=$(grep -nF 'ARG BUILD_VALIDATION_NONCE' "$DOCKERFILE" | cut -d: -f1)
+[ -n "$wheel_install_line" ] && [ -n "$validation_nonce_line" ] || \
+    fail 'Dockerfile validation/cache markers are unavailable'
+[ "$validation_nonce_line" -gt "$wheel_install_line" ] || \
+    fail 'BUILD_VALIDATION_NONCE invalidates the native wheel build cache'
+
 SOURCE_BUNDLE="$TEST_ROOT/source tree/override-bundle"
 SOURCE="$SOURCE_BUNDLE/source"
 SOURCE_METADATA="$SOURCE_BUNDLE/UPSTREAM"
@@ -143,7 +151,11 @@ case "${1-}" in
         printf 'Using Ascend environment:\n%s\n' "$selected_env"
         printf 'CATMONITOR_ASCEND_ENV_SCRIPT=%s\n' "$selected_env"
         printf 'CATMONITOR_CANN_VERSION=9.0.1\n'
-        printf 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=false\n'
+        if find -L "$context/build-driver-lib64" -maxdepth 3 -name 'libascend_hal.so*' -print -quit | grep -q .; then
+            printf 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=true\n'
+        else
+            printf 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=false\n'
+        fi
         if [ "${FAKE_DOCKER_BUILD_FAIL-}" = hal ]; then
             printf 'ERROR: Ascend build environment preflight failed\n' >&2
             printf 'libascend_hal:\n  unresolved: fixture failure\n' >&2
@@ -186,6 +198,16 @@ assert_fails "$TEST_ROOT/relative-ascend-env.log" \
     --ascend-env-script relative/set_env.sh
 assert_contains "$TEST_ROOT/relative-ascend-env.log" '--ascend-env-script must be an absolute path'
 
+assert_fails "$TEST_ROOT/relative-build-driver.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$TEST_ROOT/relative-driver-build" \
+    --build-driver-lib-dir relative/driver/lib64
+assert_contains "$TEST_ROOT/relative-build-driver.log" \
+    '--build-driver-lib-dir must be an absolute path on the build host'
+
 assert_fails "$TEST_ROOT/missing-base-image.log" \
     bash "$BUILD_SCRIPT" \
     --base-image missing-base:test \
@@ -209,7 +231,7 @@ bash "$BUILD_SCRIPT" \
     fail 'bundled source tree was modified'
 [ -f "$MANIFEST" ] || fail 'manifest was not created'
 python3 -m json.tool "$MANIFEST" >/dev/null
-assert_contains "$MANIFEST" '"schema_version":"4"'
+assert_contains "$MANIFEST" '"schema_version":"5"'
 assert_contains "$MANIFEST" '"origin":"bundled"'
 assert_contains "$MANIFEST" '"upstream_revision":"381028b688a70e881d97477d7fa1ae8f2a26288e"'
 assert_contains "$MANIFEST" '"profile":"none"'
@@ -265,6 +287,28 @@ assert_contains "$FAKE_DOCKER_ROOT/context-readme.md" 'isolated patch fixture'
 [ "$BUNDLED_BEFORE" = "$(sha256sum "$BUNDLED_SOURCE/README.md" | awk '{print $1}')" ] || \
     fail 'compatibility patch modified the vendored source tree'
 assert_contains "$BUNDLED_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"origin":"bundled"'
+
+A2_PATCH="$REPO_ROOT/scripts/stress/patches/ascend_npu_burn/a2-cann83.patch"
+A2_PATCH_ROOT="$TEST_ROOT/a2-patch-build"
+A2_DRIVER_LIB="$TEST_ROOT/a2-driver/lib64"
+install -d -m 0755 "$A2_DRIVER_LIB"
+printf 'fixture driver library\n' >"$A2_DRIVER_LIB/libascend_hal.so"
+[ -f "$A2_PATCH" ] || fail 'A2 compatibility patch is unavailable'
+bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:a2-cann83 \
+    --image catmonitor/npuburn:a2-cann83-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --compat-profile a2-cann83 \
+    --patch "$A2_PATCH" \
+    --build-driver-lib-dir "$A2_DRIVER_LIB" \
+    --build-root "$A2_PATCH_ROOT"
+assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'choices=["A2", "A3", "A5"]'
+assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"profile":"a2-cann83"'
+assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" 'a2-cann83.patch'
+assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"build_driver":{"injected":true'
+assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"included_in_final_image":false'
+[ "$BUNDLED_BEFORE" = "$(sha256sum "$BUNDLED_SOURCE/README.md" | awk '{print $1}')" ] || \
+    fail 'A2 compatibility patch modified the vendored source tree'
 
 OVERRIDE_ROOT="$TEST_ROOT/override-build"
 OVERRIDE_MANIFEST="$OVERRIDE_ROOT/manifests/npu-burn-image-manifest.json"
@@ -471,6 +515,10 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_bui
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_NPU_DEVICE_COUNT=1'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'cd /tmp'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY build-driver-lib64/'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${BASE_IMAGE} AS npuburn_runtime'
 NORMALIZED_DOCKERFILE=$(tr '\n' ' ' <"$REPO_ROOT/docker/stress/npu/Dockerfile")
 printf '%s\n' "$NORMALIZED_DOCKERFILE" | grep -Eq \
     'python3 -m pip install .*--no-index .*--no-cache-dir .*--no-deps .*--force-reinstall .*"\$1"' || \
@@ -484,16 +532,21 @@ if grep -Fq 'test -d /usr/local/Ascend/driver' "$REPO_ROOT/docker/stress/npu/Doc
 fi
 PREFLIGHT_LINE=$(grep -n 'catmonitor_ascend_build_preflight' "$REPO_ROOT/docker/stress/npu/Dockerfile" | head -n 1 | cut -d: -f1)
 WHEEL_BUILD_LINE=$(grep -n 'bash build/build.sh' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
-WHEEL_INSTALL_LINE=$(grep -n -- '--force-reinstall' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+WHEEL_INSTALL_LINE=$(grep -n -- '--force-reinstall' "$REPO_ROOT/docker/stress/npu/Dockerfile" | head -n 1 | cut -d: -f1)
+RUNTIME_INSTALL_LINE=$(grep -n -- '--force-reinstall' "$REPO_ROOT/docker/stress/npu/Dockerfile" | tail -n 1 | cut -d: -f1)
 PACKAGE_VALIDATE_LINE=$(grep -n 'CATMONITOR_PACKAGE_VERSION' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
 [ "$PREFLIGHT_LINE" -lt "$WHEEL_BUILD_LINE" ] || fail 'Ascend preflight must run before wheel build'
 [ "$WHEEL_BUILD_LINE" -lt "$WHEEL_INSTALL_LINE" ] || fail 'wheel build and install must use separate ordered layers'
 [ "$WHEEL_INSTALL_LINE" -lt "$PACKAGE_VALIDATE_LINE" ] || fail 'package validation must follow wheel installation'
+[ "$PACKAGE_VALIDATE_LINE" -lt "$RUNTIME_INSTALL_LINE" ] || fail 'clean runtime installation must follow builder validation'
 [ "$(grep -c '^RUN set -euo pipefail' "$REPO_ROOT/docker/stress/npu/Dockerfile")" -ge 5 ] || \
     fail 'Dockerfile must keep preparation, preflight, wheel build, install, and validation layers separate'
 if grep -Eq '(^|[[:space:]])(npu-smi|npu-burn)([[:space:]]|$)' \
     "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'Dockerfile must not execute an NPU workload'
+fi
+if grep -Eq '^COPY --from=npuburn_builder .*driver' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
+    fail 'final image must not copy staged host driver libraries from the builder'
 fi
 
 ENTRYPOINT_LOG="$TEST_ROOT/entrypoint.log"

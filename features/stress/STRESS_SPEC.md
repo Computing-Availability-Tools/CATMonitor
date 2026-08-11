@@ -50,7 +50,8 @@ AscendNPUBurn 上游源码和管理员已审批、已拉取或加载到本地的
 基础镜像构建目标镜像。标准构建必须只要求 `--base-image` 和 `--image`；
 `--source` 与 `--source-metadata` 只作为上游升级、开发和兼容性验证的显式覆盖
 入口。构建器还必须支持 `--docker-bin`、`--compat-profile`、可重复的 `--patch`、
-`--build-root`、`--manifest`、`--force` 和可选的 `--ascend-env-script`。
+`--build-root`、`--manifest`、`--force`、可选的 `--ascend-env-script`，以及只进入
+builder stage 的可选 `--build-driver-lib-dir`。
 
 内置源码必须位于 `third_party/ascend_npu_burn/source`，保留上游许可证，并用
 机器可读 `UPSTREAM`、审计说明和逐文件 SHA-256 清单固定 repository、revision、
@@ -63,6 +64,10 @@ Git tree、归档哈希及许可证。源码必须与所记录上游修订版一
 补丁。补丁只能应用到隔离的源码快照，不能修改调用者的原始源码目录。仓库不
 内置未经 A3 实机失败证明所必需的 A3 专用补丁。
 
+仓库内置的 `a2-cann83.patch` 仅适用于已实机验证的 Ascend 910B4（A2）、
+CANN 8.3.RC2、torch 2.8 和 torch_npu 2.8 组合；使用时必须显式选择
+`--compat-profile a2-cann83`。该补丁不得隐式应用到 A3/A5。
+
 基础镜像必须包含构建所需的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE。
 构建必须使用 Bash 显式 source 已发现的 CANN 环境，不得依赖登录 shell、
 profile 或默认关闭 torch backend autoload。发现顺序为：显式 override、
@@ -71,7 +76,10 @@ profile 或默认关闭 torch backend autoload。发现顺序为：显式 overri
 
 镜像构建只允许完成 HAL/import 预检、源码构建、wheel 安装、NPU Burn
 import 和 `npu-burn --version` 检查；不得映射 NPU 设备、创建或运行容器，也不得
-执行 NPU 负载。构建期不要求 `/usr/local/Ascend/driver`、`npu-smi` 或设备存在。
+执行 NPU 负载。自带 HAL 的基础镜像不要求宿主机 driver、`npu-smi` 或设备存在。
+若基础镜像只在挂载宿主机 driver 后才能 import torch_npu，管理员可显式提供
+`--build-driver-lib-dir`；构建器必须使用多阶段构建，只将其放入 builder stage，
+不得复制到最终运行镜像，也不得借此映射 NPU 设备。
 管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配，以及后续固定
 容器的 device、volume、env 和生命周期。
 
@@ -93,7 +101,8 @@ import 和 `npu-burn --version` 检查；不得映射 NPU 设备、创建或运�
 - 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint/
   Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
   CANN 版本、wheel 文件名/SHA-256/安装版本与路径、离线强制重装事实、
-  HAL/import/custom ops/wheel/version 校验、构建期 driver 存在性以及
+  HAL/import/custom ops/wheel/version 校验、构建期 driver 是否注入、输入哈希、
+  最终镜像不包含该输入的事实以及
   “未执行 NPU 负载”的事实；
 - 将上游 Mulan PSL v2 许可证随镜像保留。
 
