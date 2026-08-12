@@ -92,6 +92,12 @@ func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 		totalScore += score.Score
 	}
 
+	if chassisMetrics, ok := byComponent["chassis"]; ok {
+		score := evaluateChassis(chassisMetrics, scheme.Chassis)
+		components["chassis"] = score
+		totalScore += score.Score
+	}
+
 	serverType := "cpu_only"
 	if scheme.GPU > 0 {
 		if _, hasGPU := byComponent["gpu"]; hasGPU {

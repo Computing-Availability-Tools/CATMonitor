@@ -15,6 +15,8 @@ const MANIFEST = {
          key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
   network: { title: '网络', headline: null,
              key: [ 'throughput', 'packet_count', 'error_count', 'connection_count' ] },
+  chassis: { title: '机箱', headline: null,
+             key: [ 'power', 'inlet_temp', 'outlet_temp', 'fan_speed', 'fan_power' ] },
 };
 
 const METRIC_NAMES = {
@@ -109,6 +111,11 @@ const RULE_TEXT = {
   'error_count>10':  '网络错误包数超过 10',
   'time_wait>2000':  'TIME_WAIT 连接数超过 2000',
   'estab>10000':     'ESTABLISHED 连接数超过 10000',
+  // Chassis
+  'inlet_temp>40':  '进风口温度超过 40°C',
+  'inlet_temp>35':  '进风口温度超过 35°C',
+  'outlet_temp>60': '出风口温度超过 60°C',
+  'outlet_temp>50': '出风口温度超过 50°C',
 };
 
 // Maps a static spec metric name to (display type, the label key that holds
