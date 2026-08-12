@@ -208,7 +208,8 @@ base image 重建，不包含宿主机 driver。不要把 `/usr/local/Ascend/dri
 隔离复制源码 → 发现并 source CANN 环境
              → libascend_hal + torch/torch_npu/TBE 预检
              → build/build.sh → 离线强制重装唯一 wheel
-             → import ascend_npu_burn/custom_ops → npu-burn --version
+             → 校验安装包元数据 → import ascend_npu_burn/custom_ops
+             → 检查运行入口存在且可执行
              → 校验镜像标签 → 写 manifest
 ```
 

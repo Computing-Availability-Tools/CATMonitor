@@ -51,8 +51,9 @@ RUN set -euo pipefail; \
         "$1"
 
 # D. Re-run read-only preflight and validate the wheel in an uncached layer.
-# The explicit device count makes --version deterministic in containers whose
-# lscpu output hides socket/NUMA data; it is not persisted as a runtime default.
+# Build validation must not launch the runtime CLI: importing its command module
+# performs NUMA discovery, which requires runtime topology that a Docker build
+# environment is not required to expose.
 ARG BUILD_VALIDATION_NONCE
 RUN set -euo pipefail; \
     : "${BUILD_VALIDATION_NONCE:?build validation nonce is required}"; \
@@ -68,12 +69,13 @@ RUN set -euo pipefail; \
     package_version=$(python3 -c 'import importlib.metadata as metadata; print(metadata.version("ascend-npu-burn"))'); \
     package_file=$(python3 -c 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'); \
     python3 -c 'import ascend_npu_burn.custom_ops.custom_ops_lib'; \
+    [ -x /usr/local/bin/catmonitor-npu-burn ]; \
     printf 'CATMONITOR_WHEEL_FILENAME=%s\n' "$wheel_filename"; \
     printf 'CATMONITOR_WHEEL_SHA256=%s\n' "$wheel_sha256"; \
     printf 'CATMONITOR_PACKAGE_VERSION=%s\n' "$package_version"; \
     printf 'CATMONITOR_PACKAGE_FILE=%s\n' "$package_file"; \
     printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'; \
-    CATMONITOR_NPU_DEVICE_COUNT=1 /usr/local/bin/catmonitor-npu-burn --version
+    printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'
 
 
 FROM ${BASE_IMAGE} AS npuburn_runtime

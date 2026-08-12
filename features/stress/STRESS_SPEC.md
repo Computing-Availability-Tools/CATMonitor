@@ -74,8 +74,9 @@ profile 或默认关闭 torch backend autoload。发现顺序为：显式 overri
 `ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash`、唯一的
 `cann-*/set_env.sh`。多个 versioned 路径必须拒绝并要求显式 override。
 
-镜像构建只允许完成 HAL/import 预检、源码构建、wheel 安装、NPU Burn
-import 和 `npu-burn --version` 检查；不得映射 NPU 设备、创建或运行容器，也不得
+镜像构建只允许完成 HAL/import 预检、源码构建、wheel 安装、安装包元数据、NPU Burn
+import、custom ops import 和入口文件可执行性检查；不得调用依赖 NUMA/NPU 拓扑的
+运行时 CLI，不得映射 NPU 设备、创建或运行容器，也不得
 执行 NPU 负载。自带 HAL 的基础镜像不要求宿主机 driver、`npu-smi` 或设备存在。
 若基础镜像只在挂载宿主机 driver 后才能 import torch_npu，管理员可显式提供
 `--build-driver-lib-dir`；构建器必须使用多阶段构建，只将其放入 builder stage，

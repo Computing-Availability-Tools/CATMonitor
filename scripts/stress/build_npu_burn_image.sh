@@ -65,8 +65,9 @@ Profile rules:
   * Any other safe profile name requires at least one explicit --patch.
   * Patches are applied only to the isolated source snapshot, never in place.
 
-The Docker build verifies imports and `npu-burn --version`. It does not run an
-NPU workload and never calls docker run/create/start/stop/rm.
+The Docker build verifies installed package metadata, imports, and the entrypoint
+file. Runtime CLI, NUMA, and NPU validation happen only after image creation. The
+builder never calls docker run/create/start/stop/rm.
 EOF
 }
 
@@ -424,6 +425,8 @@ PACKAGE_FILE=$(build_marker CATMONITOR_PACKAGE_FILE) || \
     die "Docker build did not report the installed package path"
 [ "$(build_marker CATMONITOR_CUSTOM_OPS_IMPORT)" = PASS ] || \
     die "Docker build did not pass the custom ops import validation"
+[ "$(build_marker CATMONITOR_ENTRYPOINT_EXECUTABLE)" = PASS ] || \
+    die "Docker build did not report an executable NPU Burn entrypoint"
 case "$WHEEL_FILENAME" in
     ""|*/*|*\\*) die "Docker build reported an invalid wheel filename" ;;
 esac

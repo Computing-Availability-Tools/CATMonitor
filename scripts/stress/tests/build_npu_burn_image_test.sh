@@ -20,6 +20,12 @@ assert_contains() {
     grep -Fq -- "$2" "$1" || fail "$1 does not contain: $2"
 }
 
+assert_not_contains() {
+    if grep -Fq -- "$2" "$1"; then
+        fail "$1 unexpectedly contains: $2"
+    fi
+}
+
 assert_fails() {
     local log=$1
     shift
@@ -170,6 +176,7 @@ case "${1-}" in
         printf 'CATMONITOR_PACKAGE_VERSION=26.1.0+torch.2.10.0\n'
         printf 'CATMONITOR_PACKAGE_FILE=/usr/local/lib/python3.12/site-packages/ascend_npu_burn/__init__.py\n'
         printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'
+        printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'
         printf '%s\n' "$image" >"$FAKE_DOCKER_ROOT/image"
         printf 'Successfully built fixture-image-id\n'
         ;;
@@ -512,10 +519,13 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'SHELL ["/bin/bash", "
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${ASCEND_ENV_SCRIPT}'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_source_ascend_env'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_build_preflight'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'metadata.version("ascend-npu-burn")'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_NPU_DEVICE_COUNT=1'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '[ -x /usr/local/bin/catmonitor-npu-burn ]'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_NPU_DEVICE_COUNT'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'cd /tmp'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY build-driver-lib64/'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${BASE_IMAGE} AS npuburn_runtime'

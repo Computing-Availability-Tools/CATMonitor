@@ -93,8 +93,9 @@ custom ops 和 wheel 验证；最终运行镜像从原始基础镜像重新开�
 manifest 会记录 driver 输入哈希以及 `included_in_final_image=false`。
 
 构建会在 wheel 之前检查 `libascend_hal.so`、torch、torch_npu 和 TBE，再执行
-wheel 构建、纯本地强制重装、`ascend_npu_burn`/custom ops import 与
-`npu-burn --version`。安装使用 `--no-index --no-deps --force-reinstall`，即使
+wheel 构建、纯本地强制重装、安装包元数据、`ascend_npu_burn`/custom ops import
+与入口文件可执行性检查。构建阶段不会启动依赖 NUMA/NPU 拓扑的运行时 CLI。安装使用
+`--no-index --no-deps --force-reinstall`，即使
 基础镜像存在同版本包，最终镜像也必须使用本轮固定源码生成的 wheel。它不要求
 `/usr/local/Ascend/driver`、`npu-smi` 或 NPU 设备，不创建运行容器，也不执行 NPU
 压测。生成的
