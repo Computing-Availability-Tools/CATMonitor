@@ -149,6 +149,7 @@ case "${1-}" in
         [ -f "$dockerfile" ]
         [ -f "$context/entrypoint.sh" ]
         [ -f "$context/ascend_env.sh" ]
+        [ -f "$context/validate_entrypoint.sh" ]
         [ -f "$context/source/LICENSE.md" ]
         cp "$context/source/ascend_npu_burn/npu_burn.py" "$FAKE_DOCKER_ROOT/context-npu-burn.py"
         cp "$context/source/README.md" "$FAKE_DOCKER_ROOT/context-readme.md" 2>/dev/null || true
@@ -255,6 +256,7 @@ assert_contains "$MANIFEST" '"installed_version":"26.1.0+torch.2.10.0"'
 assert_contains "$MANIFEST" '"force_installed":true'
 assert_contains "$MANIFEST" '"network_access":false'
 assert_contains "$MANIFEST" '"custom_ops_import":true'
+assert_contains "$MANIFEST" '"entrypoint_validator_sha256":"'
 assert_contains "$MANIFEST" '"driver_mount_present_at_build":false'
 assert_contains "$MANIFEST" '"npu_workload_run":false'
 assert_contains "$FAKE_DOCKER_ROOT/network" 'none'
@@ -522,8 +524,9 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_bui
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'metadata.version("ascend-npu-burn")'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '[ -x /usr/local/bin/catmonitor-npu-burn ]'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '[ -x /usr/local/bin/catmonitor-npu-burn ]'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_NPU_DEVICE_COUNT'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'cd /tmp'
@@ -558,6 +561,29 @@ fi
 if grep -Eq '^COPY --from=npuburn_builder .*driver' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'final image must not copy staged host driver libraries from the builder'
 fi
+
+ENTRYPOINT_VALIDATOR="$REPO_ROOT/docker/stress/npu/validate_entrypoint.sh"
+assert_contains "$ENTRYPOINT_VALIDATOR" "stat -c '%a'"
+assert_contains "$ENTRYPOINT_VALIDATOR" 'mode_value & 0111'
+if grep -Eq '(^|[[:space:]])-x([[:space:]]|$)' "$ENTRYPOINT_VALIDATOR"; then
+    fail 'build-time entrypoint validator must not use test -x'
+fi
+VALIDATOR_FIXTURE="$TEST_ROOT/validator-entrypoint"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$VALIDATOR_FIXTURE"
+chmod 0755 "$VALIDATOR_FIXTURE"
+bash "$ENTRYPOINT_VALIDATOR" "$VALIDATOR_FIXTURE"
+chmod 0644 "$VALIDATOR_FIXTURE"
+assert_fails "$TEST_ROOT/validator-0644.log" \
+    bash "$ENTRYPOINT_VALIDATOR" "$VALIDATOR_FIXTURE"
+assert_contains "$TEST_ROOT/validator-0644.log" 'has no execute mode bit'
+printf '' >"$VALIDATOR_FIXTURE"
+chmod 0755 "$VALIDATOR_FIXTURE"
+assert_fails "$TEST_ROOT/validator-empty.log" \
+    bash "$ENTRYPOINT_VALIDATOR" "$VALIDATOR_FIXTURE"
+assert_contains "$TEST_ROOT/validator-empty.log" 'entrypoint is empty'
+assert_fails "$TEST_ROOT/validator-directory.log" \
+    bash "$ENTRYPOINT_VALIDATOR" "$TEST_ROOT"
+assert_contains "$TEST_ROOT/validator-directory.log" 'entrypoint is not a regular file'
 
 ENTRYPOINT_LOG="$TEST_ROOT/entrypoint.log"
 export ENTRYPOINT_LOG

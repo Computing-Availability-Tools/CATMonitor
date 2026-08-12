@@ -10,6 +10,7 @@ REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd -P)
 DOCKERFILE_TEMPLATE="$REPO_ROOT/docker/stress/npu/Dockerfile"
 ENTRYPOINT_TEMPLATE="$REPO_ROOT/docker/stress/npu/entrypoint.sh"
 ASCEND_ENV_TEMPLATE="$REPO_ROOT/docker/stress/npu/ascend_env.sh"
+ENTRYPOINT_VALIDATOR_TEMPLATE="$REPO_ROOT/docker/stress/npu/validate_entrypoint.sh"
 BUNDLED_SOURCE="$REPO_ROOT/third_party/ascend_npu_burn/source"
 BUNDLED_METADATA="$REPO_ROOT/third_party/ascend_npu_burn/UPSTREAM"
 
@@ -267,7 +268,11 @@ case "$MANIFEST_PATH" in "$SOURCE_ROOT"|"$SOURCE_ROOT"/*) die "--manifest cannot
 [ -f "$DOCKERFILE_TEMPLATE" ] || die "Dockerfile template is unavailable"
 [ -f "$ENTRYPOINT_TEMPLATE" ] || die "entrypoint template is unavailable"
 [ -f "$ASCEND_ENV_TEMPLATE" ] || die "Ascend environment helper template is unavailable"
-for shell_template in "$ENTRYPOINT_TEMPLATE" "$ASCEND_ENV_TEMPLATE"; do
+[ -f "$ENTRYPOINT_VALIDATOR_TEMPLATE" ] || die "entrypoint validator template is unavailable"
+for shell_template in \
+    "$ENTRYPOINT_TEMPLATE" \
+    "$ASCEND_ENV_TEMPLATE" \
+    "$ENTRYPOINT_VALIDATOR_TEMPLATE"; do
     if grep -q $'\r' "$shell_template"; then
         die "shell template must use LF line endings: $shell_template"
     fi
@@ -349,9 +354,11 @@ PATCHED_SOURCE_SHA256=$(hash_tree "$STAGED_SOURCE")
 install -m 0644 "$DOCKERFILE_TEMPLATE" "$CONTEXT/Dockerfile"
 install -m 0755 "$ENTRYPOINT_TEMPLATE" "$CONTEXT/entrypoint.sh"
 install -m 0644 "$ASCEND_ENV_TEMPLATE" "$CONTEXT/ascend_env.sh"
+install -m 0755 "$ENTRYPOINT_VALIDATOR_TEMPLATE" "$CONTEXT/validate_entrypoint.sh"
 DOCKERFILE_SHA256=$(sha256_file "$DOCKERFILE_TEMPLATE")
 ENTRYPOINT_SHA256=$(sha256_file "$ENTRYPOINT_TEMPLATE")
 ASCEND_ENV_SHA256=$(sha256_file "$ASCEND_ENV_TEMPLATE")
+ENTRYPOINT_VALIDATOR_SHA256=$(sha256_file "$ENTRYPOINT_VALIDATOR_TEMPLATE")
 BUILD_VALIDATION_NONCE="$(date -u +%s)-$$"
 DOCKER_BUILD_LOG="$RUN_ROOT/docker-build.log"
 
@@ -507,7 +514,8 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ']}'
     printf ',"templates":{"dockerfile_sha256":'; json_string "$DOCKERFILE_SHA256"
     printf ',"entrypoint_sha256":'; json_string "$ENTRYPOINT_SHA256"
-    printf ',"ascend_env_sha256":'; json_string "$ASCEND_ENV_SHA256"; printf '}'
+    printf ',"ascend_env_sha256":'; json_string "$ASCEND_ENV_SHA256"
+    printf ',"entrypoint_validator_sha256":'; json_string "$ENTRYPOINT_VALIDATOR_SHA256"; printf '}'
     printf ',"docker":{"path":'; json_string "$DOCKER_BIN"
     printf ',"server_version":'; json_string "$DOCKER_VERSION"; printf '}'
     printf ',"image":{"name":'; json_string "$TARGET_IMAGE"

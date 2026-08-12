@@ -11,6 +11,7 @@ SHELL ["/bin/bash", "-c"]
 WORKDIR /opt/catmonitor/npuburn-source
 COPY source/ /opt/catmonitor/npuburn-source/
 COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
+COPY validate_entrypoint.sh /usr/local/libexec/catmonitor/validate_entrypoint.sh
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 
 # Optional host driver libraries are staged only in this disposable builder
@@ -21,6 +22,7 @@ COPY build-driver-lib64/ /usr/local/Ascend/driver/lib64/
 # Prepare immutable CATMonitor helpers.
 RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn; \
+    chmod 0755 /usr/local/libexec/catmonitor/validate_entrypoint.sh; \
     chmod 0644 /usr/local/libexec/catmonitor/ascend_env.sh
 
 # A. Validate the build-capable Ascend software stack.
@@ -69,7 +71,7 @@ RUN set -euo pipefail; \
     package_version=$(python3 -c 'import importlib.metadata as metadata; print(metadata.version("ascend-npu-burn"))'); \
     package_file=$(python3 -c 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'); \
     python3 -c 'import ascend_npu_burn.custom_ops.custom_ops_lib'; \
-    [ -x /usr/local/bin/catmonitor-npu-burn ]; \
+    /usr/local/libexec/catmonitor/validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn; \
     printf 'CATMONITOR_WHEEL_FILENAME=%s\n' "$wheel_filename"; \
     printf 'CATMONITOR_WHEEL_SHA256=%s\n' "$wheel_sha256"; \
     printf 'CATMONITOR_PACKAGE_VERSION=%s\n' "$package_version"; \
