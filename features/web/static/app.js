@@ -641,7 +641,7 @@ function renderDetail(compKey, snap) {
 
   if (!collectors.some(c => c.component === compKey)) {
     const head = el('div', 'detail-head');
-    head.appendChild(anchor('#/', '← 概览', 'back'));
+  head.appendChild(anchor('#/', '← 概览', 'btn'));
     head.appendChild(elText('span', 'detail-title', '未找到该部件'));
     page.appendChild(head);
     page.appendChild(elText('div', 'empty', '部件 "' + compKey + '" 未注册'));
@@ -667,9 +667,13 @@ function renderDetail(compKey, snap) {
   page.appendChild(head);
 
   if (compHealth && compHealth.deductions && compHealth.deductions.length) {
-    const d = el('div', 'deductions');
-    d.appendChild(elText('div', 'deductions-title', '扣分项'));
-    const list = el('div', 'deductions-list');
+    const dpanel = el('div', 'panel deductions-panel');
+    const dph = el('div', 'panel-head');
+    dph.appendChild(elText('span', '', '扣分项'));
+    dph.appendChild(elText('span', 'sub', compHealth.deductions.length + ' 条'));
+    dpanel.appendChild(dph);
+    const dbody = el('div', 'panel-body');
+    const d = el('div', 'deductions-list');
     for (const dd of compHealth.deductions) {
       const text = RULE_TEXT[dd.rule] || dd.rule;
       const item = el('div', 'deduction-item');
@@ -677,10 +681,11 @@ function renderDetail(compKey, snap) {
         '<span class="deduction-icon">⚠</span>' +
         '<span class="deduction-text">' + text + '</span>' +
         '<span class="deduction-value">-' + dd.penalty + ' 分</span>';
-      list.appendChild(item);
+      d.appendChild(item);
     }
-    d.appendChild(list);
-    page.appendChild(d);
+    dbody.appendChild(d);
+    dpanel.appendChild(dbody);
+    page.appendChild(dpanel);
   }
 
   // trends
@@ -704,7 +709,7 @@ function renderDetail(compKey, snap) {
     page.appendChild(panel);
   }
 
-  // all metrics
+  // all metrics (grouped by name)
   const mpanel = el('div', 'panel');
   const mph = el('div', 'panel-head');
   mph.appendChild(elText('span', '', '全部指标'));
@@ -714,21 +719,40 @@ function renderDetail(compKey, snap) {
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
   } else {
-    const tbl = document.createElement('table');
-    tbl.className = 'table';
-    tbl.innerHTML = '<thead><tr><th>指标</th><th>值</th><th>标签</th></tr></thead>';
-    const tb = document.createElement('tbody');
+    const groups = {};
+    const order = [];
     for (const mt of metrics) {
-      const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td class="m-name">' + (METRIC_NAMES[mt.name] || mt.name) + '</td>' +
-        '<td class="m-val">' + fmt(mt.value) + ' ' + (mt.unit || '') + '</td>' +
-        '<td class="m-labels">' + labels + '</td>';
-      tb.appendChild(tr);
+      if (!groups[mt.name]) { groups[mt.name] = []; order.push(mt.name); }
+      groups[mt.name].push(mt);
     }
-    tbl.appendChild(tb);
-    mbody.appendChild(tbl);
+    for (const name of order) {
+      const items = groups[name];
+      const dispName = METRIC_NAMES[name] || name;
+      const unit = items[0].unit || '';
+      const grp = el('div', 'metric-group');
+      const gh = el('div', 'metric-group-head');
+      gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
+        (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
+        '<span class="metric-group-count">' + items.length + ' 条</span>' +
+        '<span class="metric-group-toggle">▾</span>';
+      const gb = el('div', 'metric-group-body');
+      for (const mt of items) {
+        const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+        const row = el('div', 'metric-row');
+        row.innerHTML =
+          '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
+          '<span class="metric-labels">' + labels + '</span>';
+        gb.appendChild(row);
+      }
+      gh.onclick = () => {
+        const open = gb.style.display !== 'none';
+        gb.style.display = open ? 'none' : '';
+        gh.querySelector('.metric-group-toggle').textContent = open ? '▸' : '▾';
+      };
+      grp.appendChild(gh);
+      grp.appendChild(gb);
+      mbody.appendChild(grp);
+    }
   }
   mpanel.appendChild(mbody);
   page.appendChild(mpanel);
