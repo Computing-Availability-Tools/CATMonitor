@@ -453,7 +453,6 @@ NPU_BURN_RUN_CASE="quant_matmul" # 与 NPU_BURN_GROUP 二选一
 NPU_BURN_GROUP=""
 NPU_BURN_DEVICE="all"            # 或 0,1,2,3
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
-NPU_BURN_EXEC_COUNT=1
 NPU_BURN_CHIP_GENERATION="A3"    # A2、A3 或 A5
 ```
 
@@ -468,17 +467,20 @@ NPU_BURN_RUNTIME_CANN="<管理员确认的实际版本>"
 NPU_BURN_RUNTIME_TORCH_NPU="<管理员确认的实际版本>"
 NPU_BURN_SOC_MODEL="<实际 A3 SoC>"
 
-# 这是容器内绝对路径；describe 会用 docker exec test -x 预检。
+# 这是容器内绝对路径；describe 会用 docker exec /usr/bin/test -x 预检。
 NPU_BURN_EXECUTABLE="/usr/local/bin/catmonitor-npu-burn"
 NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
-NPU_BURN_RUN_CASE="matmul"
+NPU_BURN_RUN_CASE="quant_matmul"
 NPU_BURN_GROUP=""
 NPU_BURN_DEVICE="0"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
-NPU_BURN_EXEC_COUNT=1
 NPU_BURN_CHIP_GENERATION="A3"
 ```
+
+`NPU_BURN_CHIP_GENERATION` 与 `NPU_BURN_RUN_CASE` 必须显式、成对设置，适配器
+不会自动把代际映射成 workload。当前已验证 A2 使用 `matmul`、A3 使用
+`quant_matmul`；这不是对所有上游版本的硬编码保证，部署前仍需按实际版本确认。
 
 `NPU_BURN_CONTAINER_IMAGE` 是声明的可复现镜像身份；运行容器的实际镜像不一致
 时预检失败。CANN、torch_npu 和 SoC 是管理员确认后的只读元数据，缺失时
@@ -734,15 +736,19 @@ A3 首次验收按三级推进，不要直接在全部设备运行长作业：
 
 1. 在固定容器内完成单卡 runtime smoke，验证 Docker、CANN、PyTorch、
    torch_npu 和设备访问；这一步由管理员按已审批 A3 环境执行，不经过 Web。
-2. 将部署脚本临时设为单设备、`NPU_BURN_RUN_CASE="matmul"`、较短内部时限和
-   `NPU_BURN_EXEC_COUNT=1`，通过 CLI 运行，要求本次 CSV 全部 PASS、
+2. 将部署脚本临时设为单设备、`NPU_BURN_RUN_CASE="quant_matmul"` 和较短内部
+   时限，通过 CLI 运行，要求本次 CSV 全部 PASS、
    `err_count=0` 且无残留进程。
-3. 短测通过后才切换到经过评审的正式 A3 用例/profile、设备范围和执行次数，
+3. 短测通过后才切换到经过评审的正式 A3 用例/profile 和设备范围，
    再做 CLI、取消/超时清理和 Web acceptance。
 
 矩阵 shape 属于镜像内已审批的 NPU Burn 用例配置，不进入 CATMonitor YAML，也
 不允许在 Web 任意编辑。需要 1024 smoke 或 4096 正式 profile 时，应先检查镜像
 内实际配置和构建 manifest，不能仅凭用例名称假定资源规模。
+
+上游 v26.1.0 虽解析 `--exec_count`，但执行链没有消费该值，受控测试也未改变
+执行时间、CSV 行数或实际 `run_count`。CATMonitor 因此不传递、不校验也不展示
+该无效参数。真正的单 case 循环次数由镜像内用例配置的 `run_count` 决定。
 
 需要机器可读输出时使用 `-o json`。表格中的成功状态显示为 `OK`，JSON 使用稳定
 内部状态 `healthy`，二者语义相同。

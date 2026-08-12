@@ -37,11 +37,11 @@ const metricInfo = {
   n: {label: '问题规模 N', unit: ''},
   nb: {label: '块大小 NB', unit: ''},
   process: {label: 'MPI 进程', unit: ''},
-  device_count: {label: 'NPU 设备', unit: 'cards'},
-  case_count: {label: '用例结果', unit: 'cases'},
-  passed_case_count: {label: '通过用例', unit: 'cases'},
-  failed_case_count: {label: '失败用例', unit: 'cases'},
-  error_count: {label: '检测错误', unit: ''},
+  devices: {label: 'NPU 设备', unit: 'cards'},
+  cases: {label: '用例结果', unit: 'cases'},
+  passed: {label: '通过用例', unit: 'cases'},
+  failed: {label: '失败用例', unit: 'cases'},
+  errors: {label: '检测错误', unit: ''},
   case_time_seconds: {label: '累计用例时间', unit: 's'}
 };
 const streamMetricOrder = ['copy_mb_s', 'scale_mb_s', 'add_mb_s', 'triad_mb_s'];
@@ -98,6 +98,25 @@ function shortHash(value) {
 }
 function profileValue(value, fallback) {
   return value === undefined || value === null || value === '' ? (fallback || '--') : String(value);
+}
+
+// New reports use the canonical NPU Burn protocol keys. Keep the aliases here,
+// at the read-only presentation boundary, so reports written by older versions
+// remain viewable without making the backend emit two schemas.
+function npuBurnValues(values) {
+  values = values || {};
+  return {
+    ...values,
+    devices: values.devices ?? values.device_count,
+    cases: values.cases ?? values.case_count,
+    passed: values.passed ?? values.passed_case_count,
+    failed: values.failed ?? values.failed_case_count,
+    errors: values.errors ?? values.error_count
+  };
+}
+
+function resultValues(item) {
+  return item.name === 'npu_burn' ? npuBurnValues(item.values) : (item.values || {});
 }
 function profileParameters(profile) {
   const values = {};
@@ -462,7 +481,7 @@ function createTrend(name, key, unit) {
 }
 
 function detailRows(item) {
-  const values = item.values || {};
+  const values = resultValues(item);
   const rows = [];
   if (Number.isFinite(item.duration_ms)) {
     rows.push(['CATMonitor 总耗时', duration(item.duration_ms)]);
@@ -479,9 +498,11 @@ function detailRows(item) {
     if (Number.isFinite(values.process)) rows.push(['MPI 进程', metricValue(values.process)]);
   }
   if (item.name === 'npu_burn') {
-    if (Number.isFinite(values.device_count)) rows.push(['NPU 设备', metricValue(values.device_count)]);
-    if (Number.isFinite(values.case_count)) rows.push(['结果行数', metricValue(values.case_count)]);
-    if (Number.isFinite(values.error_count)) rows.push(['检测错误', metricValue(values.error_count)]);
+    if (Number.isFinite(values.devices)) rows.push(['NPU 设备', metricValue(values.devices)]);
+    if (Number.isFinite(values.cases)) rows.push(['用例总数', metricValue(values.cases)]);
+    if (Number.isFinite(values.passed)) rows.push(['通过用例', metricValue(values.passed)]);
+    if (Number.isFinite(values.failed)) rows.push(['失败用例', metricValue(values.failed)]);
+    if (Number.isFinite(values.errors)) rows.push(['检测错误', metricValue(values.errors)]);
     if (Number.isFinite(values.case_time_seconds)) {
       rows.push(['累计用例时间', metricText(values.case_time_seconds, 's')]);
     }
@@ -496,7 +517,7 @@ function detailRows(item) {
 }
 
 function appendMetricContent(card, item, jobID) {
-  const values = item.values || {};
+  const values = resultValues(item);
   if ((item.name === 'hpl' || item.name === 'hpcg') && Number.isFinite(values.gflops)) {
     const primary = document.createElement('div');
     primary.className = 'primary-metric';
@@ -554,9 +575,13 @@ function appendMetricContent(card, item, jobID) {
     }
   }
 
-  if (item.name === 'npu_burn' && Number.isFinite(values.case_count)) {
+  if (item.name === 'npu_burn' && Number.isFinite(values.cases)) {
+    const passed = Number.isFinite(values.passed) ? values.passed : 0;
+    const failed = Number.isFinite(values.failed) ? values.failed : 0;
+    const errors = Number.isFinite(values.errors) ? values.errors : 0;
     const primary = document.createElement('div');
     primary.className = 'primary-metric';
+    if (failed > 0 || errors > 0) primary.classList.add('bad');
     const label = document.createElement('span');
     label.className = 'primary-metric-label';
     label.textContent = 'NPU Burn 用例结果';
@@ -564,12 +589,16 @@ function appendMetricContent(card, item, jobID) {
     line.className = 'primary-metric-line';
     const value = document.createElement('strong');
     value.className = 'primary-metric-value';
-    value.textContent = metricValue(values.passed_case_count || 0) + ' / ' + metricValue(values.case_count);
+    value.textContent = metricValue(passed) + ' / ' + metricValue(values.cases);
     const unit = document.createElement('span');
     unit.className = 'primary-metric-unit';
-    unit.textContent = 'PASS';
+    unit.textContent = 'cases passed';
     line.append(value, unit);
-    primary.append(label, line);
+    const summary = document.createElement('div');
+    summary.className = 'primary-metric-summary';
+    summary.textContent = metricValue(passed) + ' / ' + metricValue(values.cases) +
+      ' cases passed · ' + metricValue(failed) + ' failed · ' + metricValue(errors) + ' errors';
+    primary.append(label, line, summary);
     card.appendChild(primary);
   }
 

@@ -58,7 +58,6 @@ func TestDispatcherDescribeAscendNPUBurnIsReadOnly(t *testing.T) {
 		"NPU_BURN_GROUP":                    "group_basic",
 		"NPU_BURN_DEVICE":                   "0,1,2,3",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "300",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A3",
 	})
 	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
@@ -91,6 +90,7 @@ func TestDispatcherDescribeAscendNPUBurnDockerExecProfile(t *testing.T) {
 case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
   exec)
+    [ "$5" = '/usr/bin/test -x "$1"' ] || exit 97
     shift 2
     exec "$@"
     ;;
@@ -111,7 +111,6 @@ esac
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A2",
 	})
 	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
@@ -136,6 +135,64 @@ esac
 		parameters["soc"] != "Ascend 910B4" || parameters["chip_generation"] != "A2" {
 		t.Fatalf("unexpected container NPU Burn profile: %+v parameters=%v", profile, parameters)
 	}
+	if _, exists := parameters["execution_count"]; exists {
+		t.Fatalf("dead upstream exec_count must not be exposed: parameters=%v", parameters)
+	}
+}
+
+func TestDispatcherDescribeAscendNPUBurnRejectsMissingContainerExecutable(t *testing.T) {
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
+case "$1" in
+  inspect) printf 'true|catmonitor/npuburn:a3-candidate\n' ;;
+  exec)
+    [ "$5" = '/usr/bin/test -x "$1"' ] || exit 97
+    shift 2
+    exec "$@"
+    ;;
+  *) exit 98 ;;
+esac
+`)
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               "/missing/catmonitor-npu-burn",
+		"NPU_BURN_CONTAINER_RUNTIME":        docker,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a3",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a3-candidate",
+		"NPU_BURN_RUNTIME_CANN":             "9.0.1",
+		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.10.0.post2",
+		"NPU_BURN_SOC_MODEL":                "Ascend910_9382",
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "quant_matmul",
+		"NPU_BURN_DEVICE":                   "0",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_CHIP_GENERATION":          "A3",
+	})
+	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile ExecutionProfile
+	if err := json.Unmarshal(output, &profile); err != nil {
+		t.Fatalf("describe output is not JSON: %v: %s", err, output)
+	}
+	var containerAsset *AssetCheck
+	for index := range profile.Assets {
+		if profile.Assets[index].Name == "container" {
+			containerAsset = &profile.Assets[index]
+			break
+		}
+	}
+	if profile.Preflight.Status != CheckFail || containerAsset == nil ||
+		containerAsset.Status != CheckFail ||
+		!strings.Contains(containerAsset.Message, "container executable is unavailable") {
+		t.Fatalf("missing container executable was not rejected: %+v", profile)
+	}
 }
 
 func TestManagerAvailabilityReportsContainerPreflightFailures(t *testing.T) {
@@ -159,7 +216,6 @@ func TestManagerAvailabilityReportsContainerPreflightFailures(t *testing.T) {
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A2",
 	})
 	manager := NewManager(Config{

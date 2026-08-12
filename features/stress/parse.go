@@ -4,6 +4,7 @@ package stress
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,8 +20,10 @@ var (
 	hplExplicitFailed = regexp.MustCompile(`(?im)\bFAILED\s*$`)
 	hpcgGFLOPS        = regexp.MustCompile(`HPCG result is VALID with a GFLOP/s rating of=\s*([0-9]+(?:\.[0-9]+)?)`)
 	hpcgTime          = regexp.MustCompile(`Results are valid but execution time \(sec\) is=\s*([0-9]+(?:\.[0-9]+)?)`)
-	npuBurnSummary    = regexp.MustCompile(`(?m)^CATMONITOR_NPU_BURN_SUMMARY devices=([0-9]+) cases=([0-9]+) passed=([0-9]+) failed=([0-9]+) errors=([0-9]+) case_time_seconds=([0-9]+(?:\.[0-9]+)?)\s*$`)
+	npuBurnSummary    = regexp.MustCompile(`^CATMONITOR_NPU_BURN_SUMMARY\s+devices=(\S+)\s+cases=(\S+)\s+passed=(\S+)\s+failed=(\S+)\s+errors=(\S+)\s+case_time_seconds=(\S+)[ \t]*(?:\r?\n|$)`)
 )
+
+const npuBurnSummaryToken = "CATMONITOR_NPU_BURN_SUMMARY"
 
 type fileSignature struct {
 	size   int64
@@ -44,24 +47,41 @@ func parseBenchmark(name, output, resultDir string, hpcgBefore map[string]fileSi
 }
 
 func parseNPUBurn(output string) (map[string]float64, string, error) {
-	matches := npuBurnSummary.FindAllStringSubmatch(output, -1)
-	if len(matches) == 0 {
+	summaryIndex := strings.LastIndex(output, npuBurnSummaryToken)
+	if summaryIndex < 0 {
 		return nil, "", fmt.Errorf("Ascend NPU Burn validated summary not found")
 	}
-	match := matches[len(matches)-1]
-	keys := []string{"device_count", "case_count", "passed_case_count", "failed_case_count", "error_count", "case_time_seconds"}
-	values := make(map[string]float64, len(keys))
-	for index, key := range keys {
-		value, err := strconv.ParseFloat(match[index+1], 64)
-		if err != nil {
-			return nil, "", fmt.Errorf("Ascend NPU Burn summary has invalid %s", key)
-		}
-		values[key] = value
+	match := npuBurnSummary.FindStringSubmatch(output[summaryIndex:])
+	if len(match) != 7 {
+		return nil, "", fmt.Errorf("Ascend NPU Burn summary protocol error: malformed fields")
 	}
-	if values["device_count"] < 1 || values["case_count"] < 1 ||
-		values["passed_case_count"] != values["case_count"] ||
-		values["failed_case_count"] != 0 || values["error_count"] != 0 {
-		return nil, "", fmt.Errorf("Ascend NPU Burn summary did not report a complete pass")
+
+	integerKeys := []string{"devices", "cases", "passed", "failed", "errors"}
+	values := make(map[string]float64, 6)
+	for index, key := range integerKeys {
+		value, err := strconv.ParseUint(match[index+1], 10, 64)
+		if err != nil {
+			return nil, "", fmt.Errorf("Ascend NPU Burn summary protocol error: invalid %s", key)
+		}
+		values[key] = float64(value)
+	}
+	caseTime, err := strconv.ParseFloat(match[6], 64)
+	if err != nil || math.IsNaN(caseTime) || math.IsInf(caseTime, 0) || caseTime < 0 {
+		return nil, "", fmt.Errorf("Ascend NPU Burn summary protocol error: invalid case_time_seconds")
+	}
+	values["case_time_seconds"] = caseTime
+
+	if values["devices"] < 1 {
+		return nil, "", fmt.Errorf("Ascend NPU Burn summary protocol error: devices must be at least 1")
+	}
+	if values["cases"] < 1 {
+		return nil, "", fmt.Errorf("Ascend NPU Burn summary protocol error: cases must be at least 1")
+	}
+	if values["passed"]+values["failed"] != values["cases"] {
+		return nil, "", fmt.Errorf("Ascend NPU Burn summary protocol error: passed plus failed must equal cases")
+	}
+	if values["passed"] != values["cases"] || values["failed"] != 0 || values["errors"] != 0 {
+		return values, "result_csv", fmt.Errorf("Ascend NPU Burn summary did not report a complete pass")
 	}
 	return values, "result_csv", nil
 }

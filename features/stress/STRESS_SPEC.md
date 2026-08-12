@@ -156,6 +156,12 @@ YAML 不接收 benchmark 可执行路径。具体执行器、环境变量、MPI/
 `--output` 校验。HPCG 的 `result_dir` 仅供 Go
 核验本次结果文件，不用于定位可执行文件。
 
+NPU Burn 的芯片代际和 workload 必须在节点脚本中显式、成对配置，profile
+分别以 `chip_generation` 和 `workload` 暴露。CATMonitor 不做隐式
+generation-to-workload 映射；当前实机验证组合为 A2 + `matmul`、A3 +
+`quant_matmul`，但节点仍须按实际安装版本确认用例存在。当前上游未实际消费的
+参数不得进入模板配置、执行命令、describe、报告或 Web。
+
 CATMonitor 不是容器环境管理器。第一版不在 Go 中抽象 container executor，
 不接收 image/device/volume/env/command，不创建、启动、停止或删除容器。仓库
 脚本模板支持 `native`，以及对管理员预先启动并维护的固定容器执行
@@ -275,7 +281,9 @@ Web 只能选择 YAML 已启用且通过预检的项目，可为单次作业缩�
 HPL/HPCG 的 GFLOP/s 分别作为主指标，不得与问题规模、进程数或秒数混合归一化，
 也不得直接比较 HPL 与 HPCG。时间和运行参数使用独立详情区域。同一 benchmark
 存在至少两次历史性能值时可显示零基线趋势，但趋势不改变通过/失败状态。
-Ascend NPU Burn 显示设备数、结果行数、通过/失败数、错误数和累计用例时间，
+Ascend NPU Burn 显示设备数、结果行数、通过/失败数、错误数和累计用例时间；
+新报告只生成 `devices/cases/passed/failed/errors/case_time_seconds`，Web 仅在读取
+历史报告时兼容旧 key。失败摘要中的计数必须保留并突出显示，
 不将这些可靠性计数伪装成性能分数。
 
 ## 5. 验证要求

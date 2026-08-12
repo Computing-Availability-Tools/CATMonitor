@@ -32,22 +32,50 @@ func TestParseNPUBurnSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source != "result_csv" || values["device_count"] != 8 ||
-		values["case_count"] != 24 || values["passed_case_count"] != 24 ||
+	if source != "result_csv" || values["devices"] != 8 ||
+		values["cases"] != 24 || values["passed"] != 24 ||
+		values["failed"] != 0 || values["errors"] != 0 ||
 		values["case_time_seconds"] != 123.5 {
 		t.Fatalf("unexpected Ascend NPU Burn result: source=%q values=%v", source, values)
 	}
 }
 
-func TestParseNPUBurnRejectsIncompletePass(t *testing.T) {
-	for _, output := range []string{
-		"no validated summary\n",
-		"CATMONITOR_NPU_BURN_SUMMARY devices=8 cases=24 passed=23 failed=1 errors=1 case_time_seconds=123.5\n",
-		"CATMONITOR_NPU_BURN_SUMMARY devices=0 cases=0 passed=0 failed=0 errors=0 case_time_seconds=0\n",
-	} {
-		if _, _, err := parseNPUBurn(output); err == nil {
-			t.Fatalf("expected invalid NPU Burn result to fail: %q", output)
-		}
+func TestParseNPUBurnAcceptsSummaryGluedToPriorOutput(t *testing.T) {
+	output := "path string is NULLpath string is NULLCATMONITOR_NPU_BURN_SUMMARY devices=1 cases=2 passed=2 failed=0 errors=0 case_time_seconds=1.647\n"
+	values, _, err := parseNPUBurn(output)
+	if err != nil || values["devices"] != 1 || values["cases"] != 2 || values["passed"] != 2 {
+		t.Fatalf("real A3 glued summary was not parsed: err=%v values=%v", err, values)
+	}
+}
+
+func TestParseNPUBurnRejectsInvalidProtocolOrIncompletePass(t *testing.T) {
+	tests := []struct {
+		name      string
+		output    string
+		wantError string
+	}{
+		{name: "missing", output: "no validated summary\n", wantError: "validated summary not found"},
+		{name: "malformed fields", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=2 passed=2\n", wantError: "protocol error"},
+		{name: "malformed integer", output: "CATMONITOR_NPU_BURN_SUMMARY devices=one cases=2 passed=2 failed=0 errors=0 case_time_seconds=1\n", wantError: "protocol error: invalid devices"},
+		{name: "fractional integer", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=1.5 passed=1 failed=0 errors=0 case_time_seconds=1\n", wantError: "protocol error: invalid cases"},
+		{name: "malformed time", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=1 passed=1 failed=0 errors=0 case_time_seconds=soon\n", wantError: "protocol error: invalid case_time_seconds"},
+		{name: "negative time", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=1 passed=1 failed=0 errors=0 case_time_seconds=-1\n", wantError: "protocol error: invalid case_time_seconds"},
+		{name: "zero devices", output: "CATMONITOR_NPU_BURN_SUMMARY devices=0 cases=1 passed=1 failed=0 errors=0 case_time_seconds=0\n", wantError: "protocol error: devices must be at least 1"},
+		{name: "zero cases", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=0 passed=0 failed=0 errors=0 case_time_seconds=0\n", wantError: "protocol error: cases must be at least 1"},
+		{name: "accounting mismatch", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=3 passed=1 failed=1 errors=0 case_time_seconds=1\n", wantError: "protocol error: passed plus failed must equal cases"},
+		{name: "failed case", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=2 passed=1 failed=1 errors=0 case_time_seconds=1\n", wantError: "did not report a complete pass"},
+		{name: "SDC error", output: "CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=2 passed=2 failed=0 errors=1 case_time_seconds=1\n", wantError: "did not report a complete pass"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			values, _, err := parseNPUBurn(test.output)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("expected %q, got %v", test.wantError, err)
+			}
+			if (test.name == "failed case" || test.name == "SDC error") && values == nil {
+				t.Fatal("valid failure summary must retain metrics for unhealthy result rendering")
+			}
+		})
 	}
 }
 
@@ -146,6 +174,7 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`describe_hpcg`,
 		`describe_npu_burn`,
 		`probe_npu_container`,
+		`/usr/bin/test -x "$1"`,
 		`summarize_npu_burn_csv`,
 		`--sdc_detect`,
 	} {
@@ -170,6 +199,7 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		"--map-by",
 		"--bind-to",
 		"-mca",
+		`'test -x "$1"'`,
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("benchmark_check.sh contains host-specific or unsupported value %q", forbidden)
@@ -191,12 +221,18 @@ func TestStandaloneUIExposesDeploymentFailureDetails(t *testing.T) {
 		"benchmark-deployment",
 		"npuDeploymentSummary",
 		"profileValue(asset.message, '失败')",
+		"values.devices ?? values.device_count",
+		"values.cases ?? values.case_count",
+		"values.passed ?? values.passed_case_count",
+		"values.failed ?? values.failed_case_count",
+		"values.errors ?? values.error_count",
+		"cases passed · ",
 	} {
 		if !strings.Contains(string(javascript), required) {
 			t.Errorf("stress UI script does not expose %q", required)
 		}
 	}
-	for _, required := range []string{".benchmark-reason", ".benchmark-deployment"} {
+	for _, required := range []string{".benchmark-reason", ".benchmark-deployment", ".primary-metric.bad"} {
 		if !strings.Contains(string(stylesheet), required) {
 			t.Errorf("stress UI stylesheet does not contain %q", required)
 		}
@@ -212,15 +248,14 @@ func TestBundledDispatcherValidatesAscendNPUBurnCSV(t *testing.T) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nset -eu\nfor arg in \"$@\"; do [ \"$arg\" != --output ] || exit 9; done\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nmatmul,0,0,100,1,12.5,0,PASS,shape=test\\nmatmul,1,0,100,1,13.5,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nset -eu\nfor arg in \"$@\"; do [ \"$arg\" != --output ] || exit 9; [ \"$arg\" != --exec_count ] || exit 10; done\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nquant_matmul,0,0,100,1,12.5,0,PASS,shape=test\\nquant_matmul,1,0,100,1,13.5,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
 	script := configuredDispatcher(t, dir, map[string]string{
 		"NPU_BURN_EXECUTABLE":               npuBurn,
 		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
-		"NPU_BURN_RUN_CASE":                 "matmul",
+		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "0,1",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "300",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A3",
 	})
 	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
@@ -228,7 +263,7 @@ func TestBundledDispatcherValidatesAscendNPUBurnCSV(t *testing.T) {
 		t.Fatalf("configured Ascend NPU Burn dispatcher failed: %v: %s", err, output)
 	}
 	values, _, err := parseNPUBurn(string(output))
-	if err != nil || values["device_count"] != 2 || values["case_count"] != 2 ||
+	if err != nil || values["devices"] != 2 || values["cases"] != 2 ||
 		values["case_time_seconds"] != 26 {
 		t.Fatalf("unexpected validated NPU Burn output: err=%v values=%v output=%s", err, values, output)
 	}
@@ -262,7 +297,6 @@ esac
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A2",
 	})
 	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
@@ -270,7 +304,7 @@ esac
 		t.Fatalf("prepared-container NPU Burn failed: %v: %s", err, output)
 	}
 	values, _, err := parseNPUBurn(string(output))
-	if err != nil || values["device_count"] != 1 || values["case_count"] != 1 ||
+	if err != nil || values["devices"] != 1 || values["cases"] != 1 ||
 		values["case_time_seconds"] != 10.897049 {
 		t.Fatalf("unexpected container NPU Burn output: err=%v values=%v output=%s", err, values, output)
 	}
@@ -293,7 +327,6 @@ func TestBundledDispatcherRejectsAscendNPUBurnFailureCSV(t *testing.T) {
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "all",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "300",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A5",
 	})
 	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
@@ -323,7 +356,6 @@ func TestBundledDispatcherRejectsStaleAscendNPUBurnCSV(t *testing.T) {
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A2",
 	})
 	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
@@ -349,7 +381,6 @@ func TestBundledDispatcherRejectsAscendNPUBurnGlobalFailure(t *testing.T) {
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "all",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "300",
-		"NPU_BURN_EXEC_COUNT":               "1",
 		"NPU_BURN_CHIP_GENERATION":          "A3",
 	})
 	output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
@@ -819,6 +850,37 @@ func TestManagerRejectsAscendNPUBurnOuterTimeout(t *testing.T) {
 		report.Benchmarks[0].Status != StatusUnhealthy ||
 		!strings.Contains(report.Benchmarks[0].Message, "complete validated result") {
 		t.Fatalf("NPU Burn timeout must not be accepted as pass: %+v", report)
+	}
+}
+
+func TestManagerRetainsAscendNPUBurnFailureMetrics(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("script execution is Linux-only")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "benchmark_check.sh")
+	content := "#!/bin/sh\nprintf '%s\\n' 'CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=2 passed=1 failed=1 errors=1 case_time_seconds=4.5'\nexit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{
+		Enabled: true, ScriptPath: script, ReportPath: filepath.Join(dir, "stress-latest.json"),
+		DefaultBenchmarks: []string{"npu_burn"},
+		Benchmarks: map[string]BenchmarkConfig{
+			"npu_burn": {Enabled: true, Timeout: time.Second},
+		},
+	})
+	report, err := manager.Start(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report = waitForJob(t, manager, report.JobID)
+	result := report.Benchmarks[0]
+	if report.Status != StatusUnhealthy || result.Status != StatusUnhealthy ||
+		result.Source != "result_csv" || result.Values["cases"] != 2 ||
+		result.Values["passed"] != 1 || result.Values["failed"] != 1 ||
+		result.Values["errors"] != 1 {
+		t.Fatalf("NPU Burn failure metrics were not retained: %+v", report)
 	}
 }
 

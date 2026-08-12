@@ -59,7 +59,6 @@ NPU_BURN_RUN_CASE=""
 NPU_BURN_GROUP=""
 NPU_BURN_DEVICE="all"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
-NPU_BURN_EXEC_COUNT=1
 NPU_BURN_CHIP_GENERATION=""
 
 require_absolute_executable() {
@@ -255,7 +254,7 @@ probe_npu_container() {
         *) NPU_CONTAINER_MESSAGE="container executable path is not absolute"; return ;;
     esac
     if ! "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME" \
-        /bin/sh -c 'test -x "$1"' catmonitor "$NPU_BURN_EXECUTABLE" \
+        /bin/sh -c '/usr/bin/test -x "$1"' catmonitor "$NPU_BURN_EXECUTABLE" \
         >/dev/null 2>&1; then
         NPU_CONTAINER_MESSAGE="container executable is unavailable"
         return
@@ -572,7 +571,6 @@ describe_npu_burn() {
         *) failed=$((failed + 1)) ;;
     esac
     if ! is_positive_integer "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"; then failed=$((failed + 1)); fi
-    if ! is_positive_integer "$NPU_BURN_EXEC_COUNT"; then failed=$((failed + 1)); fi
     if [ -z "$NPU_BURN_DEVICE" ]; then failed=$((failed + 1)); fi
     case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
         true|false) ;;
@@ -633,8 +631,6 @@ describe_npu_burn() {
     emit_parameter sdc_detection "SDC detection" enabled
     printf ','
     emit_parameter internal_timeout "Per-case timeout" "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS" seconds
-    printf ','
-    emit_parameter execution_count "Execution count" "$NPU_BURN_EXEC_COUNT"
     printf '],"resources":{"mpi_processes":0,"threads_per_process":0,"total_workers":0,"runtime_seconds":%s,"problem_size":' \
         "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
     json_string "$npu_workload"
@@ -792,7 +788,6 @@ case "$benchmark_type" in
         esac
         require_absolute_directory "Ascend NPU Burn output directory" "$NPU_BURN_OUTPUT_DIR"
         require_positive_integer "NPU_BURN_INTERNAL_TIMEOUT_SECONDS" "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
-        require_positive_integer "NPU_BURN_EXEC_COUNT" "$NPU_BURN_EXEC_COUNT"
         if [ -z "$NPU_BURN_DEVICE" ]; then
             echo "NPU_BURN_DEVICE must not be empty."
             exit 1
@@ -814,7 +809,6 @@ case "$benchmark_type" in
             --device "$NPU_BURN_DEVICE"
             --sdc_detect
             --timeout "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
-            --exec_count "$NPU_BURN_EXEC_COUNT"
             --chip_generation "$NPU_BURN_CHIP_GENERATION"
         )
         if [ "$NPU_BURN_USE_DEFAULT_OUTPUT" = false ]; then

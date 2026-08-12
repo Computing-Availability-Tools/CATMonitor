@@ -46,6 +46,9 @@ revision、归档哈希和逐文件哈希记录在同目录的 `UPSTREAM*` 与
 或使用 `docker_exec` 调用一个已经运行且由管理员维护的固定容器；镜像、设备、挂载、
 环境和容器命令不进入 YAML/Web。`describe` 会把 backend、容器/镜像、CANN、
 torch_npu、SoC、芯片代际和用例作为只读 profile 参数展示并写入配置哈希。
+芯片代际和 workload 必须由节点管理员显式、成对配置；CATMonitor 不根据代际
+暗中改写用例。当前已验证组合为 A2 的 `matmul` 与 A3 的 `quant_matmul`，具体
+可用用例仍以所部署 NPU Burn 版本为准。
 当前上游版本默认从 `$HOME/.ascend_npu_burn/output` 读取结果，避免其自定义
 `--output` 校验缺陷。CATMonitor 只接受本次 `npu_burn_results.csv` 中所有结果
 均为 `PASS`、`err_count=0` 且全局设备汇总无 `FAIL` 的完整报告；外层超时不作为

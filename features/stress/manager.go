@@ -402,10 +402,24 @@ func (m *Manager) runBenchmark(ctx context.Context, name string, timeoutOverride
 		return finish(StatusCancelled, "benchmark cancelled")
 	}
 	if err != nil {
+		if name == "npu_burn" && strings.Contains(outputText, npuBurnSummaryToken) {
+			values, source, parseErr := parseNPUBurn(outputText)
+			if values != nil {
+				result.Values = values
+				result.Source = source
+			}
+			if parseErr != nil {
+				return finish(StatusUnhealthy, fmt.Sprintf("benchmark command failed: %v; %v", err, parseErr))
+			}
+		}
 		return finish(StatusUnhealthy, fmt.Sprintf("benchmark command failed: %v", err))
 	}
 	values, source, err := parseBenchmark(name, outputText, resultDir, hpcgBefore)
 	if err != nil {
+		if values != nil {
+			result.Values = values
+			result.Source = source
+		}
 		return finish(StatusUnhealthy, err.Error())
 	}
 	result.Values = values
