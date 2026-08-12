@@ -29,7 +29,7 @@ storage:
 collection:
   min_priority: medium
 
-features: [web, dfee]
+features: [web, dfee, health]
 
 snapshot:
   enabled: true

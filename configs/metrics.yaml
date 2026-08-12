@@ -38,42 +38,42 @@ components:
         static: true
       - name: user_time
         cn_name: "用户态运行时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: nice_time
         cn_name: "低优先级用户进程时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: system_time
         cn_name: "内核态运行时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: idle_time
         cn_name: "空闲时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: iowait_time
         cn_name: "等待IO时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: irq_time
         cn_name: "硬中断处理时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: softirq_time
         cn_name: "软中断处理时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: steal_time
         cn_name: "被窃取时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: user_util
