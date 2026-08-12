@@ -22,6 +22,7 @@ services:
       # NPU command-line tools (installed by driver to host system paths)
       - /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro
       - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro
+      - /etc/os-release:/etc/os-release:ro
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler

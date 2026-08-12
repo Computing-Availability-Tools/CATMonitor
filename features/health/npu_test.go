@@ -245,11 +245,13 @@ func TestEvaluateFullNPUAccelerated(t *testing.T) {
 		npuMetric("memory_usage", 50.0),
 		npuMetric("utilization", 50.0),
 		npuMetric("health_status", 1.0),
+		makeMetric("network", "error_count", 0, map[string]string{"interface": "eth0", "type": "rx_err"}),
+		makeMetric("network", "connection_count", 100, map[string]string{"state": "ESTABLISHED"}),
 	}
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU 10 + Memory 20 + Disk 10 + NPU 60 = 100
+	// CPU 10 + Memory 15 + Disk 10 + NPU 50 + Network 15 = 100
 	if result.Score != 100 {
 		t.Errorf("expected total score 100, got %d", result.Score)
 	}

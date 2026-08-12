@@ -64,6 +64,51 @@ const LABEL_NAMES = {
   locator: '插槽', type: '类型',
   model_name: '型号', cache_size: '缓存', core: '核心', node: '节点', die: 'Die',
   pretty_name: 'OS', version_id: '版本号', kernel: '内核',
+  npu_id: 'NPU ID', chip_id: '芯片 ID',
+};
+
+const SERVER_TYPE_TEXT = {
+  cpu_only: '仅 CPU',
+  accelerated: '加速型（含 GPU/NPU）',
+};
+
+const RULE_TEXT = {
+  // CPU
+  'usage>90%': 'CPU 使用率超过 90%',
+  'usage>80%': 'CPU 使用率超过 80%',
+  'temp>85C':  'CPU 温度超过 85°C',
+  'temp>75C':  'CPU 温度超过 75°C',
+  'load>cores*2': '系统负载超过核心数 × 2',
+  'cpu_ce_error':  'CPU 发生可纠正 ECC 错误',
+  'cpu_uce_error': 'CPU 发生不可纠正 ECC 错误',
+  // Memory
+  'swap>50%':       '交换分区使用率超过 50%',
+  'ce_error':       '内存可纠正 ECC 错误',
+  'uce_error':      '内存不可纠正 ECC 错误',
+  'saturation>80%': '内存饱和度超过 80%',
+  'fragmentation>80%': '内存碎片率超过 80%',
+  // Disk
+  'space>90%':   '磁盘空间使用率超过 90%',
+  'space>80%':   '磁盘空间使用率超过 80%',
+  'io_wait>20%': '磁盘 IO 等待超过 20%',
+  'smart_failed': 'SMART 健康检查未通过',
+  // GPU
+  'mem>95%':    '显存使用率超过 95%',
+  'util>95%':   '利用率超过 95%',
+  'ecc_error':  '发生 ECC 错误',
+  // NPU
+  'health_alarm':    'NPU 健康状态告警',
+  'health_warning':  'NPU 健康状态预警',
+  'hbm_double_ecc':  'HBM 发生双比特 ECC 错误',
+  'ddr_double_ecc':  'DDR 发生双比特 ECC 错误',
+  'hbm_single_ecc':  'HBM 发生单比特 ECC 错误',
+  'ddr_single_ecc':  'DDR 发生单比特 ECC 错误',
+  'error_code':      'NPU 存在错误代码',
+  // Network
+  'error_count>100': '网络错误包数超过 100',
+  'error_count>10':  '网络错误包数超过 10',
+  'time_wait>2000':  'TIME_WAIT 连接数超过 2000',
+  'estab>10000':     'ESTABLISHED 连接数超过 10000',
 };
 
 // Maps a static spec metric name to (display type, the label key that holds
@@ -255,11 +300,19 @@ function pickMetric(metrics, spec) {
   return first;
 }
 
-function orderedComponents() {
+function orderedComponents(snap) {
   // The "system" collector emits static identity metrics (device_model etc.
   // attributed to gpu/npu/disk/network) but has no dynamic page of its own, so
   // hide it from the nav and overview grid.
-  return collectors.filter(c => c.component !== 'system').slice().sort((a, b) => {
+  let comps = collectors.filter(c => c.component !== 'system');
+  if (snap) {
+    comps = comps.filter(c => {
+      const hasMetrics = (snap.metrics || []).some(m => m.component === c.component);
+      const hasHealth = snap.health && snap.health.components && snap.health.components[c.component];
+      return hasMetrics || hasHealth;
+    });
+  }
+  return comps.slice().sort((a, b) => {
     const oa = navOrder(a.component), ob = navOrder(b.component);
     if (oa !== ob) return oa - ob;
     return a.component < b.component ? -1 : 1;
@@ -302,7 +355,7 @@ function renderNav() {
   const aOverview = el('a'); aOverview.href = '#/'; aOverview.textContent = '概览';
   if (route === 'overview') aOverview.className = 'active';
   nav.appendChild(aOverview);
-  for (const c of orderedComponents()) {
+  for (const c of orderedComponents(lastSnapshot)) {
     const a = el('a'); a.href = '#/' + c.component; a.textContent = compTitle(c.component);
     if (route === c.component) a.className = 'active';
     nav.appendChild(a);
@@ -493,10 +546,10 @@ function renderOverview(snap) {
 
   const info = el('div', 'hero-info');
   info.innerHTML =
-    '<div>服务器类型: <b>' + (h.server_type || '--') + '</b></div>' +
+    '<div>服务器类型: <b>' + (SERVER_TYPE_TEXT[h.server_type] || h.server_type || '--') + '</b></div>' +
     '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>' +
     '<div>采集间隔: <b>' + (snap.refresh_interval_ms ? snap.refresh_interval_ms / 1000 + 's' : '--') + '</b></div>';
-  const comps = orderedComponents();
+  const comps = orderedComponents(snap);
   if (comps.length) {
     const chips = el('div', 'hero-components');
     for (const c of comps) {
@@ -546,8 +599,7 @@ function summaryCard(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    // Collected but not part of health evaluation (e.g. network).
-    sc.innerHTML = '<span class="badge na">不评估</span>';
+    sc.innerHTML = '<span class="badge na">无数据</span>';
   }
   head.appendChild(t); head.appendChild(sc);
   card.appendChild(head);
@@ -602,15 +654,25 @@ function renderDetail(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    // Collected but not part of health evaluation (e.g. network).
-    sc.innerHTML = '<span class="badge na">不评估</span>';
+    sc.innerHTML = '<span class="badge na">无数据</span>';
   }
   head.appendChild(sc);
   page.appendChild(head);
 
   if (compHealth && compHealth.deductions && compHealth.deductions.length) {
     const d = el('div', 'deductions');
-    for (const dd of compHealth.deductions) d.appendChild(elText('div', '', dd.rule + ' (-' + dd.penalty + ')'));
+    d.appendChild(elText('div', 'deductions-title', '扣分项'));
+    const list = el('div', 'deductions-list');
+    for (const dd of compHealth.deductions) {
+      const text = RULE_TEXT[dd.rule] || dd.rule;
+      const item = el('div', 'deduction-item');
+      item.innerHTML =
+        '<span class="deduction-icon">⚠</span>' +
+        '<span class="deduction-text">' + text + '</span>' +
+        '<span class="deduction-value">-' + dd.penalty + ' 分</span>';
+      list.appendChild(item);
+    }
+    d.appendChild(list);
     page.appendChild(d);
   }
 

@@ -248,7 +248,7 @@ func (c *DiskCollector) collectSMART(now time.Time) ([]collector.Metric, error) 
 	var metrics []collector.Metric
 	for dev := range devs {
 		output, err := smartctl.Default().Health(dev)
-		if err != nil {
+		if err != nil || output == "" {
 			continue
 		}
 		metrics = append(metrics, parseSmartOutput(dev, output, now)...)

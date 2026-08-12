@@ -30,51 +30,43 @@ func TestCollectIntegration(t *testing.T) {
 	useTestdata(t)
 	c := New()
 
-	// First call: total bytes and error_count but no throughput/packet_count.
+	// First call: only rx_bytes_total and tx_bytes_total (no prev for deltas).
 	metrics, err := c.Collect()
 	if err != nil {
 		t.Fatalf("first Collect failed: %v", err)
 	}
 
-	// eth0: 2 total + 4 error_count = 6 metrics (no throughput/packet on first call)
+	// eth0: 2 total metrics only (no throughput/packet_count/error_count on first call)
 	eth0Count := 0
 	for _, m := range metrics {
 		if m.Labels["interface"] == "eth0" {
 			eth0Count++
 		}
 	}
-	if eth0Count < 6 {
-		t.Errorf("expected at least 6 eth0 metrics on first call, got %d", eth0Count)
+	if eth0Count < 2 {
+		t.Errorf("expected at least 2 eth0 metrics on first call, got %d", eth0Count)
 	}
 
-	// Verify error_count values
-	for _, m := range metrics {
-		if m.Name == "error_count" && m.Labels["interface"] == "eth0" {
-			switch m.Labels["type"] {
-			case "rx_err":
-				if m.Value != 2 {
-					t.Errorf("expected rx_err=2, got %.0f", m.Value)
-				}
-			case "rx_drop":
-				if m.Value != 1 {
-					t.Errorf("expected rx_drop=1, got %.0f", m.Value)
-				}
-			}
-		}
-	}
-
-	// Second call: should have throughput and packet_count.
+	// Second call: should have throughput, packet_count, error_count (all deltas).
 	metrics2, err := c.Collect()
 	if err != nil {
 		t.Fatalf("second Collect failed: %v", err)
 	}
-	hasThroughput, hasPacketCount := false, false
+	hasThroughput, hasPacketCount, hasErrorCount := false, false, false
 	for _, m := range metrics2 {
-		if m.Name == "throughput" && m.Labels["interface"] == "eth0" {
-			hasThroughput = true
-		}
-		if m.Name == "packet_count" && m.Labels["interface"] == "eth0" {
-			hasPacketCount = true
+		if m.Labels["interface"] == "eth0" {
+			switch m.Name {
+			case "throughput":
+				hasThroughput = true
+			case "packet_count":
+				hasPacketCount = true
+			case "error_count":
+				hasErrorCount = true
+				// Same testdata → delta is 0
+				if m.Value != 0 {
+					t.Errorf("expected error_count delta=0, got %.0f", m.Value)
+				}
+			}
 		}
 	}
 	if !hasThroughput {
@@ -82,6 +74,9 @@ func TestCollectIntegration(t *testing.T) {
 	}
 	if !hasPacketCount {
 		t.Error("expected packet_count metrics on second call")
+	}
+	if !hasErrorCount {
+		t.Error("expected error_count metrics on second call")
 	}
 
 	// lo should be filtered out.

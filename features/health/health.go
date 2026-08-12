@@ -86,6 +86,12 @@ func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 		totalScore += score.Score
 	}
 
+	if netMetrics, ok := byComponent["network"]; ok {
+		score := evaluateNetwork(netMetrics, scheme.Network)
+		components["network"] = score
+		totalScore += score.Score
+	}
+
 	serverType := "cpu_only"
 	if scheme.GPU > 0 {
 		if _, hasGPU := byComponent["gpu"]; hasGPU {
