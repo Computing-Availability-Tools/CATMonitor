@@ -23,6 +23,13 @@ services:
       - /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro
       - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro
       - /etc/os-release:/etc/os-release:ro
+      # Override config files (baked into image at /etc/catmonitor/ and /features/)
+      # Uncomment and adjust paths to customize:
+      # - ./catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro
+      # - ./metrics.yaml:/etc/catmonitor/metrics.yaml:ro
+      # - ./features/web/metrics.yaml:/features/web/metrics.yaml:ro
+      # - ./features/dfee/metrics.yaml:/features/dfee/metrics.yaml:ro
+      # - ./features/health/metrics.yaml:/features/health/metrics.yaml:ro
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler
