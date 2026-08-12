@@ -105,6 +105,8 @@ docker run -d --name catmonitor --privileged --network host \
   catmonitor-npu
 ```
 
+> 配置文件（`catmonitor.yaml`、`metrics.yaml`、`features/*/metrics.yaml`）已打包在镜像中，默认无需挂载。如需自定义，参见[第 8 节：配置修改](#8-配置修改)。
+
 > NPU 环境专用参数：
 > - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
 > - `-v /usr/bin/hccn_tool` + `-v /usr/local/sbin/npu-smi`：挂载 NPU 命令行工具（driver 安装到宿主机系统路径，不在 Ascend 目录下）
