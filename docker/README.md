@@ -6,7 +6,7 @@ CATMonitor 容器化方案支持两种镜像：
 
 | 镜像 | 适用环境 | 说明 |
 |------|---------|------|
-| `catmonitor-npu` | 有 Ascend NPU | CGo 编译，链接 libdcmi.so，采集 119 项 NPU 指标 |
+| `catmonitor-npu` | 有 Ascend NPU | CGo 编译，链接 libdcmi.so，采集 123 项 NPU 指标 |
 | `catmonitor-generic` | 无 NPU（纯 CPU/GPU） | 纯 Go 编译，不依赖 NPU 驱动 |
 
 三个服务可以组合使用：
@@ -98,6 +98,7 @@ docker run -d --name catmonitor --privileged --network host \
   -v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
   -v /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro \
   -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro \
+  -v /etc/os-release:/etc/os-release:ro \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
@@ -107,10 +108,11 @@ docker run -d --name catmonitor --privileged --network host \
 > NPU 环境专用参数：
 > - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
 > - `-v /usr/bin/hccn_tool` + `-v /usr/local/sbin/npu-smi`：挂载 NPU 命令行工具（driver 安装到宿主机系统路径，不在 Ascend 目录下）
+> - `-v /etc/os-release:/etc/os-release:ro`：获取宿主机 OS 信息（容器内默认显示容器 OS）
 > - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
 > - `--privileged` 已包含 NPU 设备访问权限，无需额外 `--device`
 >
-> 非 NPU 环境去掉 driver/nnae/toolkit/hccn_tool/npu-smi/LD_LIBRARY_PATH，镜像名改为 `catmonitor-generic`。
+> 非 NPU 环境去掉 driver/nnae/toolkit/hccn_tool/npu-smi/LD_LIBRARY_PATH，镜像名改为 `catmonitor-generic`。`/etc/os-release` 挂载在非 NPU 环境同样需要。
 
 #### 步骤 3：等待首次采集（6-9 秒）
 
@@ -223,6 +225,7 @@ docker/docker/build.sh generic
 
 # 启动（不需要 driver/nnae 挂载、device、LD_LIBRARY_PATH）
 docker run -d --name catmonitor --privileged --network host \
+  -v /etc/os-release:/etc/os-release:ro \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
   catmonitor-generic
@@ -245,12 +248,27 @@ docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/
 
 ### 挂载自定义配置
 
+容器内配置文件位置：
+
+| 文件 | 容器路径 | 用途 |
+|------|---------|------|
+| `catmonitor.yaml` | `/etc/catmonitor/catmonitor.yaml` | 主配置（采集器/端口/功能开关等） |
+| `metrics.yaml` | `/etc/catmonitor/metrics.yaml` | 指标目录（优先级/单位/采集间隔） |
+| `features/web/metrics.yaml` | `/features/web/metrics.yaml` | web 特性指标范围 |
+| `features/dfee/metrics.yaml` | `/features/dfee/metrics.yaml` | dfee 特性指标范围 |
+| `features/health/metrics.yaml` | `/features/health/metrics.yaml` | 健康评估指标范围 |
+
+以上文件均已打包在镜像中，挂载自定义文件覆盖即可：
+
 ```bash
 docker run -d --name catmonitor --privileged --network host \
   -v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
+  -v /path/to/my-metrics.yaml:/etc/catmonitor/metrics.yaml:ro \
   ...其他参数...
   catmonitor-npu
 ```
+
+Docker Compose 用户取消 `docker-compose.yml` 中 volumes 段的注释，将宿主机文件挂载覆盖即可。
 
 ### 开启 faultsub（故障订阅推送）
 
