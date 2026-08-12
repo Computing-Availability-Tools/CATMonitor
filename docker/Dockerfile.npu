@@ -14,5 +14,8 @@ COPY dfee /usr/local/bin/dfee
 COPY web /usr/local/bin/web
 COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
+COPY features/web/metrics.yaml /features/web/metrics.yaml
+COPY features/dfee/metrics.yaml /features/dfee/metrics.yaml
+COPY features/health/metrics.yaml /features/health/metrics.yaml
 
 ENTRYPOINT ["/usr/local/bin/catmonitor", "daemon", "--config", "/etc/catmonitor/catmonitor.yaml"]

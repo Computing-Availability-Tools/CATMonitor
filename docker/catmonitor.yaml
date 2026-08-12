@@ -29,7 +29,7 @@ storage:
 collection:
   min_priority: medium
 
-features: [web, dfee]
+features: [web, dfee, health]
 
 snapshot:
   enabled: true
@@ -37,7 +37,7 @@ snapshot:
 
 faultsub:
   enabled: false
-  rest_addr: ":9101"
+  rest_addr: ":19321"
 
 straggler_output:
   enabled: false

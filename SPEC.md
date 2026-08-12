@@ -15,7 +15,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 ### 1.2 核心需求
 
-1. **多部件指标采集**：覆盖 CPU、内存、硬盘、GPU、NPU、网卡、机箱共 7 个部件，**204 个指标**。
+1. **多部件指标采集**：覆盖 CPU、内存、硬盘、GPU、NPU、网卡、机箱共 7 个部件，**210 个指标**。
 2. **健康度评估**：基于采集指标自动计算 0-100 健康分，自动检测 GPU/NPU 切换权重方案，输出等级与扣分明细。
 3. **Prometheus 导出**：daemon 内置 `/metrics` 端点，以 Prometheus 文本格式导出全部采集指标，零额外进程。
 4. **Web 可视化**：独立 Web 仪表盘二进制，可视化单机健康度与各部件指标。
@@ -50,7 +50,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 | `features/health` | 健康度评估：消费采集指标，按部件评估器 + 权重自适应，输出总分/等级/扣分明细 | [HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) |
 | `features/snapshot` | Snapshot 统一生产：daemon 唯一生产 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs），只读特性消费快照 | [DESIGN.md](DESIGN.md) §6 |
 | `features/web` | Web 仪表盘二进制：**只读消费** snapshot，概览页 + 部件详情页 + 趋势 + 设备规格，REST API | [Web_SPEC.md](features/web/Web_SPEC.md) |
-| `features/dfee` | 能效监控独立二进制：**只读消费** snapshot，能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
+| `features/dfee` | 能效监控独立二进制：**只读消费** snapshot，能效指标过滤 + CPU 利用率推导 + 网络差值，交互式实时图表 + **内置 Prometheus exporter（`:9333/metrics`）** 将 snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*` 格式 | [dfee_SPEC.md](features/dfee/dfee_SPEC.md) |
 | `features/exporter` | Prometheus 导出：CachingStorage 包装存储 + `/metrics` 端点 + 健康端点 | [exporter_SPEC.md](features/exporter/exporter_SPEC.md) |
 | `features/faultsub` | 故障订阅推送：NPU 故障判定（卡掉线/健康状态/错误码/HBM UCE/RoCE 链路） + HTTP Webhook 推送 + 订阅/快照/事件 REST API | [faultsub_SPEC.md](features/faultsub/faultsub_SPEC.md) |
 | `features/stragglerout` | 落后节点 KPI 输出：NPU KPI 时序按"每时刻×每卡"聚合追加写日级 JSONL，供 straggler 慢节点检测器消费 | [stragglerout_SPEC.md](features/stragglerout/stragglerout_SPEC.md) |
@@ -107,20 +107,20 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 |------|--------|------|--------|-----|:-----:|:-------:|
 | CPU | 40 | 4 | 12 | 24 | ✅ | ✅（基础指标，扩展指标 Linux 专有） |
 | Memory | 19 | 4 | 7 | 8 | ✅ | ✅（同上） |
-| Disk | 9 | 1 | 5 | 3 | ✅ | ✅（2/9） |
-| GPU | 7 | 3 | 3 | 1 | ✅ | ✅（7/7） |
+| Disk | 13 | 1 | 9 | 3 | ✅ | ✅（2/9） |
+| GPU | 8 | 3 | 4 | 1 | ✅ | ✅（7/7） |
 | NPU | 120 | 11 | 87 | 22 | ✅ | ✗（Linux 专有；DCMI 走 CGo `-tags dcmi`，Windows no-op 降级） |
 | Network | 5 | 1 | 3 | 1 | ✅ | ✅（5/5） |
 | Chassis | 5 | 2 | 3 | 0 | ✅ | ✗（Linux 专有，依赖 ipmitool） |
-| **合计** | **205** | **26** | **120** | **59** | | |
+| **合计** | **210** | **26** | **125** | **59** | | |
 
-> v0.3.2 NPU 指标 74→119（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。v0.3.3 新增 NPU `card_drop`（掉卡检测，High）并将 `error_code` 升级为 High（返回完整 hex 错误码列表 + 计数），指标总数 204→205。
+> v0.3.2 NPU 指标 74→119（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。v0.3.3 新增 NPU `card_drop`（掉卡检测，High）并将 `error_code` 升级为 High（返回完整 hex 错误码列表 + 计数），指标总数 204→205。v0.3.3 后续合并 `feature/wyx/add-metrics`：Disk 新增 4 项累计 raw counters（`read_sectors_total`/`written_sectors_total`/`read_time_total`/`write_time_total`，Medium）+ GPU 新增 `memory_detail`（显存明细，Medium），指标总数 205→210。
 
 ### 4.3 指标采集目录
 
 为统一管控"采哪些指标、按什么优先级、默认是否采集"，提供指标采集目录（`configs/metrics.yaml` 为默认目录，模块可用自有 `metrics.yaml` 按 name 覆盖合并）。默认策略：High/Medium + 静态身份指标默认采集，Low 诊断指标默认不采集。目录中缺失的指标默认放行，避免静默丢数据。
 
-**Feature-scoped 采集**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标（每个 feature 的 `metrics.yaml` 列出其需要的指标 name）。daemon 启动时加载各 feature 覆盖后，以 `SetFeatureScope` 取各 feature 列出指标的**并集**建立白名单；`features` 非空时，`metrics.Filter` 只保留白名单内且 `priority ≥ collection.min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 为空则退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 只采 dfee `metrics.yaml` 列出的指标并集，`features: [web, dfee]` 采 web∪dfee 并集。同时 `ComponentIntervals` 取各 feature `metrics.yaml` 声明 interval 的最小值派生每组件采集 cadence（C_comp），覆盖 `collectors.<name>.interval`——使 feature 所需刷新节奏成为采集节奏（采集即快照刷新）。
+**Feature-scoped 采集**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标（每个 feature 的 `metrics.yaml` 列出其需要的指标 name）。daemon 启动时经 `metrics.LoadFeatureOverrides` 一次性加载全部 feature 覆盖，按 **higher-priority-wins** 规则合并（同名指标取高优先级，其余字段后写覆盖）；再以 `SetFeatureScope` 取各 feature 列出指标的**并集**建立白名单；`features` 非空时，`metrics.Filter` 只保留白名单内且 `priority ≥ collection.min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 为空则退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 只采 dfee `metrics.yaml` 列出的指标并集，`features: [web, dfee]` 采 web∪dfee 并集。同时 `ComponentIntervals` 取各 feature `metrics.yaml` 声明 interval 的最小值派生每组件采集 cadence（C_comp），覆盖 `collectors.<name>.interval`——使 feature 所需刷新节奏成为采集节奏（采集即快照刷新）。
 
 ---
 
@@ -166,8 +166,10 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 - **CPU 利用率推导**：8 个原始 jiffies → 7 项利用率百分比（后端有状态 delta）
 - **网络字节差值**：累计值 → 采集间增量
 - **交互**：卡片拖拽重排 + 手柄缩放 + 虚线对齐辅助、多选下拉筛选、模块折叠
+- **Prometheus exporter**：`-exporter=enabled` 时启动独立 `/metrics` 端点（`:9333`），将 snapshot 映射为 `node_*`（CPU/内存/网络/磁盘 raw counters）/ `dsmi_*`（NPU）/ `ipmi_*`（机箱）/ `static_hardware_info`+`static_software_info`（启动时一次性采集的硬件/软件身份）格式；`supplementDiskStats` 直接读 `/proc/diskstats` 补 snapshot 未覆盖的设备。零外部 prometheus 库依赖（自实现文本 exposition）
+- **静态信息采集**：启动时通过 `ipmitool`/`lscpu`/`dmidecode`/`lsblk`/`npu-smi`/`nvidia-smi`/`nvcc`/`pip` 等命令采集硬件与软件版本（OS/NPU 驱动/CANN/Python/PyTorch/vLLM 等），无对应工具或权限时优雅降级为空
 - **解耦**：独立二进制（`features/dfee` package main），只读 snapshot，不修改 web 业务代码
-- **启动参数**：`-addr`（默认 `:9528`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）
+- **启动参数**：`-addr`（默认 `:9528`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）、`-exporter`（`enabled`|`disabled`，默认 disabled）、`-exporter-port`（默认 `9333`）、`-device`（NPU 设备过滤，逗号分隔，空=全部）、`-docker-container`（容器名，用于软件版本采集）
 
 > 详见 [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md)。
 
@@ -182,6 +184,8 @@ daemon 内置 Prometheus 兼容导出，无需额外进程。
 - **类型**：累计型（`_total`/`_time` 后缀）为 counter，其余为 gauge，含 `# HELP`/`# TYPE` 头
 - **健康端点**：`GET /-/healthy`（存活）、`GET /-/ready`（缓存就绪）
 - **零侵入**：CachingStorage 包装在 JSONLStorage 外，一次采集同时落盘 + 缓存导出
+
+> dfee 二进制另内置独立 Prometheus exporter（`:9333/metrics`），输出 `node_*`/`dsmi_*`/`ipmi_*`/`static_*` 命名（对齐 node_exporter/dsmi 风格），与 daemon 的 `catmonitor_*` 导出互不冲突，由 `-exporter=enabled` 开启。
 
 > 详见 [features/exporter/exporter_SPEC.md](features/exporter/exporter_SPEC.md)。
 
@@ -214,13 +218,13 @@ health:
   weight_scheme: auto     # auto | cpu_only | accelerated_8card | accelerated_4card
 
 collection:
-  min_priority: low       # low (全采) | medium (跳过 Low) | high (仅 High)
+  min_priority: medium   # low (全采) | medium (跳过 Low) | high (仅 High)
 
-features: [dfee]          # feature-scope 白名单：各 feature metrics.yaml 并集；空 = 默认目录全集
+features: [web, dfee]     # feature-scope 白名单：各 feature metrics.yaml 并集；空 = 默认目录全集
                           # 派生 per-component 采集 cadence C_comp = min(声明该 comp 的 feature interval)
 
-snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 off）
-  enabled: false          # off 时 daemon 不写 snapshot 文件，行为同前
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 on）
+  enabled: true           # off 时 daemon 不写 snapshot 文件，行为同前
   dir: /var/lib/catmonitor/snapshot   # snapshot_<comp>.json + snapshot.json 目录
 
 faultsub:                 # 故障订阅推送（默认 off）；详见 features/faultsub/faultsub_SPEC.md
@@ -269,7 +273,7 @@ straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详�
 | Mock 测试 | GPU/NPU 无硬件场景 |
 | 端到端测试 | 守护进程启动→采集→存储→评分→导出 |
 
-> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.3：单元测试 PASS + 无 NPU/GPU 系统测试 + Linux/Windows 双平台编译通过）。
+> 当前测试结果见 [docs/test_report.md](docs/test_report.md)（v0.3.3：单元测试 PASS + 无 NPU/GPU 系统测试 + Linux/Windows 双平台编译通过；v0.3.3 后续合并 `feature/wyx/add-metrics` 后全量系统测试复跑通过：`go vet`/`go test ./...` 全绿 + daemon/web/dfee 三二进制构建 + `:9100`/`:9101`/`:9527`/`:9528`/`:9333` 五端点端到端验证）。
 
 ---
 
@@ -277,6 +281,7 @@ straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详�
 
 | 版本 | 主要内容 |
 |------|----------|
+| v0.3.3 后续 | 合并 `feature/wyx/add-metrics`：dfee 新增 Prometheus exporter（`:9333/metrics`，`node_*`/`dsmi_*`/`ipmi_*`/`static_*`）+ 静态软硬件信息采集；Disk 新增 4 项累计 raw counters；GPU 新增 `memory_detail`；`LoadFeatureOverrides` higher-priority-wins 合并替代逐个 `LoadModuleOverride`；NPU `power_draw` 单位修正（DCMI 返回 0.1W → W）；faultsub `/-/ready` 改用 `written` 标志（健康 NPU 不再误报 503）；IPMI `cacheDir` 改绝对路径；新增 `docker/` 容器化方案（NPU/generic 镜像 + compose 编排） |
 | v0.3.3 | 采集粒度控制（`collection.min_priority` + `AnyWanted` DI 预过滤）；daemon 移除周期健康检查（改由 `health` 子命令）；web 退出清 snapshot；修复 npu 非 linux 桩签名致 Windows 交叉编译失败 |
 | v0.3.2 | 新增 Prometheus exporter（`:9100/metrics`）；NPU 新增 45 项 `hccn_tool` 网络统计（74→119）；IPMI 来源层重构（`sdr→sensor`、定向采集、两级缓存、降级回退）；dfee 能效监控增强（卡片拖拽缩放、多选下拉筛选、模块折叠）；`--help` 解析后退出 |
 | v0.3.1 | 新增 Chassis 机箱环境采集器（5 指标）、Disk 读/写耗时、`features/dfee` 能效监控模块 |

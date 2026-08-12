@@ -20,7 +20,7 @@ import (
 // the daemon's snapshot.dir (daemon must run with snapshot.enabled:true and
 // features including dfee). No web dashboard, no collection.
 func main() {
-	addr := flag.String("addr", ":9528", "listen address (port taken => auto +1)")
+	addr := flag.String("addr", ":19323", "listen address (port taken => auto +1)")
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
 	exporter := flag.String("exporter", "disabled", "enable Prometheus exporter: enabled|disabled")
 	exporterPort := flag.String("exporter-port", "9333", "exporter listen port")

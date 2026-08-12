@@ -112,6 +112,15 @@ func (p *cgoProvider) DeviceNumInCard(card int) (int, error) {
 	return int(num), nil
 }
 
+func (p *cgoProvider) DeviceIDInCard(card int) (int, int, int, error) {
+	var devIDMax, mcuID, cpuID C.int
+	rc := C.dcmi_get_device_id_in_card(C.int(card), &devIDMax, &mcuID, &cpuID)
+	if rc != 0 {
+		return 0, 0, 0, fmt.Errorf("dcmi_get_device_id_in_card: %d", int32(rc))
+	}
+	return int(devIDMax), int(mcuID), int(cpuID), nil
+}
+
 func (p *cgoProvider) Temperature(card, dev int) (int, error) {
 	var temp C.int
 	rc := C.dcmi_get_device_temperature(C.int(card), C.int(dev), &temp)

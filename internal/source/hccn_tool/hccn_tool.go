@@ -88,9 +88,7 @@ func (s *defaultSource) cached(devID int, opt string) (string, error) {
 	}
 	out, err := s.fetch(devID, opt)
 	if err != nil {
-		s.cache[key] = ""
-		s.at[key] = time.Now()
-		return "", nil
+		return "", err
 	}
 	s.cache[key] = out
 	s.at[key] = time.Now()
@@ -118,7 +116,7 @@ func (s *defaultSource) Link(devID int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return parseValue(out, "Link:"), nil
+	return parseValue(out, "link status"), nil
 }
 
 func (s *defaultSource) Statistics(devID int) (map[string]uint64, error) {

@@ -34,7 +34,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 )
 
-const version = "0.3.3"
+const version = "0.3.4"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -280,7 +280,7 @@ func runDaemon() {
 	scheduler.SetFilter(metrics.Filter)
 
 	// Prometheus exporter endpoint
-	go exporter.ServeMetrics(":9100", cacheStore, logger)
+	go exporter.ServeMetrics(":19320", cacheStore, logger)
 
 	scheduler.Start(ctx, collectorCfgs)
 

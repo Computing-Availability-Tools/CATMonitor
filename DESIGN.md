@@ -65,6 +65,8 @@
 
 > **v0.3.3 后续重构（`feature/catmonitor` 合入，底座版本号不变）**：① snapshot 生产统一收归 daemon——新增 `features/snapshot` 包（`PerCompWriter` 按 per-component 写 `snapshot_<comp>.json` + `GlobalWriter` 维护全局 `snapshot.json`），web/dfee 转为**只读消费者**不再各自采集（web 删 `DataCollector`/`config.go`/`config.yaml`，改 `-addr`/`-snapshot-dir` flag；dfee 转独立二进制 `catmonitor-dfee` `package main`，`:9528`）。② **Feature-scoped 采集**：`features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法；并派生 per-component cadence `C_comp = min(feature interval)`、`C_global = min(C_comp)`。③ **DCMI 掉卡检测**：`source/dcmi` 新增 `DeviceNotReadyErrCode`(-8012)、`ErrorCodeList`（返回完整 hex 错误码列表 `DeviceErrors{Count,Codes}`）、`CardDrop`；NPU 新增 `card_drop` 指标（High）、`error_code` 升级为完整列表（High，`value`=数量、`labels.error_codes`=hex 列表），供故障检测匹配特定码。④ **故障订阅推送 `features/faultsub`**：`FaultStorage` 作为 daemon Storage 管道 tap，复用采集管道对 NPU 指标做故障判定（卡掉线/健康/错误码/HBM UCE/RoCE 链路），HTTP Webhook 推送 `FaultEvent` + REST 订阅 API（`:9101`），opt-in 默认 off。详见 §9。⑤ **落后节点 KPI 输出 `features/stragglerout`**：`StragglerStorage` 作为 daemon Storage 管道 tap，把 NPU KPI 按"每时刻×每卡"聚合追加写日级 JSONL，供 straggler 慢节点检测器消费，opt-in 默认 off。详见 §10。详见 §6 Web、§7 dfee、§9 faultsub、§10 stragglerout、§1.7-7。
 
+> **v0.3.3 后续合并 `feature/wyx/add-metrics` 补充变更**：① **dfee 内置 Prometheus exporter**（`features/dfee/exporter.go` + `static_info.go`）：`-exporter=enabled` 启动 `:9333/metrics`，将 snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*`（对齐 node_exporter/dsmi 命名），`supplementDiskStats` 直读 `/proc/diskstats` 补全设备；启动时采集静态软硬件身份（HW/SW），无工具时优雅降级。详见 §7。② **`metrics.LoadFeatureOverrides` higher-priority-wins 合并**：替代逐个 `LoadModuleOverride`，多 feature 同名指标取高优先级、字段后写覆盖，`cmd/catmonitor` 一次性加载。③ **Disk 新增 4 项累计 raw counters**（`read_sectors_total`/`written_sectors_total`/`read_time_total`/`write_time_total`，Medium）：`disk_linux.go` 新增 `collectRawCounters` 从 `/proc/diskstats` 输出累计计数器。④ **bug 修复**：faultsub `FaultStorage.Ready()` 改用 `written` 标志（健康 NPU 无故障时 snapshot 为空但已采集，不再误报 503）；NPU `power_draw` 单位修正（DCMI 返回 0.1W，`/10.0` 转 W）；IPMI `cacheDir` 由相对路径 `features/web/data` 改绝对路径 `/var/lib/catmonitor`，消除工作目录依赖。⑤ **容器化方案**：新增 `docker/`（`Dockerfile.npu` Debian/glibc 两步构建 + driver/nnae 挂载 + `LD_LIBRARY_PATH`；`Dockerfile.generic` alpine 多阶段；`build.sh` 自动检测 driver；`docker-compose.yml` 编排 daemon+web+dfee 三服务）。详见 [docker/README.md](docker/README.md)。
+
 ### 1.2 跨平台架构设计
 
 核心策略：**共享逻辑 + 平台数据源分离**，通过 Go 构建标签在编译时选择。
@@ -239,17 +241,19 @@ CATMonitor/
 │   │   ├── static.go                 #     //go:embed static，内嵌前端资源
 │   │   ├── metrics.yaml              #     web feature 指标目录（供 daemon LoadModuleOverride + SetFeatureScope）
 │   │   └── static/                   #     前端资源（index.html + style.css + app.js）
-│   ├── dfee/                         #   能效监控（catmonitor-dfee 独立二进制，v0.3.3 后续转只读消费者，:9528）
-│   │   ├── main.go                   #     入口：-addr/-snapshot-dir flag + HTTP server（package main）
+│   ├── dfee/                         #   能效监控（catmonitor-dfee 独立二进制，v0.3.3 后续转只读消费者，:9528 + 内置 Prometheus exporter :9333）
+│   │   ├── main.go                   #     入口：-addr/-snapshot-dir/-exporter/-exporter-port/-device/-docker-container flag + HTTP server（package main）
 │   │   ├── dfee_SPEC.md             #     能效模块设计规格（唯一设计+规格文档）
 │   │   ├── energy_efficiency_metrics.md #  能效指标清单
 │   │   ├── filter.go                #     能效指标过滤 + 分组（通用筛选框架）
 │   │   ├── cpu_derive.go            #     CPU 8 jiffies → 7 利用率推导
 │   │   ├── net_derive.go            #     网络差值计算
 │   │   ├── handler.go               #     HTTP handler + 静态文件服务（/dfee/ + /api/dfee）
+│   │   ├── exporter.go              #     Prometheus exporter（:9333/metrics，snapshot → node_*/dsmi_*/ipmi_*/static_*，v0.3.3 后续新增）
+│   │   ├── static_info.go           #     静态软硬件信息采集（HW/SW，外部命令优雅降级，v0.3.3 后续新增）
 │   │   ├── embed.go                 #     //go:embed static
 │   │   ├── metrics.yaml             #     dfee 指标目录覆盖（CPU Low → Medium）
-│   │   └── static/                  #     前端（dfee.js + dfee.css + index.html，含拖拽缩放/多选筛选/折叠）
+│   │   └── static/                   #     前端（dfee.js + dfee.css + index.html，含拖拽缩放/多选筛选/折叠）
 │   ├── exporter/                     #   Prometheus 导出模块（v0.3.2 新增）
 │   │   ├── exporter_SPEC.md         #     导出模块唯一设计+规格文档
 │   │   ├── prometheus.go            #     Encode()：Metric → Prometheus 文本（HELP/TYPE/labels，counter 推断）
@@ -272,6 +276,7 @@ CATMonitor/
 ├── configs/
 │   ├── catmonitor.yaml              # 默认配置文件
 │   └── metrics.yaml                 # 默认指标采集目录（6 部件，v0.3.0 新增）
+├── docker/                          # 容器化（v0.3.3 后续新增）：Dockerfile.npu/generic + build.sh + compose + README
 ├── docs/
 │   └── CATMonitor_indi_list.md      # 指标清单文档
 ├── tests/
@@ -399,7 +404,7 @@ type Source interface {
 4. **Filter（选择策略）**：`priority ∈ {High,Medium} OR static==true` 默认采集；Low 诊断指标默认不采。**目录中缺失的指标默认放行**（default-allow），避免目录漂移静默丢数据。模块覆盖可通过改写 priority 单独 opt-in/out。
 5. **DI 注入**：`scheduler.SetFilter(catalog.Filter)` 由 `cmd/catmonitor` 启动时装配；`interval` 本期仅记录、不接 ticker（采集仍 per-collector 既有节拍）。
 6. **采集粒度预过滤（v0.3.3）**：`collection.min_priority`（low/medium/high）经 `metrics.SetCollectionThreshold` 设定阈值；`collector.SetWantedChecker(metrics.AnyWanted)` 把 `AnyWanted(component, names)` 注入采集核心。采集器在执行昂贵采集阶段前调用 `collector.AnyWanted` 判断该指标组是否有任一指标通过阈值，无则整组跳过（NPU static / per-device、CPU / Memory / Disk 子指标组等）。优先级值大小写不敏感。daemon 与 `runCollect` 启动时均装配。
-7. **Feature-scoped 白名单（v0.3.3 后续，`feature/catmonitor` 合入）**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标。daemon 加载各 feature `metrics.yaml` 覆盖后，以 `SetFeatureScope(并集)` 建立白名单。`features` 非空时 `Filter` 只保留白名单内且 `priority ≥ min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 空 → 退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 采 dfee 列出指标并集，`[web, dfee]` 采 web∪dfee。同时按 feature 声明的 interval 派生 per-component cadence `C_comp = min(声明该 comp 的 feature interval)`，`C_global = min(C_comp)`。
+7. **Feature-scoped 白名单（v0.3.3 后续，`feature/catmonitor` 合入；v0.3.3 后续 `feature/wyx/add-metrics` 改 higher-wins 合并）**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标。daemon 启动时经 `metrics.LoadFeatureOverrides(paths)` **一次性**加载全部 feature `metrics.yaml`，按 **higher-priority-wins** 规则合并（同名指标取高优先级，`cn_name`/`unit`/`static` 后写覆盖），再以 `SetFeatureScope(并集)` 建立白名单。`features` 非空时 `Filter` 只保留白名单内且 `priority ≥ min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 空 → 退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 采 dfee 列出指标并集，`[web, dfee]` 采 web∪dfee。同时按 feature 声明的 interval 派生 per-component cadence `C_comp = min(声明该 comp 的 feature interval)`，`C_global = min(C_comp)`。
 
 #### 目录文件（YAML）
 
@@ -485,6 +490,10 @@ components:
 7. **smart_status**：对每个块设备执行 `smartctl -H /dev/sdX`，解析输出中的 `PASSED`/`FAILED`。
 8. **smart_temperature**：执行 `smartctl -A /dev/sdX`，解析 SMART 属性表中的 `Temperature_Celsius`。
 9. **io_errors**：读取 `/proc/diskstats` 错误字段 + 搜索 `dmesg` 中 I/O error 关键词。
+10. **read_sectors_total**（v0.3.3 后续新增）：读取 `/proc/diskstats` 第 3 字段（sectors read，累计值），直接输出累计计数器，不差分。经 `AnyWanted("disk", [...])` 守护，仅真实块设备。
+11. **written_sectors_total**（v0.3.3 后续新增）：读取 `/proc/diskstats` 第 7 字段（sectors written，累计值），同上。
+12. **read_time_total**（v0.3.3 后续新增）：读取 `/proc/diskstats` 第 4 字段（time spent reading, ms，累计值）。
+13. **write_time_total**（v0.3.3 后续新增）：读取 `/proc/diskstats` 第 8 字段（time spent writing, ms，累计值）。
 
 **设备过滤规则**：排除虚拟设备（loop/ram/dm-/md 等），只采集物理块设备。设备名匹配正则 `^(sd|nvme|vd|xvd|hba)[a-z]+[0-9]*n[0-9]+$`。
 
@@ -569,7 +578,7 @@ Collect() {
 | 掉卡检测（v0.3.3 后续新增） | 1 | dcmi（`CardDrop`：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode` -8012） |
 | **合计** | **120** | |
 
-**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）；无 NPU 硬件时输出 `npu_num=0`。`npu_smi`/`hccn_tool` 命令执行超时或缺失时返回 error，静默跳过。掉卡判定：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode`（-8012）时 `CardDrop()` 判定设备未就绪/掉卡，`card_drop`=1；`ErrorCodeList()` 返回完整 hex 错误码列表（含 `0x40f84e00` 等掉卡码），供 `features/faultsub` 匹配。DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
+**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）；无 NPU 硬件时输出 `npu_num=0`。`npu_smi`/`hccn_tool` 命令执行超时或缺失时返回 error，静默跳过。掉卡判定：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode`（-8012）时 `CardDrop()` 判定设备未就绪/掉卡，`card_drop`=1；`ErrorCodeList()` 返回完整 hex 错误码列表（含 `0x40f84e00` 等掉卡码），供 `features/faultsub` 匹配。**单位换算**：`power_draw` 经 `/10.0` 由 DCMI 返回的 0.1W 转为 W（v0.3.3 后续 `feature/wyx/add-metrics` 修正，测试用例同步）；其余 DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
 
 
 ### 2.6 Network 采集器
@@ -1043,7 +1052,7 @@ snapshot 由 `features/snapshot` 包生产，分两层（均原子写：临时�
 
 ---
 
-## 7. 能效监控模块设计（features/dfee，v0.3.1 新增，v0.3.2 增强，独立二进制化）
+## 7. 能效监控模块设计（features/dfee，v0.3.1 新增，v0.3.2 增强，独立二进制化，v0.3.3 后续加 Prometheus exporter）
 
 > 详细规格见 [`features/dfee/dfee_SPEC.md`](features/dfee/dfee_SPEC.md)。本节描述架构、数据流与扩展机制。
 
@@ -1051,26 +1060,30 @@ snapshot 由 `features/snapshot` 包生产，分两层（均原子写：临时�
 
 `features/dfee/` 转为**独立二进制 `catmonitor-dfee`**（`package main`，默认端口 `:9528`），与 `features/web` 同级、与 daemon 解耦。**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），不再注册到 web 路由、不再依赖 web 进程。启动参数 `-addr`/`-snapshot-dir`，端口占用自动 +1 回退（同 web 的 `listenWithFallback`）。
 
+> **v0.3.3 后续合并 `feature/wyx/add-metrics` 新增 Prometheus exporter**：`-exporter=enabled` 时启动独立 `/metrics` 端点（`:9333`），将 snapshot 映射为 Prometheus 文本格式——`node_*`（CPU/内存/网络/磁盘 raw counters，对齐 node_exporter 命名）/ `dsmi_*`（NPU，对齐 dsmi 命名）/ `ipmi_*`（机箱）/ `static_hardware_info` + `static_software_info`（启动时一次性采集的硬件/软件身份）。零外部 prometheus 库依赖（自实现文本 exposition + label 转义）。`supplementDiskStats` 直接读 `/proc/diskstats` 补 snapshot 未覆盖设备。静态信息经 `ipmitool`/`lscpu`/`dmidecode`/`lsblk`/`npu-smi`/`nvidia-smi`/`nvcc`/`pip` 等命令采集，无对应工具时优雅降级为空。
+
 > **v0.3.2 交互增强**：图表卡片**拖拽重排** + 右下角手柄**缩放**（`align-self: start` 使边框不跟随增长）+ 虚线**对齐辅助**（3px 吸附）；NPU/磁盘/网络模块**多选下拉筛选**（重构为通用筛选框架）；**模块折叠**（机箱 3 图同行）。NPU 图表改为单指标图布局（默认 4 行 3+2+2+2、gridCols 6 列、功耗电压首行），图例简化为 NPU 0~7。
 
 ### 7.2 目录结构
 
 ```
 features/dfee/
-├── main.go                    # 入口（package main）：解析 -addr/-snapshot-dir + HTTP server + 端口回退 + 信号
+├── main.go                    # 入口（package main）：解析 -addr/-snapshot-dir/-exporter/-exporter-port/-device/-docker-container + HTTP server + 端口回退 + 信号
 ├── dfee_SPEC.md               # 设计+规格文档
 ├── energy_efficiency_metrics.md # 能效指标清单
 ├── filter.go                  # 能效指标过滤 + 分组 + 通用筛选框架
 ├── cpu_derive.go              # CPU 8 jiffies → 7 利用率推导（有状态）
 ├── net_derive.go              # 网络差值计算
 ├── handler.go                 # HTTP handler：组装 /api/dfee 响应 + 静态文件（Register(mux, dir)）
+├── exporter.go                # Prometheus exporter（v0.3.3 后续新增）：readSnapshot + mapNode/mapDSMI/mapChassis/mapDisk + supplementDiskStats + encodePrometheus
+├── static_info.go             # 静态软硬件信息采集（v0.3.3 后续新增）：collectHWStaticInfo/collectSWStaticInfo + 外部命令调用优雅降级
 ├── embed.go                   # //go:embed static
-├── metrics.yaml               # dfee feature 指标目录（69 项，供 daemon LoadModuleOverride + SetFeatureScope）
+├── metrics.yaml               # dfee feature 指标目录（70 项，供 daemon LoadFeatureOverrides + SetFeatureScope）
 ├── static/
 │   ├── index.html             # 能效监控 SPA 页面
 │   ├── dfee.js                # 实时图表渲染 + 轮询 + 拖拽/缩放/筛选/折叠交互
 │   └── dfee.css               # 样式（卡片布局 + 下拉框截断 + 模块分割线）
-└── *_test.go                  # 过滤/推导/HTTP 测试
+└── *_test.go                  # 过滤/推导/HTTP/exporter 映射/格式测试
 ```
 
 ### 7.3 数据流与解耦边界
@@ -1079,17 +1092,22 @@ features/dfee/
 daemon (cmd/catmonitor)
   采集 → health.Evaluate → features/snapshot 写
        snapshot.json + snapshot_<comp>.json (per-comp cadence)
-        │
-        ├──────────────────────────────────────────┐
-        ↓                                          ↓
+         │
+         ├──────────────────────────────────────────┐
+         ↓                                          ↓
   catmonitor-web (只读)                    catmonitor-dfee (只读, 独立二进制 :9528)
   GET /api/snapshot (组装 global+per-comp)  GET /api/dfee (过滤能效指标)
   → 前端 SPA 概览/详情页                    → CPU 8 jiffies → 7 利用率推导
-                                            → 按小节分组 → 25 张图表数据
-                                            → 前端 Canvas 实时折线图
+                                             → 按小节分组 → 25 张图表数据
+                                             → 前端 Canvas 实时折线图
+                                             ↓ (若 -exporter=enabled)
+                                             GET :9333/metrics (Prometheus 文本)
+                                             → mapNode/mapDSMI/mapChassis/mapDisk
+                                             → supplementDiskStats(/proc/diskstats)
+                                             → static_hardware_info/static_software_info
 ```
 
-**解耦边界**：dfee 只读 snapshot（与 web 同一数据源，均由 daemon 生产），**绝不调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。
+**解耦边界**：dfee 只读 snapshot（与 web 同一数据源，均由 daemon 生产），**绝不调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。Prometheus exporter 同样只读 snapshot + `/proc/diskstats`（补充磁盘设备），**不触发采集**。
 
 ### 7.4 能效指标来源
 
@@ -1098,7 +1116,7 @@ daemon (cmd/catmonitor)
 | NPU | 频率/利用率/温度(13 路)/电压/ECC/带宽网络/HBM（v0.3.2 含新增 hccn_tool 网络统计） |
 | CPU | 利用率推导(7) + 时间原始 + 温度/power/MCE |
 | Memory | usage/swap/saturation/fragmentation/power/ecc |
-| Disk | space_usage/iops/throughput/io_wait + read/write_latency |
+| Disk | space_usage/iops/throughput/io_wait + read/write_latency + read/written_sectors_total + read/write_time_total |
 | Network | throughput/packet_count |
 | Chassis | power/inlet_temp/outlet_temp/fan_speed/fan_power |
 
@@ -1106,7 +1124,7 @@ daemon (cmd/catmonitor)
 
 ### 7.5 指标目录覆盖
 
-dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml`（69 项）将它们覆盖为 Medium 并列出 dfee 所需全部指标。**由 daemon** 启动时经 `metrics.LoadModuleOverride` 加载，并经 `SetFeatureScope`（dfee 列出指标的并集）建立白名单——`features: [dfee]` 时只采白名单内且 `priority ≥ min_priority` 的指标，写入 snapshot 供 dfee 消费。web 不再加载 dfee 的 metrics.yaml。
+dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml`（70 项）将它们覆盖为 Medium 并列出 dfee 所需全部指标。**由 daemon** 启动时经 `metrics.LoadFeatureOverrides` 一次性加载全部 feature 覆盖（higher-priority-wins：同名指标取高优先级，其余字段后写覆盖），并经 `SetFeatureScope`（各 feature 列出指标的并集）建立白名单——`features: [web, dfee]` 时只采白名单内且 `priority ≥ min_priority` 的指标，写入 snapshot 供 dfee 消费。web 不再加载 dfee 的 metrics.yaml。
 
 ### 7.6 扩展机制
 
@@ -1219,7 +1237,7 @@ cmd/catmonitor (daemon)
         ├── GET    /faultsub/events?since=&type=&npu_id=  近期事件回补
         ├── GET    /faultsub/types                支持的故障类型
         ├── GET    /-/healthy                     200 OK
-        └── GET    /-/ready                       有采集过则 200，否则 503
+        └── GET    /-/ready                       有 Write 过则 200，否则 503（v0.3.3 后续修复：改用 `written` 标志而非 `len(snapshot)>0`，健康 NPU 无故障时 snapshot 为空但已采集，不再误报 503）
 ```
 
 ### 9.3 故障判定规则（FaultDetector）

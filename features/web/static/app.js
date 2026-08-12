@@ -15,6 +15,8 @@ const MANIFEST = {
          key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
   network: { title: '网络', headline: null,
              key: [ 'throughput', 'packet_count', 'error_count', 'connection_count' ] },
+  chassis: { title: '机箱', headline: null,
+             key: [ 'power', 'inlet_temp', 'outlet_temp', 'fan_speed', 'fan_power' ] },
 };
 
 const METRIC_NAMES = {
@@ -64,6 +66,56 @@ const LABEL_NAMES = {
   locator: '插槽', type: '类型',
   model_name: '型号', cache_size: '缓存', core: '核心', node: '节点', die: 'Die',
   pretty_name: 'OS', version_id: '版本号', kernel: '内核',
+  npu_id: 'NPU ID', chip_id: '芯片 ID',
+};
+
+const SERVER_TYPE_TEXT = {
+  cpu_only: '仅 CPU',
+  accelerated: '加速型（含 GPU/NPU）',
+};
+
+const RULE_TEXT = {
+  // CPU
+  'usage>90%': 'CPU 使用率超过 90%',
+  'usage>80%': 'CPU 使用率超过 80%',
+  'temp>85C':  'CPU 温度超过 85°C',
+  'temp>75C':  'CPU 温度超过 75°C',
+  'load>cores*2': '系统负载超过核心数 × 2',
+  'cpu_ce_error':  'CPU 发生可纠正 ECC 错误',
+  'cpu_uce_error': 'CPU 发生不可纠正 ECC 错误',
+  // Memory
+  'swap>50%':       '交换分区使用率超过 50%',
+  'ce_error':       '内存可纠正 ECC 错误',
+  'uce_error':      '内存不可纠正 ECC 错误',
+  'saturation>80%': '内存饱和度超过 80%',
+  'fragmentation>80%': '内存碎片率超过 80%',
+  // Disk
+  'space>90%':   '磁盘空间使用率超过 90%',
+  'space>80%':   '磁盘空间使用率超过 80%',
+  'io_wait>20%': '磁盘 IO 等待超过 20%',
+  'smart_failed': 'SMART 健康检查未通过',
+  // GPU
+  'mem>95%':    '显存使用率超过 95%',
+  'util>95%':   '利用率超过 95%',
+  'ecc_error':  '发生 ECC 错误',
+  // NPU
+  'health_alarm':    'NPU 健康状态告警',
+  'health_warning':  'NPU 健康状态预警',
+  'hbm_double_ecc':  'HBM 发生双比特 ECC 错误',
+  'ddr_double_ecc':  'DDR 发生双比特 ECC 错误',
+  'hbm_single_ecc':  'HBM 发生单比特 ECC 错误',
+  'ddr_single_ecc':  'DDR 发生单比特 ECC 错误',
+  'error_code':      'NPU 存在错误代码',
+  // Network
+  'error_count>100': '网络错误包数超过 100',
+  'error_count>10':  '网络错误包数超过 10',
+  'time_wait>2000':  'TIME_WAIT 连接数超过 2000',
+  'estab>10000':     'ESTABLISHED 连接数超过 10000',
+  // Chassis
+  'inlet_temp>40':  '进风口温度超过 40°C',
+  'inlet_temp>35':  '进风口温度超过 35°C',
+  'outlet_temp>60': '出风口温度超过 60°C',
+  'outlet_temp>50': '出风口温度超过 50°C',
 };
 
 // Maps a static spec metric name to (display type, the label key that holds
@@ -255,11 +307,19 @@ function pickMetric(metrics, spec) {
   return first;
 }
 
-function orderedComponents() {
+function orderedComponents(snap) {
   // The "system" collector emits static identity metrics (device_model etc.
   // attributed to gpu/npu/disk/network) but has no dynamic page of its own, so
   // hide it from the nav and overview grid.
-  return collectors.filter(c => c.component !== 'system').slice().sort((a, b) => {
+  let comps = collectors.filter(c => c.component !== 'system');
+  if (snap) {
+    comps = comps.filter(c => {
+      const hasMetrics = (snap.metrics || []).some(m => m.component === c.component);
+      const hasHealth = snap.health && snap.health.components && snap.health.components[c.component];
+      return hasMetrics || hasHealth;
+    });
+  }
+  return comps.slice().sort((a, b) => {
     const oa = navOrder(a.component), ob = navOrder(b.component);
     if (oa !== ob) return oa - ob;
     return a.component < b.component ? -1 : 1;
@@ -302,7 +362,7 @@ function renderNav() {
   const aOverview = el('a'); aOverview.href = '#/'; aOverview.textContent = '概览';
   if (route === 'overview') aOverview.className = 'active';
   nav.appendChild(aOverview);
-  for (const c of orderedComponents()) {
+  for (const c of orderedComponents(lastSnapshot)) {
     const a = el('a'); a.href = '#/' + c.component; a.textContent = compTitle(c.component);
     if (route === c.component) a.className = 'active';
     nav.appendChild(a);
@@ -493,10 +553,10 @@ function renderOverview(snap) {
 
   const info = el('div', 'hero-info');
   info.innerHTML =
-    '<div>服务器类型: <b>' + (h.server_type || '--') + '</b></div>' +
+    '<div>服务器类型: <b>' + (SERVER_TYPE_TEXT[h.server_type] || h.server_type || '--') + '</b></div>' +
     '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>' +
     '<div>采集间隔: <b>' + (snap.refresh_interval_ms ? snap.refresh_interval_ms / 1000 + 's' : '--') + '</b></div>';
-  const comps = orderedComponents();
+  const comps = orderedComponents(snap);
   if (comps.length) {
     const chips = el('div', 'hero-components');
     for (const c of comps) {
@@ -546,8 +606,7 @@ function summaryCard(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    // Collected but not part of health evaluation (e.g. network).
-    sc.innerHTML = '<span class="badge na">不评估</span>';
+    sc.innerHTML = '<span class="badge na">无数据</span>';
   }
   head.appendChild(t); head.appendChild(sc);
   card.appendChild(head);
@@ -582,7 +641,7 @@ function renderDetail(compKey, snap) {
 
   if (!collectors.some(c => c.component === compKey)) {
     const head = el('div', 'detail-head');
-    head.appendChild(anchor('#/', '← 概览', 'back'));
+  head.appendChild(anchor('#/', '← 概览', 'btn'));
     head.appendChild(elText('span', 'detail-title', '未找到该部件'));
     page.appendChild(head);
     page.appendChild(elText('div', 'empty', '部件 "' + compKey + '" 未注册'));
@@ -602,16 +661,31 @@ function renderDetail(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    // Collected but not part of health evaluation (e.g. network).
-    sc.innerHTML = '<span class="badge na">不评估</span>';
+    sc.innerHTML = '<span class="badge na">无数据</span>';
   }
   head.appendChild(sc);
   page.appendChild(head);
 
   if (compHealth && compHealth.deductions && compHealth.deductions.length) {
-    const d = el('div', 'deductions');
-    for (const dd of compHealth.deductions) d.appendChild(elText('div', '', dd.rule + ' (-' + dd.penalty + ')'));
-    page.appendChild(d);
+    const dpanel = el('div', 'panel deductions-panel');
+    const dph = el('div', 'panel-head');
+    dph.appendChild(elText('span', '', '扣分项'));
+    dph.appendChild(elText('span', 'sub', compHealth.deductions.length + ' 条'));
+    dpanel.appendChild(dph);
+    const dbody = el('div', 'panel-body');
+    const d = el('div', 'deductions-list');
+    for (const dd of compHealth.deductions) {
+      const text = RULE_TEXT[dd.rule] || dd.rule;
+      const item = el('div', 'deduction-item');
+      item.innerHTML =
+        '<span class="deduction-icon">⚠</span>' +
+        '<span class="deduction-text">' + text + '</span>' +
+        '<span class="deduction-value">-' + dd.penalty + ' 分</span>';
+      d.appendChild(item);
+    }
+    dbody.appendChild(d);
+    dpanel.appendChild(dbody);
+    page.appendChild(dpanel);
   }
 
   // trends
@@ -635,7 +709,7 @@ function renderDetail(compKey, snap) {
     page.appendChild(panel);
   }
 
-  // all metrics
+  // all metrics (grouped by name)
   const mpanel = el('div', 'panel');
   const mph = el('div', 'panel-head');
   mph.appendChild(elText('span', '', '全部指标'));
@@ -645,21 +719,40 @@ function renderDetail(compKey, snap) {
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
   } else {
-    const tbl = document.createElement('table');
-    tbl.className = 'table';
-    tbl.innerHTML = '<thead><tr><th>指标</th><th>值</th><th>标签</th></tr></thead>';
-    const tb = document.createElement('tbody');
+    const groups = {};
+    const order = [];
     for (const mt of metrics) {
-      const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td class="m-name">' + (METRIC_NAMES[mt.name] || mt.name) + '</td>' +
-        '<td class="m-val">' + fmt(mt.value) + ' ' + (mt.unit || '') + '</td>' +
-        '<td class="m-labels">' + labels + '</td>';
-      tb.appendChild(tr);
+      if (!groups[mt.name]) { groups[mt.name] = []; order.push(mt.name); }
+      groups[mt.name].push(mt);
     }
-    tbl.appendChild(tb);
-    mbody.appendChild(tbl);
+    for (const name of order) {
+      const items = groups[name];
+      const dispName = METRIC_NAMES[name] || name;
+      const unit = items[0].unit || '';
+      const grp = el('div', 'metric-group');
+      const gh = el('div', 'metric-group-head');
+      gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
+        (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
+        '<span class="metric-group-count">' + items.length + ' 条</span>' +
+        '<span class="metric-group-toggle">▾</span>';
+      const gb = el('div', 'metric-group-body');
+      for (const mt of items) {
+        const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+        const row = el('div', 'metric-row');
+        row.innerHTML =
+          '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
+          '<span class="metric-labels">' + labels + '</span>';
+        gb.appendChild(row);
+      }
+      gh.onclick = () => {
+        const open = gb.style.display !== 'none';
+        gb.style.display = open ? 'none' : '';
+        gh.querySelector('.metric-group-toggle').textContent = open ? '▸' : '▾';
+      };
+      grp.appendChild(gh);
+      grp.appendChild(gb);
+      mbody.appendChild(grp);
+    }
   }
   mpanel.appendChild(mbody);
   page.appendChild(mpanel);

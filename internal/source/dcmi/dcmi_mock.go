@@ -46,6 +46,10 @@ func (m *MockProvider) DeviceNumInCard(card int) (int, error) {
 	return 1, nil // each card has 1 device
 }
 
+func (m *MockProvider) DeviceIDInCard(card int) (int, int, int, error) {
+	return 1, -1, -1, nil // 1 device, no MCU, no CPU
+}
+
 func (m *MockProvider) Temperature(card, dev int) (int, error) {
 	if v, ok := m.Temp[[2]int{card, dev}]; ok {
 		return v, nil

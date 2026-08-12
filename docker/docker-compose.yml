@@ -8,6 +8,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.npu
     privileged: true
+    network: host              # share host network namespace (see real NICs in /sys/class/net)
     # --privileged already grants access to all devices (including /dev/davinci*).
     # To use tighter security instead, replace privileged with:
     #   devices:
@@ -18,6 +19,17 @@ services:
       - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
       - /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro
       - /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro
+      # NPU command-line tools (installed by driver to host system paths)
+      - /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro
+      - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro
+      - /etc/os-release:/etc/os-release:ro
+      # Override config files (baked into image at /etc/catmonitor/ and /features/)
+      # Uncomment and adjust paths to customize:
+      # - ./catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro
+      # - ./metrics.yaml:/etc/catmonitor/metrics.yaml:ro
+      # - ./features/web/metrics.yaml:/features/web/metrics.yaml:ro
+      # - ./features/dfee/metrics.yaml:/features/dfee/metrics.yaml:ro
+      # - ./features/health/metrics.yaml:/features/health/metrics.yaml:ro
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler
@@ -25,39 +37,38 @@ services:
     environment:
       LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
     ports:
-      - "9100:9100"    # Prometheus exporter
-      - "9101:9101"    # faultsub REST API (enable in config to use)
+      - "19320:19320"  # daemon Prometheus exporter (ignored with network: host)
+      - "19321:19321"  # faultsub REST API (enable in config to use)
     restart: unless-stopped
 
   # 2. web: standalone read-only dashboard. Reads snapshots from daemon.
   web:
     image: catmonitor-npu
+    network: host
     command: >
       /usr/local/bin/web
-      -addr=:9527
+      -addr=:19322
       -snapshot-dir=/var/lib/catmonitor/snapshot
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
     ports:
-      - "9527:9527"
+      - "19322:19322"  # (ignored with network: host)
     depends_on:
       - catmonitor
     restart: unless-stopped
 
-  # 3. dfee: energy-efficiency SPA + Prometheus exporter.
-  #    Reads snapshots from daemon.
+  # 3. dfee: energy-efficiency SPA + API. Reads snapshots from daemon.
   dfee:
     image: catmonitor-npu
+    network: host
     command: >
       /usr/local/bin/dfee
-      -addr=:9528
-      -exporter=enabled -exporter-port=9333
+      -addr=:19323
       -snapshot-dir=/var/lib/catmonitor/snapshot
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
     ports:
-      - "9528:9528"    # dfee SPA
-      - "9333:9333"    # dfee Prometheus exporter
+      - "19323:19323"  # (ignored with network: host)
     depends_on:
       - catmonitor
     restart: unless-stopped

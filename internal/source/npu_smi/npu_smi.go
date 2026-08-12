@@ -6,6 +6,7 @@ package npu_smi
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -91,6 +92,9 @@ func (s *defaultSource) HccsBandwidth(devID int) (*HccsBw, error) {
 	out, err := s.fetch("info", "-t", "hccs-bw", "-i", strconv.Itoa(devID), "-c", "0", "-time", "50")
 	if err != nil {
 		return nil, err
+	}
+	if strings.Contains(strings.ToLower(out), "does not support") {
+		return nil, fmt.Errorf("npu-smi: device %d does not support hccs-bw", devID)
 	}
 	return parseHccsBw(out), nil
 }
