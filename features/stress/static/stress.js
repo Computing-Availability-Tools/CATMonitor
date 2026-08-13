@@ -134,6 +134,8 @@ function npuDeploymentSummary(profile) {
   if (values.soc) parts.push('SoC：' + values.soc);
   if (values.device_namespace) parts.push('设备命名空间：' + values.device_namespace);
   if (values.available_devices) parts.push('可用 logical ID：' + values.available_devices);
+  if (values.topology_source) parts.push('拓扑来源：' + values.topology_source);
+  if (values.pci_topology_devices) parts.push('PCI logical ID：' + values.pci_topology_devices);
   return parts.join(' · ');
 }
 function appendResource(container, label, value) {

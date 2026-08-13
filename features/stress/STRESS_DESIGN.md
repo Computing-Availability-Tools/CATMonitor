@@ -61,6 +61,7 @@ build_npu_burn_image.sh                 create_npu_burn_container.sh  catmonitor
   ├─ CANN/torch_npu 基础镜像              ├─ benchmark_check.sh            ├─ 互斥、超时与取消
   ├─ 可选显式兼容补丁                      ├─ 全量 identity device map       └─ CSV/SDC 校验
   ├─ CANN 环境发现与构建预检              └─ docker exec
+  ├─ runtime pciutils/lspci
   ├─ wheel/metadata/import 校验
   └─ image manifest
 ```
@@ -75,9 +76,18 @@ source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 
 它验证 `libascend_hal.so` 解析及 torch、torch_npu、TBE import，然后构建、
 安装并检查 NPU Burn metadata、import、custom ops 和入口 mode。Dockerfile 将
 预检、native wheel 构建、
-本地 wheel 安装和最终验证拆成独立 layer；最终 layer 用 nonce 重跑只读
+runtime `pciutils/lspci` 供应、本地 wheel 安装和最终验证拆成独立
+layer；最终 layer 用 nonce 重跑只读
 预检并输出 manifest marker，而高成本 C++ 编译与安装 layer 可复用缓存。
-安装通过 `--no-index --no-deps --force-reinstall` 确保无网络且不会被基础镜像
+Docker build network 默认 `default`。供应顺序为基础镜像已有 `lspci`、构建上下文的
+离线 RPM/DEB 依赖闭包、基础镜像在线包管理器；离线包输入在未显式覆盖 network 时
+自动选择 `none`。在线包名由 `runtime-packages.txt` 解析，版本不写死。构建脚本只把
+已存在代理环境变量的名字传给 Docker，让 Docker 读取当前环境值；脚本不把值展开到
+argv、日志或 manifest，Dockerfile 也不声明相应 `ARG/ENV`。离线包只进入临时 build
+context，安装完成后从最终文件系统清除；构建器自动记录来源与集合哈希。正式部署不
+直接 bind 宿主机 `lspci`，避免把容器绑定到宿主机动态库 ABI。
+wheel 安装通过 `--no-index --no-deps --force-reinstall` 确保不访问
+PyPI 且不会被基础镜像
 中的同版本包跳过。它不依赖登录 shell/profile，不设置
 `TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求 `npu-smi` 或 NPU 设备。基础镜像
 不自带 HAL 时，可显式把宿主机 driver `lib64` 暂存到 builder stage；最终 stage
@@ -90,7 +100,8 @@ source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 
 
 镜像标签和 manifest 同时记录 bundled/override 来源、上游 repository/revision、
 原始/补丁后源码及补丁哈希、profile、模板哈希、基础镜像 ID/摘要、目标镜像
-ID/摘要与架构，以及实际 Ascend 环境脚本、CANN 版本、wheel 文件名/
+ID/摘要与架构，以及实际 Ascend 环境脚本、CANN 版本、build network、runtime
+package list 哈希、pciutils 来源、离线包集合与 lspci 路径/版本、wheel 文件名/
 SHA-256/安装包位置、HAL/import 预检、构建期 driver 是否注入及其哈希。
 `driver_mount_present_at_build=false` 是允许的事实，不是
 失败状态。manifest 用于确认“构建了什么”，不能证明宿主机驱动、
@@ -146,7 +157,11 @@ STREAM/xhpl/xhpcg/npu-burn，不创建结果文件，也不改变配置。
 并把 backend、容器/镜像、CANN、torch_npu、SoC 等记录为 profile 参数；这些
 参数同样参与配置哈希，不构成可由 Web 修改的容器配置接口。
 adapter 还枚举当前环境的 `/dev/davinciN` 并暴露
-`device_namespace=npu_burn_logical` 与 `available_devices`。选择值在 describe 和
+`device_namespace=npu_burn_logical` 与 `available_devices`。在 `docker_exec` 下，
+它同时在固定容器内执行与 upstream 相同语义的 `lspci -D -d 19e5:` 过滤，根据
+排序后的 PCI accelerator 数量得到 `pci_topology_devices`。设备节点集合与 PCI
+logical ID 集合必须完全一致，否则拒绝运行，避免 upstream 缺失 `lspci` 时静默
+退回固定 `range(8)`。选择值在 describe 和
 正式执行前都必须属于该集合；不能使用 PyTorch device count 或 `npu-smi` Phy-ID
 替代这个 namespace。越界错误作为必需 `logical_devices` 资产展示，因此 CLI 与
 Web 能在负载启动前给出有效 ID 和修正提示。

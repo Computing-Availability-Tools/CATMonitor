@@ -106,6 +106,18 @@ wheel 构建、纯本地强制重装、安装包元数据、`ascend_npu_burn`/cu
 profile。真正的驱动、设备与 ABI 验证仍由管理员固定容器、`describe npu_burn`、
 单卡 smoke 和正式验收完成。
 
+最终 runtime image 必须包含 `pciutils/lspci`。这是 upstream 枚举真实 Ascend PCI
+topology 的运行依赖；缺失时 upstream 会静默退回固定八设备假设，在 16-die A3 上
+产生错误范围。依赖名称由仓库的 `docker/stress/npu/runtime-packages.txt` 维护，版本
+由审批基础镜像的软件仓库决定。正常节点默认使用 Docker `default` build network：
+基础镜像已带 `lspci` 时不下载，否则按清单安装。受限节点可临时设置标准 HTTP(S)
+代理环境变量，构建器只把已设置的变量名作为 Docker 预定义 build args 转发，不输出
+值，也不写入 Git、YAML、manifest 或镜像 ENV。隔离节点可重复传入
+`--pciutils-package`，把兼容 RPM/DEB 依赖闭包离线装入镜像；未显式指定网络时该路径
+自动使用 `none`。不要只挂载宿主机 `/usr/bin/lspci`，它还依赖 `libpci` 等与宿主机
+ABI 相关的文件。manifest 会自动记录依赖来源、离线包集合哈希、build network、路径
+和版本，不要求使用者手工计算。
+
 ## NPU Burn 固定容器
 
 镜像构建成功后，管理员使用仓库工具创建或安全启动长期运行容器：
@@ -127,7 +139,8 @@ torch_npu 或 PATH 环境变量。相同 profile 的运行中容器直接复用�
 
 CATMonitor 作业仍只执行 `docker exec`，不会调用该管理员生命周期工具。切换
 `NPU_BURN_DEVICE` 不需要重建容器。对于当前支持并已验证的 fixed-container
-topology，该值使用容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical ID；
+topology，该值来自 upstream 的 PCI topology 枚举并作为 torch_npu device index；
+CATMonitor 会交叉检查容器 `/dev/davinciN` ID 集合与 `lspci` topology ID 集合；
 不得直接填写 `npu-smi` Phy-ID，也不得用 `torch.npu.device_count()` 推导其范围。
 模板不默认选择设备，管理员必须明确配置一个或多个已预留设备，例如 `7` 或
 `0,1,7`。上游支持 `all`，但它只适用于整节点已由本压测独占的场景，不作为共享

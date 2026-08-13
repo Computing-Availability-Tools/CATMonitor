@@ -89,6 +89,8 @@ ARG SOURCE_ORIGIN
 ARG UPSTREAM_REPOSITORY
 ARG UPSTREAM_REVISION
 ARG ASCEND_ENV_SCRIPT
+ARG BUILD_VALIDATION_NONCE
+ARG PCIUTILS_ONLINE_INSTALL=false
 
 LABEL org.opencontainers.image.title="CATMonitor Ascend NPU Burn runtime" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
@@ -108,8 +110,79 @@ COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/build/dist/ /opt/catmonitor/npuburn-wheel/
 COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/LICENSE.md /usr/share/licenses/ascend-npu-burn/LICENSE.md
+COPY pciutils-packages/ /opt/catmonitor/pciutils-packages/
+COPY runtime-packages.txt /opt/catmonitor/runtime-packages.txt
 
-# E. Install the exact builder-validated wheel into the clean runtime stage.
+# E. Provide the upstream runtime topology dependency. Offline packages staged
+# by the outer builder take precedence. Online package-manager access is used
+# only when the administrator explicitly enables a Docker build network.
+# NPU Burn silently falls back to eight devices without lspci, which is wrong
+# on 16-die A3 nodes.
+RUN set -euo pipefail; \
+    mapfile -t runtime_packages < <(awk 'NF && $1 !~ /^#/ { print $1 }' /opt/catmonitor/runtime-packages.txt); \
+    [ "${#runtime_packages[@]}" -gt 0 ]; \
+    if command -v lspci >/dev/null 2>&1; then \
+        pciutils_source=base-image; \
+    elif set -- /opt/catmonitor/pciutils-packages/*.rpm; [ -f "$1" ]; then \
+        command -v rpm >/dev/null 2>&1 || { \
+            printf 'ERROR: offline RPM packages were supplied but rpm is unavailable\n' >&2; \
+            exit 1; \
+        }; \
+        rpm -Uvh --replacepkgs "$@"; \
+        pciutils_source=offline-rpm; \
+    elif set -- /opt/catmonitor/pciutils-packages/*.deb; [ -f "$1" ]; then \
+        command -v dpkg >/dev/null 2>&1 || { \
+            printf 'ERROR: offline DEB packages were supplied but dpkg is unavailable\n' >&2; \
+            exit 1; \
+        }; \
+        dpkg -i "$@"; \
+        pciutils_source=offline-deb; \
+    elif [ "$PCIUTILS_ONLINE_INSTALL" != true ]; then \
+        printf 'ERROR: lspci is absent; provide compatible offline pciutils packages or explicitly enable a build network\n' >&2; \
+        exit 1; \
+    elif command -v dnf >/dev/null 2>&1; then \
+        dnf install -y "${runtime_packages[@]}" || { \
+            printf 'ERROR: online runtime package installation failed; configure a temporary proxy or provide offline packages\n' >&2; \
+            exit 1; \
+        }; \
+        dnf clean all; \
+        pciutils_source=online-dnf; \
+    elif command -v yum >/dev/null 2>&1; then \
+        yum install -y "${runtime_packages[@]}" || { \
+            printf 'ERROR: online runtime package installation failed; configure a temporary proxy or provide offline packages\n' >&2; \
+            exit 1; \
+        }; \
+        yum clean all; \
+        pciutils_source=online-yum; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        export DEBIAN_FRONTEND=noninteractive; \
+        apt-get update || { \
+            printf 'ERROR: online runtime package index update failed; configure a temporary proxy or provide offline packages\n' >&2; \
+            exit 1; \
+        }; \
+        apt-get install -y --no-install-recommends "${runtime_packages[@]}" || { \
+            printf 'ERROR: online runtime package installation failed; configure a temporary proxy or provide offline packages\n' >&2; \
+            exit 1; \
+        }; \
+        rm -rf /var/lib/apt/lists/*; \
+        pciutils_source=online-apt; \
+    elif command -v zypper >/dev/null 2>&1; then \
+        zypper --non-interactive install --no-recommends "${runtime_packages[@]}" || { \
+            printf 'ERROR: online runtime package installation failed; configure a temporary proxy or provide offline packages\n' >&2; \
+            exit 1; \
+        }; \
+        zypper clean --all; \
+        pciutils_source=online-zypper; \
+    else \
+        printf 'ERROR: pciutils is absent and the base image has no supported package manager\n' >&2; \
+        exit 1; \
+    fi; \
+    command -v lspci >/dev/null; \
+    install -d -m 0755 /usr/local/share/catmonitor; \
+    printf '%s\n' "$pciutils_source" > /usr/local/share/catmonitor/pciutils-source; \
+    rm -rf /opt/catmonitor/pciutils-packages /opt/catmonitor/runtime-packages.txt
+
+# F. Install the exact builder-validated wheel into the clean runtime stage.
 # Host driver libraries from the optional builder input are not copied here.
 RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn; \
@@ -123,6 +196,21 @@ RUN set -euo pipefail; \
         --force-reinstall \
         "$1"; \
     install -d -m 0750 "$HOME/.ascend_npu_burn/output"
+
+# G. Revalidate the final image without importing the runtime command module or
+# touching NPU devices. The nonce prevents a cached layer from hiding markers
+# that the outer builder records in its manifest.
+RUN set -euo pipefail; \
+    : "${BUILD_VALIDATION_NONCE:?build validation nonce is required}"; \
+    lspci_path=$(command -v lspci); \
+    lspci_version=$("$lspci_path" --version 2>&1); \
+    [ -n "$lspci_version" ]; \
+    pciutils_source=$(cat /usr/local/share/catmonitor/pciutils-source); \
+    [ -n "$pciutils_source" ]; \
+    printf 'CATMONITOR_RUNTIME_PCIUTILS=PASS\n'; \
+    printf 'CATMONITOR_PCIUTILS_SOURCE=%s\n' "$pciutils_source"; \
+    printf 'CATMONITOR_LSPCI_PATH=%s\n' "$lspci_path"; \
+    printf 'CATMONITOR_LSPCI_VERSION=%s\n' "${lspci_version%%$'\n'*}"
 
 ENTRYPOINT ["/usr/local/bin/catmonitor-npu-burn"]
 CMD ["__serve__"]

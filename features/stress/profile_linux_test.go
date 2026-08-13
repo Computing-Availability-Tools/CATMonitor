@@ -91,7 +91,9 @@ case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
   exec)
     if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
-      printf '0\n1\n7\n'
+      printf '0\n1\n2\n'
+    elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
+      printf '0\n1\n2\n'
     else
       [ "$5" = '/usr/bin/test -x "$1"' ] || exit 97
       shift 2
@@ -138,7 +140,9 @@ esac
 		parameters["cann"] != "8.3.RC2" || parameters["torch_npu"] != "2.8.0" ||
 		parameters["soc"] != "Ascend 910B4" || parameters["chip_generation"] != "A2" ||
 		parameters["device_namespace"] != "npu_burn_logical" ||
-		parameters["available_devices"] != "0,1,7" {
+		parameters["available_devices"] != "0,1,2" ||
+		parameters["topology_source"] != "container_lspci" ||
+		parameters["pci_topology_devices"] != "0,1,2" {
 		t.Fatalf("unexpected container NPU Burn profile: %+v parameters=%v", profile, parameters)
 	}
 	if _, exists := parameters["execution_count"]; exists {
@@ -146,7 +150,7 @@ esac
 	}
 }
 
-func TestDispatcherRejectsNPUSMIPhysicalIDBeforeWorkload(t *testing.T) {
+func TestDispatcherRejectsDeviceOutsideSixteenDevicePCITopologyBeforeWorkload(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "workload-launched")
 	outputDir := filepath.Join(dir, "output")
@@ -159,7 +163,9 @@ case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a3-v3\n' ;;
   exec)
     if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
-      printf '0\n1\n2\n3\n4\n5\n6\n7\n'
+      printf '0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n'
+    elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
+      printf '0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n'
     else
       shift 2
       exec "$@"
@@ -177,7 +183,7 @@ esac
 		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
-		"NPU_BURN_DEVICE":                   "14",
+		"NPU_BURN_DEVICE":                   "16",
 		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
 		"NPU_BURN_CHIP_GENERATION":          "A3",
 	})
@@ -203,8 +209,9 @@ esac
 	}
 	if profile.Preflight.Status != CheckFail || topology == nil || topology.Status != CheckFail ||
 		parameters["device_namespace"] != "npu_burn_logical" ||
-		parameters["available_devices"] != "0,1,2,3,4,5,6,7" ||
-		!strings.Contains(topology.Message, "logical device 14 is unavailable") ||
+		parameters["available_devices"] != "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15" ||
+		parameters["pci_topology_devices"] != "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15" ||
+		!strings.Contains(topology.Message, "logical device 16 is unavailable") ||
 		!strings.Contains(topology.Message, "Do not use npu-smi Phy-ID") {
 		t.Fatalf("physical ID was not rejected by describe: profile=%+v parameters=%v", profile, parameters)
 	}
@@ -217,16 +224,74 @@ esac
 	})
 	available, message := manager.Availability("npu_burn")
 	if available || !strings.Contains(message, "logical_devices (/dev/davinci[0-9]*)") ||
-		!strings.Contains(message, "logical device 14 is unavailable") {
+		!strings.Contains(message, "logical device 16 is unavailable") {
 		t.Fatalf("manager did not surface logical device preflight: available=%v message=%q", available, message)
 	}
 
 	runOutput, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
-	if err == nil || !strings.Contains(string(runOutput), "valid logical devices: 0,1,2,3,4,5,6,7") {
+	if err == nil || !strings.Contains(string(runOutput), "valid logical devices: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15") {
 		t.Fatalf("invalid device must fail before workload: err=%v output=%s", err, runOutput)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("invalid device launched NPU Burn workload: %v", err)
+	}
+}
+
+func TestDispatcherAcceptsDevice14OnSixteenDevicePCITopology(t *testing.T) {
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
+case "$1" in
+  inspect) printf 'true|catmonitor/npuburn:a3-v5\n' ;;
+  exec)
+    if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
+      seq 0 15
+    elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
+      seq 0 15
+    elif [ "${5-}" = '/usr/bin/test -x "$1"' ]; then
+      exit 0
+    else
+      exit 97
+    fi
+    ;;
+  *) exit 98 ;;
+esac
+`)
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               "/usr/local/bin/catmonitor-npu-burn",
+		"NPU_BURN_CONTAINER_RUNTIME":        docker,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a3-v5",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a3-v5",
+		"NPU_BURN_RUNTIME_CANN":             "9.0.1",
+		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.10.0.post2",
+		"NPU_BURN_SOC_MODEL":                "Ascend910_9382",
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "quant_matmul",
+		"NPU_BURN_DEVICE":                   "14",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_CHIP_GENERATION":          "A3",
+	})
+	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile ExecutionProfile
+	if err := json.Unmarshal(output, &profile); err != nil {
+		t.Fatalf("describe output is not JSON: %v: %s", err, output)
+	}
+	parameters := make(map[string]string, len(profile.Parameters))
+	for _, parameter := range profile.Parameters {
+		parameters[parameter.Key] = parameter.Value
+	}
+	if profile.Preflight.Status != CheckPass || parameters["devices"] != "14" ||
+		parameters["available_devices"] != "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15" ||
+		parameters["pci_topology_devices"] != parameters["available_devices"] {
+		t.Fatalf("device 14 was not accepted on matching 16-device topology: profile=%+v parameters=%v", profile, parameters)
 	}
 }
 
@@ -370,6 +435,69 @@ esac
 		parameters["available_devices"] != "" ||
 		!strings.Contains(topology.Message, "cannot inspect /dev/davinciN in the fixed container") {
 		t.Fatalf("docker topology probe incorrectly fell back to host devices: profile=%+v parameters=%v", profile, parameters)
+	}
+}
+
+func TestDispatcherRejectsContainerAndPCITopologyMismatch(t *testing.T) {
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
+case "$1" in
+  inspect) printf 'true|catmonitor/npuburn:a3-v4\n' ;;
+  exec)
+    if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
+      seq 0 15
+    elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
+      seq 0 7
+    elif [ "${5-}" = '/usr/bin/test -x "$1"' ]; then
+      exit 0
+    else
+      exit 97
+    fi
+    ;;
+  *) exit 98 ;;
+esac
+`)
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               "/usr/local/bin/catmonitor-npu-burn",
+		"NPU_BURN_CONTAINER_RUNTIME":        docker,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a3-v4",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a3-v4",
+		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "quant_matmul",
+		"NPU_BURN_DEVICE":                   "14",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_CHIP_GENERATION":          "A3",
+	})
+	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile ExecutionProfile
+	if err := json.Unmarshal(output, &profile); err != nil {
+		t.Fatalf("describe output is not JSON: %v: %s", err, output)
+	}
+	parameters := make(map[string]string, len(profile.Parameters))
+	for _, parameter := range profile.Parameters {
+		parameters[parameter.Key] = parameter.Value
+	}
+	var topology *AssetCheck
+	for index := range profile.Assets {
+		if profile.Assets[index].Name == "logical_devices" {
+			topology = &profile.Assets[index]
+			break
+		}
+	}
+	if profile.Preflight.Status != CheckFail || topology == nil || topology.Status != CheckFail ||
+		parameters["available_devices"] != "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15" ||
+		parameters["pci_topology_devices"] != "0,1,2,3,4,5,6,7" ||
+		!strings.Contains(topology.Message, "do not match NPU Burn lspci topology") {
+		t.Fatalf("container/lspci topology mismatch was not rejected: profile=%+v parameters=%v", profile, parameters)
 	}
 }
 

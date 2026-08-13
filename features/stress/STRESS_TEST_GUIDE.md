@@ -154,28 +154,102 @@ docker pull "$BASE_IMAGE"  # 离线环境改用 docker load -i /path/to/image.ta
 docker image inspect "$BASE_IMAGE" >/dev/null
 ```
 
+NPU Burn 运行时还依赖 `pciutils/lspci` 获取真实 PCI topology。仓库在
+`docker/stress/npu/runtime-packages.txt` 维护机器可读依赖名，不写死发行版版本。
+构建按以下优先级准备：
+
+1. 基础镜像已经包含可执行 `lspci`；
+2. 正常节点默认使用 Docker `default` network，由基础镜像包管理器按清单安装；
+3. 受限节点临时设置标准 HTTP(S) 代理，构建器安全转发；
+4. 完全离线节点从同发行版、同架构的软件仓库缓存或兼容构建节点取得完整 RPM/DEB
+   依赖闭包，用可重复的 `--pciutils-package` 注入；未显式设置 network 时自动改为
+   `none`。
+
+先检查基础镜像：
+
+```bash
+docker run --rm --entrypoint /bin/sh "$BASE_IMAGE" -c \
+  'command -v lspci && lspci --version'
+```
+
+若没有 `lspci`，在 RPM 系宿主机可先查已安装版本和本地缓存：
+
+```bash
+command -v lspci
+rpm -qf "$(command -v lspci)"
+rpm -q pciutils pciutils-libs 2>/dev/null || true
+find /var/cache /opt /root -type f \
+  \( -name 'pciutils*.rpm' -o -name 'pciutils-libs*.rpm' \) \
+  2>/dev/null
+```
+
+安装数据库不能还原 RPM payload；本机没有缓存时，应在兼容、可联网的构建节点下载
+完整依赖闭包后传入隔离节点，或制作已经包含 `pciutils` 的审批基础镜像并通过
+`docker save/load` 传输。另一个兼容容器可以作为查找缓存/版本的来源，但优先取其
+RPM/DEB，不要只复制或 bind `/usr/bin/lspci`：单个二进制还依赖 `libpci` 等动态库，
+会把容器绑定到宿主机 ABI。
+
+离线包示例（文件名以实际环境为准）：
+
+```bash
+PCIUTILS_ARGS=(
+  --pciutils-package /opt/catmonitor/packages/pciutils-libs-3.8.0.aarch64.rpm
+  --pciutils-package /opt/catmonitor/packages/pciutils-3.8.0.aarch64.rpm
+)
+```
+
+基础镜像已经含 `lspci` 或正常联网安装时，将 `PCIUTILS_ARGS=()`：
+
+```bash
+PCIUTILS_ARGS=()
+```
+
+受限节点只在当前管理终端临时配置代理：
+
+```bash
+export HTTP_PROXY=http://proxy.example.com:3128
+export HTTPS_PROXY=http://proxy.example.com:3128
+export NO_PROXY=127.0.0.1,localhost,registry.internal.example.com
+```
+
+构建器只向 `docker build` 传 `HTTP_PROXY` 等变量名，不把值展开到命令行或写入
+日志、Git、CATMonitor YAML、manifest、Dockerfile/镜像 ENV。若代理只监听宿主机
+`127.0.0.1`，bridge 内无法访问该回环地址，应让代理监听容器可达地址，或在明确批准
+后增加 `--build-network host`。使用 `sudo` 时必须保留这些环境变量；下面命令只保留
+六个标准代理变量，不使用宽泛的 `sudo -E`。
+
 A3 首次 candidate 必须先使用无补丁 profile：
 
 ```bash
-sudo bash scripts/stress/build_npu_burn_image.sh \
+sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,http_proxy,https_proxy,no_proxy \
+  bash scripts/stress/build_npu_burn_image.sh \
   --base-image "$BASE_IMAGE" \
   --image catmonitor/npuburn:a3-candidate \
   --compat-profile none \
   --docker-bin /usr/bin/docker \
+  "${PCIUTILS_ARGS[@]}" \
   --build-root /var/tmp/catmonitor-npu-burn-build
+```
+
+受限节点构建完成后清理当前终端变量：
+
+```bash
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
 ```
 
 A2/CANN 8.3 基础镜像需要宿主机 driver 才能 import torch_npu 时，使用仓库已审计
 profile：
 
 ```bash
-sudo bash scripts/stress/build_npu_burn_image.sh \
+sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,http_proxy,https_proxy,no_proxy \
+  bash scripts/stress/build_npu_burn_image.sh \
   --base-image quay.io/ascend/vllm-ascend:v0.12.0rc1 \
   --image catmonitor/npuburn:a2-cann83 \
   --compat-profile a2-cann83 \
   --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
   --build-driver-lib-dir /usr/local/Ascend/driver/lib64 \
   --docker-bin /usr/bin/docker \
+  "${PCIUTILS_ARGS[@]}" \
   --build-root /var/tmp/catmonitor-npu-burn-build-a2
 ```
 
@@ -210,14 +284,18 @@ base image 重建，不包含宿主机 driver。不要把 `/usr/local/Ascend/dri
              → build/build.sh → 离线强制重装唯一 wheel
              → 校验安装包元数据 → import ascend_npu_burn/custom_ops
              → 检查运行入口存在且可执行
+             → 校验镜像内 pciutils/lspci
              → 校验镜像标签 → 写 manifest
 ```
 
 它不会调用 `docker run/create/start/stop/rm`，不会映射 NPU，也不会运行矩阵或
 SDC 负载。自带 HAL 的基础镜像允许宿主机 `/usr/local/Ascend/driver` 不存在；需要
 宿主机 driver 的基础镜像必须显式使用 build-only 输入。`npu-smi` 不可用时的
-警告也不是失败，只要 HAL 可解析且 Python 预检返回 0。Docker RUN
-使用无网络模式，pip 只安装本轮 wheel，不需要配置 PyPI 代理。默认 manifest 位于：
+警告也不是失败，只要 HAL 可解析且 Python 预检返回 0。Docker build 默认使用
+`default` network；离线包输入未显式覆盖时自动使用 `none`。无论选择哪条 pciutils
+供应路径，pip 都只安装本轮本地 wheel，不访问 PyPI。网络安装失败会提示管理员配置
+临时代理或提供离线包。
+默认 manifest 位于：
 
 ```text
 /var/tmp/catmonitor-npu-burn-build/manifests/npu-burn-image-manifest.json
@@ -239,6 +317,8 @@ manifest 中应看到 `source.origin=bundled`、固定上游 repository/revision
 mode validator、Ascend helper 的 SHA-256，基础/目标镜像身份、架构和
 `compatibility.profile=none`。还应看到 `runtime.ascend_env_script`、
 `runtime.cann_version`、HAL/torch/torch_npu/TBE/wheel/package metadata 验证结果、
+`runtime.pciutils_source`、离线包格式/数量/自动集合哈希、`runtime.lspci_path`、
+`runtime.lspci_version` 和 `docker.build_network`、
 `wheel.filename`、`wheel.sha256`、安装版本/路径、
 `wheel.force_installed=true`、`wheel.network_access=false`、custom ops import，
 `build_driver.injected/source_path/sha256/included_in_final_image`、
@@ -490,7 +570,7 @@ NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
 NPU_BURN_RUN_CASE="quant_matmul"
 NPU_BURN_GROUP=""
-NPU_BURN_DEVICE="7"
+NPU_BURN_DEVICE="14"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
 NPU_BURN_CHIP_GENERATION="A3"
 ```
@@ -498,21 +578,24 @@ NPU_BURN_CHIP_GENERATION="A3"
 对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用固定
 容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical device ID，不是
 `npu-smi` 的 Phy-ID，也不能根据 PyTorch logical device count 推导。必须明确选择
-管理员已经预留的设备，例如 `7` 或 `0,1,7`；不得依靠脚本自动选择所谓空闲卡。
-上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。一次已验证 A3 节点
-的四类事实为：
+管理员已经预留的设备，例如 `14` 或 `14,15`；不得依靠脚本自动选择所谓空闲卡。
+上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。当前 A3 V5 待验收
+节点已经确认的事实为：
 
 | 编号来源 | 本次节点 | 用途 |
 |---|---|---|
-| Linux device node | `/dev/davinci0`～`/dev/davinci7` | 固定容器 identity map |
-| NPU Burn `--device` | `0`～`7` | `NPU_BURN_DEVICE` 的有效范围 |
-| `torch.npu.device_count()` | `16` | PyTorch namespace，不用于本参数校验 |
+| Linux device node | `/dev/davinci0`～`/dev/davinci15` | 固定容器 identity map |
+| `lspci -D -d 19e5:` | 16 个 Ascend accelerator | upstream topology 输入 |
+| NPU Burn `--device` | 预期 `0`～`15` | 必须由 V5 describe/实测确认 |
+| `torch.npu.device_count()` | `16` | 辅助事实，不单独用于参数校验 |
 | `npu-smi` Phy-ID | `0`～`15` | 运维物理编号，不可直接填入本参数 |
 
-该节点上 logical device 7 对应 `/dev/davinci7`，并观察到 board7 的 host Phy-ID
-为 14/15；这只是本机证据，不能推广成通用映射。配置 `14` 会在 describe 阶段
-直接失败并列出有效 logical IDs，不再等上游以 RC=255 退出。改变 logical device
-只需修改节点脚本并重新 describe，不需要重建镜像或容器。
+旧镜像缺少 `lspci` 时出现的 `0`～`7` 是 upstream fallback，不是 A3 硬件范围，
+因此旧版 `device 14` 的 RC=255 不能作为越界证据。V5 必须先确认容器内 16 个 PCI
+accelerator、`/dev/davinci0`～`15` 和 describe 的 `available_devices=0,...,15`
+一致，再运行 device 14/15。NPU Burn logical ID 最终作为 torch_npu device index；
+它与 `/dev/davinciN`、`npu-smi` Phy-ID 的对应只对本机实测负责，不写成跨平台规则。
+改变 logical device 只需修改节点脚本并重新 describe，不需要重建镜像或容器。
 
 `NPU_BURN_CHIP_GENERATION` 与 `NPU_BURN_RUN_CASE` 必须显式、成对设置，适配器
 不会自动把代际映射成 workload。当前已验证 A2 使用 `matmul`、A3 使用
@@ -672,6 +755,8 @@ docker inspect catmonitor-npuburn-a3 \
   --format '{{.State.Running}} {{.Config.Image}} {{.Image}}'
 docker exec catmonitor-npuburn-a3 \
   /usr/local/bin/catmonitor-npu-burn --version
+docker exec catmonitor-npuburn-a3 command -v lspci
+docker exec catmonitor-npuburn-a3 lspci -D -d 19e5:
 docker exec catmonitor-npuburn-a3 python3 -c \
   'import torch, torch_npu; print(torch.__version__); print(torch_npu.__version__)'
 npu-smi info
@@ -946,28 +1031,34 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] 单次缩短超时会改变执行配置哈希但不修改 YAML
 - [ ] 回滚文件和操作步骤已验证
 
-### 14.1 V4 pristine A3 闭环
+### 14.1 V5 pristine A3 topology 闭环
 
-V4 候选不能只运行容器内裸 `npu-burn`。至少完成以下产品链路：
+V5 候选不能只运行容器内裸 `npu-burn`。至少完成以下产品链路：
 
-1. 用全新名称执行 bootstrap，创建 V4 fixed candidate；再次执行同一命令应幂等
+1. 镜像构建 manifest 必须显示 `runtime.pciutils=true`、实际 source/path/version、
+   `required_packages=["pciutils"]`；正常构建 network 为 `default`，离线包路径自动为
+   `none`。离线包输入由构建器自动记录，不要求用户计算哈希，代理值不得出现。
+2. 用全新名称执行 bootstrap，创建 V5 fixed candidate；再次执行同一命令应幂等
    复用，不重建、不覆盖、不删除容器。
-2. 将节点脚本设置为管理员确认空闲的 logical device，例如 `7`，执行
-   `describe npu_burn`，确认 `preflight=pass`、`device_namespace` 和容器内
-   `available_devices`。
-3. 临时改为实机确认无效的 `14`，确认 describe 在负载前失败并提示不得使用
-   `npu-smi` Phy-ID；随后恢复 `7` 并重新 describe。
-4. 必须通过完整入口执行：
+3. 容器内 `/dev/davinciN`、`lspci -D -d 19e5:` 和 NPU Burn topology 都必须是
+   16 个 logical device；`describe npu_burn` 应显示 `topology_source=container_lspci`、
+   `available_devices=0,...,15` 和相同的 `pci_topology_devices`。
+4. 将节点脚本设置为管理员确认空闲的 logical device `14`；describe 应通过。
+   临时配置 `16` 应在 workload 前失败并列出有效 logical IDs，随后恢复 `14`。
+5. 必须通过完整入口执行：
 
    ```bash
    catmonitor stress -b npu_burn -o table
    ```
 
-   当前 V4 `quant_matmul` 验收预期为整体 `Healthy`，并从本次 CSV 得到
+   当前 V5 `quant_matmul` 验收预期为整体 `Healthy`，并从本次 CSV 得到
    `devices=1`、`cases=2`、`passed=2`、`failed=0`、`errors=0`；同时核对 int32、
-   int8 均为 PASS、`run_count=100`、`err_count=0`。这些数值是本次 V4 profile 的
+   int8 均为 PASS、`run_count=100`、`err_count=0`。这些数值是本次 V5 profile 的
    验收基线，不是所有 NPU Burn 用例的通用固定值。
-5. Web 应展示同一报告中的 device namespace、available devices 和 `2 / 2 PASS`；
+6. 运行 device 14 时同步观察 `npu-smi`，记录本机 logical ID、device node 和
+   Phy-ID 的实测对应；该记录不得推广成其他机型的固定规则。
+7. Web 应展示同一报告中的 topology source、PCI logical devices、available devices
+   和 `2 / 2 PASS`；
    Web 不提供 device、image、container 或 run case 编辑入口。
 
 推荐顺序：

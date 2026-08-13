@@ -36,7 +36,7 @@ assert_fails() {
 
 DOCKERFILE="$REPO_ROOT/docker/stress/npu/Dockerfile"
 wheel_install_line=$(grep -nF '# C. Replace any same-version package' "$DOCKERFILE" | cut -d: -f1)
-validation_nonce_line=$(grep -nF 'ARG BUILD_VALIDATION_NONCE' "$DOCKERFILE" | cut -d: -f1)
+validation_nonce_line=$(grep -nF 'ARG BUILD_VALIDATION_NONCE' "$DOCKERFILE" | head -n 1 | cut -d: -f1)
 [ -n "$wheel_install_line" ] && [ -n "$validation_nonce_line" ] || \
     fail 'Dockerfile validation/cache markers are unavailable'
 [ "$validation_nonce_line" -gt "$wheel_install_line" ] || \
@@ -130,7 +130,11 @@ case "${1-}" in
             case "$1" in
                 --file) dockerfile=$2; shift 2 ;;
                 --tag) image=$2; shift 2 ;;
-                --network) [ "$2" = none ]; printf '%s\n' "$2" >"$FAKE_DOCKER_ROOT/network"; shift 2 ;;
+                --network)
+                    case "$2" in default|host|none) ;; *) exit 92 ;; esac
+                    printf '%s\n' "$2" >"$FAKE_DOCKER_ROOT/network"
+                    shift 2
+                    ;;
                 --build-arg)
                     case "$2" in
                         SOURCE_SHA256=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/source-sha" ;;
@@ -140,6 +144,7 @@ case "${1-}" in
                         UPSTREAM_REPOSITORY=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/repository" ;;
                         UPSTREAM_REVISION=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/revision" ;;
                         ASCEND_ENV_SCRIPT=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/ascend-env-override" ;;
+                        PCIUTILS_ONLINE_INSTALL=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/pciutils-online-install" ;;
                     esac
                     shift 2
                     ;;
@@ -151,6 +156,11 @@ case "${1-}" in
         [ -f "$context/ascend_env.sh" ]
         [ -f "$context/validate_entrypoint.sh" ]
         [ -f "$context/source/LICENSE.md" ]
+        [ -d "$context/pciutils-packages" ]
+        grep -Fxq 'pciutils' "$context/runtime-packages.txt"
+        if [ "${FAKE_ECHO_PROXY-}" = true ]; then
+            printf 'proxy-debug=%s\n' "${HTTP_PROXY-}"
+        fi
         cp "$context/source/ascend_npu_burn/npu_burn.py" "$FAKE_DOCKER_ROOT/context-npu-burn.py"
         cp "$context/source/README.md" "$FAKE_DOCKER_ROOT/context-readme.md" 2>/dev/null || true
         selected_env=$(cat "$FAKE_DOCKER_ROOT/ascend-env-override")
@@ -178,6 +188,24 @@ case "${1-}" in
         printf 'CATMONITOR_PACKAGE_FILE=/usr/local/lib/python3.12/site-packages/ascend_npu_burn/__init__.py\n'
         printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'
         printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'
+        printf 'CATMONITOR_RUNTIME_PCIUTILS=PASS\n'
+        set -- "$context"/pciutils-packages/*.rpm
+        if [ -f "$1" ]; then
+            printf 'CATMONITOR_PCIUTILS_SOURCE=offline-rpm\n'
+            find "$context/pciutils-packages" -maxdepth 1 -type f -printf '%f\n' | sort >"$FAKE_DOCKER_ROOT/pciutils-package-files"
+        else
+            set -- "$context"/pciutils-packages/*.deb
+            if [ -f "$1" ]; then
+                printf 'CATMONITOR_PCIUTILS_SOURCE=offline-deb\n'
+                find "$context/pciutils-packages" -maxdepth 1 -type f -printf '%f\n' | sort >"$FAKE_DOCKER_ROOT/pciutils-package-files"
+            elif [ "$(cat "$FAKE_DOCKER_ROOT/pciutils-online-install")" = true ]; then
+                printf 'CATMONITOR_PCIUTILS_SOURCE=online-dnf\n'
+            else
+                printf 'CATMONITOR_PCIUTILS_SOURCE=base-image\n'
+            fi
+        fi
+        printf 'CATMONITOR_LSPCI_PATH=/usr/bin/lspci\n'
+        printf 'CATMONITOR_LSPCI_VERSION=lspci version 3.8.0\n'
         printf '%s\n' "$image" >"$FAKE_DOCKER_ROOT/image"
         printf 'Successfully built fixture-image-id\n'
         ;;
@@ -216,6 +244,36 @@ assert_fails "$TEST_ROOT/relative-build-driver.log" \
 assert_contains "$TEST_ROOT/relative-build-driver.log" \
     '--build-driver-lib-dir must be an absolute path on the build host'
 
+assert_fails "$TEST_ROOT/invalid-build-network.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-network bridge
+assert_contains "$TEST_ROOT/invalid-build-network.log" \
+    '--build-network must be default, host, or none'
+
+touch "$TEST_ROOT/not-a-package.tar"
+assert_fails "$TEST_ROOT/invalid-pciutils-package.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --pciutils-package "$TEST_ROOT/not-a-package.tar"
+assert_contains "$TEST_ROOT/invalid-pciutils-package.log" \
+    '--pciutils-package accepts only .rpm or .deb files'
+
+printf 'rpm fixture\n' >"$TEST_ROOT/real-pciutils.rpm"
+ln -s "$TEST_ROOT/real-pciutils.rpm" "$TEST_ROOT/symlink-pciutils.rpm"
+assert_fails "$TEST_ROOT/symlink-pciutils-package.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --pciutils-package "$TEST_ROOT/symlink-pciutils.rpm"
+assert_contains "$TEST_ROOT/symlink-pciutils-package.log" \
+    'pciutils package must not be a symbolic link'
+
 assert_fails "$TEST_ROOT/missing-base-image.log" \
     bash "$BUILD_SCRIPT" \
     --base-image missing-base:test \
@@ -239,7 +297,7 @@ bash "$BUILD_SCRIPT" \
     fail 'bundled source tree was modified'
 [ -f "$MANIFEST" ] || fail 'manifest was not created'
 python3 -m json.tool "$MANIFEST" >/dev/null
-assert_contains "$MANIFEST" '"schema_version":"5"'
+assert_contains "$MANIFEST" '"schema_version":"6"'
 assert_contains "$MANIFEST" '"origin":"bundled"'
 assert_contains "$MANIFEST" '"upstream_revision":"381028b688a70e881d97477d7fa1ae8f2a26288e"'
 assert_contains "$MANIFEST" '"profile":"none"'
@@ -247,6 +305,15 @@ assert_contains "$MANIFEST" '"base_id":"sha256:fixture-base-image-id"'
 assert_contains "$MANIFEST" '"architecture":"arm64"'
 assert_contains "$MANIFEST" '"ascend_env_script":"/usr/local/Ascend/cann-9.0.1/set_env.sh"'
 assert_contains "$MANIFEST" '"cann_version":"9.0.1"'
+assert_contains "$MANIFEST" '"build_network":"default"'
+assert_contains "$MANIFEST" '"pciutils":true'
+assert_contains "$MANIFEST" '"pciutils_source":"online-dnf"'
+assert_contains "$MANIFEST" '"pciutils_package_format":""'
+assert_contains "$MANIFEST" '"pciutils_package_count":0'
+assert_contains "$MANIFEST" '"pciutils_package_bundle_sha256":""'
+assert_contains "$MANIFEST" '"required_packages":["pciutils"]'
+assert_contains "$MANIFEST" '"lspci_path":"/usr/bin/lspci"'
+assert_contains "$MANIFEST" '"lspci_version":"lspci version 3.8.0"'
 assert_contains "$MANIFEST" '"libascend_hal_resolved":true'
 assert_contains "$MANIFEST" '"torch_npu_import":true'
 assert_contains "$MANIFEST" '"tbe_import":true'
@@ -256,11 +323,66 @@ assert_contains "$MANIFEST" '"installed_version":"26.1.0+torch.2.10.0"'
 assert_contains "$MANIFEST" '"force_installed":true'
 assert_contains "$MANIFEST" '"network_access":false'
 assert_contains "$MANIFEST" '"custom_ops_import":true'
+assert_contains "$MANIFEST" '"runtime_pci_topology_dependency":true'
 assert_contains "$MANIFEST" '"entrypoint_validator_sha256":"'
 assert_contains "$MANIFEST" '"driver_mount_present_at_build":false'
 assert_contains "$MANIFEST" '"npu_workload_run":false'
-assert_contains "$FAKE_DOCKER_ROOT/network" 'none'
+assert_contains "$FAKE_DOCKER_ROOT/network" 'default'
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'argparse'
+
+OFFLINE_PACKAGE_ROOT="$TEST_ROOT/offline packages"
+install -d -m 0755 "$OFFLINE_PACKAGE_ROOT"
+printf 'pciutils fixture\n' >"$OFFLINE_PACKAGE_ROOT/pciutils-3.8.0.aarch64.rpm"
+printf 'libpci fixture\n' >"$OFFLINE_PACKAGE_ROOT/pciutils-libs-3.8.0.aarch64.rpm"
+OFFLINE_BUILD_ROOT="$TEST_ROOT/offline-package-build"
+OFFLINE_MANIFEST="$OFFLINE_BUILD_ROOT/manifests/npu-burn-image-manifest.json"
+bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-offline-pciutils \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --pciutils-package "$OFFLINE_PACKAGE_ROOT/pciutils-3.8.0.aarch64.rpm" \
+    --pciutils-package "$OFFLINE_PACKAGE_ROOT/pciutils-libs-3.8.0.aarch64.rpm" \
+    --build-root "$OFFLINE_BUILD_ROOT"
+assert_contains "$OFFLINE_MANIFEST" '"build_network":"none"'
+assert_contains "$OFFLINE_MANIFEST" '"pciutils_source":"offline-rpm"'
+assert_contains "$OFFLINE_MANIFEST" '"pciutils_package_format":"rpm"'
+assert_contains "$OFFLINE_MANIFEST" '"pciutils_package_count":2'
+assert_contains "$OFFLINE_MANIFEST" '"pciutils_package_bundle_sha256":"'
+assert_contains "$FAKE_DOCKER_ROOT/pciutils-package-files" 'pciutils-3.8.0.aarch64.rpm'
+assert_contains "$FAKE_DOCKER_ROOT/pciutils-package-files" 'pciutils-libs-3.8.0.aarch64.rpm'
+[ "$(cat "$FAKE_DOCKER_ROOT/network")" = none ] || \
+    fail 'offline package build must keep Docker networking disabled'
+
+ONLINE_BUILD_ROOT="$TEST_ROOT/online-package-build"
+bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-online-pciutils \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-network default \
+    --build-root "$ONLINE_BUILD_ROOT"
+assert_contains "$ONLINE_BUILD_ROOT/manifests/npu-burn-image-manifest.json" '"build_network":"default"'
+assert_contains "$ONLINE_BUILD_ROOT/manifests/npu-burn-image-manifest.json" '"pciutils_source":"online-dnf"'
+
+PROXY_BUILD_ROOT="$TEST_ROOT/proxy-build"
+PROXY_SECRET='http://proxy-user:p[a]*?ss@proxy.example.invalid:3128'
+HTTP_PROXY="$PROXY_SECRET" \
+HTTPS_PROXY="$PROXY_SECRET" \
+NO_PROXY='127.0.0.1,localhost,registry.example' \
+FAKE_ECHO_PROXY=true \
+bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:cann9 \
+    --image catmonitor/npuburn:a3-proxy \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$PROXY_BUILD_ROOT" >"$TEST_ROOT/proxy-build.log"
+assert_contains "$FAKE_DOCKER_ROOT/calls.log" '--build-arg HTTP_PROXY'
+assert_contains "$FAKE_DOCKER_ROOT/calls.log" '--build-arg HTTPS_PROXY'
+assert_contains "$FAKE_DOCKER_ROOT/calls.log" '--build-arg NO_PROXY'
+assert_not_contains "$FAKE_DOCKER_ROOT/calls.log" "$PROXY_SECRET"
+assert_contains "$TEST_ROOT/proxy-build.log" 'HTTP proxy: configured'
+assert_contains "$TEST_ROOT/proxy-build.log" 'proxy-debug=[proxy-redacted]'
+assert_not_contains "$TEST_ROOT/proxy-build.log" "$PROXY_SECRET"
+assert_not_contains "$PROXY_BUILD_ROOT/manifests/npu-burn-image-manifest.json" "$PROXY_SECRET"
+assert_not_contains "$PROXY_BUILD_ROOT/manifests/npu-burn-image-manifest.json" 'HTTP_PROXY'
 
 assert_fails "$TEST_ROOT/no-force.log" \
     bash "$BUILD_SCRIPT" \
@@ -526,9 +648,21 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_bur
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_RUNTIME_PCIUTILS=PASS'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_PCIUTILS_SOURCE='
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'command -v lspci'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY pciutils-packages/'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY runtime-packages.txt'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'rpm -Uvh --replacepkgs'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'dpkg -i'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'dnf install -y "${runtime_packages[@]}"'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'apt-get install -y --no-install-recommends "${runtime_packages[@]}"'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '[ -x /usr/local/bin/catmonitor-npu-burn ]'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '/usr/local/bin/catmonitor-npu-burn --version'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_NPU_DEVICE_COUNT'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ARG HTTP_PROXY'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ARG HTTPS_PROXY'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ENV HTTP_PROXY'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'cd /tmp'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY build-driver-lib64/'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${BASE_IMAGE} AS npuburn_runtime'
@@ -536,7 +670,10 @@ NORMALIZED_DOCKERFILE=$(tr '\n' ' ' <"$REPO_ROOT/docker/stress/npu/Dockerfile")
 printf '%s\n' "$NORMALIZED_DOCKERFILE" | grep -Eq \
     'python3 -m pip install .*--no-index .*--no-cache-dir .*--no-deps .*--force-reinstall .*"\$1"' || \
     fail 'local wheel install must be offline and force reinstall the built wheel'
-assert_contains "$BUILD_SCRIPT" '--network none'
+assert_contains "$BUILD_SCRIPT" '--network "$BUILD_NETWORK"'
+assert_contains "$BUILD_SCRIPT" 'BUILD_NETWORK=default'
+assert_contains "$BUILD_SCRIPT" 'PROXY_ARGS+=(--build-arg "$proxy_name")'
+assert_not_contains "$BUILD_SCRIPT" '--build-arg "$proxy_name=$proxy_value"'
 if grep -Fq 'TORCH_DEVICE_BACKEND_AUTOLOAD' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'Dockerfile must not disable torch backend autoload'
 fi

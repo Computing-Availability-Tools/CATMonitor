@@ -178,6 +178,7 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`describe_npu_burn`,
 		`probe_npu_container`,
 		`/usr/bin/test -x "$1"`,
+		`lspci_path=$(command -v lspci)`,
 		`summarize_npu_burn_csv`,
 		`--sdc_detect`,
 	} {
@@ -194,7 +195,6 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		"    osu)",
 		"osu_alltoall",
 		`HPL_INPUT=`,
-		"command -v",
 		`-x OPENBLAS_NUM_THREADS`,
 		`-x OMP_NUM_THREADS`,
 		`-x OMP_DYNAMIC`,
@@ -226,6 +226,8 @@ func TestStandaloneUIExposesDeploymentFailureDetails(t *testing.T) {
 		"npuDeploymentSummary",
 		"设备命名空间：",
 		"可用 logical ID：",
+		"拓扑来源：",
+		"PCI logical ID：",
 		"profileValue(asset.message, '失败')",
 		"values.devices ?? values.device_count",
 		"values.cases ?? values.case_count",
@@ -290,6 +292,8 @@ case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
   exec)
     if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
+      printf '0\n'
+    elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
       printf '0\n'
     else
       shift 2

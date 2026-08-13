@@ -13,6 +13,7 @@ ASCEND_ENV_TEMPLATE="$REPO_ROOT/docker/stress/npu/ascend_env.sh"
 ENTRYPOINT_VALIDATOR_TEMPLATE="$REPO_ROOT/docker/stress/npu/validate_entrypoint.sh"
 BUNDLED_SOURCE="$REPO_ROOT/third_party/ascend_npu_burn/source"
 BUNDLED_METADATA="$REPO_ROOT/third_party/ascend_npu_burn/UPSTREAM"
+RUNTIME_PACKAGES_TEMPLATE="$REPO_ROOT/docker/stress/npu/runtime-packages.txt"
 
 SOURCE_ROOT="$BUNDLED_SOURCE"
 SOURCE_ORIGIN=bundled
@@ -24,10 +25,13 @@ DOCKER_BIN=
 ASCEND_ENV_SCRIPT_OVERRIDE=${ASCEND_ENV_SCRIPT:-}
 BUILD_DRIVER_LIB_DIR=
 COMPAT_PROFILE=none
+BUILD_NETWORK=default
+BUILD_NETWORK_EXPLICIT=false
 BUILD_ROOT=/var/tmp/catmonitor-npu-burn-build
 MANIFEST_PATH=
 FORCE=false
 declare -a PATCH_FILES=()
+declare -a PCIUTILS_PACKAGES=()
 
 usage() {
     cat <<'EOF'
@@ -52,6 +56,11 @@ Build controls:
                             only by the disposable builder stage; it is never
                             copied into the final runtime image
   --compat-profile NAME     Compatibility identity (default: none)
+  --build-network NAME      Docker build network: default, host, or none
+                            (default: default; offline package input selects
+                            none unless this option is explicit)
+  --pciutils-package PATH   Compatible offline pciutils RPM/DEB; repeat for
+                            dependency packages. Preferred on isolated nodes.
   --patch PATH              Apply an audited -p1 patch; repeatable
   --build-root PATH         Isolated build parent
                             (default: /var/tmp/catmonitor-npu-burn-build)
@@ -91,6 +100,8 @@ while [ "$#" -gt 0 ]; do
         --ascend-env-script) require_value "$@"; ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
         --build-driver-lib-dir) require_value "$@"; BUILD_DRIVER_LIB_DIR=$2; shift 2 ;;
         --compat-profile) require_value "$@"; COMPAT_PROFILE=$2; shift 2 ;;
+        --build-network) require_value "$@"; BUILD_NETWORK=$2; BUILD_NETWORK_EXPLICIT=true; shift 2 ;;
+        --pciutils-package) require_value "$@"; PCIUTILS_PACKAGES+=("$2"); shift 2 ;;
         --patch) require_value "$@"; PATCH_FILES+=("$2"); shift 2 ;;
         --build-root) require_value "$@"; BUILD_ROOT=$2; shift 2 ;;
         --manifest) require_value "$@"; MANIFEST_PATH=$2; shift 2 ;;
@@ -100,8 +111,16 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+if [ "${#PCIUTILS_PACKAGES[@]}" -gt 0 ] && [ "$BUILD_NETWORK_EXPLICIT" != true ]; then
+    BUILD_NETWORK=none
+fi
+
 [ -n "$BASE_IMAGE" ] || die "--base-image is required"
 [ -n "$TARGET_IMAGE" ] || die "--image is required"
+case "$BUILD_NETWORK" in
+    default|host|none) ;;
+    *) die "--build-network must be default, host, or none" ;;
+esac
 if [ "$SOURCE_ORIGIN" = bundled ] && [ "$SOURCE_METADATA_EXPLICIT" = true ]; then
     die "--source-metadata is only valid with --source"
 fi
@@ -242,6 +261,25 @@ for index in "${!PATCH_FILES[@]}"; do
     [ -f "${PATCH_FILES[$index]}" ] || die "patch file is unavailable: ${PATCH_FILES[$index]}"
 done
 
+PCIUTILS_PACKAGE_FORMAT=
+for index in "${!PCIUTILS_PACKAGES[@]}"; do
+    package_input=${PCIUTILS_PACKAGES[$index]}
+    [ ! -L "$package_input" ] || die "pciutils package must not be a symbolic link: $package_input"
+    PCIUTILS_PACKAGES[$index]=$(readlink -m -- "$package_input")
+    package_path=${PCIUTILS_PACKAGES[$index]}
+    [ -f "$package_path" ] || die "pciutils package is unavailable: $package_path"
+    case "$package_path" in
+        *.rpm) package_format=rpm ;;
+        *.deb) package_format=deb ;;
+        *) die "--pciutils-package accepts only .rpm or .deb files" ;;
+    esac
+    if [ -z "$PCIUTILS_PACKAGE_FORMAT" ]; then
+        PCIUTILS_PACKAGE_FORMAT=$package_format
+    elif [ "$PCIUTILS_PACKAGE_FORMAT" != "$package_format" ]; then
+        die "pciutils package inputs must not mix RPM and DEB formats"
+    fi
+done
+
 if [ -z "$DOCKER_BIN" ]; then
     DOCKER_BIN=$(command -v docker 2>/dev/null || true)
 fi
@@ -269,6 +307,7 @@ case "$MANIFEST_PATH" in "$SOURCE_ROOT"|"$SOURCE_ROOT"/*) die "--manifest cannot
 [ -f "$ENTRYPOINT_TEMPLATE" ] || die "entrypoint template is unavailable"
 [ -f "$ASCEND_ENV_TEMPLATE" ] || die "Ascend environment helper template is unavailable"
 [ -f "$ENTRYPOINT_VALIDATOR_TEMPLATE" ] || die "entrypoint validator template is unavailable"
+[ -f "$RUNTIME_PACKAGES_TEMPLATE" ] || die "runtime package list is unavailable"
 for shell_template in \
     "$ENTRYPOINT_TEMPLATE" \
     "$ASCEND_ENV_TEMPLATE" \
@@ -277,6 +316,24 @@ for shell_template in \
         die "shell template must use LF line endings: $shell_template"
     fi
 done
+if grep -q $'\r' "$RUNTIME_PACKAGES_TEMPLATE"; then
+    die "runtime package list must use LF line endings"
+fi
+mapfile -t RUNTIME_PACKAGES < <(
+    awk 'NF && $1 !~ /^#/ { print $1 }' "$RUNTIME_PACKAGES_TEMPLATE"
+)
+[ "${#RUNTIME_PACKAGES[@]}" -gt 0 ] || die "runtime package list is empty"
+declare -A runtime_package_seen=()
+for runtime_package in "${RUNTIME_PACKAGES[@]}"; do
+    case "$runtime_package" in
+        *[!A-Za-z0-9+._-]*|'') die "runtime package list contains an invalid package name" ;;
+    esac
+    [ -z "${runtime_package_seen[$runtime_package]-}" ] || \
+        die "runtime package list contains a duplicate package: $runtime_package"
+    runtime_package_seen[$runtime_package]=true
+done
+[ -n "${runtime_package_seen[pciutils]-}" ] || \
+    die "runtime package list must include pciutils"
 
 DOCKER_VERSION=$("$DOCKER_BIN" version --format '{{.Server.Version}}' 2>&1) || \
     die "docker daemon is unavailable: $DOCKER_VERSION"
@@ -300,7 +357,8 @@ trap cleanup EXIT HUP INT TERM
 CONTEXT="$RUN_ROOT/context"
 STAGED_SOURCE="$CONTEXT/source"
 STAGED_BUILD_DRIVER="$CONTEXT/build-driver-lib64"
-install -d -m 0755 "$STAGED_SOURCE" "$STAGED_BUILD_DRIVER"
+STAGED_PCIUTILS_PACKAGES="$CONTEXT/pciutils-packages"
+install -d -m 0755 "$STAGED_SOURCE" "$STAGED_BUILD_DRIVER" "$STAGED_PCIUTILS_PACKAGES"
 
 # Copy a clean source snapshot. Generated wheels, VCS metadata and Python/C++
 # cache products are not accepted as source inputs.
@@ -336,6 +394,17 @@ if [ -n "$BUILD_DRIVER_LIB_DIR" ]; then
     BUILD_DRIVER_SHA256=$(hash_tree "$STAGED_BUILD_DRIVER")
 fi
 
+PCIUTILS_PACKAGE_BUNDLE_SHA256=
+for package_path in "${PCIUTILS_PACKAGES[@]}"; do
+    package_name=${package_path##*/}
+    [ ! -e "$STAGED_PCIUTILS_PACKAGES/$package_name" ] || \
+        die "duplicate pciutils package filename: $package_name"
+    install -m 0644 -- "$package_path" "$STAGED_PCIUTILS_PACKAGES/$package_name"
+done
+if [ "${#PCIUTILS_PACKAGES[@]}" -gt 0 ]; then
+    PCIUTILS_PACKAGE_BUNDLE_SHA256=$(hash_tree "$STAGED_PCIUTILS_PACKAGES")
+fi
+
 sha256_file() {
     sha256sum -- "$1" | awk '{print $1}'
 }
@@ -355,10 +424,12 @@ install -m 0644 "$DOCKERFILE_TEMPLATE" "$CONTEXT/Dockerfile"
 install -m 0755 "$ENTRYPOINT_TEMPLATE" "$CONTEXT/entrypoint.sh"
 install -m 0644 "$ASCEND_ENV_TEMPLATE" "$CONTEXT/ascend_env.sh"
 install -m 0755 "$ENTRYPOINT_VALIDATOR_TEMPLATE" "$CONTEXT/validate_entrypoint.sh"
+install -m 0644 "$RUNTIME_PACKAGES_TEMPLATE" "$CONTEXT/runtime-packages.txt"
 DOCKERFILE_SHA256=$(sha256_file "$DOCKERFILE_TEMPLATE")
 ENTRYPOINT_SHA256=$(sha256_file "$ENTRYPOINT_TEMPLATE")
 ASCEND_ENV_SHA256=$(sha256_file "$ASCEND_ENV_TEMPLATE")
 ENTRYPOINT_VALIDATOR_SHA256=$(sha256_file "$ENTRYPOINT_VALIDATOR_TEMPLATE")
+RUNTIME_PACKAGES_SHA256=$(sha256_file "$RUNTIME_PACKAGES_TEMPLATE")
 BUILD_VALIDATION_NONCE="$(date -u +%s)-$$"
 DOCKER_BUILD_LOG="$RUN_ROOT/docker-build.log"
 
@@ -378,11 +449,49 @@ else
     printf '    Ascend env: deterministic auto-discovery\n'
 fi
 printf '    compatibility profile: %s\n' "$COMPAT_PROFILE"
+if [ "${#PCIUTILS_PACKAGES[@]}" -gt 0 ]; then
+    printf '    offline pciutils packages: %s (%s)\n' "${#PCIUTILS_PACKAGES[@]}" "$PCIUTILS_PACKAGE_FORMAT"
+else
+    printf '    offline pciutils packages: not staged\n'
+fi
+printf '    build network: %s (default is normal; offline package input selects none unless explicitly overridden)\n' "$BUILD_NETWORK"
+PCIUTILS_ONLINE_INSTALL=false
+if [ "$BUILD_NETWORK" != none ]; then PCIUTILS_ONLINE_INSTALL=true; fi
+declare -a PROXY_ARGS=()
+if [ "$BUILD_NETWORK" != none ]; then
+    for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+        proxy_value=${!proxy_name-}
+        [ -n "$proxy_value" ] || continue
+        case "$proxy_value" in
+            *$'\n'*|*$'\r'*) die "$proxy_name contains an unsupported line break" ;;
+        esac
+        # Passing only the predefined build-arg name keeps the proxy value out
+        # of this process argv and our logs; Docker reads it from the environment.
+        PROXY_ARGS+=(--build-arg "$proxy_name")
+    done
+fi
+if [ "$BUILD_NETWORK" != none ]; then
+    if [ -n "${HTTP_PROXY-}${http_proxy-}" ]; then printf '    HTTP proxy: configured\n'; fi
+    if [ -n "${HTTPS_PROXY-}${https_proxy-}" ]; then printf '    HTTPS proxy: configured\n'; fi
+    if [ -n "${NO_PROXY-}${no_proxy-}" ]; then printf '    NO_PROXY: configured\n'; fi
+fi
+
+redact_build_output() {
+    local line proxy_name proxy_value
+    while IFS= read -r line || [ -n "$line" ]; do
+        for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+            proxy_value=${!proxy_name-}
+            [ -n "$proxy_value" ] || continue
+            line=${line//"$proxy_value"/[proxy-redacted]}
+        done
+        printf '%s\n' "$line"
+    done
+}
 set +e
 "$DOCKER_BIN" build \
     --file "$CONTEXT/Dockerfile" \
     --tag "$TARGET_IMAGE" \
-    --network none \
+    --network "$BUILD_NETWORK" \
     --build-arg "BASE_IMAGE=$BASE_IMAGE" \
     --build-arg "SOURCE_SHA256=$SOURCE_SHA256" \
     --build-arg "PATCHED_SOURCE_SHA256=$PATCHED_SOURCE_SHA256" \
@@ -391,8 +500,10 @@ set +e
     --build-arg "UPSTREAM_REPOSITORY=$UPSTREAM_REPOSITORY" \
     --build-arg "UPSTREAM_REVISION=$UPSTREAM_REVISION" \
     --build-arg "ASCEND_ENV_SCRIPT=$ASCEND_ENV_SCRIPT_OVERRIDE" \
+    --build-arg "PCIUTILS_ONLINE_INSTALL=$PCIUTILS_ONLINE_INSTALL" \
     --build-arg "BUILD_VALIDATION_NONCE=$BUILD_VALIDATION_NONCE" \
-    "$CONTEXT" 2>&1 | tee "$DOCKER_BUILD_LOG"
+    "${PROXY_ARGS[@]}" \
+    "$CONTEXT" 2>&1 | redact_build_output | tee "$DOCKER_BUILD_LOG"
 DOCKER_BUILD_STATUS=${PIPESTATUS[0]}
 set -e
 [ "$DOCKER_BUILD_STATUS" -eq 0 ] || \
@@ -434,6 +545,14 @@ PACKAGE_FILE=$(build_marker CATMONITOR_PACKAGE_FILE) || \
     die "Docker build did not pass the custom ops import validation"
 [ "$(build_marker CATMONITOR_ENTRYPOINT_EXECUTABLE)" = PASS ] || \
     die "Docker build did not report an executable NPU Burn entrypoint"
+[ "$(build_marker CATMONITOR_RUNTIME_PCIUTILS)" = PASS ] || \
+    die "Docker build did not validate the pciutils runtime dependency"
+PCIUTILS_SOURCE=$(build_marker CATMONITOR_PCIUTILS_SOURCE) || \
+    die "Docker build did not report the pciutils source"
+LSPCI_PATH=$(build_marker CATMONITOR_LSPCI_PATH) || \
+    die "Docker build did not report the lspci path"
+LSPCI_VERSION=$(build_marker CATMONITOR_LSPCI_VERSION) || \
+    die "Docker build did not report the lspci version"
 case "$WHEEL_FILENAME" in
     ""|*/*|*\\*) die "Docker build reported an invalid wheel filename" ;;
 esac
@@ -444,6 +563,17 @@ esac
 case "$PACKAGE_FILE" in
     /*) ;;
     *) die "Docker build reported a non-absolute installed package path" ;;
+esac
+case "$LSPCI_PATH" in
+    /*) ;;
+    *) die "Docker build reported a non-absolute lspci path" ;;
+esac
+case "$PCIUTILS_SOURCE" in
+    base-image|offline-rpm|offline-deb|online-dnf|online-yum|online-apt|online-zypper) ;;
+    *) die "Docker build reported an invalid pciutils source" ;;
+esac
+case "$PCIUTILS_SOURCE:$BUILD_NETWORK" in
+    online-*:none) die "Docker build unexpectedly installed pciutils online with network disabled" ;;
 esac
 case "$DRIVER_MOUNT_PRESENT_AT_BUILD" in
     true|false) ;;
@@ -488,7 +618,7 @@ json_string() {
 install -d -m 0755 "$(dirname -- "$MANIFEST_PATH")"
 MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
 {
-    printf '{"schema_version":"5","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"schema_version":"6","generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf ',"builder":"build_npu_burn_image.sh","source":{"origin":'; json_string "$SOURCE_ORIGIN"
     printf ',"path":'; json_string "$SOURCE_ROOT"
     printf ',"metadata_path":'; json_string "$SOURCE_METADATA_PATH"
@@ -515,9 +645,11 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"templates":{"dockerfile_sha256":'; json_string "$DOCKERFILE_SHA256"
     printf ',"entrypoint_sha256":'; json_string "$ENTRYPOINT_SHA256"
     printf ',"ascend_env_sha256":'; json_string "$ASCEND_ENV_SHA256"
-    printf ',"entrypoint_validator_sha256":'; json_string "$ENTRYPOINT_VALIDATOR_SHA256"; printf '}'
+    printf ',"entrypoint_validator_sha256":'; json_string "$ENTRYPOINT_VALIDATOR_SHA256"
+    printf ',"runtime_packages_sha256":'; json_string "$RUNTIME_PACKAGES_SHA256"; printf '}'
     printf ',"docker":{"path":'; json_string "$DOCKER_BIN"
-    printf ',"server_version":'; json_string "$DOCKER_VERSION"; printf '}'
+    printf ',"server_version":'; json_string "$DOCKER_VERSION"
+    printf ',"build_network":'; json_string "$BUILD_NETWORK"; printf '}'
     printf ',"image":{"name":'; json_string "$TARGET_IMAGE"
     printf ',"base":'; json_string "$BASE_IMAGE"
     printf ',"base_id":'; json_string "$BASE_IMAGE_ID"
@@ -528,7 +660,19 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"architecture":'; json_string "$IMAGE_ARCH"
     printf ',"created":'; json_string "$IMAGE_CREATED"; printf '}'
     printf ',"runtime":{"ascend_env_script":'; json_string "$ASCEND_ENV_SCRIPT_SELECTED"
-    printf ',"cann_version":'; json_string "$CANN_VERSION"; printf '}'
+    printf ',"cann_version":'; json_string "$CANN_VERSION"
+    printf ',"pciutils":true,"pciutils_source":'; json_string "$PCIUTILS_SOURCE"
+    printf ',"pciutils_package_format":'; json_string "$PCIUTILS_PACKAGE_FORMAT"
+    printf ',"pciutils_package_count":%s' "${#PCIUTILS_PACKAGES[@]}"
+    printf ',"pciutils_package_bundle_sha256":'; json_string "$PCIUTILS_PACKAGE_BUNDLE_SHA256"
+    printf ',"required_packages":['
+    for index in "${!RUNTIME_PACKAGES[@]}"; do
+        [ "$index" -eq 0 ] || printf ','
+        json_string "${RUNTIME_PACKAGES[$index]}"
+    done
+    printf ']'
+    printf ',"lspci_path":'; json_string "$LSPCI_PATH"
+    printf ',"lspci_version":'; json_string "$LSPCI_VERSION"; printf '}'
     printf ',"build_driver":{"injected":%s' "$BUILD_DRIVER_INJECTED"
     printf ',"source_path":'; json_string "$BUILD_DRIVER_LIB_DIR"
     printf ',"sha256":'; json_string "$BUILD_DRIVER_SHA256"
@@ -542,6 +686,7 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"torch_import":true,"torch_npu_import":true,"tbe_import":true'
     printf ',"wheel_build":true,"wheel_install":true,"ascend_npu_burn_import":true'
     printf ',"custom_ops_import":true'
+    printf ',"runtime_pci_topology_dependency":true'
     printf ',"version_command":true,"driver_mount_present_at_build":%s' "$DRIVER_MOUNT_PRESENT_AT_BUILD"
     printf ',"npu_workload_run":false}'
     printf '}\n'

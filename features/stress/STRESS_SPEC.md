@@ -47,11 +47,13 @@ STREAM 编译规模、`--only`、`--skip` 和 `--force`。
 仓库必须提供独立的 Linux 管理员入口
 `scripts/stress/build_npu_burn_image.sh`，从仓库内固定的 MindCluster
 AscendNPUBurn 上游源码和管理员已审批、已拉取或加载到本地的 CANN/torch_npu
-基础镜像构建目标镜像。标准构建必须只要求 `--base-image` 和 `--image`；
+基础镜像构建目标镜像。基础镜像已包含 `lspci` 时，标准构建只要求
+`--base-image` 和 `--image`；
 `--source` 与 `--source-metadata` 只作为上游升级、开发和兼容性验证的显式覆盖
 入口。构建器还必须支持 `--docker-bin`、`--compat-profile`、可重复的 `--patch`、
-`--build-root`、`--manifest`、`--force`、可选的 `--ascend-env-script`，以及只进入
-builder stage 的可选 `--build-driver-lib-dir`。
+`--build-root`、`--manifest`、`--force`、可选的 `--ascend-env-script`、显式
+`--build-network`、可重复的 `--pciutils-package`，以及只进入 builder stage 的可选
+`--build-driver-lib-dir`。
 
 内置源码必须位于 `third_party/ascend_npu_burn/source`，保留上游许可证，并用
 机器可读 `UPSTREAM`、审计说明和逐文件 SHA-256 清单固定 repository、revision、
@@ -74,8 +76,13 @@ profile 或默认关闭 torch backend autoload。发现顺序为：显式 overri
 `ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash`、唯一的
 `cann-*/set_env.sh`。多个 versioned 路径必须拒绝并要求显式 override。
 
-镜像构建只允许完成 HAL/import 预检、源码构建、wheel 安装、安装包元数据、NPU Burn
-import、custom ops import 和入口文件可执行性检查；不得调用依赖 NUMA/NPU 拓扑的
+最终 runtime image 必须包含 `pciutils/lspci`。该依赖必须来自基础镜像已有内容、
+构建上下文中兼容的离线 RPM/DEB 依赖闭包，或正常构建网络可用时的基础镜像包
+管理器安装，不得把宿主机 `/usr/bin/lspci` 单独挂载或复制进镜像。构建必须
+用 `command -v lspci` 和不会访问 NPU 的版本查询确认最终镜像依赖，并将路径、版本
+与构建网络记录进 manifest。镜像构建只允许完成系统依赖安装、HAL/import 预检、
+源码构建、wheel 安装、安装包元数据、NPU Burn import、custom ops import 和入口文件
+可执行性检查；不得调用依赖 NUMA/NPU 拓扑的
 运行时 CLI，不得映射 NPU 设备、创建或运行容器，也不得
 执行 NPU 负载。自带 HAL 的基础镜像不要求宿主机 driver、`npu-smi` 或设备存在。
 若基础镜像只在挂载宿主机 driver 后才能 import torch_npu，管理员可显式提供
@@ -91,17 +98,28 @@ import、custom ops import 和入口文件可执行性检查；不得调用依�
   链接的源码输入、Docker daemon 以及基础镜像已在本地存在；
 - 在 wheel 构建前确认 `libascend_hal.so` 可解析，torch、torch_npu 和 TBE
   可 import；`npu-smi` 的警告不得在 Python 返回码为 0 时被判为失败；
-- Docker build 的 RUN 阶段默认无网络；必须用
-  `--no-index --no-deps --force-reinstall` 安装本轮唯一 wheel，禁止因基础
-  镜像已安装同版本而跳过。基础镜像缺少构建依赖时必须失败，不得
-  联网补齐；
+- 仓库必须提供 LF、无重复且机器可读的 `docker/stress/npu/runtime-packages.txt`，
+  至少声明 `pciutils`；Dockerfile 的在线安装必须读取该清单，不写死发行版版本号；
+- Docker build network 默认为 `default`。基础镜像已有 `lspci` 时不得重复安装；
+  缺失时按清单使用基础镜像包管理器安装。传入任一 `--pciutils-package` 且未显式设置
+  network 时自动选择 `none`；隔离节点必须提供同发行版、同架构的 RPM/DEB 完整依赖
+  闭包。混用 RPM/DEB、符号链接、缺失依赖或安装后没有可执行 `lspci` 均必须失败；
+- 构建网络不是 `none` 时，构建器必须把宿主机已经设置且非空的 `HTTP_PROXY`、
+  `HTTPS_PROXY`、`NO_PROXY` 及小写形式按 Docker 预定义 build arg 的变量名转发。
+  不得输出或校验代理值，不得把值放入命令行参数、Git、CATMonitor YAML、manifest、
+  Dockerfile `ARG/ENV` 或最终镜像；日志最多报告某类代理“已配置”；
+- NPU Burn wheel 必须继续用
+  `--no-index --no-deps --force-reinstall`
+  安装，禁止访问 PyPI 或因基础镜像已安装同版本而跳过；
 - 分离预检、wheel 构建、wheel 安装与 package 验证 layer，使
   native wheel 在仅最终验证变更时可复用缓存；
 - 在镜像标签中记录来源类型、上游 repository/revision、原始/补丁后源码 SHA-256
   和兼容 profile，并在构建后回读校验；
 - 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint/
   entrypoint validator/Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
-  CANN 版本、wheel 文件名/SHA-256/安装版本与路径、离线强制重装事实、
+  CANN 版本、build network、runtime package list 哈希、pciutils 来源、离线包数量/
+  格式/集合哈希、lspci 路径与版本（但不记录代理）、wheel 文件名/SHA-256/
+  安装版本与路径、离线强制重装事实、
   HAL/import/custom ops/wheel/package metadata 校验、构建期 driver 是否注入、输入哈希、
   最终镜像不包含该输入的事实以及
   “未执行 NPU 负载”的事实；
@@ -132,13 +150,17 @@ torch_npu、PATH、LD_LIBRARY_PATH、ASCEND 或 ATB 环境变量。
 `no`、`on-failure`、`always` 或 `unless-stopped`；restart policy 必须进入 profile
 哈希和既有容器一致性检查。
 
-对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用容器内
-`/dev/davinciN` 的 `N` 所对应的 NPU Burn logical ID。它不是 `npu-smi` Phy-ID，
-也不能用 PyTorch 报告的 device count 验证。模板不得默认选择设备；管理员必须
+`docker_exec` 的 NPU Burn logical ID 来自 upstream 对 Ascend PCI accelerator 的
+`lspci` 枚举、排序和编号，并最终作为 torch_npu device index 使用。CATMonitor 必须
+同时枚举容器内 `/dev/davinciN` 与同一容器的 upstream-compatible PCI topology；
+两个 logical ID 集合完全一致时才能通过 preflight，缺失 `lspci`、没有 PCI 结果或
+集合不一致时必须失败，不能接受 upstream 的固定八设备 fallback。该 ID 不是
+`npu-smi` Phy-ID，也不能只用 PyTorch 报告的 device count 验证。模板不得默认选择设备；管理员必须
 显式选择一个或多个已预留 logical ID。`all` 仅允许在整节点由本压测独占时显式
 配置，不得作为共享节点推荐值。describe 和正式执行前，native backend 必须从
 宿主机、`docker_exec` backend 必须从固定容器内的 `/dev/davinci[0-9]*` 获取可用
-ID，容器探测失败时不得回退宿主机。空值、重复值、非法格式或越界配置都应作为
+ID，容器探测失败时不得回退宿主机。describe v1 通过 `topology_source` 和
+`pci_topology_devices` 暴露交叉检查结果。空值、重复值、非法格式或越界配置都应作为
 必需资产失败，并提示有效 logical IDs。describe v1 可通过新增参数
 `device_namespace=npu_burn_logical` 与 `available_devices` 向旧消费者兼容地暴露事实。
 

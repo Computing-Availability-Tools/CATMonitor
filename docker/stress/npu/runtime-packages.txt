@@ -1,0 +1,3 @@
+# Runtime packages required by the bundled NPU Burn integration.
+# Package versions are resolved by the approved base image repository.
+pciutils

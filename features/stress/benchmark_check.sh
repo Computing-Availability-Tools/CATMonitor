@@ -278,18 +278,22 @@ emit_npu_container_asset() {
     [ "$NPU_CONTAINER_STATUS" = pass ]
 }
 
-# probe_npu_logical_devices reads only /dev/davinciN names. It deliberately
-# does not use the PyTorch-reported device count or npu-smi Phy-ID because
-# those are different namespaces on multi-die Ascend systems.
+# probe_npu_logical_devices starts from /dev/davinciN names. For docker_exec it
+# also reproduces the upstream lspci filter and requires both logical ID sets
+# to match. It deliberately does not use the PyTorch-reported device count or
+# npu-smi Phy-ID because those are different namespaces on multi-die systems.
 probe_npu_logical_devices() {
     NPU_DEVICE_STATUS=fail
     NPU_DEVICE_MESSAGE="NPU Burn logical device topology is unavailable"
     NPU_AVAILABLE_DEVICES=""
+    NPU_PCI_TOPOLOGY_DEVICES=""
+    NPU_TOPOLOGY_SOURCE="device_nodes"
     NPU_DEVICE_ASSET_PATH="$NPU_BURN_DEVICE_ROOT/davinci[0-9]*"
     device_lines=""
     case "$NPU_BURN_BACKEND" in
         docker_exec)
             NPU_DEVICE_ASSET_PATH="/dev/davinci[0-9]*"
+            NPU_TOPOLOGY_SOURCE="container_lspci"
             if [ "${NPU_CONTAINER_STATUS-}" != pass ]; then
                 NPU_DEVICE_MESSAGE="fixed container is not ready for logical device discovery"
                 return
@@ -308,6 +312,29 @@ probe_npu_logical_devices() {
                 NPU_DEVICE_MESSAGE="cannot inspect /dev/davinciN in the fixed container"
                 return
             }
+            pci_topology_lines=$(
+                "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME" \
+                    /bin/sh -c '
+                        lspci_path=$(command -v lspci) || exit 127
+                        output=$("$lspci_path" -D -d 19e5:) || exit 70
+                        printf "%s\n" "$output" |
+                            LC_ALL=C sort |
+                            awk '\''/Processing accelerators/ && /Device/ { print count; count++ }'\''
+                    ' 2>/dev/null
+            ) || {
+                NPU_DEVICE_MESSAGE="cannot enumerate NPU Burn PCI topology in the fixed container; ensure pciutils/lspci is installed and executable"
+                return
+            }
+            NPU_PCI_TOPOLOGY_DEVICES=$(
+                printf '%s' "$pci_topology_lines" |
+                    awk '/^[0-9]+$/ { print $1 }' |
+                    sort -n -u |
+                    paste -sd, -
+            )
+            if [ -z "$NPU_PCI_TOPOLOGY_DEVICES" ]; then
+                NPU_DEVICE_MESSAGE="lspci found no Ascend 19e5 Processing accelerators in the fixed container; refusing the upstream eight-device fallback"
+                return
+            fi
             ;;
         native)
             case "$NPU_BURN_DEVICE_ROOT" in
@@ -337,6 +364,11 @@ probe_npu_logical_devices() {
     )
     if [ -z "$NPU_AVAILABLE_DEVICES" ]; then
         NPU_DEVICE_MESSAGE="no /dev/davinciN logical device nodes are available"
+        return
+    fi
+    if [ "$NPU_BURN_BACKEND" = docker_exec ] &&
+       [ "$NPU_AVAILABLE_DEVICES" != "$NPU_PCI_TOPOLOGY_DEVICES" ]; then
+        NPU_DEVICE_MESSAGE="container device nodes ($NPU_AVAILABLE_DEVICES) do not match NPU Burn lspci topology logical IDs ($NPU_PCI_TOPOLOGY_DEVICES); verify pciutils and the fixed-container device mapping"
         return
     fi
     case "$NPU_BURN_DEVICE" in
@@ -746,6 +778,10 @@ describe_npu_burn() {
     emit_parameter device_namespace "Device namespace" npu_burn_logical
     printf ','
     emit_parameter available_devices "Available logical devices" "$NPU_AVAILABLE_DEVICES"
+    printf ','
+    emit_parameter topology_source "Topology source" "$NPU_TOPOLOGY_SOURCE"
+    printf ','
+    emit_parameter pci_topology_devices "PCI topology logical devices" "$NPU_PCI_TOPOLOGY_DEVICES"
     printf ','
     emit_parameter chip_generation "Chip generation" "$NPU_BURN_CHIP_GENERATION"
     printf ','
