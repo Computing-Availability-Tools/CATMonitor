@@ -560,6 +560,63 @@ function specsGroup(comp, arr) {
   return sec;
 }
 
+function specsGroupMemory(specs) {
+  const sec = el('div', 'specs-group');
+  const tbl = document.createElement('table');
+  tbl.className = 'table';
+  tbl.innerHTML = '<thead><tr><th>插槽</th><th>容量</th><th>类型</th><th>速率</th><th>厂商</th></tr></thead>';
+  const tb = document.createElement('tbody');
+
+  const sizes = {};
+  const infos = {};
+  const order = [];
+  let memTotal = null;
+
+  for (const m of specs) {
+    if (m.name === 'mem_total') { memTotal = m; continue; }
+    const loc = (m.labels || {}).locator || '';
+    if (m.name === 'module_size') {
+      sizes[loc] = m;
+      if (!order.includes(loc)) order.push(loc);
+    } else if (m.name === 'module_info') {
+      infos[loc] = m;
+      if (!order.includes(loc)) order.push(loc);
+    }
+  }
+
+  if (memTotal) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>合计</td><td>' + (memTotal.labels || {}).capacity + '</td><td colspan="3"></td>';
+    tb.appendChild(tr);
+  }
+
+  order.sort(metricLocatorCmp);
+  for (const loc of order) {
+    const sz = sizes[loc], info = infos[loc];
+    const lb = (info || sz || {}).labels || {};
+    const sizeStr = sz ? fmtMB(sz.value) : (lb.capacity || '--');
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + (loc || '--') + '</td>' +
+      '<td>' + sizeStr + '</td>' +
+      '<td>' + (lb.type || '--') + '</td>' +
+      '<td>' + (lb.speed || '--') + '</td>' +
+      '<td>' + (lb.manufacturer || '--') + '</td>';
+    tb.appendChild(tr);
+  }
+
+  tbl.appendChild(tb);
+  sec.appendChild(tbl);
+  return sec;
+}
+
+function metricLocatorCmp(a, b) {
+  const na = parseInt(a.replace(/\D/g, ''), 10);
+  const nb = parseInt(b.replace(/\D/g, ''), 10);
+  if (!isNaN(na) && !isNaN(nb)) return na - nb;
+  return a < b ? -1 : 1;
+}
+
 // ---- overview ----
 function renderOverview(snap) {
   const page = document.getElementById('page');
@@ -731,7 +788,11 @@ function renderDetail(compKey, snap) {
     sph.appendChild(elText('span', 'sub', compSpecs.length + ' 条'));
     spanel.appendChild(sph);
     const sbody = el('div', 'panel-body');
-    sbody.appendChild(specsGroup(compKey, compSpecs));
+    if (compKey === 'memory') {
+      sbody.appendChild(specsGroupMemory(compSpecs));
+    } else {
+      sbody.appendChild(specsGroup(compKey, compSpecs));
+    }
     spanel.appendChild(sbody);
     page.appendChild(spanel);
   }
@@ -780,11 +841,14 @@ function renderDetail(compKey, snap) {
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
       const gh = el('div', 'metric-group-head');
+      const groupKey = compKey + ':' + name;
+      const collapsed = localStorage.getItem('mg:' + groupKey) === '1';
       gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
         (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
         '<span class="metric-group-count">' + items.length + ' 条</span>' +
-        '<span class="metric-group-toggle">▾</span>';
+        '<span class="metric-group-toggle">' + (collapsed ? '▸' : '▾') + '</span>';
       const gb = el('div', 'metric-group-body');
+      if (collapsed) gb.style.display = 'none';
       for (const mt of items) {
         const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
         const row = el('div', 'metric-row');
@@ -797,6 +861,7 @@ function renderDetail(compKey, snap) {
         const open = gb.style.display !== 'none';
         gb.style.display = open ? 'none' : '';
         gh.querySelector('.metric-group-toggle').textContent = open ? '▸' : '▾';
+        localStorage.setItem('mg:' + groupKey, open ? '1' : '0');
       };
       grp.appendChild(gh);
       grp.appendChild(gb);
