@@ -28,9 +28,9 @@ func TestEvaluateMemoryUsageHigh(t *testing.T) {
 
 	score := evaluateMemory(metrics, 40)
 
-	// usage > 90%: -30% of 40 = -12
-	if score.Score != 28 {
-		t.Errorf("expected score 28 (usage>90%%), got %d", score.Score)
+	// usage > 90%: -25% of 40 = -10 → 30
+	if score.Score != 30 {
+		t.Errorf("expected score 30 (usage>90%%), got %d", score.Score)
 	}
 }
 
@@ -42,9 +42,9 @@ func TestEvaluateMemoryCEErrors(t *testing.T) {
 
 	score := evaluateMemory(metrics, 40)
 
-	// 3 CE errors * 2 = -6
-	if score.Score != 34 {
-		t.Errorf("expected score 34 (3 CE errors), got %d", score.Score)
+	// 3 CE errors → -10% of 40 = -4 → 36
+	if score.Score != 36 {
+		t.Errorf("expected score 36 (3 CE errors), got %d", score.Score)
 	}
 }
 
@@ -56,9 +56,9 @@ func TestEvaluateMemoryUCErrors(t *testing.T) {
 
 	score := evaluateMemory(metrics, 40)
 
-	// 1 UCE error * 10 = -10
-	if score.Score != 30 {
-		t.Errorf("expected score 30 (1 UCE error), got %d", score.Score)
+	// 1 UCE error → -30% of 40 = -12 → 28
+	if score.Score != 28 {
+		t.Errorf("expected score 28 (1 UCE error), got %d", score.Score)
 	}
 }
 

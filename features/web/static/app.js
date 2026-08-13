@@ -84,6 +84,8 @@ const RULE_TEXT = {
   'cpu_ce_error':  'CPU 发生可纠正 ECC 错误',
   'cpu_uce_error': 'CPU 发生不可纠正 ECC 错误',
   // Memory
+  'usage>90%':       '内存使用率超过 90%',
+  'usage>80%':       '内存使用率超过 80%',
   'swap>50%':       '交换分区使用率超过 50%',
   'ce_error':       '内存可纠正 ECC 错误',
   'uce_error':      '内存不可纠正 ECC 错误',
@@ -99,6 +101,7 @@ const RULE_TEXT = {
   'util>95%':   '利用率超过 95%',
   'ecc_error':  '发生 ECC 错误',
   // NPU
+  'card_drop':       'NPU 卡掉线',
   'health_alarm':    'NPU 健康状态告警',
   'health_warning':  'NPU 健康状态预警',
   'hbm_double_ecc':  'HBM 发生双比特 ECC 错误',
@@ -110,7 +113,8 @@ const RULE_TEXT = {
   'error_count>100': '网络错误包数超过 100',
   'error_count>10':  '网络错误包数超过 10',
   'time_wait>2000':  'TIME_WAIT 连接数超过 2000',
-  'estab>10000':     'ESTABLISHED 连接数超过 10000',
+  'estab>5000':     'ESTABLISHED 连接数超过 5000',
+  'estab>3000':     'ESTABLISHED 连接数超过 3000',
   // Chassis
   'inlet_temp>40':  '进风口温度超过 40°C',
   'inlet_temp>35':  '进风口温度超过 35°C',
@@ -153,7 +157,12 @@ const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
 
 function metricSortCmp(a, b) {
   const la = a.labels || {}, lb = b.labels || {};
-  for (const key of ['core', 'cpu', 'node', 'interface', 'device', 'mount_point', 'direction', 'type', 'fan', 'state', 'status']) {
+  for (const key of [
+    'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
+    'interface', 'device', 'mount_point', 'mc', 'locator', 'sensor',
+    'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
+    'kind', 'interval', 'state', 'status',
+  ]) {
     const va = la[key], vb = lb[key];
     if (va === undefined && vb === undefined) continue;
     if (va === undefined) return 1;

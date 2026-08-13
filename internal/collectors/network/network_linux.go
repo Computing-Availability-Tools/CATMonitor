@@ -3,12 +3,27 @@
 package network
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/proc"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
+
+var virtualInterfacePrefixes = []string{
+	"lo", "cali", "cni", "veth", "br-", "virbr", "flannel",
+	"ovs-system", "dummy", "endvnic",
+}
+
+func isVirtualInterface(name string) bool {
+	for _, p := range virtualInterfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
 
 func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 	if !collector.AnyWanted("network", []string{"throughput", "packet_count", "error_count", "rx_bytes_total", "tx_bytes_total", "connection_count", "interface_status"}) {
@@ -23,7 +38,7 @@ func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 	}
 
 	for iface, curr := range current {
-		if iface == "lo" {
+		if isVirtualInterface(iface) {
 			continue
 		}
 
@@ -114,7 +129,7 @@ func (c *NetworkCollector) collectInterfaceStatus(now time.Time) ([]collector.Me
 	}
 	var metrics []collector.Metric
 	for _, iface := range ifaces {
-		if iface == "lo" {
+		if isVirtualInterface(iface) {
 			continue
 		}
 		state, err := sys.Default().NetOperstate(iface)

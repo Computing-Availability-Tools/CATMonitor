@@ -93,6 +93,8 @@ docker volume create cm-data
 
 ```bash
 docker run -d --name catmonitor --privileged --network host \
+  -v /proc/mounts:/host/proc/mounts:ro \
+  -v /:/host:ro \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
   -v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
@@ -108,6 +110,7 @@ docker run -d --name catmonitor --privileged --network host \
 > 配置文件（`catmonitor.yaml`、`metrics.yaml`、`features/*/metrics.yaml`）已打包在镜像中，默认无需挂载。如需自定义，参见[第 8 节：配置修改](#8-配置修改)。
 
 > NPU 环境专用参数：
+> - `-v /proc/mounts:/host/proc/mounts:ro` + `-v /:/host:ro`：挂载宿主机挂载列表和根文件系统，使磁盘空间指标反映宿主机真实文件系统而非容器 bind mount
 > - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
 > - `-v /usr/bin/hccn_tool` + `-v /usr/local/sbin/npu-smi`：挂载 NPU 命令行工具（driver 安装到宿主机系统路径，不在 Ascend 目录下）
 > - `-v /etc/os-release:/etc/os-release:ro`：获取宿主机 OS 信息（容器内默认显示容器 OS）
@@ -227,6 +230,8 @@ docker/docker/build.sh generic
 
 # 启动（不需要 driver/nnae 挂载、device、LD_LIBRARY_PATH）
 docker run -d --name catmonitor --privileged --network host \
+  -v /proc/mounts:/host/proc/mounts:ro \
+  -v /:/host:ro \
   -v /etc/os-release:/etc/os-release:ro \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \

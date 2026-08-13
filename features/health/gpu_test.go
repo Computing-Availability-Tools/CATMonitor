@@ -27,9 +27,9 @@ func TestEvaluateGPUTempHigh(t *testing.T) {
 
 	score := evaluateGPU(metrics, 60)
 
-	// temp > 90°C: -30% of 60 = -18
-	if score.Score != 42 {
-		t.Errorf("expected score 42 (temp>90C), got %d", score.Score)
+	// temp > 90°C: -35% of 60 = -21 → 39
+	if score.Score != 39 {
+		t.Errorf("expected score 39 (temp>90C), got %d", score.Score)
 	}
 }
 
@@ -40,9 +40,9 @@ func TestEvaluateGPUEccError(t *testing.T) {
 
 	score := evaluateGPU(metrics, 60)
 
-	// ECC error: -20% of 60 = -12
-	if score.Score != 48 {
-		t.Errorf("expected score 48 (ecc_error), got %d", score.Score)
+	// ECC error: -30% of 60 = -18 → 42
+	if score.Score != 42 {
+		t.Errorf("expected score 42 (ecc_error), got %d", score.Score)
 	}
 }
 
@@ -53,9 +53,9 @@ func TestEvaluateGPUUtilizationHigh(t *testing.T) {
 
 	score := evaluateGPU(metrics, 60)
 
-	// utilization > 95%: -10% of 60 = -6 → 54
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (util>95%%), got %d", score.Score)
+	// utilization > 95%: -15% of 60 = -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (util>95%%), got %d", score.Score)
 	}
 	found := false
 	for _, d := range score.Deductions {
@@ -77,8 +77,8 @@ func TestEvaluateGPUUtilWorstCard(t *testing.T) {
 
 	score := evaluateGPU(metrics, 60)
 
-	// worst 97 > 95 → -6 → 54
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (worst card util>95%%), got %d", score.Score)
+	// worst 97 > 95 → -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (worst card util>95%%), got %d", score.Score)
 	}
 }
