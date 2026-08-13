@@ -151,12 +151,30 @@ const SERIES_LABELS = {
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
 
+function metricSortCmp(a, b) {
+  const la = a.labels || {}, lb = b.labels || {};
+  for (const key of ['core', 'cpu', 'node', 'interface', 'device', 'mount_point', 'direction', 'type', 'fan', 'state', 'status']) {
+    const va = la[key], vb = lb[key];
+    if (va === undefined && vb === undefined) continue;
+    if (va === undefined) return 1;
+    if (vb === undefined) return -1;
+    if (va === vb) continue;
+    if (va === 'total') return -1;
+    if (vb === 'total') return 1;
+    const na = parseFloat(va), nb = parseFloat(vb);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return va < vb ? -1 : 1;
+  }
+  return 0;
+}
+
 // ---- state ----
 let collectors = [];
 let lastSnapshot = null;
 let refreshIntervalMs = 5000;
 let pollTimer = null;
 let autoOn = true;
+let appVersion = '';
 
 // ---- helpers ----
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -554,8 +572,7 @@ function renderOverview(snap) {
   const info = el('div', 'hero-info');
   info.innerHTML =
     '<div>服务器类型: <b>' + (SERVER_TYPE_TEXT[h.server_type] || h.server_type || '--') + '</b></div>' +
-    '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>' +
-    '<div>采集间隔: <b>' + (snap.refresh_interval_ms ? snap.refresh_interval_ms / 1000 + 's' : '--') + '</b></div>';
+    '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>';
   const comps = orderedComponents(snap);
   if (comps.length) {
     const chips = el('div', 'hero-components');
@@ -688,6 +705,28 @@ function renderDetail(compKey, snap) {
     page.appendChild(dpanel);
   }
 
+  // hardware specs for this component
+  const allSpecs = snap.specs || [];
+  const compSpecs = allSpecs.filter(m => m.component === compKey);
+  if (compKey === 'memory') {
+    const mt = memoryTotalMB(snap);
+    if (mt) {
+      compSpecs.push({ component: 'memory', name: 'mem_total', value: mt,
+        labels: { capacity: fmtMB(mt) }, synthetic: true });
+    }
+  }
+  if (compSpecs.length) {
+    const spanel = el('div', 'panel');
+    const sph = el('div', 'panel-head');
+    sph.appendChild(elText('span', '', '硬件信息'));
+    sph.appendChild(elText('span', 'sub', compSpecs.length + ' 条'));
+    spanel.appendChild(sph);
+    const sbody = el('div', 'panel-body');
+    sbody.appendChild(specsGroup(compKey, compSpecs));
+    spanel.appendChild(sbody);
+    page.appendChild(spanel);
+  }
+
   // trends
   const series = componentSeries(compKey, snap.history || {});
   if (series.length) {
@@ -727,6 +766,7 @@ function renderDetail(compKey, snap) {
     }
     for (const name of order) {
       const items = groups[name];
+      items.sort(metricSortCmp);
       const dispName = METRIC_NAMES[name] || name;
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
@@ -798,6 +838,11 @@ async function fetchConfigData() {
     const c = await r.json();
     refreshIntervalMs = c.refresh_interval_ms || 5000;
     document.getElementById('intervalInput').value = Math.round(refreshIntervalMs / 1000);
+    if (c.version) {
+      appVersion = c.version;
+      const el = document.querySelector('.brand .subtitle');
+      if (el) el.textContent = 'v' + appVersion + ' · 设备健康度';
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -812,20 +857,9 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 async function applyInterval() {
   const sec = parseInt(document.getElementById('intervalInput').value, 10);
   if (!sec || sec < 1) { showBanner('请输入有效的刷新间隔（秒）', true); return; }
-  const ms = sec * 1000;
-  try {
-    const r = await fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_interval_ms: ms }),
-    });
-    if (!r.ok) { const t = await r.text(); showBanner('应用失败：' + t, true); return; }
-    const c = await r.json();
-    refreshIntervalMs = c.refresh_interval_ms || ms;
-    startPolling();
-    showBanner('刷新间隔已更新为 ' + (refreshIntervalMs / 1000) + ' 秒', false);
-  } catch (e) {
-    showBanner('应用失败：' + e.message, true);
-  }
+  refreshIntervalMs = sec * 1000;
+  startPolling();
+  showBanner('刷新间隔已更新为 ' + sec + ' 秒', false);
 }
 
 async function manualRefresh() {

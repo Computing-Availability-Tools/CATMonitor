@@ -128,13 +128,13 @@ components:
       - name: free_pages
         priority: Low
       - name: module_num
-        priority: Low
+        priority: Medium
         static: true
       - name: module_size
-        priority: Low
+        priority: Medium
         static: true
       - name: module_info
-        priority: Low
+        priority: Medium
         static: true
       - name: power
         priority: Medium

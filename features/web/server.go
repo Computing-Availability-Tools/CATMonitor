@@ -12,6 +12,7 @@ import (
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
 
 // historyPoints is the per-component history ring depth the daemon uses
@@ -137,6 +138,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
+		"version":             version.Version,
 		"refresh_interval_ms": g.RefreshInterval,
 		"history_points":      historyPoints,
 	})
