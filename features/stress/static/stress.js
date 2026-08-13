@@ -132,6 +132,8 @@ function npuDeploymentSummary(profile) {
   if (values.cann) parts.push('CANN：' + values.cann);
   if (values.torch_npu) parts.push('torch_npu：' + values.torch_npu);
   if (values.soc) parts.push('SoC：' + values.soc);
+  if (values.device_namespace) parts.push('设备命名空间：' + values.device_namespace);
+  if (values.available_devices) parts.push('可用 logical ID：' + values.available_devices);
   return parts.join(' · ');
 }
 function appendResource(container, label, value) {

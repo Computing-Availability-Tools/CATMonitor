@@ -42,10 +42,11 @@ Ascend NPU Burn 源码以固定上游修订版内置在
 `third_party/ascend_npu_burn/source`，并继续遵循 Mulan PSL v2；来源、Git
 revision、归档哈希和逐文件哈希记录在同目录的 `UPSTREAM*` 与
 `SOURCE_SHA256SUMS`。CATMonitor 不内置 CANN、PyTorch/torch_npu、驱动或基础
-镜像，也不管理容器生命周期。节点管理员可在脚本中选择宿主机原生执行，
+镜像。节点管理员可在脚本中选择宿主机原生执行，
 或使用 `docker_exec` 调用一个已经运行且由管理员维护的固定容器；镜像、设备、挂载、
 环境和容器命令不进入 YAML/Web。`describe` 会把 backend、容器/镜像、CANN、
-torch_npu、SoC、芯片代际和用例作为只读 profile 参数展示并写入配置哈希。
+torch_npu、SoC、芯片代际、NPU Burn logical device namespace 和用例作为只读
+profile 参数展示并写入配置哈希。
 芯片代际和 workload 必须由节点管理员显式、成对配置；CATMonitor 不根据代际
 暗中改写用例。当前已验证组合为 A2 的 `matmul` 与 A3 的 `quant_matmul`，具体
 可用用例仍以所部署 NPU Burn 版本为准。
@@ -104,6 +105,34 @@ wheel 构建、纯本地强制重装、安装包元数据、`ascend_npu_burn`/cu
 文件名/哈希/安装位置、预检结果和兼容
 profile。真正的驱动、设备与 ABI 验证仍由管理员固定容器、`describe npu_burn`、
 单卡 smoke 和正式验收完成。
+
+## NPU Burn 固定容器
+
+镜像构建成功后，管理员使用仓库工具创建或安全启动长期运行容器：
+
+```bash
+sudo bash scripts/stress/create_npu_burn_container.sh \
+  --image catmonitor/npuburn:a3-candidate \
+  --name catmonitor-npuburn-a3 \
+  --output-dir /var/lib/catmonitor/npu-burn-output \
+  --docker-bin /usr/bin/docker \
+  --runtime ascend \
+  --restart-policy unless-stopped
+```
+
+工具自动枚举并 identity-map 宿主机全部 `/dev/davinciN`，同时映射必需控制设备、
+已验证的驱动/工具路径和默认结果目录。它继承镜像 `Config.Env`，不会复制 CANN、
+torch_npu 或 PATH 环境变量。相同 profile 的运行中容器直接复用，停止容器会被启动；
+名称相同但镜像或 profile 不一致时明确失败，不会静默 `rm -f`。
+
+CATMonitor 作业仍只执行 `docker exec`，不会调用该管理员生命周期工具。切换
+`NPU_BURN_DEVICE` 不需要重建容器。对于当前支持并已验证的 fixed-container
+topology，该值使用容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical ID；
+不得直接填写 `npu-smi` Phy-ID，也不得用 `torch.npu.device_count()` 推导其范围。
+模板不默认选择设备，管理员必须明确配置一个或多个已预留设备，例如 `7` 或
+`0,1,7`。上游支持 `all`，但它只适用于整节点已由本压测独占的场景，不作为共享
+节点推荐值。`describe npu_burn` 会列出容器实际可见的 logical IDs，并在负载启动
+前拒绝空值、重复值、非法格式和越界配置。
 
 ## CPU 压测资产构建
 

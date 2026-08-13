@@ -235,10 +235,10 @@ docker image inspect \
 ```
 
 manifest 中应看到 `source.origin=bundled`、固定上游 repository/revision、来源
-元数据和逐文件清单哈希、原始/补丁后源码、Dockerfile、entrypoint、
-Ascend helper 的 SHA-256，基础/目标镜像身份、架构和
+元数据和逐文件清单哈希、原始/补丁后源码、Dockerfile、entrypoint、entrypoint
+mode validator、Ascend helper 的 SHA-256，基础/目标镜像身份、架构和
 `compatibility.profile=none`。还应看到 `runtime.ascend_env_script`、
-`runtime.cann_version`、HAL/torch/torch_npu/TBE/wheel/version 验证结果、
+`runtime.cann_version`、HAL/torch/torch_npu/TBE/wheel/package metadata 验证结果、
 `wheel.filename`、`wheel.sha256`、安装版本/路径、
 `wheel.force_installed=true`、`wheel.network_access=false`、custom ops import，
 `build_driver.injected/source_path/sha256/included_in_final_image`、
@@ -384,7 +384,7 @@ install -m 0750 \
 - HPL：工作目录、执行器、库目录、MPI launcher、进程数和线程数；
 - HPCG：工作目录、执行器、MPI launcher、进程数、线程数、网格和运行时长。
 - Ascend NPU Burn：执行 backend、`npu-burn`、输出目录、用例或组、设备列表、
-  工具内部超时、执行次数和芯片代际；容器模式还声明固定容器和运行时元数据。
+  工具内部超时和芯片代际；容器模式还声明固定容器和运行时元数据。
 
 所有执行器、工作目录和 launcher 必须使用绝对路径。仓库模板的 HPL/HPCG
 命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的 `-np`；厂商专用绑核、通信和
@@ -408,40 +408,56 @@ command -v npu-burn
 npu-burn --version
 ```
 
-容器模式推荐由管理员创建并保持一个固定容器运行，再由节点脚本执行
-`docker exec`。容器创建时的 image、device、volume、env 和启动命令属于节点
-部署资料，不写入 CATMonitor YAML，也不能由 Web 修改。CATMonitor 不会自动
-pull/start/stop/rm 容器。若节点必须使用一次性 `docker run`，只在
-`/etc/catmonitor/benchmark_check.sh` 部署副本中固化并审计完整命令。
+容器模式由管理员在部署阶段创建并保持一个固定容器运行，再由节点脚本执行
+`docker exec`。容器 profile 不写入 CATMonitor YAML，也不能由 Web 修改。
+CATMonitor 作业不会自动 pull/create/start/stop/rm 容器。
 
-项目以 Mulan PSL v2 发布，部署和再分发需保留其许可证及版权声明。无论使用
-哪种模式，都要创建宿主机可读的独立结果目录；容器模式还必须将它挂载到容器，
-并保证工具生成的 CSV 能在相同宿主机路径读取：
-
-```bash
-install -d -m 0750 "$HOME/.ascend_npu_burn/output"
-```
+项目以 Mulan PSL v2 发布，部署和再分发需保留其许可证及版权声明。原生模式要
+创建 `$HOME/.ascend_npu_burn/output`；容器模式由下述管理员工具创建宿主结果目录
+并挂到镜像默认输出目录。
 
 A3 节点已有 STREAM/HPL/HPCG 时，不要为了接入 NPU Burn 先重编 CPU 三项。
 保留当前已验证资产和 MPI 参数，只生成新的 CATMonitor/脚本 candidate，并对
 三项重新执行 `describe`；镜像构建和 NPU 验收独立推进。
 
 仓库镜像的默认 HOME 是 `/opt/catmonitor/npuburn-home`，entrypoint
-`/usr/local/bin/catmonitor-npu-burn` 会初始化可用的 CANN 环境。为绕开当前
-上游自定义 `--output` 校验缺陷，推荐将宿主机结果目录挂到容器默认输出目录：
+`/usr/local/bin/catmonitor-npu-burn` 会初始化可用的 CANN 环境。镜像构建成功后，
+使用仓库提供的管理员工具创建固定容器：
 
 ```bash
-install -d -m 0750 /var/lib/catmonitor/npu-burn-output
-
-docker run -d \
+sudo bash scripts/stress/create_npu_burn_container.sh \
+  --image catmonitor/npuburn:a3-candidate \
   --name catmonitor-npuburn-a3 \
-  <管理员已审计的 A3 device/driver/env 参数> \
-  --mount type=bind,src=/var/lib/catmonitor/npu-burn-output,dst=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output \
-  catmonitor/npuburn:a3-candidate
+  --output-dir /var/lib/catmonitor/npu-burn-output \
+  --docker-bin /usr/bin/docker \
+  --runtime ascend \
+  --restart-policy unless-stopped
 ```
 
-尖括号一行不是可直接复制的通用参数：A3 设备和宿主机驱动挂载必须使用该站点
-已审批的容器启动方式。CATMonitor 不生成、保存或从 Web 接收这些高权限参数。
+工具会检查镜像与 Docker daemon，动态枚举并按数字顺序 identity-map 宿主机全部
+`/dev/davinciN`，同时要求并映射：
+
+```text
+/dev/davinci_manager
+/dev/devmm_svm
+/dev/hisi_hdc
+/usr/local/Ascend/driver/lib64
+/usr/local/Ascend/driver/version.info
+/etc/ascend_install.info
+/usr/local/dcmi
+/usr/local/bin/npu-smi
+```
+
+宿主结果目录映射到
+`/opt/catmonitor/npuburn-home/.ascend_npu_burn/output`。容器 profile 使用
+`runtime=ascend`、privileged、host network、64 MiB shm、`/workspace` workdir、
+默认 PID/IPC namespace 和 `label=disable`；脚本不硬编码或复制镜像的 29 个 ENV，
+CANN、torch_npu、PATH、LD_LIBRARY_PATH、ASCEND/ATB 等继续由 image `Config.Env`
+负责。
+
+重复执行时，匹配且运行中的容器直接成功，匹配但停止的容器会安全启动。名称相同
+但镜像或 profile 不一致时脚本失败并要求管理员检查；它不会静默 `docker rm -f`。
+CATMonitor runtime 不调用这个脚本，仍然只执行 `docker exec`。
 
 原生模式示例：
 
@@ -452,7 +468,7 @@ NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
 NPU_BURN_RUN_CASE="quant_matmul" # 与 NPU_BURN_GROUP 二选一
 NPU_BURN_GROUP=""
-NPU_BURN_DEVICE="all"            # 或 0,1,2,3
+NPU_BURN_DEVICE="7"              # 明确选择管理员已预留的 logical device
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
 NPU_BURN_CHIP_GENERATION="A3"    # A2、A3 或 A5
 ```
@@ -474,10 +490,29 @@ NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
 NPU_BURN_RUN_CASE="quant_matmul"
 NPU_BURN_GROUP=""
-NPU_BURN_DEVICE="0"
+NPU_BURN_DEVICE="7"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
 NPU_BURN_CHIP_GENERATION="A3"
 ```
+
+对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用固定
+容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical device ID，不是
+`npu-smi` 的 Phy-ID，也不能根据 PyTorch logical device count 推导。必须明确选择
+管理员已经预留的设备，例如 `7` 或 `0,1,7`；不得依靠脚本自动选择所谓空闲卡。
+上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。一次已验证 A3 节点
+的四类事实为：
+
+| 编号来源 | 本次节点 | 用途 |
+|---|---|---|
+| Linux device node | `/dev/davinci0`～`/dev/davinci7` | 固定容器 identity map |
+| NPU Burn `--device` | `0`～`7` | `NPU_BURN_DEVICE` 的有效范围 |
+| `torch.npu.device_count()` | `16` | PyTorch namespace，不用于本参数校验 |
+| `npu-smi` Phy-ID | `0`～`15` | 运维物理编号，不可直接填入本参数 |
+
+该节点上 logical device 7 对应 `/dev/davinci7`，并观察到 board7 的 host Phy-ID
+为 14/15；这只是本机证据，不能推广成通用映射。配置 `14` 会在 describe 阶段
+直接失败并列出有效 logical IDs，不再等上游以 RC=255 退出。改变 logical device
+只需修改节点脚本并重新 describe，不需要重建镜像或容器。
 
 `NPU_BURN_CHIP_GENERATION` 与 `NPU_BURN_RUN_CASE` 必须显式、成对设置，适配器
 不会自动把代际映射成 workload。当前已验证 A2 使用 `matmul`、A3 使用
@@ -501,9 +536,8 @@ Docker 参数输入，因此不会把宿主机控制权扩展给 Web 用户。
 `--output` 目录，因此默认保持 `NPU_BURN_USE_DEFAULT_OUTPUT=true`：适配器不传
 `--output`，但仍从工具默认的 `$HOME/.ascend_npu_burn/output` 读取结果。CATMonitor
 CLI/Web 必须与安装和创建该目录时使用同一个系统账户。仅当后续安装版本已验证
-自定义 `--output` 可用时，才改成 `false` 并设置其他绝对目录。容器模式通常应
-使用已验证支持自定义输出目录的版本，并把该目录显式挂载到宿主机；否则无法
-可靠区分本次结果与容器内部历史文件。
+自定义 `--output` 可用时，才改成 `false` 并设置其他绝对目录。当前容器验收路径
+保持 `true`，通过 bootstrap 的默认输出 bind 读取宿主结果，不额外传 `--output`。
 
 ## 5. 升级现有节点脚本
 
@@ -570,6 +604,9 @@ PY
 
 旧脚本若早于上述变量模型，应停止自动迁移，人工把旧参数映射到新模板顶部，
 不要为了通过脚本而复制旧的 `case`、解析函数或 MPI 命令实现。
+NPU Burn 配置也必须按 4.1 节人工写入 candidate，尤其要保留新模板默认的
+`NPU_BURN_DEVICE_ROOT="/dev"`，并重新确认 `NPU_BURN_DEVICE` 使用 logical ID；不要
+从旧部署机械复制未经确认的物理编号。
 
 检查候选脚本：
 
@@ -617,6 +654,8 @@ done
 - `resources` 与 CPU、线程、MPI 进程数和问题规模一致；
 - `mpi.status` 不得为明确的 ABI `fail`；无法判断时允许带原因的 `warn`；
 - `preflight.status` 为 `pass`，或为经过人工确认的 `warn`。
+- NPU profile 的 `device_namespace` 为 `npu_burn_logical`，`available_devices`
+  来自当前 `/dev/davinciN`；选定 ID 不在集合中时必须为 `fail`。
 
 MPI launcher 必须与 HPL/HPCG 编译时使用的 MPI ABI 匹配：
 
@@ -737,7 +776,8 @@ A3 首次验收按三级推进，不要直接在全部设备运行长作业：
 
 1. 在固定容器内完成单卡 runtime smoke，验证 Docker、CANN、PyTorch、
    torch_npu 和设备访问；这一步由管理员按已审批 A3 环境执行，不经过 Web。
-2. 将部署脚本临时设为单设备、`NPU_BURN_RUN_CASE="quant_matmul"` 和较短内部
+2. 将部署脚本设为 describe 列出的单个 logical device（本次 A3 为 `7`）、
+   `NPU_BURN_RUN_CASE="quant_matmul"` 和较短内部
    时限，通过 CLI 运行，要求本次 CSV 全部 PASS、
    `err_count=0` 且无残留进程。
 3. 短测通过后才切换到经过评审的正式 A3 用例/profile 和设备范围，
@@ -887,10 +927,14 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] CLI 和 Web 在目标架构构建成功
 - [ ] NPU 内置源码通过逐文件哈希校验，来源 revision/许可证记录完整
 - [ ] NPU 镜像从内置源码和已审批本地基础镜像构建，manifest 与镜像标签/ID一致且未运行 NPU 负载
+- [ ] 管理员 bootstrap 动态映射全部现有 `/dev/davinciN`，固定容器 profile/结果 bind 正确且重复执行幂等
+- [ ] 固定容器 restart policy 符合部署选择（默认 `unless-stopped`），并通过既有容器一致性校验
 - [ ] A3 首次构建使用 `compat-profile=none`；任何补丁都有命名 profile、审计文件和哈希
 - [ ] 正式节点脚本位于源码目录外并通过 `bash -n`
 - [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误
 - [ ] Docker/容器缺失时 CLI 与 Web 直接显示失败资产、路径和原因，禁用项不执行 describe
+- [ ] `describe npu_burn` 显示 logical namespace/有效 IDs，并在 workload 前拒绝 `npu-smi` Phy-ID
+- [ ] NPU device list 覆盖单卡、逗号列表、非连续 topology；空值、重复值、空格、负数、非数字和越界均失败
 - [ ] 主配置只有顶层 `stress:`，Web 默认读取平台路径且可显式覆盖
 - [ ] CLI 依次完成 STREAM、HPCG、HPL、Ascend NPU Burn 启用项
 - [ ] 容器 NPU Burn 的正常结束、外层超时、取消和 Web 异常退出均无容器内残留进程
@@ -902,13 +946,37 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] 单次缩短超时会改变执行配置哈希但不修改 YAML
 - [ ] 回滚文件和操作步骤已验证
 
+### 14.1 V4 pristine A3 闭环
+
+V4 候选不能只运行容器内裸 `npu-burn`。至少完成以下产品链路：
+
+1. 用全新名称执行 bootstrap，创建 V4 fixed candidate；再次执行同一命令应幂等
+   复用，不重建、不覆盖、不删除容器。
+2. 将节点脚本设置为管理员确认空闲的 logical device，例如 `7`，执行
+   `describe npu_burn`，确认 `preflight=pass`、`device_namespace` 和容器内
+   `available_devices`。
+3. 临时改为实机确认无效的 `14`，确认 describe 在负载前失败并提示不得使用
+   `npu-smi` Phy-ID；随后恢复 `7` 并重新 describe。
+4. 必须通过完整入口执行：
+
+   ```bash
+   catmonitor stress -b npu_burn -o table
+   ```
+
+   当前 V4 `quant_matmul` 验收预期为整体 `Healthy`，并从本次 CSV 得到
+   `devices=1`、`cases=2`、`passed=2`、`failed=0`、`errors=0`；同时核对 int32、
+   int8 均为 PASS、`run_count=100`、`err_count=0`。这些数值是本次 V4 profile 的
+   验收基线，不是所有 NPU Burn 用例的通用固定值。
+5. Web 应展示同一报告中的 device namespace、available devices 和 `2 / 2 PASS`；
+   Web 不提供 device、image、container 或 run case 编辑入口。
+
 推荐顺序：
 
 ```text
 备份
 → 临时目录构建 CLI/Web
 → 构建/核验 NPU Burn candidate 镜像（不运行 NPU）
-→ 管理员创建固定容器并检查实际 runtime/NPU
+→ 管理员用 bootstrap 创建固定容器并检查实际 runtime/NPU/logical IDs
 → 新模板生成 candidate
 → 迁移节点变量
 → candidate describe

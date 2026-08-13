@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,8 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"`,
 		`NPU_BURN_RUN_CASE=""`,
 		`NPU_BURN_GROUP=""`,
+		`NPU_BURN_DEVICE=""`,
+		`NPU_BURN_DEVICE_ROOT="/dev"`,
 		`NPU_BURN_CHIP_GENERATION=""`,
 		`require_absolute_executable`,
 		`require_absolute_directory`,
@@ -200,6 +203,7 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		"--bind-to",
 		"-mca",
 		`'test -x "$1"'`,
+		`torch.npu.device_count`,
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("benchmark_check.sh contains host-specific or unsupported value %q", forbidden)
@@ -220,6 +224,8 @@ func TestStandaloneUIExposesDeploymentFailureDetails(t *testing.T) {
 		"benchmark-reason",
 		"benchmark-deployment",
 		"npuDeploymentSummary",
+		"设备命名空间：",
+		"可用 logical ID：",
 		"profileValue(asset.message, '失败')",
 		"values.devices ?? values.device_count",
 		"values.cases ?? values.case_count",
@@ -282,7 +288,14 @@ func TestBundledDispatcherRunsAscendNPUBurnWithPreparedContainer(t *testing.T) {
 	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
 case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
-  exec) shift 2; exec "$@" ;;
+  exec)
+    if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
+      printf '0\n'
+    else
+      shift 2
+      exec "$@"
+    fi
+    ;;
   *) exit 98 ;;
 esac
 `)
@@ -1385,6 +1398,28 @@ func waitForJob(t *testing.T, manager *Manager, jobID string) Report {
 
 func configuredDispatcher(t *testing.T, dir string, values map[string]string) string {
 	t.Helper()
+	if deviceSelection, configured := values["NPU_BURN_DEVICE"]; configured &&
+		values["NPU_BURN_BACKEND"] != "docker_exec" {
+		if _, hasRoot := values["NPU_BURN_DEVICE_ROOT"]; !hasRoot {
+			deviceRoot := filepath.Join(dir, "npu-devices")
+			if err := os.MkdirAll(deviceRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			deviceIDs := strings.Split(deviceSelection, ",")
+			if deviceSelection == "all" {
+				deviceIDs = []string{"0"}
+			}
+			for _, deviceID := range deviceIDs {
+				if _, err := strconv.Atoi(deviceID); err != nil {
+					continue
+				}
+				if err := os.WriteFile(filepath.Join(deviceRoot, "davinci"+deviceID), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			values["NPU_BURN_DEVICE_ROOT"] = deviceRoot
+		}
+	}
 	data, err := os.ReadFile("benchmark_check.sh")
 	if err != nil {
 		t.Fatal(err)

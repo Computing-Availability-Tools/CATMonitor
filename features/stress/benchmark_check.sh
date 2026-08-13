@@ -57,7 +57,11 @@ NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
 NPU_BURN_RUN_CASE=""
 NPU_BURN_GROUP=""
-NPU_BURN_DEVICE="all"
+# Deliberately empty: an administrator must explicitly reserve one or more
+# logical devices for stress. "all" is supported by upstream, but is unsafe as
+# an implicit default on shared nodes.
+NPU_BURN_DEVICE=""
+NPU_BURN_DEVICE_ROOT="/dev"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
 NPU_BURN_CHIP_GENERATION=""
 
@@ -272,6 +276,117 @@ emit_npu_container_asset() {
     json_string "$NPU_CONTAINER_MESSAGE"
     printf '}'
     [ "$NPU_CONTAINER_STATUS" = pass ]
+}
+
+# probe_npu_logical_devices reads only /dev/davinciN names. It deliberately
+# does not use the PyTorch-reported device count or npu-smi Phy-ID because
+# those are different namespaces on multi-die Ascend systems.
+probe_npu_logical_devices() {
+    NPU_DEVICE_STATUS=fail
+    NPU_DEVICE_MESSAGE="NPU Burn logical device topology is unavailable"
+    NPU_AVAILABLE_DEVICES=""
+    NPU_DEVICE_ASSET_PATH="$NPU_BURN_DEVICE_ROOT/davinci[0-9]*"
+    device_lines=""
+    case "$NPU_BURN_BACKEND" in
+        docker_exec)
+            NPU_DEVICE_ASSET_PATH="/dev/davinci[0-9]*"
+            if [ "${NPU_CONTAINER_STATUS-}" != pass ]; then
+                NPU_DEVICE_MESSAGE="fixed container is not ready for logical device discovery"
+                return
+            fi
+            device_lines=$(
+                "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME" \
+                    /bin/sh -c '
+                        for path in /dev/davinci[0-9]*; do
+                            name=${path##*/}
+                            id=${name#davinci}
+                            case "$id" in ""|*[!0-9]*) continue ;; esac
+                            printf "%s\n" "$id"
+                        done
+                    ' 2>/dev/null
+            ) || {
+                NPU_DEVICE_MESSAGE="cannot inspect /dev/davinciN in the fixed container"
+                return
+            }
+            ;;
+        native)
+            case "$NPU_BURN_DEVICE_ROOT" in
+                /*) ;;
+                *)
+                    NPU_DEVICE_MESSAGE="NPU_BURN_DEVICE_ROOT must be an absolute path"
+                    return
+                    ;;
+            esac
+            for path in "$NPU_BURN_DEVICE_ROOT"/davinci[0-9]*; do
+                name=${path##*/}
+                id=${name#davinci}
+                case "$id" in ""|*[!0-9]*) continue ;; esac
+                device_lines+="$id"$'\n'
+            done
+            ;;
+        *)
+            NPU_DEVICE_MESSAGE="NPU_BURN_BACKEND must be native or docker_exec"
+            return
+            ;;
+    esac
+    NPU_AVAILABLE_DEVICES=$(
+        printf '%s' "$device_lines" |
+            awk '/^[0-9]+$/ { print $1 }' |
+            sort -n -u |
+            paste -sd, -
+    )
+    if [ -z "$NPU_AVAILABLE_DEVICES" ]; then
+        NPU_DEVICE_MESSAGE="no /dev/davinciN logical device nodes are available"
+        return
+    fi
+    case "$NPU_BURN_DEVICE" in
+        all)
+            NPU_DEVICE_STATUS=pass
+            NPU_DEVICE_MESSAGE="all available NPU Burn logical devices: $NPU_AVAILABLE_DEVICES"
+            return
+            ;;
+        ''|,*|*,|*,,*)
+            NPU_DEVICE_MESSAGE="NPU_BURN_DEVICE must explicitly select one or more logical device IDs (for example 7 or 0,1,7); use all only on an exclusively reserved node"
+            return
+            ;;
+    esac
+    seen_devices=,
+    IFS=',' read -r -a requested_devices <<<"$NPU_BURN_DEVICE"
+    for requested_device in "${requested_devices[@]}"; do
+        case "$requested_device" in
+            ''|*[!0-9]*)
+                NPU_DEVICE_MESSAGE="NPU_BURN_DEVICE must be all or a comma-separated list of logical device IDs without whitespace"
+                return
+                ;;
+        esac
+        case "$seen_devices" in
+            *",$requested_device,"*)
+                NPU_DEVICE_MESSAGE="NPU_BURN_DEVICE contains duplicate logical device $requested_device"
+                return
+                ;;
+        esac
+        seen_devices+="$requested_device,"
+        case ",$NPU_AVAILABLE_DEVICES," in
+            *",$requested_device,"*) ;;
+            *)
+                NPU_DEVICE_MESSAGE="NPU Burn logical device $requested_device is unavailable; valid logical devices: $NPU_AVAILABLE_DEVICES. Do not use npu-smi Phy-ID as NPU_BURN_DEVICE."
+                return
+                ;;
+        esac
+    done
+    NPU_DEVICE_STATUS=pass
+    NPU_DEVICE_MESSAGE="selected NPU Burn logical devices are available: $NPU_BURN_DEVICE"
+}
+
+emit_npu_devices_asset() {
+    printf '{"name":"logical_devices","path":'
+    json_string "$NPU_DEVICE_ASSET_PATH"
+    printf ',"kind":"device_topology","required":true,"status":'
+    json_string "$NPU_DEVICE_STATUS"
+    printf ',"message":'
+    json_string "$NPU_DEVICE_MESSAGE"
+    printf '}'
+    [ "$NPU_DEVICE_STATUS" = pass ]
 }
 
 probe_mpi() {
@@ -570,6 +685,8 @@ describe_npu_burn() {
             ;;
         *) failed=$((failed + 1)) ;;
     esac
+    probe_npu_logical_devices
+    if [ "$NPU_DEVICE_STATUS" != pass ]; then failed=$((failed + 1)); fi
     if ! is_positive_integer "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"; then failed=$((failed + 1)); fi
     if [ -z "$NPU_BURN_DEVICE" ]; then failed=$((failed + 1)); fi
     case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
@@ -626,6 +743,10 @@ describe_npu_burn() {
     printf ','
     emit_parameter devices "NPU devices" "$NPU_BURN_DEVICE"
     printf ','
+    emit_parameter device_namespace "Device namespace" npu_burn_logical
+    printf ','
+    emit_parameter available_devices "Available logical devices" "$NPU_AVAILABLE_DEVICES"
+    printf ','
     emit_parameter chip_generation "Chip generation" "$NPU_BURN_CHIP_GENERATION"
     printf ','
     emit_parameter sdc_detection "SDC detection" enabled
@@ -644,6 +765,8 @@ describe_npu_burn() {
     fi
     printf ','
     if ! emit_asset output_directory "$NPU_BURN_OUTPUT_DIR" directory true; then failed=$((failed + 1)); fi
+    printf ','
+    if ! emit_npu_devices_asset; then :; fi
     printf '],"mpi":'
     emit_mpi false ""
     printf ',"preflight":'
@@ -786,6 +909,11 @@ case "$benchmark_type" in
                 ;;
             *) echo "NPU_BURN_BACKEND must be native or docker_exec."; exit 1 ;;
         esac
+        probe_npu_logical_devices
+        if [ "$NPU_DEVICE_STATUS" != pass ]; then
+            echo "$NPU_DEVICE_MESSAGE"
+            exit 1
+        fi
         require_absolute_directory "Ascend NPU Burn output directory" "$NPU_BURN_OUTPUT_DIR"
         require_positive_integer "NPU_BURN_INTERNAL_TIMEOUT_SECONDS" "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
         if [ -z "$NPU_BURN_DEVICE" ]; then

@@ -56,12 +56,12 @@ NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是�
 
 ```text
 管理员镜像构建期                         A3 节点部署期                 用户运行期
-build_npu_burn_image.sh                 固定管理员容器                catmonitor stress
-  ├─ 仓库固定上游源码                     ├─ device/volume/env            ├─ 选择 npu_burn
+build_npu_burn_image.sh                 create_npu_burn_container.sh  catmonitor stress
+  ├─ 仓库固定上游源码                     ├─ 固定管理员容器                ├─ 选择 npu_burn
   ├─ CANN/torch_npu 基础镜像              ├─ benchmark_check.sh            ├─ 互斥、超时与取消
-  ├─ 可选显式兼容补丁                      ├─ describe 当前 runtime         └─ CSV/SDC 校验
+  ├─ 可选显式兼容补丁                      ├─ 全量 identity device map       └─ CSV/SDC 校验
   ├─ CANN 环境发现与构建预检              └─ docker exec
-  ├─ wheel/import/version 校验
+  ├─ wheel/metadata/import 校验
   └─ image manifest
 ```
 
@@ -73,7 +73,8 @@ build_npu_burn_image.sh                 固定管理员容器                cat
 source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 路径，
 最后仅接受唯一的 `cann-*/set_env.sh`；多版本不静默选择。在 wheel 构建前，
 它验证 `libascend_hal.so` 解析及 torch、torch_npu、TBE import，然后构建、
-安装并检查 NPU Burn import/version。Dockerfile 将预检、native wheel 构建、
+安装并检查 NPU Burn metadata、import、custom ops 和入口 mode。Dockerfile 将
+预检、native wheel 构建、
 本地 wheel 安装和最终验证拆成独立 layer；最终 layer 用 nonce 重跑只读
 预检并输出 manifest marker，而高成本 C++ 编译与安装 layer 可复用缓存。
 安装通过 `--no-index --no-deps --force-reinstall` 确保无网络且不会被基础镜像
@@ -81,8 +82,11 @@ source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 
 `TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求 `npu-smi` 或 NPU 设备。基础镜像
 不自带 HAL 时，可显式把宿主机 driver `lib64` 暂存到 builder stage；最终 stage
 重新从原基础镜像开始，只复制已验证 wheel、入口和许可证，不携带宿主机驱动。
-构建器只调用 image inspect/build，固定容器
-的创建、设备、挂载和运行仍完全属于管理员部署面。
+构建器只调用 image inspect/build。`create_npu_burn_container.sh` 位于独立的管理员
+部署面，动态映射全部 `/dev/davinciN`、控制设备、只读 driver/tool 路径和结果目录；
+它不复制 image ENV，不替换不匹配容器。默认 restart policy 为 `unless-stopped`，
+管理员可以显式覆盖；策略与 image ID、runtime、设备及挂载共同进入 profile 哈希，
+并参与既有容器一致性校验。该工具不由 Manager、CLI 或 Web 调用。
 
 镜像标签和 manifest 同时记录 bundled/override 来源、上游 repository/revision、
 原始/补丁后源码及补丁哈希、profile、模板哈希、基础镜像 ID/摘要、目标镜像
@@ -115,7 +119,7 @@ NPU Burn 不引入 Go container backend。管理员负责准备、固定和维�
 环境，节点脚本负责调用。通用模板支持直接执行宿主机程序，也支持对已经运行的
 固定容器执行 `docker exec`；它只做只读 inspect/可执行性预检，不负责 pull、
 create、start、stop、kill 或 rm。容器镜像、设备、挂载、环境和命令不进入 YAML
-或 HTTP 请求。需要一次性 `docker run` 的节点只能在受控部署副本中固化完整命令。
+或 HTTP 请求。固定容器由管理员在作业之外通过受控 bootstrap 创建。
 本地进程组清理不能天然证明容器内 exec 进程已退出，因此容器 profile 必须由
 管理员提供工具硬时限或容器侧清理机制，并在启用 Web 前完成取消/异常断开验收；
 CATMonitor 不把“本地 docker 客户端已退出”误当作该部署前置条件已经满足。
@@ -141,6 +145,14 @@ STREAM/xhpl/xhpcg/npu-burn，不创建结果文件，也不改变配置。
 容器 NPU Burn 额外只读检查 runtime、容器运行态、实际镜像和容器内执行器，
 并把 backend、容器/镜像、CANN、torch_npu、SoC 等记录为 profile 参数；这些
 参数同样参与配置哈希，不构成可由 Web 修改的容器配置接口。
+adapter 还枚举当前环境的 `/dev/davinciN` 并暴露
+`device_namespace=npu_burn_logical` 与 `available_devices`。选择值在 describe 和
+正式执行前都必须属于该集合；不能使用 PyTorch device count 或 `npu-smi` Phy-ID
+替代这个 namespace。越界错误作为必需 `logical_devices` 资产展示，因此 CLI 与
+Web 能在负载启动前给出有效 ID 和修正提示。
+native backend 只枚举宿主机 namespace；`docker_exec` 只通过 `docker exec` 枚举
+固定容器 namespace，探测失败不回退宿主机。设备默认值为空，避免共享节点误压
+业务设备；管理员必须显式选择已预留 logical ID，`all` 仅适用于整节点独占。
 芯片代际与 workload 也作为两个显式 profile 参数，不在 Go、Shell 或 Web 中
 建立隐式映射。已验证节点可分别配置 A2 + `matmul`、A3 + `quant_matmul`；
 用例存在性仍由实际安装版本和节点验收负责。

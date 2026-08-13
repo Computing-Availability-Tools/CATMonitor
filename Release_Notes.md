@@ -14,6 +14,7 @@
 - Ascend NPU Burn 源码按 Mulan PSL v2 以固定上游 revision、许可证和逐文件哈希随仓库提供；CANN、torch_npu、驱动和基础镜像仍由管理员按节点环境准备。接入校验本次 CSV 的 PASS/FAIL 与 SDC 错误数，不能只依赖工具退出码，未完成即超时不判为通过。
 - 新增 Linux 管理员 CPU benchmark 构建工具：支持从任意位置构建 STREAM/HPL/HPCG、显式选择 GCC/MPI/OpenBLAS、精确应用 HPCG OpenMP 兼容补丁，并输出含工具链与资产哈希的 build manifest；构建、节点适配和运行保持分离。
 - 新增 Ascend NPU Burn 管理员镜像构建工具：默认使用仓库固定源码和管理员批准的本地 CANN/torch_npu 基础镜像；A3 默认使用无补丁 profile，另提供经 Ascend 910B4、CANN 8.3 验证的显式 `a2-cann83` profile，兼容补丁只作用于隔离快照；构建器使用 Bash 显式发现并 source CANN 环境，在 wheel 前校验 HAL、torch、torch_npu 和 TBE，再以离线强制重装方式安装本轮 wheel；若基础镜像在构建阶段依赖宿主机驱动库，可通过 `--build-driver-lib-dir` 只注入多阶段构建的 builder，最终镜像不得包含该输入；构建不使用 `npu-smi`、不挂载 NPU 设备，也不运行 NPU 负载；manifest 追溯所选 CANN 环境、build-only 驱动输入哈希、wheel 哈希/安装位置和各项预检结果。
+- 新增 NPU Burn 固定容器管理员工具：动态 identity-map 全部 `/dev/davinciN` 和必需控制设备，继承镜像环境，以可配置且纳入一致性校验的 `unless-stopped` 策略安全处理已存在容器；NPU adapter 不默认选择设备，在 describe/运行前按 native 宿主机或 `docker_exec` 固定容器内的 `/dev/davinciN` 校验管理员明确指定的 NPU Burn logical ID，明确拒绝把 `npu-smi` Phy-ID 或 PyTorch device count 当作可运行范围。
 - 构建文档与 `go.mod` 统一要求 Go 1.23.4+；Makefile 支持通过 `GO=/absolute/path/to/go` 显式选择节点工具链并自动创建 `bin/`，避免系统默认旧 Go 与 `GOTOOLCHAIN=local` 组合导致误用。
 
 ---

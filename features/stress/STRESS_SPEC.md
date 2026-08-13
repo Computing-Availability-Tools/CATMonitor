@@ -95,20 +95,52 @@ import、custom ops import 和入口文件可执行性检查；不得调用依�
   `--no-index --no-deps --force-reinstall` 安装本轮唯一 wheel，禁止因基础
   镜像已安装同版本而跳过。基础镜像缺少构建依赖时必须失败，不得
   联网补齐；
-- 分离预检、wheel 构建、wheel 安装与 package/runtime 验证 layer，使
+- 分离预检、wheel 构建、wheel 安装与 package 验证 layer，使
   native wheel 在仅最终验证变更时可复用缓存；
 - 在镜像标签中记录来源类型、上游 repository/revision、原始/补丁后源码 SHA-256
   和兼容 profile，并在构建后回读校验；
 - 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint/
-  Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
+  entrypoint validator/Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
   CANN 版本、wheel 文件名/SHA-256/安装版本与路径、离线强制重装事实、
-  HAL/import/custom ops/wheel/version 校验、构建期 driver 是否注入、输入哈希、
+  HAL/import/custom ops/wheel/package metadata 校验、构建期 driver 是否注入、输入哈希、
   最终镜像不包含该输入的事实以及
   “未执行 NPU 负载”的事实；
 - 将上游 Mulan PSL v2 许可证随镜像保留。
 
 镜像 manifest 是构建时供应链记录，不代替 A3 节点上的 `describe npu_burn`、
 runtime smoke、短 NPU Burn 和正式 acceptance。
+
+### 1.3 NPU Burn 固定容器契约
+
+仓库必须提供 `scripts/stress/create_npu_burn_container.sh` 供管理员在节点部署阶段
+创建或安全启动固定容器。该工具不属于 CATMonitor 作业路径；Manager、CLI、Web 和
+`benchmark_check.sh npu_burn` 仍只能对既有容器执行只读 inspect 与 `docker exec`，
+不得在作业期间创建、启动、停止、删除或替换容器。
+
+管理员工具至少接收 image、container name、host output directory、docker binary，
+并允许覆盖默认 `ascend` runtime。创建 profile 必须使用 `privileged`、host network、
+64 MiB shm、`/workspace` workdir、`label=disable` security option、默认 PID/IPC
+namespace，以及不会退出的 Bash command。它不得复制或硬编码镜像的 CANN、
+torch_npu、PATH、LD_LIBRARY_PATH、ASCEND 或 ATB 环境变量。
+
+工具必须动态枚举宿主机已有 `/dev/davinci[0-9]*`，按数字排序后 identity-map 到
+容器同名路径，不得写死设备数量或补造缺失 ID；还必须校验并映射
+`davinci_manager`、`devmm_svm`、`hisi_hdc`，已验证的 driver/DCMI/npu-smi 路径，
+以及 host output directory 到镜像默认输出目录。已有匹配运行容器必须幂等成功；
+匹配但停止的容器可以安全启动；名称相同但镜像或 profile 不一致时必须失败，且
+不得静默删除。管理员工具默认使用 `unless-stopped` restart policy，并允许显式选择
+`no`、`on-failure`、`always` 或 `unless-stopped`；restart policy 必须进入 profile
+哈希和既有容器一致性检查。
+
+对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用容器内
+`/dev/davinciN` 的 `N` 所对应的 NPU Burn logical ID。它不是 `npu-smi` Phy-ID，
+也不能用 PyTorch 报告的 device count 验证。模板不得默认选择设备；管理员必须
+显式选择一个或多个已预留 logical ID。`all` 仅允许在整节点由本压测独占时显式
+配置，不得作为共享节点推荐值。describe 和正式执行前，native backend 必须从
+宿主机、`docker_exec` backend 必须从固定容器内的 `/dev/davinci[0-9]*` 获取可用
+ID，容器探测失败时不得回退宿主机。空值、重复值、非法格式或越界配置都应作为
+必需资产失败，并提示有效 logical IDs。describe v1 可通过新增参数
+`device_namespace=npu_burn_logical` 与 `available_devices` 向旧消费者兼容地暴露事实。
 
 ## 2. CLI 与配置
 
@@ -163,11 +195,11 @@ generation-to-workload 映射；当前实机验证组合为 A2 + `matmul`、A3 +
 `quant_matmul`，但节点仍须按实际安装版本确认用例存在。当前上游未实际消费的
 参数不得进入模板配置、执行命令、describe、报告或 Web。
 
-CATMonitor 不是容器环境管理器。第一版不在 Go 中抽象 container executor，
+CATMonitor 作业不是容器环境管理器。第一版不在 Go 中抽象 container executor，
 不接收 image/device/volume/env/command，不创建、启动、停止或删除容器。仓库
 脚本模板支持 `native`，以及对管理员预先启动并维护的固定容器执行
-`docker_exec`；需要 `docker run` 的节点可在部署副本内固化已审计命令，但不得
-把任意容器参数暴露给 CLI 或 Web。
+`docker_exec`；容器创建由 1.3 节的管理员工具在部署阶段完成，不得把任意容器
+参数暴露给 CLI 或 Web。
 容器适配必须自行提供可验证的硬时限和清理语义，确保 CATMonitor 取消或进程
 异常断开后容器内负载不会无限继续；不满足该条件的容器不得启用 Web 触发。
 
@@ -193,10 +225,12 @@ MPI 等无法可靠识别的情况为 `warn`，不得误判为失败。CATMonito
 字段、版本、benchmark 名和状态做严格校验。未声明协议的旧脚本使用基础预检
 兼容运行，但必须暴露 `unsupported` 警告。
 
-NPU Burn 的 profile 必须通过参数数组暴露实际 backend。容器模式还应暴露固定
+NPU Burn 的 profile 必须通过参数数组暴露实际 backend、device namespace、选定及
+可用 logical IDs。容器模式还应暴露固定
 容器名、实际/声明镜像、CANN、torch_npu 和 SoC；缺少运行时元数据为 `warn`，
-容器不存在、未运行、镜像不匹配或容器内执行器不可用为 `fail`。describe 仅做
-inspect 和可执行性检查，不得启动 benchmark，也不得改变容器生命周期。
+容器不存在、未运行、镜像不匹配、容器内执行器不可用或 logical ID 越界为
+`fail`。describe 仅做 inspect、可执行性和 `/dev/davinciN` 名称检查，不得启动
+benchmark，也不得改变容器生命周期。
 
 ## 3. 作业、状态和报告
 
@@ -291,7 +325,8 @@ Ascend NPU Burn 显示设备数、结果行数、通过/失败数、错误数和
 
 自动化测试必须覆盖解析、按时限通过、取消、进程组清理、报告原子写入与错误、
 历史上限/排序/输出裁剪、防御性复制、跨进程锁、共享报告刷新、describe
-无副作用/严格 JSON/超时/旧版降级、资产和 MPI ABI 预检、profile 哈希持久化、
+无副作用/严格 JSON/超时/旧版降级、资产和 MPI ABI 预检、NPU logical device
+范围/错误提示、profile 哈希持久化、
 Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义及独立 SPA 资源。Linux 执行单元测试、竞态检查和
 构建；Windows 交叉构建。容器节点还必须实测正常结束、外层超时、用户取消和
 Web 进程异常退出后的容器内残留进程。真实性能只在资产与拓扑匹配的 Linux
@@ -299,5 +334,7 @@ Web 进程异常退出后的容器内残留进程。真实性能只在资产与�
 
 构建工具测试还必须覆盖 CPU 三项事务安装，以及 NPU 镜像默认内置来源、开发
 覆盖来源、来源元数据缺失/非法、逐文件篡改、无补丁/显式补丁、源码不变、拒绝
-覆盖、输入/标签失败、manifest JSON 和禁止 Docker 容器生命
-周期操作。模拟 Docker 测试不能替代真实基础镜像构建或 A3 NPU 实机验收。
+覆盖、输入/标签失败、manifest JSON 和禁止 Docker 容器生命周期操作。固定容器
+bootstrap 测试必须覆盖设备动态枚举、控制设备缺失、结果目录、image/profile
+不匹配、运行/停止容器的幂等行为，以及不得复制 image ENV。模拟 Docker 测试
+不能替代真实基础镜像构建或 A3 NPU 实机验收。
