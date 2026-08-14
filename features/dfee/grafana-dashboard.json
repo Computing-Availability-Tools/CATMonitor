@@ -1084,7 +1084,7 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"] },
+        "legend": { "displayMode": "hidden", "placement": "bottom", "calcs": ["lastNotNull", "mean"] },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
@@ -1127,7 +1127,7 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"] },
+        "legend": { "displayMode": "hidden", "placement": "bottom", "calcs": ["lastNotNull", "mean"] },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
@@ -1143,7 +1143,7 @@
     {
       "id": 30,
       "type": "timeseries",
-      "title": "机箱功耗 (Power)",
+      "title": "整机功耗 (Power)",
       "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
       "gridPos": { "x": 0, "y": 110, "w": 12, "h": 8 },
       "fieldConfig": {
@@ -1171,7 +1171,7 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"] },
+        "legend": { "displayMode": "hidden", "placement": "bottom", "calcs": ["lastNotNull", "mean"] },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
