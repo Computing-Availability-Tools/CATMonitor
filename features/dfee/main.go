@@ -29,6 +29,7 @@ func main() {
 	csvEnabled := flag.String("csv", "disabled", "enable CSV output: enabled|disabled")
 	csvDir := flag.String("csv-dir", "/var/lib/catmonitor/csv", "CSV output directory")
 	csvInterval := flag.String("csv-interval", "10s", "CSV write interval")
+	maxRuntime := flag.String("max-runtime", "0", "max runtime duration (e.g. 10m, 1h); 0 = run forever")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -45,6 +46,22 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	if *maxRuntime != "0" && *maxRuntime != "" {
+		if d, err := time.ParseDuration(*maxRuntime); err == nil && d > 0 {
+			logger.Info("max runtime set, will exit after", "duration", d)
+			go func() {
+				timer := time.NewTimer(d)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					logger.Info("max runtime reached, shutting down", "duration", d)
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
 	go func() {
 		logger.Info("dfee server starting (read-only consumer)", "addr", bound, "snapshot_dir", *dir)
 		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {

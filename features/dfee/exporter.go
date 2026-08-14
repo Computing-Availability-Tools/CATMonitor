@@ -350,6 +350,9 @@ func mapDSMIMetrics(metrics []collector.Metric, deviceFilter map[int]bool) []pro
 			continue
 		}
 		labels := map[string]string{"npu_id": npuIDStr}
+		if chipID, ok := m.Labels["chip_id"]; ok {
+			labels["chip_id"] = chipID
+		}
 		var pm promMetric
 		switch m.Name {
 		case "aicore_freq":
