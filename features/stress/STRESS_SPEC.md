@@ -31,6 +31,9 @@ STREAM 编译规模、`--only`、`--skip` 和 `--force`。
 - 不安装系统软件，不修改 CATMonitor YAML 或部署脚本，不构建容器；
 - 不自动生成或调优 `HPL.dat`/`hpcg.dat`，只复制并计算哈希；
 - HPL 从全新解压目录直接构建，首次构建前不运行 `make clean`；
+- HPL 顶层 `startup`、`refresh` 必须按顺序串行完成，只有其后的独立 `build`
+  target 可以使用请求的并发数；不得对声明为 `install: startup refresh build` 的
+  顶层入口直接使用 `make -j`；
 - HPCG 从独立 build 目录 configure，只对已知 OpenMP 源码布局做幂等精确补丁：
   旧 `default(none)` 布局缺少 `n` 时补入，当前非 `default(none)` 布局显式列出
   预定共享变量 `n` 时移除；两种已兼容布局不重复修改；

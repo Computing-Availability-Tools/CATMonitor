@@ -101,6 +101,11 @@ manifest。`--only stream`、`--only hpl`、`--only hpcg` 可单项重建，`--s
 记录实际值。HPL/HPCG 构建阶段不会启动完整压测；`HPL.dat` 和 `hpcg.dat` 必须由
 管理员按节点规模准备，脚本不会自动生成。
 
+`--jobs` 对 HPL 只用于完成目录初始化与 Makefile 刷新之后的 `build` target。
+不要在节点上改回顶层 `make -j arch=...`：stock HPL 2.3 会并发调度 `startup`、
+`refresh` 和 `build`，可能在架构目录创建前执行复制或进入叶子目录。回归 fixture
+会先复现旧调用的失败，再检查固定顺序、`xhpl` 产物以及递归 make 收到的 job 数。
+
 构建后检查：
 
 ```bash

@@ -126,21 +126,53 @@ printf '32 32 32\n60\n' >"$TEST_ROOT/configs/hpcg/hpcg.dat"
 printf 'fake openblas\n' >"$TEST_ROOT/openblas/lib/libopenblas.so.0"
 
 HPL_FIXTURE="$TEST_ROOT/hpl-fixture/hpl-2.3"
-install -d -m 0755 "$HPL_FIXTURE"
+install -d -m 0755 "$HPL_FIXTURE/leaf"
 printf '# fixture marker\n' >"$HPL_FIXTURE/Make.top"
 cat >"$HPL_FIXTURE/Makefile" <<'EOF'
+.PHONY: all install startup refresh build
+all: install
+install: startup refresh build
+
+startup:
+	sleep 0.2
+	mkdir -p build-state/$(arch) bin/$(arch)
+	touch build-state/$(arch)/startup.done
+	printf 'startup\n' >> build-state/$(arch)/order.log
+
+refresh:
+	test -f build-state/$(arch)/startup.done || { echo 'startup not complete' >&2; exit 9; }
+	touch build-state/$(arch)/refresh.done
+	printf 'refresh\n' >> build-state/$(arch)/order.log
+
+build:
+	test -f build-state/$(arch)/refresh.done || { echo 'refresh not complete' >&2; exit 10; }
+	printf 'build\n' >> build-state/$(arch)/order.log
+	$(MAKE) -C leaf arch=$(arch) top=$(CURDIR)
+EOF
+cat >"$HPL_FIXTURE/leaf/Makefile" <<'EOF'
 .PHONY: all
 all:
-	test -f Make.$(arch)
-	mkdir -p bin/$(arch)
-	cp fixture-xhpl bin/$(arch)/xhpl
-	chmod +x bin/$(arch)/xhpl
+	test -f $(top)/Make.$(arch)
+	cp $(top)/fixture-xhpl $(top)/bin/$(arch)/xhpl
+	order=$$(tr '\n' ' ' <$(top)/build-state/$(arch)/order.log); printf '# HPL_BUILD_ORDER=%s\n' "$$order" >> $(top)/bin/$(arch)/xhpl
+	printf '# HPL_CHILD_MAKEFLAGS=%s\n' '$(MAKEFLAGS)' >> $(top)/bin/$(arch)/xhpl
+	chmod +x $(top)/bin/$(arch)/xhpl
 EOF
 cat >"$HPL_FIXTURE/fixture-xhpl" <<'EOF'
 #!/usr/bin/env bash
 echo 'HPL fixture; full benchmark must not run during build'
 EOF
 chmod +x "$HPL_FIXTURE/fixture-xhpl"
+
+# Model stock HPL 2.3's `install: startup refresh build` race: the old
+# top-level `make -j` invocation must fail because refresh/build can run while
+# startup is sleeping. The production builder must instead call the three
+# independent targets in order.
+assert_fails "$TEST_ROOT/hpl-parallel-install-race.log" \
+    make -C "$HPL_FIXTURE" -j2 arch=RaceFixture
+assert_contains "$TEST_ROOT/hpl-parallel-install-race.log" 'startup not complete'
+rm -rf -- "$HPL_FIXTURE/build-state/RaceFixture" "$HPL_FIXTURE/bin/RaceFixture"
+
 tar -czf "$TEST_ROOT/archives/hpl-source-any-name.tar.gz" -C "$TEST_ROOT/hpl-fixture" hpl-2.3
 
 HPCG_FIXTURE="$TEST_ROOT/hpcg-fixture/hpcg-3.1"
@@ -219,6 +251,10 @@ assert_contains "$MANIFEST" '"openmp_patch_applied":true'
 assert_contains "$MANIFEST" '"-DSTREAM_ARRAY_SIZE=1000"'
 assert_contains "$MANIFEST" 'HYDRA build details: Version 4.1.3'
 assert_contains "$MANIFEST" '"implementation":"mpich"'
+
+assert_contains "$OUTPUT_ROOT/hpl/xhpl" '# HPL_BUILD_ORDER=startup refresh build '
+assert_contains "$OUTPUT_ROOT/hpl/xhpl" '# HPL_CHILD_MAKEFLAGS='
+assert_contains "$OUTPUT_ROOT/hpl/xhpl" '-j2'
 
 assert_fails "$TEST_ROOT/no-force.log" \
     bash "$BUILD_SCRIPT" \

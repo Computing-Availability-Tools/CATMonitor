@@ -42,7 +42,10 @@ build_cpu_benchmarks.sh              generate_stress_deployment.sh      catmonit
 `HPL.dat`/`hpcg.dat`、不写运行 profile，也不执行完整 HPL/HPCG 作业。
 
 HPL 使用仓库中的 `scripts/stress/templates/Make.HPL.CATMonitor`，构建脚本只替换
-ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。HPCG 从独立 build 目录执行
+ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。stock HPL 2.3 顶层 Makefile 的
+`install: startup refresh build` 不表达三个 prerequisite 之间的先后关系，因此脚本
+显式串行执行 `startup` 和 `refresh`，再以 `-j` 执行独立 `build` target；递归
+`$(MAKE)` 通过 GNU Make jobserver 继承并发上限。HPCG 从独立 build 目录执行
 `configure`，并仅对已知 `ComputeResidual.cpp` OpenMP 行做幂等精确补丁。旧版
 `default(none)` pragma 缺少 `n` 时补入；当前源码在非 `default(none)` pragma
 中显式列出预定共享变量 `n` 时移除，以兼容 GCC 7.3；两种补丁后的布局再次输入

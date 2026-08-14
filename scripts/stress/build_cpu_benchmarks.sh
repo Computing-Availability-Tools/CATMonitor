@@ -507,7 +507,15 @@ if selected hpl; then
     replace_template_token "$HPL_MAKEFILE" LAINC "$HPL_LAINC"
     replace_template_token "$HPL_MAKEFILE" LALIB "$HPL_LALIB"
     ! grep -Eq '@[A-Z_]+@' "$HPL_MAKEFILE" || die "unresolved token remains in HPL template"
-    make -C "$HPL_SOURCE_ROOT" -j"$JOBS" arch="$HPL_ARCH"
+    # Stock HPL 2.3 declares `install: startup refresh build` without ordering
+    # edges between those prerequisites. Running the top-level install target
+    # with -j can therefore start refresh/build before startup has created the
+    # per-architecture leaf directories. Keep the topology-changing phases
+    # serial, then enable the requested jobserver only for the independent
+    # upstream build target; its recursive $(MAKE) calls inherit MAKEFLAGS.
+    make -C "$HPL_SOURCE_ROOT" arch="$HPL_ARCH" startup
+    make -C "$HPL_SOURCE_ROOT" arch="$HPL_ARCH" refresh
+    make -C "$HPL_SOURCE_ROOT" -j"$JOBS" arch="$HPL_ARCH" build
     HPL_BUILT_BINARY="$HPL_SOURCE_ROOT/bin/$HPL_ARCH/xhpl"
     inspect_binary "$HPL_BUILT_BINARY"
     install -d -m 0755 "$RUN_ROOT/stage/hpl"
