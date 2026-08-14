@@ -1265,13 +1265,13 @@
         "query": "label_values(node_cpu_seconds_total, job)",
         "refresh": 2,
         "sort": 1,
-        "includeAll": true,
-        "multi": true,
-        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "includeAll": false,
+        "multi": false,
+        "current": { "selected": true, "text": "", "value": "" },
         "options": [],
         "hide": 0,
         "label": "Job",
-        "description": "目标 Job 过滤"
+        "description": "目标 Job 过滤（单选）"
       },
       {
         "name": "npu_id",
