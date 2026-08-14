@@ -40,7 +40,8 @@ STREAM 编译规模、`--only`、`--skip` 和 `--force`。
 - STREAM 完成短实际 smoke；HPL/HPCG 只完成二进制及动态依赖检查，不运行完整压测；
 - 默认拒绝覆盖已有选中资产，显式 `--force` 方可替换；
 - 生成 schema 化 `build-manifest.json`，记录架构、工具链/MPI 输出、源码/配置/
-  二进制 SHA-256、编译参数、动态依赖检查和补丁状态。
+  二进制 SHA-256、编译参数、动态依赖检查和补丁状态；新 manifest 的
+  `schema_version` 必须是正 JSON 整数。
 
 构建清单不能代替 `benchmark_check.sh describe`：前者是构建时事实，后者必须继续
 报告当前节点上的实际资产、ABI、资源规模和运行 profile。

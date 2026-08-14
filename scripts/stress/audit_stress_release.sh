@@ -78,7 +78,10 @@ fi
 validate_manifest() {
     local label=$1 path=$2
     [ -f "$path" ] || die "$label manifest is unavailable: $path"
-    grep -Eq '"schema_version"[[:space:]]*:[[:space:]]*[1-9][0-9]*' "$path" ||
+    # Numeric JSON values are canonical. Quoted positive integers remain
+    # accepted so deployments created by earlier CATMonitor releases and the
+    # current NPU image manifest schema can still be audited.
+    grep -Eq '"schema_version"[[:space:]]*:[[:space:]]*("[1-9][0-9]*"|[1-9][0-9]*)[[:space:]]*[,}]' "$path" ||
         die "$label manifest does not declare a positive schema_version: $path"
     sha256sum -- "$path" | awk -v label="$label" '{print "PASS: " label " manifest sha256=" $1}'
 }

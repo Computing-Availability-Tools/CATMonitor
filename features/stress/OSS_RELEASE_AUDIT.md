@@ -25,6 +25,11 @@ bash scripts/stress/audit_stress_release.sh \
   --require-runtime-manifests
 ```
 
+New CPU build manifests encode `schema_version` as a positive JSON integer.
+The audit also accepts a quoted positive integer for compatibility with older
+CPU manifests and the current NPU image manifest schema. Zero, missing, and
+non-numeric versions are rejected.
+
 ## Release gate
 
 The repository-side gate passes only when the bundled material remains

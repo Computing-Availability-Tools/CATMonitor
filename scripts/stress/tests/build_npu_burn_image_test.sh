@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 BUILD_SCRIPT=$(cd -- "$SCRIPT_DIR/.." && pwd -P)/build_npu_burn_image.sh
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../../.." && pwd -P)
+AUDIT_SCRIPT="$REPO_ROOT/scripts/stress/audit_stress_release.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-npu-image-test.XXXXXXXX")
 
 cleanup() {
@@ -298,6 +299,12 @@ bash "$BUILD_SCRIPT" \
 [ -f "$MANIFEST" ] || fail 'manifest was not created'
 python3 -m json.tool "$MANIFEST" >/dev/null
 assert_contains "$MANIFEST" '"schema_version":"6"'
+printf '{"schema_version":1,"fixture":"cpu"}\n' >"$TEST_ROOT/cpu-manifest.json"
+bash "$AUDIT_SCRIPT" \
+    --cpu-manifest "$TEST_ROOT/cpu-manifest.json" \
+    --npu-manifest "$MANIFEST" \
+    --require-runtime-manifests >"$TEST_ROOT/fresh-manifest-audit.log"
+assert_contains "$TEST_ROOT/fresh-manifest-audit.log" 'PASS: NPU manifest sha256='
 assert_contains "$MANIFEST" '"origin":"bundled"'
 assert_contains "$MANIFEST" '"upstream_revision":"381028b688a70e881d97477d7fa1ae8f2a26288e"'
 assert_contains "$MANIFEST" '"profile":"none"'

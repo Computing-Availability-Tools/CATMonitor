@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 BUILD_SCRIPT=$(cd -- "$SCRIPT_DIR/.." && pwd -P)/build_cpu_benchmarks.sh
+AUDIT_SCRIPT=$(cd -- "$SCRIPT_DIR/.." && pwd -P)/audit_stress_release.sh
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-stress-build-test.XXXXXXXX")
 
 cleanup() {
@@ -243,7 +244,7 @@ if command -v python3 >/dev/null 2>&1; then
 elif command -v jq >/dev/null 2>&1; then
     jq empty "$MANIFEST"
 fi
-assert_contains "$MANIFEST" '"schema_version":"1"'
+assert_contains "$MANIFEST" '"schema_version":1'
 assert_contains "$MANIFEST" '"stream":{'
 assert_contains "$MANIFEST" '"hpl":{'
 assert_contains "$MANIFEST" '"hpcg":{'
@@ -255,6 +256,16 @@ assert_contains "$MANIFEST" '"implementation":"mpich"'
 assert_contains "$OUTPUT_ROOT/hpl/xhpl" '# HPL_BUILD_ORDER=startup refresh build '
 assert_contains "$OUTPUT_ROOT/hpl/xhpl" '# HPL_CHILD_MAKEFLAGS='
 assert_contains "$OUTPUT_ROOT/hpl/xhpl" '-j2'
+
+# A manifest freshly emitted by the CPU builder must pass the repository's
+# strict deployment audit alongside the current legacy-string NPU schema.
+printf '{"schema_version":"6","fixture":"npu"}\n' >"$TEST_ROOT/npu-manifest.json"
+bash "$AUDIT_SCRIPT" \
+    --cpu-manifest "$MANIFEST" \
+    --npu-manifest "$TEST_ROOT/npu-manifest.json" \
+    --require-runtime-manifests >"$TEST_ROOT/fresh-manifest-audit.log"
+assert_contains "$TEST_ROOT/fresh-manifest-audit.log" 'PASS: CPU manifest sha256='
+assert_contains "$TEST_ROOT/fresh-manifest-audit.log" 'PASS: NPU manifest sha256='
 
 assert_fails "$TEST_ROOT/no-force.log" \
     bash "$BUILD_SCRIPT" \

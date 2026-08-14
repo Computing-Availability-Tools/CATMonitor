@@ -645,7 +645,7 @@ done
 GENERATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 MANIFEST_TEMP=$(mktemp "$MANIFEST_DIR/.build-manifest.XXXXXXXX")
 {
-    printf '{"schema_version":"1","generated_at":'; json_string "$GENERATED_AT"
+    printf '{"schema_version":1,"generated_at":'; json_string "$GENERATED_AT"
     printf ',"architecture":'; json_string "$ARCHITECTURE"
     printf ',"output_root":'; json_string "$OUTPUT_ROOT"
     printf ',"build_root":'; json_string "$BUILD_ROOT"
