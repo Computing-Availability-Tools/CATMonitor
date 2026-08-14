@@ -68,49 +68,49 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"user\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"user\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "用户空间利用率",
           "range": true
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"system\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"system\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "系统进程利用率",
           "range": true
         },
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"iowait\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"iowait\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "IO等待",
           "range": true
         },
         {
           "refId": "D",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"irq\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"irq\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "中断",
           "range": true
         },
         {
           "refId": "E",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"softirq\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"softirq\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "软中断",
           "range": true
         },
         {
           "refId": "F",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"steal\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"steal\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "虚拟机利用率",
           "range": true
         },
         {
           "refId": "G",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "rate(node_cpu_seconds_total{mode=\"nice\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
+          "expr": "rate(node_cpu_seconds_total{mode=\"nice\",instance=~\"$instance\",job=~\"$job\"}[5m]) * 100 / on(instance, job) node_cpu_cores_online{instance=~\"$instance\",job=~\"$job\"}",
           "legendFormat": "Nice",
           "range": true
         }
