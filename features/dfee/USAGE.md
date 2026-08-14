@@ -127,49 +127,66 @@ curl http://localhost:9333/metrics | head -20
 ### 5.1 安装 Prometheus
 
 ```bash
-# 下载
-wget https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz
-tar xvfz prometheus-*.tar.gz
-cd prometheus-*/
+# 拉取镜像
+docker pull prom/prometheus
 
-# 配置 scrape 目标
-cat > prometheus.yml << 'EOF'
-global:
-  scrape_interval: 5s
-  evaluation_interval: 5s
+# 创建配置目录和文件
+mkdir -p $PWD/prometheus/data
+touch $PWD/prometheus/prometheus.yml
 
-scrape_configs:
-  - job_name: 'catmonitor'
-    static_configs:
-      - targets: ['localhost:9333']   # dfee exporter 端口
-EOF
+# 设置权限（Prometheus 容器内 UID 为 65534）
+chown -R 65534:65534 $PWD/prometheus/data
+chown 65534:65534 $PWD/prometheus/prometheus.yml
 
-# 启动
-./prometheus --config.file=prometheus.yml
+# 启动 Prometheus
+docker run -d \
+  --name prometheus \
+  -v $PWD/prometheus/data:/prometheus \
+  -v $PWD/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+  -p 9090:9090 \
+  prom/prometheus
 
-# 验证
-# 浏览器访问 http://localhost:9090/targets
-# 状态应为 UP
+# 编辑配置文件
+vim $PWD/prometheus/prometheus.yml
 ```
+
+配置文件内容（`targets` 改为你的 dfee exporter 地址和端口）：
+
+```yaml
+scrape_configs:
+  - job_name: "CATMonitor"
+    scrape_interval: 2s
+    scrape_timeout: 2s
+    static_configs:
+      - targets: ["123.60.231.86:9333"]
+        labels:
+          instance: 123.60.231.86
+```
+
+> 修改配置后重启容器：`docker restart prometheus`
+>
+> 验证：浏览器访问 `http://localhost:9090/targets`，状态应为 **UP**。
 
 ### 5.2 安装 Grafana
 
 ```bash
-# CentOS/openEuler
-yum install -y grafana
-systemctl enable --now grafana-server
+# 拉取镜像
+docker pull grafana/grafana
 
-# 或 Debian/Ubuntu
-apt-get install -y grafana
-systemctl enable --now grafana-server
+# 创建数据目录（Grafana 容器内 UID 为 472）
+mkdir $PWD/grafana-storage
+chown -R 472:472 $PWD/grafana-storage
 
-# 或 Docker
-docker run -d --name grafana -p 3000:3000 grafana/grafana
-
-# 验证
-# 浏览器访问 http://localhost:3000
-# 默认账号 admin / admin
+# 启动 Grafana
+docker run -d \
+  --name=grafana \
+  --restart=always \
+  -p 3000:3000 \
+  -v $PWD/grafana-storage:/var/lib/grafana \
+  grafana/grafana
 ```
+
+> 验证：浏览器访问 `http://localhost:3000`，默认账号 `admin / admin`。
 
 ### 5.3 配置 Grafana 数据源
 
