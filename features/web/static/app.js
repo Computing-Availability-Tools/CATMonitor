@@ -160,7 +160,7 @@ function metricSortCmp(a, b) {
   const la = a.labels || {}, lb = b.labels || {};
   for (const key of [
     'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
-    'interface', 'device', 'mount_point', 'mc', 'locator', 'sensor',
+    'interface', 'mount_point', 'device', 'mc', 'locator', 'sensor',
     'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
     'kind', 'interval', 'state', 'status',
   ]) {
