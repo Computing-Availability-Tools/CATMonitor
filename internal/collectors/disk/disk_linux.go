@@ -31,7 +31,8 @@ var virtualFS = map[string]bool{
 	"hugetlbfs": true, "rpc_pipefs": true, "binfmt_misc": true,
 	"securityfs": true, "pstore": true, "bpf": true, "tracefs": true,
 	"debugfs": true, "configfs": true, "autofs": true, "fuse": true,
-	"fuse.gvfsd-fuse": true,
+	"fuse.gvfsd-fuse": true, "nfsd": true, "nsfs": true, "efivarfs": true,
+	"selinuxfs": true,
 }
 
 func (c *DiskCollector) Collect() ([]collector.Metric, error) {
