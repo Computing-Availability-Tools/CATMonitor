@@ -148,7 +148,6 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`NPU_BURN_RUNTIME_CANN=""`,
 		`NPU_BURN_RUNTIME_TORCH_NPU=""`,
 		`NPU_BURN_SOC_MODEL=""`,
-		`NPU_BURN_USE_DEFAULT_OUTPUT=true`,
 		`NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"`,
 		`NPU_BURN_RUN_CASE=""`,
 		`NPU_BURN_GROUP=""`,
@@ -204,6 +203,8 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		"-mca",
 		`'test -x "$1"'`,
 		`torch.npu.device_count`,
+		`NPU_BURN_USE_DEFAULT_OUTPUT`,
+		`npu_args+=(--output`,
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("benchmark_check.sh contains host-specific or unsupported value %q", forbidden)
@@ -256,10 +257,10 @@ func TestBundledDispatcherValidatesAscendNPUBurnCSV(t *testing.T) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nset -eu\nfor arg in \"$@\"; do [ \"$arg\" != --output ] || exit 9; [ \"$arg\" != --exec_count ] || exit 10; done\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nquant_matmul,0,0,100,1,12.5,0,PASS,shape=test\\nquant_matmul,1,0,100,1,13.5,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
+	argsFile := filepath.Join(dir, "npu-burn.args")
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nset -eu\nprintf '%s\\n' \"$@\" > "+shellLiteral(argsFile)+"\nfor arg in \"$@\"; do [ \"$arg\" != --output ] || exit 9; [ \"$arg\" != --exec_count ] || exit 10; done\ngrep -Fxq -- --sdc_detect "+shellLiteral(argsFile)+" || exit 11\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nquant_matmul,0,0,100,1,12.5,0,PASS,shape=test\\nquant_matmul,1,0,100,1,13.5,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
 	script := configuredDispatcher(t, dir, map[string]string{
 		"NPU_BURN_EXECUTABLE":               npuBurn,
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "0,1",
@@ -286,7 +287,8 @@ func TestBundledDispatcherRunsAscendNPUBurnWithPreparedContainer(t *testing.T) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nmatmul,0,0,20,1,10.897049,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
+	argsFile := filepath.Join(dir, "container-npu-burn.args")
+	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nset -eu\nprintf '%s\\n' \"$@\" > "+shellLiteral(argsFile)+"\ngrep -Fxq -- --sdc_detect "+shellLiteral(argsFile)+" || exit 11\n! grep -Fxq -- --output "+shellLiteral(argsFile)+" || exit 12\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nmatmul,0,0,20,1,10.897049,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
 	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
 case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
@@ -309,7 +311,6 @@ esac
 		"NPU_BURN_CONTAINER_RUNTIME":        docker,
 		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a2",
 		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a2-cann83",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
@@ -339,7 +340,6 @@ func TestBundledDispatcherRejectsAscendNPUBurnFailureCSV(t *testing.T) {
 	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nmatmul,0,0,100,1,12.5,1,FAIL,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
 	script := configuredDispatcher(t, dir, map[string]string{
 		"NPU_BURN_EXECUTABLE":               npuBurn,
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "all",
@@ -368,7 +368,6 @@ func TestBundledDispatcherRejectsStaleAscendNPUBurnCSV(t *testing.T) {
 	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nexit 0\n")
 	script := configuredDispatcher(t, dir, map[string]string{
 		"NPU_BURN_EXECUTABLE":               npuBurn,
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
@@ -393,7 +392,6 @@ func TestBundledDispatcherRejectsAscendNPUBurnGlobalFailure(t *testing.T) {
 	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nprintf '| 0 | FAIL | worker exception |\\n'\nprintf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\\nmatmul,1,0,100,1,13.5,0,PASS,shape=test\\n' > "+shellLiteral(filepath.Join(outputDir, "npu_burn_results.csv"))+"\n")
 	script := configuredDispatcher(t, dir, map[string]string{
 		"NPU_BURN_EXECUTABLE":               npuBurn,
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "all",

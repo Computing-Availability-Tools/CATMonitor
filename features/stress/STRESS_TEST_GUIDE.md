@@ -544,7 +544,6 @@ CATMonitor runtime 不调用这个脚本，仍然只执行 `docker exec`。
 ```bash
 NPU_BURN_BACKEND="native"
 NPU_BURN_EXECUTABLE="/absolute/path/to/bin/npu-burn"
-NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
 NPU_BURN_RUN_CASE="quant_matmul" # 与 NPU_BURN_GROUP 二选一
 NPU_BURN_GROUP=""
@@ -566,7 +565,6 @@ NPU_BURN_SOC_MODEL="<实际 A3 SoC>"
 
 # 这是容器内绝对路径；describe 会用 docker exec /usr/bin/test -x 预检。
 NPU_BURN_EXECUTABLE="/usr/local/bin/catmonitor-npu-burn"
-NPU_BURN_USE_DEFAULT_OUTPUT=true
 NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
 NPU_BURN_RUN_CASE="quant_matmul"
 NPU_BURN_GROUP=""
@@ -579,21 +577,21 @@ NPU_BURN_CHIP_GENERATION="A3"
 容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical device ID，不是
 `npu-smi` 的 Phy-ID，也不能根据 PyTorch logical device count 推导。必须明确选择
 管理员已经预留的设备，例如 `14` 或 `14,15`；不得依靠脚本自动选择所谓空闲卡。
-上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。当前 A3 V5 待验收
-节点已经确认的事实为：
+上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。当前 A3 V5 实机
+已经确认的事实为：
 
 | 编号来源 | 本次节点 | 用途 |
 |---|---|---|
 | Linux device node | `/dev/davinci0`～`/dev/davinci15` | 固定容器 identity map |
 | `lspci -D -d 19e5:` | 16 个 Ascend accelerator | upstream topology 输入 |
-| NPU Burn `--device` | 预期 `0`～`15` | 必须由 V5 describe/实测确认 |
+| NPU Burn `--device` | 已验证 `0`～`15` | V5 实机 topology logical ID |
 | `torch.npu.device_count()` | `16` | 辅助事实，不单独用于参数校验 |
 | `npu-smi` Phy-ID | `0`～`15` | 运维物理编号，不可直接填入本参数 |
 
-旧镜像缺少 `lspci` 时出现的 `0`～`7` 是 upstream fallback，不是 A3 硬件范围，
-因此旧版 `device 14` 的 RC=255 不能作为越界证据。V5 必须先确认容器内 16 个 PCI
-accelerator、`/dev/davinci0`～`15` 和 describe 的 `available_devices=0,...,15`
-一致，再运行 device 14/15。NPU Burn logical ID 最终作为 torch_npu device index；
+旧镜像缺少 `lspci` 时出现的 `0`～`7` 是 upstream fallback，不是 A3 硬件范围。
+V5 实机已经确认容器内 16 个 PCI accelerator、`/dev/davinci0`～`15` 和 upstream
+logical ID `0`～`15` 一致；device 14、15 的 `quant_matmul` int32/int8 均 PASS，
+device 16 在 workload 前以 RC=255 拒绝。NPU Burn logical ID 最终作为 torch_npu device index；
 它与 `/dev/davinciN`、`npu-smi` Phy-ID 的对应只对本机实测负责，不写成跨平台规则。
 改变 logical device 只需修改节点脚本并重新 describe，不需要重建镜像或容器。
 
@@ -611,16 +609,18 @@ Docker 参数输入，因此不会把宿主机控制权扩展给 Web 用户。
 `web_enabled` 前实际测试正常结束、CATMonitor 外层超时、用户取消和 Web 进程
 异常退出四种路径；任一路径存在残留 NPU Burn 进程时不得开放 Web 触发。
 
-脚本固定传入 `--sdc_detect`。`NPU_BURN_INTERNAL_TIMEOUT_SECONDS` 是工具内部的
-单用例时限；YAML 的 `benchmarks.npu_burn.timeout` 是 CATMonitor 整个作业的
-外层上限，必须覆盖所选全部用例、设备初始化和报告收尾时间。
+部分 Ascend NPU Burn 版本会错误拒绝调用者传入的现有 `--output` 目录，因此适配器
+固定不传该参数。原生模式必须把 `NPU_BURN_OUTPUT_DIR` 设为同一运行账户的
+`$HOME/.ascend_npu_burn/output`；容器模式把它设为 bootstrap `--output-dir` 使用的
+同一宿主目录，bootstrap 会将其绑定到镜像内默认输出目录。CLI/Web 从这个宿主可见
+目录校验本次 CSV；不存在重新开启自定义 `--output` 的配置开关。
 
-部分 Ascend NPU Burn 版本会错误拒绝调用者传入的现有
-`--output` 目录，因此默认保持 `NPU_BURN_USE_DEFAULT_OUTPUT=true`：适配器不传
-`--output`，但仍从工具默认的 `$HOME/.ascend_npu_burn/output` 读取结果。CATMonitor
-CLI/Web 必须与安装和创建该目录时使用同一个系统账户。仅当后续安装版本已验证
-自定义 `--output` 可用时，才改成 `false` 并设置其他绝对目录。当前容器验收路径
-保持 `true`，通过 bootstrap 的默认输出 bind 读取宿主结果，不额外传 `--output`。
+脚本固定传入 `--sdc_detect`，因为 CATMonitor 的 NPU Burn 项目就是 SDC 可靠性
+检测。该参数会真正启用检测器并参与 PASS/FAIL，不应视为仅修复 `args.detect`
+初始化异常的临时参数，也不需要为 A3 修改 bundled upstream。
+`NPU_BURN_INTERNAL_TIMEOUT_SECONDS` 是工具内部的单用例时限；YAML 的
+`benchmarks.npu_burn.timeout` 是 CATMonitor 整个作业的外层上限，必须覆盖所选
+全部用例、设备初始化和报告收尾时间。
 
 ## 5. 升级现有节点脚本
 
@@ -857,11 +857,11 @@ cd "$CAT_ROOT"
 ./bin/catmonitor stress --bench npu_burn -o table
 ```
 
-A3 首次验收按三级推进，不要直接在全部设备运行长作业：
+A3 CATMonitor 全链验收仍按三级推进，不要直接在全部设备运行长作业：
 
 1. 在固定容器内完成单卡 runtime smoke，验证 Docker、CANN、PyTorch、
    torch_npu 和设备访问；这一步由管理员按已审批 A3 环境执行，不经过 Web。
-2. 将部署脚本设为 describe 列出的单个 logical device（本次 A3 为 `7`）、
+2. 将部署脚本设为 describe 列出的单个 logical device（本次 A3 已验证边界设备为 `14` 或 `15`）、
    `NPU_BURN_RUN_CASE="quant_matmul"` 和较短内部
    时限，通过 CLI 运行，要求本次 CSV 全部 PASS、
    `err_count=0` 且无残留进程。
@@ -1031,9 +1031,10 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] 单次缩短超时会改变执行配置哈希但不修改 YAML
 - [ ] 回滚文件和操作步骤已验证
 
-### 14.1 V5 pristine A3 topology 闭环
+### 14.1 V5 pristine A3 topology 与产品链闭环
 
-V5 候选不能只运行容器内裸 `npu-burn`。至少完成以下产品链路：
+V5 的镜像、16-device topology 和裸 NPU Burn 边界测试已在 A3 实机完成；还必须完成
+以下 CATMonitor 产品链路：
 
 1. 镜像构建 manifest 必须显示 `runtime.pciutils=true`、实际 source/path/version、
    `required_packages=["pciutils"]`；正常构建 network 为 `default`，离线包路径自动为

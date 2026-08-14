@@ -53,7 +53,6 @@ func TestDispatcherDescribeAscendNPUBurnIsReadOnly(t *testing.T) {
 	npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/sh\ntouch "+shellLiteral(marker)+"\n")
 	script := configuredDispatcher(t, dir, map[string]string{
 		"NPU_BURN_EXECUTABLE":               npuBurn,
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_GROUP":                    "group_basic",
 		"NPU_BURN_DEVICE":                   "0,1,2,3",
@@ -112,7 +111,6 @@ esac
 		"NPU_BURN_RUNTIME_CANN":             "8.3.RC2",
 		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.8.0",
 		"NPU_BURN_SOC_MODEL":                "Ascend 910B4",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",
@@ -139,6 +137,9 @@ esac
 		parameters["image"] != "catmonitor/npuburn:a2-cann83" ||
 		parameters["cann"] != "8.3.RC2" || parameters["torch_npu"] != "2.8.0" ||
 		parameters["soc"] != "Ascend 910B4" || parameters["chip_generation"] != "A2" ||
+		parameters["output_mode"] != "upstream_default" ||
+		parameters["tool_output_directory"] != "/opt/catmonitor/npuburn-home/.ascend_npu_burn/output" ||
+		parameters["result_directory"] != outputDir || parameters["sdc_detection"] != "enabled" ||
 		parameters["device_namespace"] != "npu_burn_logical" ||
 		parameters["available_devices"] != "0,1,2" ||
 		parameters["topology_source"] != "container_lspci" ||
@@ -180,7 +181,6 @@ esac
 		"NPU_BURN_CONTAINER_RUNTIME":        docker,
 		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a3",
 		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a3-v3",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "16",
@@ -269,7 +269,6 @@ esac
 		"NPU_BURN_RUNTIME_CANN":             "9.0.1",
 		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.10.0.post2",
 		"NPU_BURN_SOC_MODEL":                "Ascend910_9382",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "14",
@@ -330,7 +329,6 @@ func TestDispatcherValidatesNPULogicalDeviceLists(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			script := configuredDispatcher(t, dir, map[string]string{
 				"NPU_BURN_EXECUTABLE":               npuBurn,
-				"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 				"NPU_BURN_OUTPUT_DIR":               outputDir,
 				"NPU_BURN_RUN_CASE":                 "quant_matmul",
 				"NPU_BURN_DEVICE":                   test.selection,
@@ -404,7 +402,6 @@ esac
 		"NPU_BURN_CONTAINER_RUNTIME":        docker,
 		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a3",
 		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a3-v4",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "7",
@@ -467,7 +464,6 @@ esac
 		"NPU_BURN_CONTAINER_RUNTIME":        docker,
 		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a3-v4",
 		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a3-v4",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "true",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "14",
@@ -527,7 +523,6 @@ esac
 		"NPU_BURN_RUNTIME_CANN":             "9.0.1",
 		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.10.0.post2",
 		"NPU_BURN_SOC_MODEL":                "Ascend910_9382",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "quant_matmul",
 		"NPU_BURN_DEVICE":                   "0",
@@ -572,7 +567,6 @@ func TestManagerAvailabilityReportsContainerPreflightFailures(t *testing.T) {
 		"NPU_BURN_RUNTIME_CANN":             "8.3.RC2",
 		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.8.0",
 		"NPU_BURN_SOC_MODEL":                "Ascend 910B4",
-		"NPU_BURN_USE_DEFAULT_OUTPUT":       "false",
 		"NPU_BURN_OUTPUT_DIR":               outputDir,
 		"NPU_BURN_RUN_CASE":                 "matmul",
 		"NPU_BURN_DEVICE":                   "0",

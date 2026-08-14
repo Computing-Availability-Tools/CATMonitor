@@ -50,8 +50,10 @@ profile 参数展示并写入配置哈希。
 芯片代际和 workload 必须由节点管理员显式、成对配置；CATMonitor 不根据代际
 暗中改写用例。当前已验证组合为 A2 的 `matmul` 与 A3 的 `quant_matmul`，具体
 可用用例仍以所部署 NPU Burn 版本为准。
-当前上游版本默认从 `$HOME/.ascend_npu_burn/output` 读取结果，避免其自定义
-`--output` 校验缺陷。CATMonitor 只接受本次 `npu_burn_results.csv` 中所有结果
+当前上游版本把结果写入 `$HOME/.ascend_npu_burn/output`。CATMonitor 固定省略
+有缺陷的自定义 `--output` 参数：原生模式读取同一账户的默认目录，容器模式由
+bootstrap 把节点结果目录绑定到镜像内默认目录。CATMonitor 只接受本次
+`npu_burn_results.csv` 中所有结果
 均为 `PASS`、`err_count=0` 且全局设备汇总无 `FAIL` 的完整报告；外层超时不作为
 NPU Burn 通过。
 

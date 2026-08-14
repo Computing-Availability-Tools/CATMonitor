@@ -53,7 +53,10 @@ NPU_BURN_CONTAINER_IMAGE=""
 NPU_BURN_RUNTIME_CANN=""
 NPU_BURN_RUNTIME_TORCH_NPU=""
 NPU_BURN_SOC_MODEL=""
-NPU_BURN_USE_DEFAULT_OUTPUT=true
+# Host-visible result directory. The adapter deliberately does not pass the
+# upstream --output option: the bundled release rejects an existing custom
+# directory. Native execution must use the tool default below; the repository
+# container bootstrap binds this host directory to that default in the image.
 NPU_BURN_OUTPUT_DIR="${HOME}/.ascend_npu_burn/output"
 NPU_BURN_RUN_CASE=""
 NPU_BURN_GROUP=""
@@ -721,12 +724,11 @@ describe_npu_burn() {
     if [ "$NPU_DEVICE_STATUS" != pass ]; then failed=$((failed + 1)); fi
     if ! is_positive_integer "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"; then failed=$((failed + 1)); fi
     if [ -z "$NPU_BURN_DEVICE" ]; then failed=$((failed + 1)); fi
-    case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
-        true|false) ;;
-        *) failed=$((failed + 1)) ;;
-    esac
-    npu_output_mode=tool_default
-    if [ "$NPU_BURN_USE_DEFAULT_OUTPUT" = false ]; then npu_output_mode=custom; fi
+    npu_output_mode=upstream_default
+    npu_tool_output_dir="${HOME}/.ascend_npu_burn/output"
+    if [ "$NPU_BURN_BACKEND" = docker_exec ]; then
+        npu_tool_output_dir=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output
+    fi
     case "$NPU_BURN_CHIP_GENERATION" in
         A2|A3|A5) ;;
         *) failed=$((failed + 1)) ;;
@@ -768,6 +770,10 @@ describe_npu_burn() {
     fi
     printf ','
     emit_parameter output_mode "Output mode" "$npu_output_mode"
+    printf ','
+    emit_parameter tool_output_directory "Tool output directory" "$npu_tool_output_dir"
+    printf ','
+    emit_parameter result_directory "Host-visible result directory" "$NPU_BURN_OUTPUT_DIR"
     printf ','
     emit_parameter selector "Workload selector" "$npu_selector"
     printf ','
@@ -960,10 +966,6 @@ case "$benchmark_type" in
             A2|A3|A5) ;;
             *) echo "NPU_BURN_CHIP_GENERATION must be A2, A3, or A5."; exit 1 ;;
         esac
-        case "$NPU_BURN_USE_DEFAULT_OUTPUT" in
-            true|false) ;;
-            *) echo "NPU_BURN_USE_DEFAULT_OUTPUT must be true or false."; exit 1 ;;
-        esac
         if { [ -n "$NPU_BURN_RUN_CASE" ] && [ -n "$NPU_BURN_GROUP" ]; } ||
            { [ -z "$NPU_BURN_RUN_CASE" ] && [ -z "$NPU_BURN_GROUP" ]; }; then
             echo "Configure exactly one of NPU_BURN_RUN_CASE or NPU_BURN_GROUP."
@@ -971,13 +973,12 @@ case "$benchmark_type" in
         fi
         npu_args=(
             --device "$NPU_BURN_DEVICE"
+            # SDC is the reliability verdict implemented by this benchmark,
+            # not a workaround for the upstream args.detect initialization bug.
             --sdc_detect
             --timeout "$NPU_BURN_INTERNAL_TIMEOUT_SECONDS"
             --chip_generation "$NPU_BURN_CHIP_GENERATION"
         )
-        if [ "$NPU_BURN_USE_DEFAULT_OUTPUT" = false ]; then
-            npu_args+=(--output "$NPU_BURN_OUTPUT_DIR")
-        fi
         if [ -n "$NPU_BURN_RUN_CASE" ]; then
             npu_args+=(--run_case "$NPU_BURN_RUN_CASE")
         else

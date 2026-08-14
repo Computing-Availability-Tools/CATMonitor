@@ -191,8 +191,14 @@ console entry，并强制启用
 作业状态保持 `unhealthy`。脚本还比较运行前后的文件时间/大小签名，
 拒绝工具退出 0 但没有更新 CSV 时误读历史 PASS 结果。
 当前上游版本的自定义 `--output` 校验有缺陷，默认适配模式不传该参数，并从
-同一运行账户的 `$HOME/.ascend_npu_burn/output` 读取 CSV；开关仅用于兼容后续已
-验证修复的版本。
+同一运行账户的 `$HOME/.ascend_npu_burn/output` 读取 CSV。容器镜像固定使用
+`/opt/catmonitor/npuburn-home` 作为 HOME，bootstrap 将管理员选择的宿主结果目录
+绑定到其默认输出目录；适配器因此仍从宿主 `NPU_BURN_OUTPUT_DIR` 校验和解析本次
+CSV。当前实现不保留重新传入 `--output` 的开关，避免不同 profile 意外重新触发
+上游缺陷。
+`--sdc_detect` 会实例化 SDC 检测器并决定 PASS/FAIL 语义，所以适配器始终显式
+传入；这同时避开上游未初始化 `args.detect` 的异常，但不是无语义的兼容 workaround，
+也不需要修改 bundled upstream。
 NPU Burn 的 CATMonitor 外层超时为 `unhealthy`，不能产生
 `time_limit_reached`，避免把未完成的 SDC 检测误报为通过。
 

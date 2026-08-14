@@ -207,8 +207,9 @@ YAML 不接收 benchmark 可执行路径。具体执行器、环境变量、MPI/
 工作目录由节点 `benchmark_check.sh` 维护。Ascend NPU Burn 的执行 backend、
 工具路径、容器名/镜像元数据、运行时版本、结果目录、用例/组、设备列表、芯片
 代际和工具内部超时也只由节点脚本维护；当前上游
-版本使用其 `$HOME/.ascend_npu_burn/output` 默认目录，以避开有缺陷的自定义
-`--output` 校验。HPCG 的 `result_dir` 仅供 Go
+版本固定使用其 `$HOME/.ascend_npu_burn/output` 默认目录，以避开有缺陷的自定义
+`--output` 校验。适配器不得提供把该参数重新打开的兼容开关；容器部署必须由
+bootstrap 将节点结果目录绑定到镜像默认目录。HPCG 的 `result_dir` 仅供 Go
 核验本次结果文件，不用于定位可执行文件。
 
 NPU Burn 的芯片代际和 workload 必须在节点脚本中显式、成对配置，profile
@@ -299,7 +300,9 @@ Ascend NPU Burn 源码以 Mulan PSL v2 第三方组件形式固定在仓库中�
 `err_count=0`，并拒绝全局设备汇总中的 `FAIL`，再输出 CATMonitor 规范化摘要。
 结果文件必须在本次命令期间新增或更新，不能接受未变化的历史 PASS 文件；工具
 退出码 0 不能替代这些校验。
-因为该工具用于 SDC/硬件错误检测，CATMonitor 外层时限到达但没有完整 CSV 时
+适配器必须显式传入 `--sdc_detect`。这是本特性的 SDC 可靠性判定语义，不是仅用于
+规避上游 `args.detect` 未初始化缺陷的参数；不得以默认初始化补丁替代并暗中关闭
+SDC 检测。因为该工具用于 SDC/硬件错误检测，CATMonitor 外层时限到达但没有完整 CSV 时
 必须为 `unhealthy`，不得沿用其他三项的受控时限通过语义。
 
 ## 4. Web 契约
