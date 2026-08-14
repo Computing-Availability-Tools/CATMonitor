@@ -207,8 +207,8 @@ docker run -d \
    - **DS_PROMETHEUS**：选择你的 Prometheus 数据源
    - 点击 **Import**
 5. 导入后，顶部变量栏可选择：
-   - **Instance**：目标实例（单选，支持 All）
-   - **Job**：目标 Job（单选，支持 All）
+   - **Instance**：目标实例（单选）
+   - **Job**：目标 Job（单选）
    - **NPU ID**：NPU 卡号（多选，支持 All）
    - **Chip ID**：NPU 芯片号（多选，支持 All）
 

@@ -1185,13 +1185,13 @@
         "query": "label_values(node_cpu_seconds_total, instance)",
         "refresh": 2,
         "sort": 1,
-        "includeAll": true,
+        "includeAll": false,
         "multi": false,
-        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "current": { "selected": true, "text": "", "value": "" },
         "options": [],
         "hide": 0,
         "label": "Instance",
-        "description": "目标实例过滤（单选，支持 All）"
+        "description": "目标实例过滤（单选）"
       },
       {
         "name": "job",
@@ -1200,13 +1200,13 @@
         "query": "label_values(node_cpu_seconds_total, job)",
         "refresh": 2,
         "sort": 1,
-        "includeAll": true,
+        "includeAll": false,
         "multi": false,
-        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "current": { "selected": true, "text": "", "value": "" },
         "options": [],
         "hide": 0,
         "label": "Job",
-        "description": "目标 Job 过滤（单选，支持 All）"
+        "description": "目标 Job 过滤（单选）"
       },
       {
         "name": "npu_id",
