@@ -1,0 +1,35 @@
+# cpugov feature scope: only the metrics the CPU-senses-NPU actuator needs.
+#   cpu.usage{core=total}  -> CPU idle% input
+#   npu.process_total      -> NPU process-presence input (summed across npu_id)
+#   energysave.*           -> cpugov's own state metrics (observability)
+# Scoping to this set makes AnyWanted("cpu",[temperature,mem_temperature,power])
+# false -> collectIpmiMetrics is skipped -> no `ipmitool sensor` SDR scan ->
+# no ~19s stalls -> snapshot_cpu.json stays fresh -> cpugov's CPU sample is
+# not flagged stale/unknown.
+components:
+  - component: cpu
+    interval: 3s
+    metrics:
+      - name: usage
+        priority: High
+  - component: npu
+    interval: 3s
+    metrics:
+      - name: process_total
+        priority: Medium
+  - component: energysave
+    metrics:
+      - name: cpu_state
+        priority: High
+      - name: cpu_idle_sample
+        priority: High
+      - name: npu_idle
+        priority: High
+      - name: downclock_active
+        priority: High
+      - name: actuator_ok
+        priority: High
+      - name: target_freq_khz
+        priority: High
+      - name: current_freq_khz
+        priority: High

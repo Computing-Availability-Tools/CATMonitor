@@ -1,9 +1,8 @@
-package main
+package snapshot
 
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
@@ -32,28 +31,7 @@ type Snapshot struct {
 // WriteAtomic writes the snapshot to disk atomically: write to a temp file in
 // the same directory, then rename. Readers never see a half-written file.
 func WriteAtomic(path string, s *Snapshot) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".snapshot-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return WriteJSONAtomic(path, s)
 }
 
 // Read loads the snapshot from disk.

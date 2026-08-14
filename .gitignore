@@ -1,4 +1,6 @@
 bin/
+# 二进制产物仅在 bin/ 下；不要用裸 "catmonitor" 规则，会误伤 cmd/catmonitor 源码目录
+bin/catmonitor
 /catmonitor
 *.exe
 *.exe~
@@ -17,3 +19,9 @@ AGENTS.md
 
 # local_docs is local-only, do not sync to remote
 local_docs/
+
+# loc_configs is local-only, do not sync to remote
+loc_configs/
+
+# .superpowers is local SDD scratch, do not sync to remote
+.superpowers/

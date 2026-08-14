@@ -216,9 +216,36 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	}
 
 	// --- 5.10 error_code ---
+	// ErrorCodeList returns the full hex error-code list (e.g. 0x40f84e00
+	// card drop); the count is the Value (backward-compatible with the
+	// Prometheus counter) and the codes go into Labels["error_codes"] so
+	// the fault detector can match specific codes.
 	if src.Available() {
-		if v, err := src.ErrorCodeV2(card, devID); err == nil {
-			metrics = append(metrics, collector.Metric{Component: "npu", Name: "error_code", Value: float64(v), Unit: "", Labels: label, Timestamp: now})
+		if errs, err := src.ErrorCodeList(card, devID); err == nil && errs != nil {
+			metrics = append(metrics, collector.Metric{
+				Component: "npu", Name: "error_code", Value: float64(errs.Count), Unit: "",
+				Labels: map[string]string{
+					"npu_id":      label["npu_id"],
+					"error_codes": joinStrings(errs.Codes, ","),
+				}, Timestamp: now,
+			})
+		}
+	}
+
+	// --- 5.11 card_drop ---
+	// DeviceNotReady(-8012) from dcmi_get_device_health means the card is
+	// offline/dropped. Surfaced as an explicit 0/1 metric so the fault
+	// detector emits card_drop without parsing error codes alone.
+	if src.Available() {
+		if dropped, err := src.CardDrop(card, devID); err == nil {
+			v := 0.0
+			if dropped {
+				v = 1.0
+			}
+			metrics = append(metrics, collector.Metric{
+				Component: "npu", Name: "card_drop", Value: v, Unit: "",
+				Labels: label, Timestamp: now,
+			})
 		}
 	}
 

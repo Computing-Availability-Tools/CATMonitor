@@ -35,5 +35,65 @@ storage:
 
 health:
   enabled: true
-  interval: 5s
   weight_scheme: auto
+
+collection:
+  # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)
+  min_priority: low
+
+# Enabled features. For each name the daemon loads features/<name>/metrics.yaml
+# (priority overrides — unions the metrics each feature needs so they survive
+# metrics.Filter) and derives the per-component collection cadence C_comp as the
+# min across the listed features' declared intervals (falling back to
+# collectors.<name>.interval for components no feature declares). Empty = use the
+# default catalog (configs/metrics.yaml) + collectors.interval only.
+features: [dfee, cpugov]
+
+# Fault subscription & push mechanism (features/faultsub). Default off; enable
+# to let external fault managers (e.g. EEP) subscribe to NPU fault events via
+# HTTP webhook and a REST API. See features/faultsub/faultsub_SPEC.md.
+faultsub:
+  enabled: false
+  rest_addr: ":9101"            # subscription REST API listen address
+  webhook_timeout: 5s          # per-request webhook push timeout
+  webhook_retry: 1              # failed-webhook retry count
+  event_buffer: 1024           # recent-event ring buffer (GET /faultsub/events)
+  defaults:
+    debounce_ms: 0             # default per-subscription debounce window
+    min_severity: "warning"
+  rules:                      # fault detection rule toggles (unset = enabled)
+    card_drop: true
+    npu_health: true
+    npu_error_code: true
+    hbm_uce: true
+    ddr_uce: true
+    roce_link_down: true
+    driver_unhealthy: false
+
+# Straggler-dedicated KPI file output (features/stragglerout). Default off;
+# enable to let the slow-node detector consume CATMonitor's NPU KPI time-series
+# instead of running its own kpi_collect.sh. See features/stragglerout/stragglerout_SPEC.md.
+straggler_output:
+  enabled: false
+  data_dir: /var/lib/catmonitor/straggler   # KPI file directory
+  retention: 360h            # file retention (default 15 days, matches baseline window)
+  flush_interval: 60s        # in-memory buffer flush cadence
+
+# Snapshot production (per-component snapshot_<comp>.json + global
+# snapshot.json), consumed by read-only features (web/dfee). Default off — when
+# off the daemon writes no snapshot files and behaves as before. When on, the
+# daemon is the sole snapshot producer; web must run as a read-only consumer
+# (no self-collection). See features/snapshot/.
+snapshot:
+  enabled: true
+  dir: /var/lib/catmonitor/snapshot   # directory for snapshot_<comp>.json + snapshot.json
+
+energysave:
+  enabled: true
+  interval: 3s
+  cpu_idle_threshold_pct: 97
+  observe_window: 120s
+  non_idle_break: 2
+  dry_run: true
+  min_freq_override: 0
+  npu_stale_sec: 6

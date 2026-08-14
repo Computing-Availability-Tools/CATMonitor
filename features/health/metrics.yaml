@@ -441,12 +441,12 @@ components:
         static: false
       - name: process_info
         cn_name: "NPU进程PID信息"
-        priority: Low
+        priority: Medium
         unit: "-"
         static: false
       - name: process_total
         cn_name: "NPU进程总数量"
-        priority: Low
+        priority: Medium
         unit: "个"
         static: false
       - name: comm_topo

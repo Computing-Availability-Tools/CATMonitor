@@ -13,7 +13,6 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/cpufreq"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/storage"
 )
 
 // energysaveCtl is the live controller (nil when disabled). Held in a
@@ -22,7 +21,7 @@ var energysaveCtl *cpugov.Controller
 
 // toCpugovConfig maps the config-layer EnergysaveConfig to the cpugov Config.
 func toCpugovConfig(cfg *config.Config, logger *slog.Logger) cpugov.Config {
-	return cpugov.Config{
+	c := cpugov.Config{
 		Interval:         cfg.Energysave.Interval,
 		IdleThresholdPct: cfg.Energysave.CpuIdleThresholdPct,
 		ObserveWindow:    cfg.Energysave.ObserveWindow,
@@ -32,20 +31,31 @@ func toCpugovConfig(cfg *config.Config, logger *slog.Logger) cpugov.Config {
 		NpuStale:         time.Duration(cfg.Energysave.NpuStaleSec) * time.Second,
 		Logger:           logger,
 	}
+	if cfg.Snapshot.Enabled {
+		c.SnapshotDir = cfg.Snapshot.Dir
+	}
+	return c
 }
 
-// startEnergysave wires the cpugov controller to the scheduler tap and starts
-// its control goroutine. No-op when cfg.Energysave.Enabled is false.
-func startEnergysave(ctx context.Context, cfg *config.Config, scheduler *collector.Scheduler, store *storage.JSONLStorage, logger *slog.Logger) {
+// startEnergysave starts the cpugov controller, which reads
+// snapshot_<cpu|npu>.json directly (no scheduler tap), and starts its
+// control goroutine. No-op when cfg.Energysave.Enabled is false.
+// energysave.* state metrics are written to sink (the storage chain end,
+// e.g. PerCompWriter -> CachingStorage -> JSONLStorage) so they surface in
+// /metrics + snapshot_energysave.json + jsonl like collector-produced metrics.
+func startEnergysave(ctx context.Context, cfg *config.Config, scheduler *collector.Scheduler, sink collector.Storage, logger *slog.Logger) {
 	if !cfg.Energysave.Enabled {
 		return
 	}
-	ctl := cpugov.NewController(toCpugovConfig(cfg, logger), cpufreq.Default(), store)
-	scheduler.SetTap(ctl.OnCollect)
+	if !cfg.Snapshot.Enabled {
+		logger.Warn("energysave requires snapshot.enabled; cpugov will not actuate (no-op)")
+	}
+	ctl := cpugov.NewController(toCpugovConfig(cfg, logger), cpufreq.Default(), sink)
 	energysaveCtl = ctl
 	go ctl.Run(ctx)
 	logger.Info("energysave controller started",
-		"dry_run", cfg.Energysave.DryRun, "interval", cfg.Energysave.Interval)
+		"dry_run", cfg.Energysave.DryRun, "interval", cfg.Energysave.Interval,
+		"snapshot_dir", cfg.Snapshot.Dir)
 }
 
 // stopEnergysave restores CPU frequencies on graceful shutdown (best-effort).

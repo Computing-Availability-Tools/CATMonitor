@@ -5,9 +5,11 @@ package cpugov
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/metrics"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/cpufreq"
@@ -23,6 +25,7 @@ type Config struct {
 	DryRun           bool
 	MinFreqOverride  uint64
 	NpuStale         time.Duration
+	SnapshotDir      string // daemon: read snapshot_<cpu|npu>.json from here; "" = CLI/unused
 	Logger           *slog.Logger
 }
 
@@ -41,9 +44,11 @@ type latestSnapshot struct {
 	npuKnown     bool
 }
 
-// Controller is the cpugov control loop. It consumes the scheduler tap
-// (OnCollect), drives the CPU idle state machine, and actuates CPU
-// frequency pin/restore on the (CPU∈C ∧ NPU idle) edge.
+// Controller is the cpugov control loop. In daemon mode it reads
+// snapshot_cpu.json + snapshot_npu.json (refreshFromSnapshot, fed through
+// OnCollect); in CLI preview mode it consumes a directly-injected batch
+// (OnCollect / RunOnce). It drives the CPU idle state machine and actuates
+// CPU frequency pin/restore on the (CPU∈C ∧ NPU idle) edge.
 type Controller struct {
 	cfg      Config
 	machine  *machine
@@ -77,10 +82,12 @@ func NewController(cfg Config, src cpufreq.Source, store Storage) *Controller {
 	}
 }
 
-// OnCollect is the scheduler tap. It scans a filtered metric batch for
+// OnCollect ingests a filtered metric batch, scanning for
 // cpu.usage{core=total} and npu.process_total (summed across npu_id) and
-// atomically stores them into the latest snapshot. It must be O(n) in batch
-// size and never block (called from collector goroutines).
+// atomically storing them into the latest snapshot. It is O(n) in batch
+// size and non-blocking. In daemon mode it is called by refreshFromSnapshot
+// (controller goroutine); in CLI/tests it is called directly with an
+// injected batch (RunOnce/feed).
 func (c *Controller) OnCollect(batch []collector.Metric) {
 	var (
 		cpuUsage float64
@@ -119,6 +126,30 @@ func (c *Controller) OnCollect(batch []collector.Metric) {
 	c.latest.mu.Unlock()
 }
 
+// refreshFromSnapshot reads snapshot_cpu.json + snapshot_npu.json from
+// cfg.SnapshotDir and feeds their metrics to OnCollect (single extraction
+// path). No-op when SnapshotDir is "" (CLI preview path, which injects its
+// own batch via OnCollect/RunOnce). Missing/corrupt files are skipped; the
+// corresponding inputs are not refreshed this tick; classifyNPU/classifyCPU
+// then report unknown via npuKnown=false (never seen) or the staleness
+// window (seen before).
+func (c *Controller) refreshFromSnapshot() {
+	if c.cfg.SnapshotDir == "" {
+		return
+	}
+	var batch []collector.Metric
+	for _, comp := range []string{"cpu", "npu"} {
+		cs, err := snapshot.ReadComp(filepath.Join(c.cfg.SnapshotDir, "snapshot_"+comp+".json"))
+		if err != nil {
+			continue
+		}
+		batch = append(batch, cs.Metrics...)
+	}
+	if len(batch) > 0 {
+		c.OnCollect(batch)
+	}
+}
+
 // Run is the control loop. It ticks at cfg.Interval until ctx is cancelled.
 // Shutdown (main.go) cancels ctx then calls Restore() for best-effort
 // frequency recovery.
@@ -144,7 +175,10 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 func (c *Controller) tick(now time.Time) {
-	// Snapshot the latest tap inputs.
+	// Daemon path: refresh latest from snapshot files (no-op when
+	// SnapshotDir is "" — CLI preview path injects via OnCollect/RunOnce).
+	c.refreshFromSnapshot()
+	// Snapshot the latest inputs.
 	c.latest.mu.Lock()
 	usage := c.latest.cpuUsage
 	cpuTs := c.latest.cpuTs
@@ -161,7 +195,14 @@ func (c *Controller) tick(now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	prev := c.machine.state
 	status := c.machine.Tick(now, cpuSample, npuState)
+	if status.State != prev {
+		c.logger.Info("cpugov state transition",
+			"from", prev.String(), "to", status.State.String(),
+			"cpu_sample", cpuSample.String(), "npu", npuState.String(),
+			"streak", status.Streak, "idle_elapsed", status.IdleElapsed.String())
+	}
 
 	// downclock_active = (CPU∈C) ∧ (NPU idle) ∧ (!dry_run) ∧ cpufreq available.
 	// NPU override guarantees CPU∉C when NPU non-idle, so CPU∈C already
@@ -172,11 +213,15 @@ func (c *Controller) tick(now time.Time) {
 	case desired && !c.active:
 		if err := c.actuator.Downclock(); err != nil {
 			c.logger.Error("cpugov downclock failed", "error", err)
+		} else {
+			c.logger.Info("cpugov downclock applied", "dry_run", c.cfg.DryRun, "target_khz", c.actuator.Target())
 		}
 		c.active = c.actuator.Applied()
 	case !desired && c.active:
 		if err := c.actuator.Restore(); err != nil {
 			c.logger.Error("cpugov restore failed", "error", err)
+		} else {
+			c.logger.Info("cpugov restore applied")
 		}
 		c.active = c.actuator.Applied()
 	case desired && c.active:

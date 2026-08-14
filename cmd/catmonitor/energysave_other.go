@@ -9,13 +9,12 @@ import (
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/storage"
 )
 
 // startEnergysave is a no-op on non-Linux: cpufreq sysfs actuation is
 // Linux-only. Matches the linux signature so main.go can call it
 // unconditionally.
-func startEnergysave(_ context.Context, _ *config.Config, _ *collector.Scheduler, _ *storage.JSONLStorage, _ *slog.Logger) {
+func startEnergysave(_ context.Context, _ *config.Config, _ *collector.Scheduler, _ collector.Storage, _ *slog.Logger) {
 }
 
 // stopEnergysave is a no-op on non-Linux.

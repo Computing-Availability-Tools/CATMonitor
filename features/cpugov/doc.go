@@ -4,7 +4,8 @@
 // (SPEC: features/cpugov/cpugov_SPEC.md).
 //
 // It watches CPU usage (cpu collector, core=total) and NPU process presence
-// (npu collector, process_total) via a scheduler tap, drives a small
+// (npu collector, process_total) via daemon snapshot files
+// (snapshot_cpu.json/snapshot_npu.json; an injected batch in CLI preview), drives a small
 // three-state CPU idle state machine (Active → Observing → ConfirmedIdle
 // with a 2-strike non-idle hysteresis and an NPU override that bypasses the
 // hysteresis), and pins all CPU cores to cpuinfo_min_freq while both CPU and

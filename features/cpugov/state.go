@@ -55,6 +55,17 @@ const (
 	CPUUnknown
 )
 
+func (s CPUSample) String() string {
+	switch s {
+	case CPUIdle:
+		return "idle"
+	case CPUNonIdle:
+		return "non-idle"
+	default:
+		return "unknown"
+	}
+}
+
 // StateConfig holds the tunables the state machine consumes.
 type StateConfig struct {
 	IdleThresholdPct float64       // CPU idle% >= this => idle sample (default 97)

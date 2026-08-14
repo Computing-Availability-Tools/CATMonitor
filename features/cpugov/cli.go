@@ -17,7 +17,8 @@ import (
 // tick can never reach ConfirmedIdle from a fresh state anyway, since the
 // observe window requires sustained idle). For actuation, run the daemon.
 func RunOnce(cfg Config, src cpufreq.Source, batch []collector.Metric, now time.Time) Snapshot {
-	cfg.DryRun = true // CLI is always a read-only preview.
+	cfg.DryRun = true     // CLI is always a read-only preview.
+	cfg.SnapshotDir = ""  // CLI: use the injected batch, do not read snapshot files.
 	c := NewController(cfg, src, nil)
 	c.actuator.RefreshTarget()
 	c.OnCollect(batch)

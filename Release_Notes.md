@@ -4,6 +4,74 @@
 
 ---
 
+## v0.3.3
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.3 |
+| 发布时间 | 2026-07-28 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (70865d7) → main (merge e1c14c4，no-ff，无冲突) + 热修 b2181e6 |
+
+### 变更摘要
+
+- **采集粒度控制（核心特性）**：新增 `collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集；`internal/metrics` 暴露 `SetCollectionThreshold`/`AnyWanted`/`IsWanted`（优先级值大小写不敏感），`internal/collector` 经 `SetWantedChecker` DI 注入；CPU/Memory/Disk/NPU 等采集器在执行昂贵采集阶段前调用 `collector.AnyWanted` 判断指标组是否通过阈值，无则整组跳过，降低无谓开销；daemon 与 `runCollect` 启动时均装配
+- **daemon 移除周期健康检查**：`runDaemon` 不再启动 health 评估 goroutine，健康度评估改由 `catmonitor health` 子命令按需执行
+- **web 退出清 snapshot**：`features/web/main.go` 收到 SIGINT/SIGTERM 后清理 snapshot 再退出
+- **配置**：`configs/catmonitor.yaml` 新增 `collection.min_priority: low`（默认全采）；`.gitignore` 增加 `loc_configs/`（本地测试用 `metrics_low.yaml` 不入库）
+- **dfee**：CPU 图表标题 `CPU 利用率分解` → `CPU 利用率`
+- **热修**：`internal/collectors/npu/npu_other.go` `collectDevice(devID int, ...)` → `collectDevice(dev npuDevice, ...)`，与 `npu_linux.go` 签名对齐，修复非 linux 平台签名不匹配致 Windows 交叉编译失败（v0.3.2 起 `67ef5f1` 引入 `npuDevice` 时遗留，非本次合并引入）
+- **文档**：README/SPEC/DESIGN/User_Manual/indi_list 同步采集粒度控制说明 + 版本号升至 v0.3.3；DESIGN 数据流与架构注释更新（daemon 不再周期评估健康度、§1.7 增预过滤要点）
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.3`；指标总数不变（204）
+- **测试**：263 用例全过（与 v0.3.2 持平），覆盖率 29.5%~94.3%，`go vet` 零警告，Linux/Windows 双平台编译通过（Windows 交叉编译恢复）；无 NPU/GPU 系统测试通过（`:9100/metrics` 52 TYPE / 173 指标行 + `/-/healthy`·`/-/ready` 200、`:9527` root/dfee/snapshot/collectors 全 200、GPU/NPU/Chassis 优雅降级不崩溃）
+
+### 已知限制
+
+1. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `dcmi` 构建标签后，本机无 CANN SDK 无法编译，需在真 NPU 服务器 `go build -tags dcmi` 验证
+2. **GPU/NPU/Chassis 无真机**：系统测试仅验证优雅降级路径（空数据 / 计数 0 / 不崩溃），真实指标采集需在配备对应硬件的机器复测
+3. **采集粒度控制仅验证默认 low**：`medium`（跳过 Low）/ `high`（仅 High）的预过滤行为未在系统测试中实跑，且未补对应单元测试（`internal/metrics` 覆盖率由 85.9% 降至 66.3%），建议后续补测
+4. **server_type 判定口径不一致**：`catmonitor health` CLI 因 NPU 采集器产出 `npu_num` 判定 `accelerated`，web 端 hwinfo 探测无真实 NPU 判定 `cpu_only`，非功能缺陷，建议后续统一
+5. **daemon 短时运行未落盘 JSONL**：`CachingStorage` 内存缓存供 `/metrics` 读取，短时未触发 JSONL 落盘，建议真机长时运行观察
+6. **未推送到远端**：合并提交 `e1c14c4` + 热修 `b2181e6` 暂在本地完成
+
+---
+
+## v0.3.2
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.2 |
+| 发布时间 | 2026-07-25 |
+| 发布人 | Sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | feature/wyx/add-metrics (c21a081) → main (merge c824349，no-ff，1 处冲突已解决) |
+
+### 变更摘要
+
+- **Prometheus 导出模块**：新增 `features/exporter`——`CachingStorage` 包装在 `JSONLStorage` 外（实现 `collector.Storage` 接口），一次采集同时落盘 JSONL + 更新内存缓存（按组件分组原子替换），HTTP `/metrics` 端点（`:9100`）从缓存读取转 Prometheus 文本格式（`catmonitor_{component}_{name}` 前缀，`_total`/`_time` 后缀判 counter，含 `# HELP`/`# TYPE`/labels）；daemon 集成仅需 ~5 行；附 `/-/healthy`、`/-/ready` 健康端点
+- **NPU 指标扩展 74→119**：新增 45 项 `hccn_tool` 网络统计指标（Medium，网口/PCIe 带宽、RoCE 速度/链路等扩展统计）；指标总数 159→204（High 24 / Medium 121 / Low 59）
+- **NPU 采集器 DCMI CGo 修复**：`dcmi_init()` 初始化、`dcmi_get_card_num_list` 返回全部设备 ID、`dcmi_get_device_errorcode_v2` 5 参数签名适配、`dcmi_get_device_info` 指针参数、dvpp struct 名修正；NPU card/device 二级枚举（CardList + DeviceNumInCard 遍历全部设备）；默认布局调整（4 行 3+2+2+2、gridCols 6 列、功耗电压首行、图例简化）
+- **IPMI 来源层重构**：`ipmitool sdr`→`sensor` 命令 + 解析器兼容 3/4 段格式 + 定向 `ipmi sensor get` 采集 + 两级缓存（传感器名称 24h / 采集结果 10s）+ 磁盘持久化 + 降级回退 + 超时 5s→30s→60s；进出风口温度精确匹配、风扇转速取平均、整机功耗只匹配 `Power`（排除 PSU 输出）
+- **dfee 能效监控增强**：图表卡片拖拽重排 + 右下角手柄缩放（`align-self: start` 边框不跟随增长）+ 虚线对齐辅助（3px 吸附）；NPU/磁盘/网络多选下拉筛选（重构为通用筛选框架，固定宽度 + 截断省略号）；模块折叠（机箱 3 图同行）；NPU 改为单指标图布局
+- **main.go 行为修复**：`--help` 解析后 `os.Exit(0)` 退出，不再继续执行采集
+- **web 修复**：补充 chassis 采集器 import，修复机箱类指标无数据
+- **配置**：新增 `configs/metrics.yaml` 默认指标采集目录
+- **文档**：README 精简（使用说明迁移至新增 `docs/User_Manual.md`）；SPEC 改为功能规格（不含技术细节，链接各 feature SPEC）；DESIGN 新增 exporter 章节、更新 NPU/IPMI/dfee；indi_list 版本升至 v0.3.2/204 指标
+- **版本号**：`cmd/catmonitor` version 升至 `0.3.2`
+- **测试**：263 用例全过（较 v0.3.1 的 241 +22，来自 `features/exporter` + `internal/source/hccn_tool` 扩展用例），覆盖率 29.5%~97.0%，`go vet` 零警告，Linux/Windows 双平台编译通过；无 NPU/GPU 系统测试通过（`:9100/metrics` 导出 33 指标名 / 31 gauge + 2 counter、`:9527` web/dfee 5 端点全 200、GPU/NPU/Chassis 优雅降级不崩溃）
+
+### 已知限制
+
+1. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `dcmi` 构建标签后，本机无 CANN SDK 无法编译，需在真 NPU 服务器 `go build -tags dcmi` 验证 CGo 绑定
+2. **GPU/NPU/Chassis 无真机**：系统测试仅验证优雅降级路径（空数据 / 计数 0 / 不崩溃），真实指标采集需在配备对应硬件的机器复测
+3. **server_type 判定口径不一致**：`catmonitor health` CLI 因 NPU 采集器产出 `npu_num` 指标判定 `accelerated`，web 端 hwinfo 探测无真实 NPU 硬件判定 `cpu_only`，非功能缺陷，建议后续统一
+4. **daemon 短时运行未落盘 JSONL**：`CachingStorage` 在内存缓存指标供 `/metrics` 读取，短时未触发 JSONL 落盘，建议真机长时运行观察落盘周期
+5. **dfee_SPEC.md 内部描述待修订**：其头部仍写"25 图/74 指标/优先级筛选"，与合并后实际行为（61 图表定义、拖拽缩放、多选筛选、取消优先级筛选）有出入，待后续修订
+6. **未推送到远端**：合并提交 `c824349` 仅在本地完成
+
+---
+
 ## v0.3.1
 
 | 项目 | 说明 |

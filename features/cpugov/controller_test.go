@@ -57,7 +57,7 @@ func newTestController(t *testing.T, dryRun bool) (*Controller, *cpufreq.MockSou
 	return c, mock, store
 }
 
-// feed emits a tap batch with the given cpu usage% + npu process_total at ts.
+// feed emits a metric batch with the given cpu usage% + npu process_total at ts.
 func feed(c *Controller, ts time.Time, cpuUsage float64, npuProc int) {
 	c.OnCollect([]collector.Metric{
 		{Component: "cpu", Name: "usage", Value: cpuUsage, Unit: "%", Labels: map[string]string{"core": "total"}, Timestamp: ts},
@@ -144,7 +144,7 @@ func TestControllerDryRunNoWrites(t *testing.T) {
 func TestControllerNPUUnknownNoDownclock(t *testing.T) {
 	c, _, _ := newTestController(t, false)
 
-	// Only feed CPU (no npu tap) → npuKnown=false → NPUUnknown → no downclock.
+	// Only feed CPU (no npu metric fed) → npuKnown=false → NPUUnknown → no downclock.
 	feedCPU := func(ts time.Time, cpuUsage float64) {
 		c.OnCollect([]collector.Metric{
 			{Component: "cpu", Name: "usage", Value: cpuUsage, Unit: "%", Labels: map[string]string{"core": "total"}, Timestamp: ts},

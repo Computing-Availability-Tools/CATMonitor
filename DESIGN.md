@@ -12,15 +12,15 @@
 ```
 ┌─────────────────────────────────────────────────────┐
 │   cmd/catmonitor            features/web            │
-│   (守护进程入口)            (catmonitor-web 仪表盘)  │
+│   (守护进程+exporter :9100)  (catmonitor-web 仪表盘) │
 ├─────────────────────────────────────────────────────┤
 │  features/ (特性层：基于采集基础能力构建的上层模块)    │
-│  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐ │
-│  │ features/health      │  │ features/web         │  │ features/dfee │ │
-│  │ 健康度评估(消费       │  │ Web 仪表盘(独立二进制)│  │ 能效监控(25图) │ │
-│  │  collector.Metric,    │  │ snapshot.json 解耦    │  │ /dfee/ 路由   │ │
-│  │  按部件评估器+scheme) │  │ blank-import 采集器   │  │ 74项过滤+推导 │ │
-│  └──────────────────────┘  └──────────────────────┘  └──────────────┘ │
+│  ┌────────────────┐ ┌────────────────┐ ┌────────────┐ ┌──────────────┐ │
+│  │features/health │ │features/web    │ │features/dfee│ │features/exporter│
+│  │健康度评估      │ │Web 仪表盘      │ │能效监控      │ │Prometheus /metrics│
+│  │按部件评估器    │ │snapshot.json   │ │/dfee/ 路由   │ │CachingStorage    │
+│  │+scheme 自适应  │ │解耦+blank-import│ │过滤+推导+交互 │ │:9100 端点         │
+│  └────────────────┘ └────────────────┘ └────────────┘ └──────────────┘ │
 ├─────────────────────────────────────────────────────┤
 │  internal/config   internal/metrics   internal/storage│
 │  internal/platform  (指标采集目录: 默认+模块覆盖+Filter)│
@@ -58,6 +58,12 @@
 > v0.3.0 引入 **`features/` 特性层** + **`internal/metrics` 指标采集目录**：`web/`、`internal/health` 统一迁入 `features/`（`features/web`、`features/health`），health 重构为按部件评估器（消费 `collector.Metric`，`Evaluate` 用局部 scheme 不改写 receiver，规则对齐 indi_list High/Medium）；`internal/metrics` 提供 MetricSpec/Catalog/Filter，`configs/metrics.yaml` 为默认目录、模块自有 `metrics.yaml` 按 name 覆盖合并，scheduler 经 Filter 决定是否采集。
 >
 > v0.3.1 新增第 7 个采集器 `internal/collectors/chassis`（5 指标：整机功耗 / 进出风口温度 / 风扇转速 / 风扇功率，来自 ipmitool SDR，与 CPU/Memory 共享 30s SDR 缓存）；Disk 采集器新增 `read_latency`/`write_latency`（/proc/diskstats field 7/11，ms/s）；新增 `features/dfee` 能效监控模块（25 张实时图表 + CPU 8 jiffies→7 利用率推导 + 网络差值，从 159 项指标中过滤 74 项能效指标，独立 SPA 路由 `/dfee/`）。指标总数 152→159，部件 6→7。
+>
+> v0.3.2 新增 **Prometheus 导出模块** `features/exporter`：`CachingStorage` 包装在 JSONLStorage 外（实现 `collector.Storage` 接口），一次采集同时落盘 JSONL + 更新内存缓存（按组件分组原子替换），HTTP `/metrics` 端点（`:9100`）从缓存读取转 Prometheus 文本格式（`catmonitor_{component}_{name}` 前缀，`_total`/`_time` 后缀判 counter），daemon 集成仅需 ~5 行。**NPU 指标 74→119**（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。**IPMI 来源层重构**：`ipmitool sdr`→`sensor` 命令 + 3/4 段解析兼容 + 定向 `ipmi sensor get` 采集 + 两级缓存（传感器名称 24h / 采集结果 10s）+ 磁盘持久化 + 降级回退 + 超时 60s。**dfee 能效监控增强**：图表卡片拖拽重排 + 右下角手柄缩放 + 虚线对齐辅助（3px 吸附）、NPU/磁盘/网络多选下拉筛选、模块折叠。`main.go` `--help` 解析后 `os.Exit(0)` 退出。
+>
+> v0.3.3 新增 **采集粒度控制**：`collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集；`internal/metrics` 暴露 `SetCollectionThreshold`/`AnyWanted`，`internal/collector` 经 `SetWantedChecker` DI 注入，采集器在执行采集前调用 `collector.AnyWanted(component, names)` 判断是否有目标指标通过阈值，无则整组跳过（如 NPU static/per-device 阶段、CPU/Memory/Disk 子指标组），降低无谓开销。daemon 与 `runCollect` 启动时均装配。**daemon 移除周期健康检查 goroutine**（健康度评估改由 `catmonitor health` 子命令按需执行）。**web 退出清 snapshot**。修复 `npu_other.go` 非 linux 桩 `collectDevice` 签名未同步 `npuDevice` 致 Windows 交叉编译失败（v0.3.2 起遗留）。
+
+> **v0.3.3 后续重构（`feature/catmonitor` 合入，底座版本号不变）**：① snapshot 生产统一收归 daemon——新增 `features/snapshot` 包（`PerCompWriter` 按 per-component 写 `snapshot_<comp>.json` + `GlobalWriter` 维护全局 `snapshot.json`），web/dfee 转为**只读消费者**不再各自采集（web 删 `DataCollector`/`config.go`/`config.yaml`，改 `-addr`/`-snapshot-dir` flag；dfee 转独立二进制 `catmonitor-dfee` `package main`，`:9528`）。② **Feature-scoped 采集**：`features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法；并派生 per-component cadence `C_comp = min(feature interval)`、`C_global = min(C_comp)`。③ **DCMI 掉卡检测**：`source/dcmi` 新增 `DeviceNotReadyErrCode`(-8012)、`ErrorCodeList`（返回完整 hex 错误码列表 `DeviceErrors{Count,Codes}`）、`CardDrop`；NPU 新增 `card_drop` 指标（High）、`error_code` 升级为完整列表（High，`value`=数量、`labels.error_codes`=hex 列表），供故障检测匹配特定码。④ **故障订阅推送 `features/faultsub`**：`FaultStorage` 作为 daemon Storage 管道 tap，复用采集管道对 NPU 指标做故障判定（卡掉线/健康/错误码/HBM UCE/RoCE 链路），HTTP Webhook 推送 `FaultEvent` + REST 订阅 API（`:9101`），opt-in 默认 off。详见 §9。⑤ **落后节点 KPI 输出 `features/stragglerout`**：`StragglerStorage` 作为 daemon Storage 管道 tap，把 NPU KPI 按"每时刻×每卡"聚合追加写日级 JSONL，供 straggler 慢节点检测器消费，opt-in 默认 off。详见 §10。详见 §6 Web、§7 dfee、§9 faultsub、§10 stragglerout、§1.7-7。
 
 ### 1.2 跨平台架构设计
 
@@ -78,7 +84,7 @@ collectors/{component}/
 - Linux 代码通过 `internal/source/` 来源层访问 `/proc`、`/sys`、`statfs`、`ipmitool` 等（v0.2.0；v0.2.2 全 6 采集器接入）
 - Windows 代码使用 Go `syscall` 包直接调用 kernel32.dll / iphlpapi.dll，零第三方依赖
 - GPU 采集器无需平台分离（`nvidia_smi` 来源包在双平台均可通过 `os/exec` 调用 nvidia-smi）
-- NPU 采集器平台分离：`npu_linux.go`（74 指标 device 并行 + DCMI CGo + npu_smi/hccn_tool）与 `npu_other.go`（`//go:build !linux` no-op stub），Windows 上整体降级跳过
+- NPU 采集器平台分离：`npu_linux.go`（119 指标 device 并行 + DCMI CGo + npu_smi/hccn_tool）与 `npu_other.go`（`//go:build !linux` no-op stub），Windows 上整体降级跳过
 - `*_metrics.go` 为跨平台文件（无 build tag），新增指标方法定义于此；Windows 上来源层不可用时返回空值
 
 ### 1.3 扩展机制：Collector 接口 + Registry 注册表
@@ -178,7 +184,7 @@ CATMonitor/
 │   │   │   └── gpu_test.go
 │   │   ├── npu/
 │   │   │   ├── npu.go               # 共享: struct/deviceIDs/prevEcc + device 并行 Collect()
-│   │   │   ├── npu_linux.go         # Linux: ensureDevices + collectStatic + collectDevice(74 指标) (DCMI/npu_smi/hccn_tool)
+│   │   │   ├── npu_linux.go         # Linux: ensureDevices + collectStatic + collectDevice(119 指标) (DCMI/npu_smi/hccn_tool)
 │   │   │   ├── npu_other.go         # !linux no-op stub
 │   │   │   └── npu_test.go
 │   │   └── network/
@@ -219,28 +225,50 @@ CATMonitor/
 │   │   ├── util.go                   #     公共工具（取最差子温度等）
 │   │   ├── metrics.yaml             #     health 自有指标目录（启动时优先读取）
 │   │   └── HEALTH_SPEC.md           #     健康度规则规格
-│   └── web/                         #   Web 仪表盘（v0.2.1 新增，v0.3.0 由 web/ 迁入 features/）
-│       ├── main.go                  #     入口：blank-import 采集器 + 采集 goroutine + HTTP server + 端口回退 + 信号处理
-│       ├── static.go                #     //go:embed static，内嵌前端资源
-│       ├── config.go                #     配置结构 + YAML 加载 + runtime.json 运行时覆盖
-│       ├── collector.go             #     DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
-│       ├── snapshot.go              #     Snapshot 结构（含 Specs 字段）+ 原子读写
-│       ├── hwinfo.go                #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info）
-│       ├── server.go                #     HTTP 路由与处理函数（含 dfee.Register，v0.3.1）
-│       ├── config.yaml              #     默认配置
-│       ├── metrics.yaml             #     web 自有指标目录（启动时优先读取）
-│       ├── static/                  #     前端资源（index.html + style.css + app.js，含能效分析导航入口）
-│       └── data/                    #     运行时数据（snapshot.json / runtime.json，git 忽略）
-│   └── dfee/                         #   能效监控模块（v0.3.1 新增，25 张实时图表 + CPU 利用率推导）
-│       ├── dfee_SPEC.md             #     能效模块设计规格
-│       ├── energy_efficiency_metrics.md #  74 项能效指标清单
-│       ├── filter.go                #     能效指标过滤 + 分组
-│       ├── cpu_derive.go            #     CPU 8 jiffies → 7 利用率推导
-│       ├── net_derive.go            #     网络差值计算
-│       ├── handler.go               #     HTTP handler + 静态文件服务
-│       ├── embed.go                 #     //go:embed static
-│       ├── metrics.yaml             #     dfee 指标目录覆盖（CPU Low → Medium）
-│       └── static/                  #     前端（dfee.js + dfee.css + index.html）
+│   ├── snapshot/                    #   Snapshot 统一生产（v0.3.3 后续新增：daemon 唯一写者，供只读特性消费）
+│   │   ├── snapshot.go               #     CompSnapshot/GlobalSnapshot 结构 + 原子读写（Read/ReadGlobal）
+│   │   ├── comp.go                   #     PerCompWriter：按组件写 snapshot_<comp>.json（原子 rename）
+│   │   ├── global.go                 #     GlobalWriter：全局 snapshot.json（health/collectors/intervals/system_specs）
+│   │   ├── atomic.go                 #     原子写工具（临时文件 + os.Rename）
+│   │   ├── read.go                   #     只读读取入口（供 web/dfee 消费）
+│   │   ├── series.go                 #     环形历史（固定 60 点）
+│   │   └── hwinfo.go                 #     一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info）
+│   ├── web/                          #   Web 仪表盘（catmonitor-web，v0.3.3 后续转只读消费者）
+│   │   ├── main.go                   #     入口：-addr/-snapshot-dir flag + HTTP server + 端口回退 + 信号处理
+│   │   ├── server.go                 #     HTTP 路由（只读：/api/snapshot 组装 global+per-comp）
+│   │   ├── static.go                 #     //go:embed static，内嵌前端资源
+│   │   ├── metrics.yaml              #     web feature 指标目录（供 daemon LoadModuleOverride + SetFeatureScope）
+│   │   └── static/                   #     前端资源（index.html + style.css + app.js）
+│   ├── dfee/                         #   能效监控（catmonitor-dfee 独立二进制，v0.3.3 后续转只读消费者，:9528）
+│   │   ├── main.go                   #     入口：-addr/-snapshot-dir flag + HTTP server（package main）
+│   │   ├── dfee_SPEC.md             #     能效模块设计规格（唯一设计+规格文档）
+│   │   ├── energy_efficiency_metrics.md #  能效指标清单
+│   │   ├── filter.go                #     能效指标过滤 + 分组（通用筛选框架）
+│   │   ├── cpu_derive.go            #     CPU 8 jiffies → 7 利用率推导
+│   │   ├── net_derive.go            #     网络差值计算
+│   │   ├── handler.go               #     HTTP handler + 静态文件服务（/dfee/ + /api/dfee）
+│   │   ├── embed.go                 #     //go:embed static
+│   │   ├── metrics.yaml             #     dfee 指标目录覆盖（CPU Low → Medium）
+│   │   └── static/                  #     前端（dfee.js + dfee.css + index.html，含拖拽缩放/多选筛选/折叠）
+│   ├── exporter/                     #   Prometheus 导出模块（v0.3.2 新增）
+│   │   ├── exporter_SPEC.md         #     导出模块唯一设计+规格文档
+│   │   ├── prometheus.go            #     Encode()：Metric → Prometheus 文本（HELP/TYPE/labels，counter 推断）
+│   │   ├── storage.go                #     CachingStorage：实现 collector.Storage，包装 JSONLStorage + 内存缓存
+│   │   └── *_test.go                #     导出格式 + 缓存测试
+│   ├── faultsub/                    #   故障订阅推送（v0.3.3 后续新增，opt-in，:9101）
+│   │   ├── faultsub_SPEC.md         #     模块设计规格
+│   │   ├── event.go                 #     FaultEvent/FaultType/Severity 数据模型
+│   │   ├── subscription.go          #     Subscription/SubscriptionManager（订阅表+去抖）
+│   │   ├── detector.go              #     FaultDetector 故障判定规则引擎（卡掉线/健康/错误码/HBM UCE/RoCE 链路）
+│   │   ├── storage.go               #     FaultStorage：实现 collector.Storage（管道 tap，落盘+判定+分发）
+│   │   ├── dispatcher.go            #     Dispatcher：匹配+去抖+异步分发+环形缓冲
+│   │   ├── webhook.go               #     Webhook 推送器（net/http 客户端）
+│   │   └── server.go                #     REST 订阅 API（/faultsub/*）
+│   └── stragglerout/                #   落后节点 KPI 输出（v0.3.3 后续新增，opt-in）
+│       ├── stragglerout_SPEC.md     #     模块设计规格
+│       ├── storage.go                #     StragglerStorage：实现 collector.Storage（管道 tap，委托 inner + KPI 抽取缓冲 flush）
+│       ├── sample.go                #     KPISample 数据模型 + KPIMapper（NPU KPI → straggler 字段映射）
+│       └── writer.go                #     KPIWriter：日级 JSONL 追加写 + 保留期清理
 ├── configs/
 │   ├── catmonitor.yaml              # 默认配置文件
 │   └── metrics.yaml                 # 默认指标采集目录（6 部件，v0.3.0 新增）
@@ -260,24 +288,34 @@ CATMonitor/
 ### 1.5 数据流与数据格式
 
 ```
-  Scheduler 按各自周期触发
-         │
-         ▼
-  Collector.Collect()  ──→  []Metric
-         │                    │
-         │ Linux: 经来源层 source.Xxx() 拿 parsed struct
-         │   (proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl
-         │    + dcmi/npu_smi/hccn_tool/nvidia_smi)
-         │ Windows: kernel32.dll / PowerShell 直接 syscall
-         ▼
-  Storage.Write(metrics)  ──→  JSON 文件
-  (路径: {data_dir}/{component}_{date}.jsonl)
-         │
-         ▼
-  HealthEvaluator.Evaluate(latestMetrics)  ──→  HealthScore
-         │                                     (自动检测 GPU/NPU)
-         ▼
-  Storage.WriteHealth(score)  ──→  health_{date}.jsonl
+   Scheduler 按各自周期触发
+          │
+          ▼
+   Collector.Collect()  ──→  []Metric
+          │                    │
+          │ Linux: 经来源层 source.Xxx() 拿 parsed struct
+          │   (proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl
+          │    + dcmi/npu_smi/hccn_tool/nvidia_smi)
+          │ Windows: kernel32.dll / PowerShell 直接 syscall
+          ▼
+   metrics.Filter(allMetrics)         # 指标采集目录过滤（High/Medium + static）
+          ▼
+    CachingStorage.Write(metrics)       # v0.3.2：exporter 缓存层（实现 collector.Storage）
+    ├── 1. 按组件分组更新内存缓存（原子替换）  ──→  HTTP /metrics 读取转 Prometheus 文本
+    └── 2. 委托 JSONLStorage.Write(metrics)  ──→  JSON 文件
+           (路径: {data_dir}/{component}_{date}.jsonl)
+
+   [daemon v0.3.3 起不再周期评估健康度；健康度评估由 `catmonitor health` 子命令按需执行：]
+    HealthEvaluator.Evaluate(collectedMetrics)  ──→  HealthScore
+           │                                     (自动检测 GPU/NPU)
+           ▼
+    输出表格 / JSON；如需落盘由调用方接管
+           │
+           ▼
+    HTTP server (:9100)                   # v0.3.2：exporter 端点
+   ├── GET /metrics  → CachingStorage.AllMetrics() → Prometheus 文本
+   ├── GET /-/healthy → 200 OK
+   └── GET /-/ready   → 缓存非空 200 / 否则 503
 ```
 
 数据文件格式（JSONL — 每行一个 JSON 对象）：
@@ -315,7 +353,7 @@ CATMonitor/
 |----|--------|-----------|------|------|
 | proc | /proc 全量 | Stat/Loadavg/Meminfo/Diskstats/NetDev/Vmstat/Cpuinfo/Buddyinfo/Mounts/NetTCPStates/Pressure | 无 | 11 个方法 |
 | sys | /sys | CpuFreqs/CacheInfos/CpuOnline·Offline·Isolated/Nodes/Edac/NetOperstate/NetInterfaces/Thermal | 无 | 符号链接修复 (IsDir \|\| ModeSymlink) |
-| ipmi | ipmitool SDR/DCMI | SDR()/DCMIPower() | 30s + 失败 + 5s 超时 | fetcher 可注入；温度/功率共用一份 SDR |
+| ipmi | ipmitool sensor（v0.3.2 由 sdr 改） | SDR()/DCMIPower() | 两级缓存：传感器名称 24h + 采集结果 10s + 失败缓存 + 60s 超时 | fetcher 可注入；定向 `ipmi sensor get` 采集 + 磁盘持久化 + 降级回退 |
 | lscpu | lscpu | Topology() | 常驻 (sync.Once) | 拓扑静态 |
 | mce | mcelog/dmesg | Errors() | 无 | MCE CE/UCE 事件 |
 | dmesg | dmesg | Text() | 30s + 失败 | 供 oom_count / io_errors |
@@ -346,7 +384,7 @@ type Source interface {
 | disk | proc, statfs, smartctl, dmesg | space_usage, iops, throughput, io_wait, io_errors, SMART |
 | network | proc, sys | throughput, packet_count, error_count, interface_status, connection_count |
 | gpu | nvidia_smi | utilization, memory_usage, temperature, power_draw, fan_speed, ecc_errors, clock_frequency |
-| npu | dcmi, npu_smi, hccn_tool | 74 指标：utilization/memory/temperature/power/health + 电压/风扇/13路温度/频率/利用率/HBM/ECC(delta)/LLC/带宽网络 |
+| npu | dcmi, npu_smi, hccn_tool | 119 指标：utilization/memory/temperature/power/health + 电压/风扇/13路温度/频率/利用率/HBM/ECC(delta)/LLC/带宽网络 + 45 项 hccn_tool 网络统计（v0.3.2） |
 | chassis | ipmi | power, inlet_temp, outlet_temp, fan_speed, fan_power（与 CPU/Memory 共享 SDR 缓存） |
 
 ### 1.7 指标采集目录系统（v0.3.0 新增）
@@ -360,6 +398,8 @@ type Source interface {
 3. **模块覆盖**：模块自有 `metrics.yaml`（如 `features/health/metrics.yaml`、`features/web/metrics.yaml`）经 `LoadModuleOverride` 按 `name` 合并覆盖默认目录（模块值优先，缺省字段保留默认）。
 4. **Filter（选择策略）**：`priority ∈ {High,Medium} OR static==true` 默认采集；Low 诊断指标默认不采。**目录中缺失的指标默认放行**（default-allow），避免目录漂移静默丢数据。模块覆盖可通过改写 priority 单独 opt-in/out。
 5. **DI 注入**：`scheduler.SetFilter(catalog.Filter)` 由 `cmd/catmonitor` 启动时装配；`interval` 本期仅记录、不接 ticker（采集仍 per-collector 既有节拍）。
+6. **采集粒度预过滤（v0.3.3）**：`collection.min_priority`（low/medium/high）经 `metrics.SetCollectionThreshold` 设定阈值；`collector.SetWantedChecker(metrics.AnyWanted)` 把 `AnyWanted(component, names)` 注入采集核心。采集器在执行昂贵采集阶段前调用 `collector.AnyWanted` 判断该指标组是否有任一指标通过阈值，无则整组跳过（NPU static / per-device、CPU / Memory / Disk 子指标组等）。优先级值大小写不敏感。daemon 与 `runCollect` 启动时均装配。
+7. **Feature-scoped 白名单（v0.3.3 后续，`feature/catmonitor` 合入）**：`catmonitor.yaml` 的 `features` 列表声明各特性所需指标。daemon 加载各 feature `metrics.yaml` 覆盖后，以 `SetFeatureScope(并集)` 建立白名单。`features` 非空时 `Filter` 只保留白名单内且 `priority ≥ min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法（不空跑硬件）；`features` 空 → 退回默认目录全集 + min_priority 预过滤。例如 `features: [dfee]` 采 dfee 列出指标并集，`[web, dfee]` 采 web∪dfee。同时按 feature 声明的 interval 派生 per-component cadence `C_comp = min(声明该 comp 的 feature interval)`，`C_global = min(C_comp)`。
 
 #### 目录文件（YAML）
 
@@ -491,7 +531,7 @@ nvidia-smi \
 | 数据来源 | `dcmi`(CGo)/`npu_smi`/`hccn_tool` 三个来源包；NPU 全部指标为 Linux 专属 |
 | 外部依赖 | `libdcmi.so`（CANN，CGo，需 `-tags dcmi`）；`npu-smi`、`hccn_tool`（昇腾驱动自带，无 CGo） |
 | 采集方式 | **device 并行采集**：collector 层每块 NPU 一个 goroutine，`WaitGroup` 等齐，单卡失败不影响其他卡 |
-| 平台分离 | `npu_linux.go`（`//go:build linux`，实现 74 指标）+ `npu_other.go`（`//go:build !linux`，no-op stub）；Windows 上 `Collect()` 整体降级跳过 |
+| 平台分离 | `npu_linux.go`（`//go:build linux`，实现 120 指标）+ `npu_other.go`（`//go:build !linux`，no-op stub）；Windows 上 `Collect()` 整体降级跳过 |
 | 可用性检测 | `dcmi.Default().Available()` = CGo provider 是否注册（`-tags dcmi` 时为 true）；命令类来源去掉 `Available()` 门控，直接调 + 处理 error |
 | Mock | 测试通过 `dcmi.SetMockProvider()`、`npu_smi.SetMock()`、`hccn_tool.SetMock()` 注入 |
 
@@ -501,7 +541,7 @@ nvidia-smi \
 Collect() {
   Phase 1: collectStatic(now)        // 全局/静态指标采 1 次：npu_num/comm_topo/driver_version/chip_type
   Phase 2: for each deviceID {
-    go collectDevice(devID, now)     // 每 device 一个 goroutine，采全部 74 指标
+    go collectDevice(devID, now)     // 每 device 一个 goroutine，采全部 120 指标
   }
   wg.Wait()                          // 等齐，合并结果
 }
@@ -509,8 +549,9 @@ Collect() {
 
 - 并行在 collector 层（来源层保持单 device 接口，简单可测）；ECC delta 用 mutex 保护 `prevEcc` map。
 - 既有 5 个指标改走 DCMI：utilization(`dcmi_get_device_utilization_rate`)、memory_usage(`dcmi_get_device_hbm_info`)、temperature(`dcmi_get_device_temperature`)、power_draw(`dcmi_get_device_power_info`)、health_status(`dcmi_get_device_health`)。
+- **掉卡检测（v0.3.3 后续增强）**：`error_code` 经 `source/dcmi.ErrorCodeList` 升级为返回**完整 hex 错误码列表**（`DeviceErrors{Count, Codes[]}`，如 `0x40f84e00` 掉卡），`value`=数量、`labels.error_codes`=逗号分隔 hex 列表，供 `features/faultsub` 故障检测器匹配特定码；新增 `card_drop`（经 `source/dcmi.CardDrop`，当 `dcmi_get_device_health` 返回 `DeviceNotReadyErrCode` -8012 时 `value`=1），显式 0/1 掉卡状态使故障检测器无需解析错误码即可触发。两者均为 High 优先级。
 
-**74 指标分布**：
+**120 指标分布**（v0.3.2：74→119，新增 45 项 `hccn_tool` 网络统计，均为 Medium；v0.3.3 后续：119→120，新增 `card_drop` 掉卡检测 High，`error_code` 升级 High）：
 
 | 组 | 指标数 | 来源 |
 |----|:------:|------|
@@ -523,10 +564,12 @@ Collect() {
 | HBM 内存 | 2 | dcmi(HbmInfo) |
 | ECC(8) | 8 | dcmi(EccInfo, delta) |
 | LLC(3) | 3 | dcmi(LlcPerf) |
-| 带宽/网络(9) | 9 | hccn_tool + npu_smi(-t hccs-bw) + dcmi(NetworkHealth) |
-| **合计** | **74** | |
+| 带宽/网络 | 9 | hccn_tool + npu_smi(-t hccs-bw) + dcmi(NetworkHealth) |
+| hccn_tool 网络统计（v0.3.2 新增） | 45 | hccn_tool（`-i <id> -<opt> -g`，网口/PCIe 带宽、RoCE 速度/链路等扩展统计） |
+| 掉卡检测（v0.3.3 后续新增） | 1 | dcmi（`CardDrop`：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode` -8012） |
+| **合计** | **120** | |
 
-**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）。`npu_smi`/`hccn_tool` 命令执行超时（5s）或缺失时返回 error，静默跳过。DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
+**错误处理**：`-tags dcmi` 未启用时（无 CANN SDK），DCMI `Available()=false`，所有 DCMI 方法返回 `errNotAvailable`，`Collect()` 不报错、仅输出非 DCMI 指标（优雅降级）；无 NPU 硬件时输出 `npu_num=0`。`npu_smi`/`hccn_tool` 命令执行超时或缺失时返回 error，静默跳过。掉卡判定：`dcmi_get_device_health` 返回 `DeviceNotReadyErrCode`（-8012）时 `CardDrop()` 判定设备未就绪/掉卡，`card_drop`=1；`ErrorCodeList()` 返回完整 hex 错误码列表（含 `0x40f84e00` 等掉卡码），供 `features/faultsub` 匹配。DCMI 原始单位（mV/V、毫摄氏度/°C、hit_rate 等）待真机实测。
 
 
 ### 2.6 Network 采集器
@@ -548,25 +591,25 @@ Collect() {
 
 **接口过滤**：过滤 `lo` 回环接口。`docker0`/`br-*` 等虚拟网桥默认不采集，可通过配置开启。
 
-### 2.7 Chassis 采集器（v0.3.1 新增）
+### 2.7 Chassis 采集器（v0.3.1 新增，v0.3.2 适配 IPMI 重构）
 
 | 项目 | 说明 |
 |------|------|
 | 包路径 | `internal/collectors/chassis` |
-| 数据来源 | `ipmitool sdr`（经 `internal/source/ipmi` 来源包，与 CPU/Memory 共享 30s SDR 缓存 + 失败缓存） |
+| 数据来源 | `ipmitool sensor`（v0.3.2 由 `sdr` 改，经 `internal/source/ipmi` 来源包，两级缓存：传感器名称 24h + 结果 10s + 失败缓存） |
 | 外部依赖 | `ipmitool` + BMC 访问权限 |
-| 采集方式 | 遍历 SDR 传感器列表，按名称关键词匹配分类（inlet/outlet/fan/power），无 BMC 时优雅降级返回空 |
+| 采集方式 | 遍历传感器列表，按名称关键词匹配分类（inlet/outlet/fan/power），定向 `ipmi sensor get` 采集，无 BMC 时优雅降级返回空 |
 | 平台分离 | Linux 专有（依赖 ipmitool + BMC），Windows 无 BMC 不采集 |
 | 指标数 | 5（High 2 / Medium 3 / Low 0） |
 
 **采集逻辑**：
-1. **power**（High）：整机功耗（W），匹配 SDR 名称 `"power"` 或不含 CPU/MEM/NPU/FAN 的 power 传感器。
-2. **inlet_temp**（High）：进风口温度（°C），匹配名称含 `"inlet"` + `"temp"`。
-3. **outlet_temp**（Medium）：出风口温度（°C），匹配名称含 `"outlet"` + `"temp"`。
-4. **fan_speed**（Medium）：风扇转速（RPM），匹配名称含 `"fan"` + `"speed"`，Labels 含 `fan` 编号 + `direction`（F/R）。
-5. **fan_power**（Medium）：风扇功率（W），匹配名称含 `"fan"` + `"power"`，Labels 含 `fan` 编号。
+1. **power**（High）：整机功耗（W），匹配名称 `"power"` 或不含 CPU/MEM/NPU/FAN 的 power 传感器。
+2. **inlet_temp**（High）：进风口温度（°C），匹配名称含 `"inlet"` + `"temp"`（精确匹配 Inlet Temp）。
+3. **outlet_temp**（Medium）：出风口温度（°C），匹配名称含 `"outlet"` + `"temp"`（精确匹配 Outlet Temp）。
+4. **fan_speed**（Medium）：风扇转速（RPM），匹配名称含 `"fan"`，Labels 含 `fan` 编号 + `direction`（F/R）；多风扇时显示平均转速。
+5. **fan_power**（Medium）：风扇功率（W），匹配名称含 `"fan"` + `"power"`，Labels 含 fan 编号。
 
-> **设计要点**：Chassis 是第一个不绑定具体硬件部件（CPU/Memory/Disk/GPU/NPU/Network）的采集器，覆盖 BMC 管理的机箱级环境传感器。与 CPU/Memory 共用同一份 SDR 缓存（ipmi 来源包 30s TTL），无额外 exec 开销。`power` 匹配排除 CPU/MEM/NPU/FAN 的功率传感器，避免误匹配。
+> **设计要点**：Chassis 是第一个不绑定具体硬件部件的采集器，覆盖 BMC 管理的机箱级环境传感器。v0.3.2 IPMI 来源层重构后，`power` 只精确匹配 `Power`（不匹配 `Power1/2/3/4` PSU 输出），进出风口改为精确匹配，风扇转速取平均，与 CPU/Memory 共享同一份传感器缓存，无额外 exec 开销。详见 §1.6 来源层 IPMI 行。
 
 ---
 
@@ -683,44 +726,37 @@ catmonitor [command] [flags]
 
 | 子命令 | 说明 | 示例 |
 |--------|------|------|
-| `daemon` | 启动守护进程，持续周期采集指标并计算健康度 | `catmonitor daemon` |
+| `daemon` | 启动守护进程，持续周期采集指标并经 exporter 导出（v0.3.3 起不再周期评估健康度，改由 `health` 子命令按需执行） | `catmonitor daemon` |
 | `collect` | 单次采集所有指标，输出快照到标准输出或文件 | `catmonitor collect` |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 | `catmonitor health` |
-| `status` | 查看守护进程运行状态（PID、运行时长、已注册采集器） | `catmonitor status` |
 | `list` | 列出所有已注册采集器及其指标清单 | `catmonitor list` |
-| `version` | 显示版本号、Go 版本、编译时间 | `catmonitor version` |
+| `version` | 显示版本号、Go 版本 | `catmonitor version` |
 
 ### 5.3 全局参数
 
 | 参数 | 短选项 | 默认值 | 说明 |
 |------|--------|--------|------|
 | `--config` | `-c` | 平台自适应 (Linux: `/etc/catmonitor/catmonitor.yaml`, Windows: `C:\ProgramData\catmonitor\catmonitor.yaml`) | 配置文件路径 |
-| `--data-dir` | `-d` | 平台自适应 (Linux: `/var/lib/catmonitor/data`, Windows: `C:\ProgramData\catmonitor\data`) | 数据输出目录 |
-| `--component` | 无 | 空（全部） | 只采集指定部件，逗号分隔：`cpu,memory,disk` |
-| `--output` | `-o` | `json` | 输出格式：`json` / `table` / `yaml` |
-| `--interval` | `-i` | 空（使用配置） | 覆盖采集周期，如 `5s` |
-| `--verbose` | `-v` | false | 输出详细日志（调试用） |
-| `--help` | `-h` | — | 显示帮助信息 |
+| `--output` | `-o` | `json` | 输出格式：`json` / `table` |
+| `--help` | `-h` | — | 显示帮助信息（解析后即退出） |
+
+> 注：`-d/--data-dir`、`--component`、`--interval`、`-v/--verbose` 历史文档曾列出，但 `cmd/catmonitor` 未实现（传入会被 flag 包视为未知参数触发退出）；数据目录通过配置文件 `storage.data_dir` 调整，采集周期通过各 collector 的 `interval` 调整。
 
 ### 5.4 使用场景
 
 #### 场景一：启动守护进程（日常运行）
 
 ```bash
-# 使用默认配置启动
+# 使用默认配置启动（前台）
 catmonitor daemon
 
 # 指定配置文件启动
 catmonitor daemon -c /etc/catmonitor/my-config.yaml
 
-# 前台运行（调试模式）
-catmonitor daemon -v
-
-# 指定数据输出目录
-catmonitor daemon --data-dir /tmp/catmonitor-data
+# 数据输出目录在配置文件 storage.data_dir 中调整（无命令行 flag）
 ```
 
-守护进程启动后，按各采集器配置周期持续采集指标，写入 `{data_dir}/{component}_{date}.jsonl`，同时按健康度周期写入 `health_{date}.jsonl`。
+守护进程启动后，按各采集器配置周期持续采集指标，写入 `{data_dir}/{component}_{date}.jsonl`；v0.3.3 起 daemon 不再周期评估/落盘健康度，改由 `catmonitor health` 子命令按需执行（输出到 stdout）。
 
 #### 场景二：单次采集快照（巡检）
 
@@ -728,32 +764,24 @@ catmonitor daemon --data-dir /tmp/catmonitor-data
 # 采集所有指标，输出 JSON
 catmonitor collect
 
-# 只采集 CPU 和内存
-catmonitor collect --component cpu,memory
-
 # 采集并以表格形式输出
 catmonitor collect -o table
 
 # 采集并保存到指定文件
 catmonitor collect -o json > /tmp/snapshot.json
-
-# 覆盖采集周期为 1s（仅影响单次采集的行为）
-catmonitor collect --interval 1s
 ```
 
-表格输出示例：
+> 采集输出受配置 `collection.min_priority` 影响（low 全采 / medium 跳过 Low / high 仅 High）；只采指定部件、采集周期需改配置文件，无对应命令行 flag。
+
+表格输出示例（`printMetricsTable`，tabwriter 纯文本）：
 
 ```
-┌───────────┬──────────────┬────────┬─────────┬──────────────────┐
-│ Component │ Metric       │ Value  │ Unit    │ Labels           │
-├───────────┼──────────────┼────────┼─────────┼──────────────────┤
-│ cpu       │ usage        │ 45.2   │ %       │ core=total       │
-│ cpu       │ load_average │ 2.34   │         │ interval=1m      │
-│ memory    │ usage        │ 62.5   │ %       │                  │
-│ memory    │ swap_usage   │ 15.3   │ %       │                  │
-│ disk      │ space_usage  │ 72.5   │ %       │ mount=/          │
-│ network   │ throughput   │ 125000 │ bytes/s │ if=eth0,dir=rx   │
-└───────────┴──────────────┴────────┴─────────┴──────────────────┘
+Component  Metric        Value    Unit  Labels
+cpu        usage         45.2     %     core=total
+cpu        load_average  2.34           interval=1m
+memory     usage         62.5     %
+disk       space_usage   72.5     %     device=sda,mount_point=/
+network    throughput    125000   B/s   interface=eth0,direction=rx
 ```
 
 #### 场景三：健康检查（运维诊断）
@@ -886,75 +914,87 @@ WantedBy=multi-user.target
 
 ## 6. Web 仪表盘设计
 
-> 详细规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)。本节描述架构、数据流与扩展机制。v0.3.0 由 `web/` 迁入 `features/web/`。
+> 详细规格见 [`features/web/Web_SPEC.md`](features/web/Web_SPEC.md)。本节描述架构、数据流与扩展机制。
+
+> **架构重构（v0.3.3 后续，`feature/catmonitor` 合入）**：snapshot 生产统一收归 daemon（新增 `features/snapshot` 包），web/dfee 转为**只读消费者**——不再各自采集，避免重复跑硬件。daemon 产出 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs），web/dfee 经 `-snapshot-dir` 指向同一目录只读消费。web 删除原 `DataCollector`/`config.go`/`config.yaml`，改命令行 flag（`-addr`/`-snapshot-dir`），`history_points` 固定 60，刷新间隔由 daemon cadence 决定。详见 §6.1-6.5 与 `features/snapshot/`。
 
 ### 6.1 模块定位与解耦
 
-`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**不新增 go.mod、不改主项目任何文件**。与 `cmd/catmonitor`、`internal/collectors`、`features/health`、`internal/storage`、`internal/config`、`internal/platform` 解耦，仅通过只读复用（blank import + 调用注册表/健康度接口）获取数据。
+`features/web/` 是与主项目同一 Go module 的独立二进制 `catmonitor-web`，**只读消费** daemon 产出的 snapshot。不再 blank-import 采集器、不再起采集 goroutine、不再调 `health.Evaluate`——采集、健康度评估、snapshot 生产全部由 daemon 完成。web 仅通过 `features/snapshot` 的 `ReadGlobal`/`ReadComp` 读 snapshot 文件，组装 `/api/snapshot` 响应。
 
 ### 6.2 目录结构
 
 ```
 features/web/
-├── main.go            # 入口：blank-import 采集器 + 起采集 goroutine + HTTP server + 信号处理 + 端口回退
+├── main.go            # 入口：解析 -addr/-snapshot-dir flag + HTTP server + 端口回退 + 信号处理
 ├── static.go          # //go:embed static，内嵌前端资源
-├── config.go          # 配置结构 + YAML 加载 + runtime.json 运行时覆盖
-├── collector.go       # DataCollector：定时采集 → 健康度 → 原子写 snapshot + 环形历史 + 热重载 + 静态 specs stash
-├── snapshot.go        # Snapshot 结构（含 Specs 字段）+ 原子读写
-├── hwinfo.go          # 一次性硬件身份采集（device_model/gpu_info/npu_info/disk_info/net_info/os_info），非注册采集器
-├── server.go          # HTTP 路由与处理函数
-├── config.yaml        # 默认配置
-├── metrics.yaml       # web 自有指标目录（启动时优先读取覆盖默认）
+├── server.go          # HTTP 路由与处理函数（只读：/api/snapshot 组装 global+per-comp）
+├── metrics.yaml       # web feature 指标目录（供 daemon LoadModuleOverride + SetFeatureScope 白名单）
 ├── static/
 │   ├── index.html     # SPA 外壳（顶栏 + nav + #page 容器）
 │   ├── style.css       # 浅色卡片式主题
 │   └── app.js          # SPA 路由 + 概览页 + 部件详情页 + 扩展 manifest
-└── data/              # 运行时数据（运行时生成，git 忽略）
-    ├── snapshot.json  # 采集 goroutine 写，HTTP 层读
-    └── runtime.json   # 界面调整的刷新间隔持久化
+└── (无 data/、无 collector.go、无 config.go —— snapshot 由 daemon 产，web 不再写本地文件)
 ```
+
+> 重构删除项：`collector.go`（DataCollector）、`config.go`（YAML 配置）、`config.yaml`、`collect_once_linux_test.go`；`hwinfo.go`/`snapshot.go` 迁至 `features/snapshot/`。
 
 ### 6.3 数据流与解耦边界
 
 ```
-  采集 goroutine (DataCollector)          HTTP server (net/http)
-    定时: 遍历注册表 → Collect()            静态页 + REST API
-         → health.Evaluate()                  读取 snapshot.json
-         → 原子写 snapshot.json                  ↑读（不调采集器）
-                  │写
-                  └──────── snapshot.json ────────┘
-                                  ↑热更新间隔
-                   浏览器（SPA：概览 + 各部件详情页）fetch /api/snapshot
+  daemon (cmd/catmonitor)                    catmonitor-web / catmonitor-dfee (只读消费者)
+    采集 → health.Evaluate                     HTTP server
+    → features/snapshot 写                      读取 snapshot.json + snapshot_<comp>.json
+       snapshot_<comp>.json + snapshot.json          ↑只读（不调采集器）
+              │写（原子 os.Rename）                        │
+              └────── snapshot.dir ──────────────────────┘
+   浏览器 fetch /api/snapshot (web) | /api/dfee (dfee)
 ```
 
-**解耦边界**：HTTP 层**只读** `snapshot.json`，**绝不直接调用采集器**；采集 goroutine 是 `snapshot.json` 的**唯一写者**（写临时文件 + `os.Rename` 原子写，读者永不会读到半截文件）。
+**解耦边界**：daemon 是 snapshot 的**唯一写者**（`features/snapshot` 原子写：临时文件 + `os.Rename`）；web/dfee 是**只读消费者**，绝不调用采集器、不写本地文件。刷新间隔由 daemon 的 per-component cadence（`C_comp = min(声明该 comp 的 feature interval)`）决定，前端按 `refresh_interval_ms` 轮询。
 
 ### 6.4 Snapshot 数据模型
 
-`Snapshot`（`snapshot.go`）是 HTTP 层唯一数据源，字段：
+snapshot 由 `features/snapshot` 包生产，分两层（均原子写：临时文件 + `os.Rename`）：
+
+**Per-component `snapshot_<comp>.json`**（`CompSnapshot`）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `timestamp` | time | 本次快照生成时间 |
-| `refresh_interval_ms` | int | 当前生效的采集周期（毫秒），供前端轮询对齐 |
-| `history_points` | int | 历史环形缓冲容量 |
-| `health` | `health.HealthScore` | 健康度结果（直接复用 `features/health` 序列化） |
-| `metrics` | `[]collector.Metric` | 本次采集的全部指标（复用 `internal/collector.Metric`） |
-| `history` | `map[string][]float64` | 趋势序列，key 形如 `<component>_<suffix>`，供详情页按部件前缀过滤 |
-| `specs` | `[]collector.Metric` | 静态设备规格（一次性身份信息），`omitempty`：无任何静态指标时不出现 |
+| `component` | string | 部件名（cpu/memory/disk/...） |
+| `timestamp` | time | 本次采集时间 |
+| `metrics` | `[]collector.Metric` | 该部件本次采集指标 |
+| `history` | `map[string][]float64` | 该部件趋势序列（环形，60 点） |
+| `specs` | `[]collector.Metric` | 该部件启动身份规格（gpu_info/disk_info 等，`omitempty`） |
 
-> `health` 与 `metrics` 直接使用主项目结构体 JSON tag，**不重新定义**，保证与采集器/健康度模块的契约一致。
+**Global `snapshot.json`**（`GlobalSnapshot`，web `/api/snapshot` 组装源）：
 
-### 6.5 DataCollector 采集与历史
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `session_id` | string | daemon 会话标识 |
+| `timestamp` | time | 全局快照时间 |
+| `refresh_interval_ms` | int | 全局 cadence（`C_global = min(C_comp)`），供前端轮询 |
+| `history_points` | int | 固定 60 |
+| `health` | `health.HealthScore` | 健康度结果（daemon 评估） |
+| `collectors` | — | 采集器元数据（驱动导航） |
+| `intervals` | — | 各部件 cadence |
+| `system_specs` | `[]collector.Metric` | 启动期硬件身份（device_model/os_info 等） |
 
-- `Run(ctx)`：立即采集一次，进入 `select` 循环：定时器到期 → 采集；`reload` 通道 → 重置定时器（间隔热更新）；`collectNow` 通道 → 立即采集；`ctx.Done` → 退出。
-- `collectOnce()`：遍历 `collector.DefaultRegistry.All()` → `Collect()` → `health.NewEvaluator(health.GetScheme("auto")).Evaluate()` → 组装 `Snapshot` → `WriteAtomic`。
-- **历史趋势**由可扩展的 `trackedSeries` spec 列表驱动（key 形如 `<component>_<suffix>`），环形缓冲每 key 保留最近 `history_points` 个点。当前跟踪 cpu_usage / cpu_load_average / memory_usage / memory_swap_usage / disk_space_usage 及 GPU/NPU 利用率/显存/温度。
-- **静态规格 stash**：CPU/内存采集器首周期产出一次静态指标后被抑制，Web 侧 `filterStatic` 提取并缓存到 `staticStash`，之后每周期重新注入快照。
+> web `handleSnapshot` 合并 global + 各 per-comp 的 metrics/history/specs 组装响应；`/api/collectors` 取 global.collectors；`/api/config` 取 global.intervals + history_points（只读）。
 
-### 6.6 硬件身份采集（hwinfo.go）
+### 6.5 Snapshot 生产与消费
 
-`main.go` 启动时起 goroutine 调 `collectHWSpecs()`（**非注册采集器**），收集跨部件身份指标：
+**生产（daemon 侧，`features/snapshot`）**：
+- `PerCompWriter`：`collector.Storage` 装饰器，每个采集批次将该部件 metrics + 环形 history + spec stash 原子写 `snapshot_<comp>.json`。
+- `GlobalWriter`：维护全局 `snapshot.json`（health/collectors/intervals/system_specs），cadence = `min(C_comp)`。
+- 启动期 `CollectHWSpecs` 一次性采集跨部件身份（device_model/os_info/gpu_info/npu_info/disk_info/net_info）分发到对应 writer 的 specs。
+- `snapshot.enabled=false` 时 daemon 不写 snapshot 文件，行为同前；`=true` 时 web/dfee 必须以只读消费者运行。
+
+**消费（web 侧）**：web 不再采集、不再维护历史——`history` 由 daemon 的 PerCompWriter 环形缓冲（60 点）产出，web 原样透传。原 `trackedSeries` spec 驱动的趋势序列迁移至 `features/snapshot/series.go`，由 daemon 侧维护。
+
+### 6.6 硬件身份采集（features/snapshot/hwinfo.go）
+
+`hwinfo.go` 由 `features/web/` 迁至 `features/snapshot/`，由 **daemon** 启动期调 `CollectHWSpecs()`（非注册采集器）一次性采集跨部件身份，分发到对应 PerCompWriter 的 specs：
 
 | metric name | component | 来源 |
 |-------------|-----------|------|
@@ -964,7 +1004,7 @@ features/web/
 | `disk_info` | disk | /sys/block + smartctl 富化 |
 | `net_info` | network | /sys/class/net（跳过 lo） |
 
-外部命令缺失则降级（不报错），`/sys` 始终可用。结果经 `SetHWSpecs` 存入 `hwSpecs`（`hwMu` 保护），每周期合入 `specs = staticStash + hwSpecs`。
+外部命令缺失则降级（不报错），`/sys` 始终可用。结果分发后写入 per-comp `snapshot_<comp>.json` 的 `specs` 字段与 global `snapshot.json` 的 `system_specs`。
 
 ### 6.7 端口占用回退（main.go listenWithFallback）
 
@@ -976,92 +1016,97 @@ features/web/
 
 ### 6.8 HTTP API 与前端设计
 
-- **路由**（`server.go`）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`、`GET /api/collectors`、`GET|POST /api/config`、`POST /api/refresh`、`/dfee/`（能效监控，见 §7）。详见 SPEC §9.7。
-- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline）+ 全部指标表。导航栏含「能效分析」入口（v0.3.1，跳转 `/dfee/`）。
+- **路由**（`server.go`，只读）：`GET /`（SPA 外壳）、`GET /static/{file}`、`GET /api/snapshot`（组装 global+per-comp）、`GET /api/collectors`、`GET /api/config`（只读）。**删除** `POST /api/config`（间隔热改）与 `POST /api/refresh`（立即采集）——刷新间隔由 daemon cadence 决定，web 不再控制；**删除** `/dfee/` 路由——dfee 转独立二进制 `catmonitor-dfee`（见 §7）。
+- **前端**（`static/`）：SPA + hash 路由（`#/` 概览，`#/<component>` 详情）。概览页含健康度面板 + 设备规格面板（点击弹出完整规格 modal）+ 部件芯片 + 概览卡网格；详情页含趋势面板（自动列出 `<component>_*` 历史 sparkline，数据来自 daemon 产出的 per-comp history）+ 全部指标表。
 - **显示 manifest**（`app.js`）：`MANIFEST`（部件显示名/关键指标）、`SERIES_LABELS`（序列显示名）、`NAV_ORDER`（导航排序）、`SPEC_DEFS`/`LABEL_NAMES`（规格面板）。未登记部件/指标/序列均有通用回退，不会崩溃。
 
 ### 6.9 扩展机制
 
+> 重构后扩展入口变化：采集器注册、trackedSeries、staticMetricNames 全部上移至 daemon/snapshot 侧，web 仅消费。
+
 | 扩展需求 | 改动位置 | 自动部分 |
 |----------|----------|----------|
-| 新部件采集器 | `features/web/main.go`（blank import） | 导航/概览卡/详情页 |
+| 新部件采集器 | daemon `cmd/catmonitor/main.go`（注册，原有流程） | daemon 产 per-comp snapshot → web 导航/概览卡/详情页自动出现 |
 | 部件显示名/关键指标 | `features/web/static/app.js` MANIFEST | — |
-| 新趋势 sparkline | `features/web/collector.go` trackedSeries 加一行 | 详情页趋势面板 |
+| 新趋势 sparkline | `features/snapshot/series.go` trackedSeries 加一行 | daemon 写 per-comp history → web 详情页趋势面板 |
 | 趋势显示名 | `features/web/static/app.js` SERIES_LABELS | — |
-| 新静态身份指标（采集器侧） | 加入 `staticMetricNames` 即被 stash 进 `specs` | specs modal 自动渲染 |
+| 新静态身份指标 | `features/snapshot/hwinfo.go` 采集 + `staticMetricNames` | daemon 分发到 specs → web specs modal 自动渲染 |
 
-> **结论：一行 blank import 即可让新部件完整可用**；后续按需在 MANIFEST/trackedSeries 美化。`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端。
+> **结论：新部件采集器在 daemon 注册后，web 自动消费其 snapshot**；显示美化集中在 web 的 MANIFEST/SERIES_LABELS。`health` 与 `metrics` 字段直接复用主项目结构体，采集器新增任何字段/标签都原样透传到前端。
 
 ### 6.10 已知限制与后续预留
 
 1. **单机本地视图**：不含认证、不含多机聚合；如需多机，预留"多个 snapshot 源 + 概览聚合"。
 2. **轮询而非推送**：前端 `setInterval` 轮询 `/api/snapshot`；如需实时推送，预留 WebSocket/SSE（`snapshot.json` 解耦边界可直接复用）。
-3. **无持久化历史存储**：历史仅存内存环形缓冲（重启清空），未落盘；如需长期趋势，预留 JSONL 落盘。
+3. **无持久化历史存储**：历史由 daemon PerCompWriter 内存环形缓冲维护（60 点，重启清空），web 不持有历史仅透传；如需长期趋势，预留 JSONL 落盘。
 4. **指标展示优先级**：当前 metric 不携带优先级字段，概览关键指标靠 MANIFEST 人工指定；未来若主项目 Metric 增加优先级可改为自动选取。
 
 ---
 
-## 7. 能效监控模块设计（features/dfee，v0.3.1 新增）
+## 7. 能效监控模块设计（features/dfee，v0.3.1 新增，v0.3.2 增强，独立二进制化）
 
 > 详细规格见 [`features/dfee/dfee_SPEC.md`](features/dfee/dfee_SPEC.md)。本节描述架构、数据流与扩展机制。
 
 ### 7.1 模块定位与解耦
 
-`features/dfee/` 是与 `features/web` 同级的独立 Go package，**不修改现有 web 业务代码**（唯一改动：`features/web/server.go` 加 1 行 `dfee.Register(mux, ...)` 路由注册 + `features/web/main.go` 加 dfee metrics override 加载 + `features/web/static/app.js` 加 1 个导航入口）。dfee 从 `snapshot.json` 过滤能效指标，独立渲染 25 张实时图表。
+`features/dfee/` 转为**独立二进制 `catmonitor-dfee`**（`package main`，默认端口 `:9528`），与 `features/web` 同级、与 daemon 解耦。**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），不再注册到 web 路由、不再依赖 web 进程。启动参数 `-addr`/`-snapshot-dir`，端口占用自动 +1 回退（同 web 的 `listenWithFallback`）。
+
+> **v0.3.2 交互增强**：图表卡片**拖拽重排** + 右下角手柄**缩放**（`align-self: start` 使边框不跟随增长）+ 虚线**对齐辅助**（3px 吸附）；NPU/磁盘/网络模块**多选下拉筛选**（重构为通用筛选框架）；**模块折叠**（机箱 3 图同行）。NPU 图表改为单指标图布局（默认 4 行 3+2+2+2、gridCols 6 列、功耗电压首行），图例简化为 NPU 0~7。
 
 ### 7.2 目录结构
 
 ```
 features/dfee/
-├── dfee_SPEC.md               # 设计规格文档
-├── energy_efficiency_metrics.md # 74 项能效指标清单
-├── filter.go                  # 能效指标过滤集 + filterEfficiency() + 分组定义
+├── main.go                    # 入口（package main）：解析 -addr/-snapshot-dir + HTTP server + 端口回退 + 信号
+├── dfee_SPEC.md               # 设计+规格文档
+├── energy_efficiency_metrics.md # 能效指标清单
+├── filter.go                  # 能效指标过滤 + 分组 + 通用筛选框架
 ├── cpu_derive.go              # CPU 8 jiffies → 7 利用率推导（有状态）
 ├── net_derive.go              # 网络差值计算
-├── handler.go                 # HTTP handler：组装 /api/dfee 响应 + 静态文件
+├── handler.go                 # HTTP handler：组装 /api/dfee 响应 + 静态文件（Register(mux, dir)）
 ├── embed.go                   # //go:embed static
-├── metrics.yaml               # dfee 指标目录覆盖（CPU 8 个 Low → Medium）
+├── metrics.yaml               # dfee feature 指标目录（69 项，供 daemon LoadModuleOverride + SetFeatureScope）
 ├── static/
 │   ├── index.html             # 能效监控 SPA 页面
-│   ├── dfee.js                # 25 张实时图表渲染 + 轮询
-│   └── dfee.css               # 样式
+│   ├── dfee.js                # 实时图表渲染 + 轮询 + 拖拽/缩放/筛选/折叠交互
+│   └── dfee.css               # 样式（卡片布局 + 下拉框截断 + 模块分割线）
 └── *_test.go                  # 过滤/推导/HTTP 测试
 ```
 
 ### 7.3 数据流与解耦边界
 
 ```
-采集层 (7 collectors, 不变)
-  → DataCollector.collectOnce() (不变)
-  → snapshot.json (不变, 159 指标)
+daemon (cmd/catmonitor)
+  采集 → health.Evaluate → features/snapshot 写
+       snapshot.json + snapshot_<comp>.json (per-comp cadence)
         │
         ├──────────────────────────────────────────┐
         ↓                                          ↓
-  GET /api/snapshot (现有, 不变)          GET /api/dfee (dfee 新增)
-  → 全量 159 指标                        → 过滤 74 能效指标
-  → 前端 SPA 概览/详情页                   → CPU 8 jiffies → 7 利用率推导
-                                         → 按小节分组 → 25 张图表数据
-                                         → 前端 Canvas 实时折线图
+  catmonitor-web (只读)                    catmonitor-dfee (只读, 独立二进制 :9528)
+  GET /api/snapshot (组装 global+per-comp)  GET /api/dfee (过滤能效指标)
+  → 前端 SPA 概览/详情页                    → CPU 8 jiffies → 7 利用率推导
+                                            → 按小节分组 → 25 张图表数据
+                                            → 前端 Canvas 实时折线图
 ```
 
-**解耦边界**：dfee 只读 `snapshot.json`（与 web HTTP 层同一数据源），**绝不直接调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。
+**解耦边界**：dfee 只读 snapshot（与 web 同一数据源，均由 daemon 生产），**绝不调用采集器**。CPU 利用率推导（8 jiffies → 7 utilization%）在 dfee 后端有状态完成（`cpu_derive.go` 维护 prev 快照做 delta），前端只收成品百分比。
 
-### 7.4 74 项能效指标来源
+### 7.4 能效指标来源
 
-| 来源部件 | 指标数 | 典型指标 |
-|----------|--------|----------|
-| NPU | 46 | 频率(7)/利用率(12)/温度(13)/电压(5)/ECC(8)/带宽网络(9)/HBM(2) |
-| CPU | 10 | 利用率推导(7) + 时间原始(8→推导消耗) + 温度/power/MCE |
-| Memory | 7 | usage/swap/saturation/fragmentation/power/ecc |
-| Disk | 4 | space_usage/iops/throughput/io_wait + read/write_latency |
-| Network | 2 | throughput/packet_count |
-| Chassis | 5 | power/inlet_temp/outlet_temp/fan_speed/fan_power |
+| 来源部件 | 典型指标 |
+|----------|----------|
+| NPU | 频率/利用率/温度(13 路)/电压/ECC/带宽网络/HBM（v0.3.2 含新增 hccn_tool 网络统计） |
+| CPU | 利用率推导(7) + 时间原始 + 温度/power/MCE |
+| Memory | usage/swap/saturation/fragmentation/power/ecc |
+| Disk | space_usage/iops/throughput/io_wait + read/write_latency |
+| Network | throughput/packet_count |
+| Chassis | power/inlet_temp/outlet_temp/fan_speed/fan_power |
 
-> 完整清单见 `features/dfee/energy_efficiency_metrics.md`。
+> 完整清单见 `features/dfee/energy_efficiency_metrics.md` 与 [dfee_SPEC.md](features/dfee/dfee_SPEC.md)。
 
 ### 7.5 指标目录覆盖
 
-dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml` 将它们覆盖为 Medium，由 `features/web/main.go` 启动时经 `metrics.LoadModuleOverride` 加载，使它们通过 Filter 进入 snapshot.json。同时覆盖若干 NPU Low 指标（acg_count/ntc*_temp/aicore_rated_freq/v*_util/llc_*）为 Medium 以供能效图表展示。
+dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`/`idle_time`/`iowait_time`/`irq_time`/`softirq_time`/`steal_time`）做利用率推导，但这 8 个在默认目录中为 Low（默认不采集）。`features/dfee/metrics.yaml`（69 项）将它们覆盖为 Medium 并列出 dfee 所需全部指标。**由 daemon** 启动时经 `metrics.LoadModuleOverride` 加载，并经 `SetFeatureScope`（dfee 列出指标的并集）建立白名单——`features: [dfee]` 时只采白名单内且 `priority ≥ min_priority` 的指标，写入 snapshot 供 dfee 消费。web 不再加载 dfee 的 metrics.yaml。
 
 ### 7.6 扩展机制
 
@@ -1069,5 +1114,227 @@ dfee 需要 8 个 CPU 时间原始指标（`user_time`/`nice_time`/`system_time`
 |----------|----------|
 | 新增能效指标图表 | `features/dfee/filter.go` 分组定义加条目 + `dfee.js` 加图表 |
 | 新增 CPU 推导指标 | `features/dfee/cpu_derive.go` 加推导逻辑 |
-| 新增能效指标来源 | （采集器侧新增指标 + `features/dfee/metrics.yaml` 覆盖优先级） |
-| 导航入口 | `features/web/static/app.js` renderNav（已有） |
+| 新增能效指标来源 | （采集器侧新增指标 + `features/dfee/metrics.yaml` 覆盖优先级，daemon 加载 + scope） |
+| 导航/前端 | `features/dfee/static/`（独立 SPA，不再依赖 web app.js） |
+
+---
+
+## 8. Prometheus 导出模块设计（features/exporter，v0.3.2 新增）
+
+> 详细规格见 [`features/exporter/exporter_SPEC.md`](features/exporter/exporter_SPEC.md)（唯一设计+规格文档）。本节描述架构、数据流与集成方式。
+
+### 8.1 模块定位
+
+`features/exporter/` 为 daemon 内置的 Prometheus 导出能力，**无需额外进程**。核心组件：
+
+- **`CachingStorage`**（`storage.go`）：实现 `collector.Storage` 接口，包装在 `JSONLStorage` 外。一次采集同时：①按组件分组更新内存缓存（原子替换，`AllMetrics()` 返回合并快照）；②委托 `JSONLStorage.Write` 落盘历史。
+- **`prometheus.go`**：`Encode(metrics) → Prometheus 文本`。命名 `catmonitor_{component}_{name}`（`-`/`/`/`.` → `_`）；`isCounter` 依据 `_total`/`_time` 后缀判 counter，其余 gauge；每组含 `# HELP` + `# TYPE`；标签按字典序排序。
+- **`ServeMetrics(":9100", ...)`**：HTTP 端点。
+
+### 8.2 架构与数据流
+
+```
+cmd/catmonitor (daemon)
+  │
+  ├── Scheduler.Start(ctx, configs)
+  │     └── collectAndStore(c)
+  │           → c.Collect()
+  │           → metrics.Filter(allMetrics)
+  │           → CachingStorage.Write(metrics)
+  │                 ├── 1. 按组件分组更新内存缓存（原子替换）
+  │                 └── 2. 委托 JSONLStorage.Write(metrics)（历史落盘）
+  │
+  └── HTTP server (:9100)
+        ├── GET /metrics   → CachingStorage.AllMetrics() → Encode → Prometheus 文本
+        ├── GET /-/healthy → 200 OK
+        └── GET /-/ready   → 缓存非空 200 / 否则 503
+```
+
+### 8.3 集成方式（零侵入）
+
+`cmd/catmonitor/main.go` 中 ~5 行改动：
+
+```go
+cacheStore := exporter.NewCachingStorage(store)            // 包装存储层
+scheduler := collector.NewScheduler(reg, cacheStore, logger) // 调度器写缓存层
+scheduler.SetFilter(metrics.Filter)
+go exporter.ServeMetrics(":9100", cacheStore, logger)       // 起 :9100 端点
+```
+
+> 一次采集即同时落盘 JSONL + 缓存导出，不存在重复采集；HTTP 层只读内存缓存，绝不调用采集器，与 `snapshot.json` 解耦边界同理。
+
+### 8.4 指标命名与类型规则
+
+| 规则 | 说明 |
+|------|------|
+| 前缀 | `catmonitor_{component}_{name}`，特殊字符 `-` `/` `.` 替换为 `_` |
+| TYPE | `_total` / `_time` 后缀 → counter；其余 → gauge |
+| 头 | 每组 `# HELP` + `# TYPE` |
+| 标签 | `{key="value",...}`，键按字典序排序 |
+| 示例 | `catmonitor_network_rx_bytes_total{interface="eth0"} 123456`（counter，可 `rate()`） |
+
+### 8.5 目录结构
+
+```
+features/exporter/
+├── exporter_SPEC.md          # 唯一设计+规格文档
+├── prometheus.go             # Encode()：Metric → Prometheus 文本（HELP/TYPE/labels/counter 推断）+ ServeMetrics()
+├── storage.go                # CachingStorage：实现 collector.Storage，包装 JSONLStorage + 内存缓存
+└── *_test.go                 # 导出格式 + 缓存测试（覆盖率 81.1%）
+```
+
+---
+
+## 9. 故障订阅推送模块设计（features/faultsub，v0.3.3 后续新增，opt-in）
+
+> 详细规格见 [`features/faultsub/faultsub_SPEC.md`](features/faultsub/faultsub_SPEC.md)。本节描述架构、数据流与集成方式。
+
+### 9.1 模块定位
+
+为 CATMonitor 提供故障信息的订阅/推送能力。外部故障管理者（如 EEP 弹性容错特性）可订阅 NPU 故障事件，daemon 在采集周期内判定故障并以 **HTTP Webhook** 主动推送 `FaultEvent`（JSON），同时提供 REST API 用于订阅注册/查询/快照/事件回补。核心原则：复用采集管道（`FaultStorage` 作为 daemon `collector.Storage` 管道 tap，一次 Write 同时落盘 + 故障判定，不改变 JSONL/Prometheus 输出）；零新依赖（仅 `net/http`）；事件驱动（按状态变迁推送，持续故障不重复，订阅级去抖抑制）；默认关闭。
+
+### 9.2 架构与数据流
+
+```
+cmd/catmonitor (daemon)
+  │
+  ├── Scheduler.Start(ctx, configs)
+  │     └── collectAndStore(c)
+  │           → c.Collect() → metrics.Filter(allMetrics)
+  │           → FaultStorage.Write(metrics)            [若 faultsub 启用]
+  │                 ├── 1. 委托内层 CachingStorage.Write（落盘 + 导出缓存，不变）
+  │                 ├── 2. FaultDetector.Detect(metrics) → []FaultEvent
+  │                 └── 3. Dispatcher.Dispatch(ev)
+  │                       ├── record → 环形缓冲（REST 事件回补）
+  │                       └── 匹配订阅 → shouldFire(去抖) →
+  │                             ├── webhook: go deliverWebhook → net/http POST
+  │                             └── poll: 已 record，无需动作
+  │
+  └── REST :9101 (net/http)
+        ├── POST   /faultsub/subscriptions        注册订阅（声明回调URL/类型/NPU/去抖）
+        ├── GET    /faultsub/subscriptions        列出
+        ├── GET    /faultsub/subscriptions/{id}   查看
+        ├── DELETE /faultsub/subscriptions/{id}   注销
+        ├── GET    /faultsub/snapshot             各 NPU 最新活跃故障快照
+        ├── GET    /faultsub/events?since=&type=&npu_id=  近期事件回补
+        ├── GET    /faultsub/types                支持的故障类型
+        ├── GET    /-/healthy                     200 OK
+        └── GET    /-/ready                       有采集过则 200，否则 503
+```
+
+### 9.3 故障判定规则（FaultDetector）
+
+纯 Go 规则引擎，消费 `collector.Metric`，按 `catmonitor.yaml` 的 `faultsub.rules` 开关启用（unset = enabled）：
+
+| FaultType | 触发条件 | 关联指标 |
+|------------|----------|----------|
+| `card_drop` | `card_drop`==1 | `npu/card_drop`（`dcmi_get_device_health` 返回 -8012） |
+| `npu_health` | `health_status` 非 0 | `npu/health_status` |
+| `npu_error_code` | `error_code` 数量 > 0 | `npu/error_code`（`labels.error_codes` hex 列表） |
+| `hbm_uce` | `hbm_double_ecc` > 0 | `npu/hbm_double_ecc` |
+| `ddr_uce` | `ddr_double_ecc` > 0 | `npu/ddr_double_ecc` |
+| `roce_link_down` | `roce_link_status` 非 0 | `npu/roce_link_status` |
+| `driver_unhealthy` | `driver_health` 非 0 | `npu/driver_health`（默认 disabled） |
+
+事件按状态变迁推送（出现/恢复），持续故障不重复；订阅级 `debounce_ms` 进一步抑制。
+
+### 9.4 集成方式（零侵入，opt-in）
+
+`cmd/catmonitor/main.go` 中可选包装（`faultsub.enabled=false` 时 `sink` 保持 `CachingStorage`，daemon 行为不变）：
+
+```go
+if cfg.FaultSub.Enabled {
+    det := faultsub.NewDetector(rules)
+    wh  := faultsub.NewWebhook(cfg.FaultSub.WebhookTimeout, logger)
+    disp := faultsub.NewDispatcher(wh, faultsub.NewSubscriptionManager(),
+        cfg.FaultSub.WebhookRetry, cfg.FaultSub.EventBuffer, logger)
+    fstore := faultsub.NewFaultStorage(cacheStore, det, disp, logger)
+    go faultsub.ServeAPI(ctx, cfg.FaultSub.RestAddr, disp, fstore, logger)
+    sink = fstore // scheduler 写经 FaultStorage（落盘 + 判定 + 分发）
+}
+```
+
+### 9.5 目录结构
+
+```
+features/faultsub/
+├── faultsub_SPEC.md         # 模块设计规格
+├── event.go                 # FaultEvent / FaultType / Severity 数据模型
+├── subscription.go          # Subscription / SubscriptionManager（订阅表+去抖）
+├── detector.go              # FaultDetector 故障判定规则引擎（纯 Go）
+├── storage.go               # FaultStorage：实现 collector.Storage（管道 tap）
+├── dispatcher.go            # Dispatcher：匹配+去抖+异步分发+环形缓冲
+├── webhook.go               # Webhook 推送器（net/http 客户端）
+├── server.go                # REST 订阅 API（/faultsub/*）
+└── *_test.go                # 各故障规则 + tap + 分发 + REST 测试
+```
+
+---
+
+## 10. 落后节点 KPI 输出模块设计（features/stragglerout，v0.3.3 后续新增，opt-in）
+
+> 详细规格见 [`features/stragglerout/stragglerout_SPEC.md`](features/stragglerout/stragglerout_SPEC.md)。本节描述架构、数据流与集成方式。
+
+### 10.1 模块定位
+
+为 straggler 慢节点检测器提供专用 KPI 时序文件，替代其自带 `kpi_collect.sh`。作为 daemon 的 `collector.Storage` 管道 tap（`StragglerStorage` 包装内层 `CachingStorage`），复用采集管道，把每次采集到的 NPU KPI 指标按"每时刻×每卡"聚合追加写为日级 JSONL，供 straggler CLI 读取。零新依赖（仅标准库），默认关闭（`straggler_output.enabled=false` 时无 KPI 文件、daemon 零回归）。
+
+### 10.2 架构与数据流
+
+```
+Scheduler → StragglerStorage.Write(metrics)
+              ├── 委托 inner.Write (CachingStorage → JSONL，不变)
+              └── KPIMapper.Extract(npu metrics) → 缓冲 → 周期 flush → KPIWriter.Append
+                    → {data_dir}/straggler_kpi_{date}.jsonl (保留 retention)
+```
+
+### 10.3 文件格式（JSONL，每行一个 KPISample）
+
+```json
+{"ts":1784547926,"vals":{"0":{"temp":47,"power":1628,"aicore_freq":1800,"aicore_util":45,"hbm_util":50,"tx_bandwidth":1250,"rx_pfc_pkt":0,"roce_tx_err_pkt":0,"roce_out_of_order":0,"roce_new_pkt_rty":0}},"cpu_avg":{"cpu1":"4.26"}}
+```
+
+字段与 straggler `resource.CSVRow` 1:1 对应，straggler 的 JSON reader 直接重建 `TimeSeriesData`。计数器写**原始累计值**（不做 delta），straggler 聚合时累加，语义对齐。
+
+### 10.4 指标映射（KPIMapper）
+
+| straggler 字段 | CATMonitor metric.Name | 来源 |
+|---|---|---|
+| temp | temperature | npu（DCMI） |
+| power | power_draw | npu（DCMI） |
+| aicore_freq | aicore_freq | npu（DCMI） |
+| aicore_util | utilization | npu（DCMI） |
+| hbm_util | memory_usage | npu（DCMI） |
+| tx_bandwidth | net_tx_bandwidth | npu（hccn_tool） |
+| rx_pfc_pkt | mac_rx_pfc_pkt_num | npu（hccn_tool） |
+| roce_tx_err_pkt | roce_tx_err_pkt_num | npu（hccn_tool） |
+| roce_out_of_order | roce_out_of_order_num | npu（hccn_tool） |
+| roce_new_pkt_rty | roce_new_pkt_rty / roce_retrans_pkt_num（别名兼容） | npu（hccn_tool） |
+| cpu_avg | cpu/usage | 按 cpu 标签聚合，忽略 total |
+
+### 10.5 集成方式（零侵入，opt-in）
+
+`cmd/catmonitor/main.go` 中可选包装：
+
+```go
+if cfg.StragglerOutput.Enabled {
+    kpiw  := stragglerout.NewKPIWriter(cfg.StragglerOutput.DataDir, cfg.StragglerOutput.Retention, logger)
+    sstore := stragglerout.NewStragglerStorage(cacheStore, stragglerout.NewKPIMapper(), kpiw,
+        cfg.StragglerOutput.FlushInterval, logger)
+    go func() { <-ctx.Done(); sstore.Flush(time.Now()) }() // 关闭时冲刷缓冲
+    sink = sstore
+}
+```
+
+### 10.6 目录结构
+
+```
+features/stragglerout/
+├── stragglerout_SPEC.md     # 模块设计规格
+├── storage.go                # StragglerStorage：实现 collector.Storage（管道 tap，委托 inner + KPI 抽取缓冲 flush）
+├── sample.go                # KPISample 数据模型 + KPIMapper（NPU KPI → straggler 字段映射）
+├── writer.go                # KPIWriter：日级 JSONL 追加写 + 保留期清理
+└── storage_test.go          # Extract 各 NPU 指标 + 别名 + cpu + tap + flush 落盘 + 保留期测试
+```
+
+> 不应提交：`features/web/bin/`、`features/web/data/*`（构建/运行时产物，已 git 忽略）。

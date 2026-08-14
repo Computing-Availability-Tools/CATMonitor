@@ -1,6 +1,5 @@
 components:
   - component: cpu
-    interval: 3s
     metrics:
       - name: usage
         cn_name: "CPU使用率"
@@ -203,7 +202,6 @@ components:
         unit: "order"
         static: false
   - component: memory
-    interval: 3s
     metrics:
       - name: usage
         cn_name: "内存使用率"
@@ -306,7 +304,6 @@ components:
         unit: ""
         static: false
   - component: disk
-    interval: 5s
     metrics:
       - name: space_usage
         cn_name: "磁盘空间使用率"
@@ -349,7 +346,6 @@ components:
         unit: ""
         static: false
   - component: gpu
-    interval: 3s
     metrics:
       - name: utilization
         cn_name: "GPU使用率"
@@ -387,7 +383,6 @@ components:
         unit: "MHz"
         static: false
   - component: npu
-    interval: 3s
     metrics:
       - name: utilization
         cn_name: "NPU使用率(AICore)"
@@ -436,17 +431,22 @@ components:
         static: false
       - name: error_code
         cn_name: "NPU错误码"
-        priority: Medium
+        priority: High
+        unit: "-"
+        static: false
+      - name: card_drop
+        cn_name: "NPU卡掉线状态"
+        priority: High
         unit: "-"
         static: false
       - name: process_info
         cn_name: "NPU进程PID信息"
-        priority: Low
+        priority: Medium
         unit: "-"
         static: false
       - name: process_total
         cn_name: "NPU进程总数量"
-        priority: Low
+        priority: Medium
         unit: "个"
         static: false
       - name: comm_topo
@@ -965,6 +965,11 @@ components:
         priority: Medium
         unit: "个"
         static: false
+      - name: roce_new_pkt_rty
+        cn_name: "ROCE重传报文数"
+        priority: Medium
+        unit: "个"
+        static: false
       - name: nic_tx_all_pkg_num
         cn_name: "NIC发送总报文数"
         priority: Medium
@@ -986,7 +991,6 @@ components:
         unit: "bytes"
         static: false
   - component: network
-    interval: 3s
     metrics:
       - name: throughput
         cn_name: "网络吞吐量"

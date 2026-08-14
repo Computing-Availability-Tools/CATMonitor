@@ -9,8 +9,11 @@ type MockProvider struct {
 	Powers     map[[2]int]int
 	Volts      map[[2]int]uint
 	Healths    map[[2]int]uint
+	HealthRCs  map[[2]int]int        // raw dcmi_get_device_health return code (for CardDrop: -8012)
 	Chips      map[[2]int]*ChipInfo
 	ErrorCodes map[[2]int]uint
+	ErrorCodeLists map[[2]int]*DeviceErrors
+	CardDrops  map[[2]int]bool
 	Resources  map[[2]int]*ResourceInfo
 	Hbms       map[[2]int]*HbmInfo
 	Freqs      map[[3]int]uint      // [card,dev,freqType]
@@ -83,6 +86,24 @@ func (m *MockProvider) ErrorCodeV2(card, dev int) (uint, error) {
 		return v, nil
 	}
 	return 0, errNotAvailable
+}
+
+func (m *MockProvider) ErrorCodeList(card, dev int) (*DeviceErrors, error) {
+	if v, ok := m.ErrorCodeLists[[2]int{card, dev}]; ok {
+		return v, nil
+	}
+	return nil, errNotAvailable
+}
+
+func (m *MockProvider) CardDrop(card, dev int) (bool, error) {
+	// Explicit CardDrops entry wins; otherwise infer from a HealthRCs == -8012.
+	if v, ok := m.CardDrops[[2]int{card, dev}]; ok {
+		return v, nil
+	}
+	if rc, ok := m.HealthRCs[[2]int{card, dev}]; ok && rc == DeviceNotReadyErrCode {
+		return true, nil
+	}
+	return false, errNotAvailable
 }
 
 func (m *MockProvider) ResourceInfo(card, dev int) (*ResourceInfo, error) {

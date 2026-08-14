@@ -343,6 +343,84 @@ func TestNoDCMIAvailable(t *testing.T) {
 	}
 }
 
+func TestCollectErrorCodeList(t *testing.T) {
+	// ErrorCodeList returns the full hex list; the collector must surface the
+	// codes in Labels["error_codes"] and the count in Value.
+	mock := &dcmi.MockProvider{
+		CardListVal: []int{0},
+		ErrorCodeLists: map[[2]int]*dcmi.DeviceErrors{{0, 0}: {
+			Count: 2,
+			Codes: []string{"0x40f84e00", "0x00000001"},
+		}},
+	}
+	dcmi.SetProvider(mock)
+	defer dcmi.SetProvider(nil)
+
+	c := New()
+	c.ensureDevices()
+	metrics := c.collectDevice(npuDevice{cardID: 0, devID: 0}, time.Now())
+
+	m := findMetric(metrics, "error_code")
+	if m == nil {
+		t.Fatal("missing error_code metric")
+	}
+	if m.Value != 2 {
+		t.Errorf("error_code count: expected 2, got %v", m.Value)
+	}
+	if m.Labels["error_codes"] != "0x40f84e00,0x00000001" {
+		t.Errorf("error_codes label: expected hex list, got %q", m.Labels["error_codes"])
+	}
+	if m.Labels["npu_id"] != "0" {
+		t.Errorf("npu_id label: expected 0, got %q", m.Labels["npu_id"])
+	}
+}
+
+func TestCollectCardDrop(t *testing.T) {
+	// CardDrop=true surfaces a card_drop metric valued 1; false values 0.
+	mock := &dcmi.MockProvider{
+		CardListVal: []int{0},
+		CardDrops:   map[[2]int]bool{{0, 0}: true},
+	}
+	dcmi.SetProvider(mock)
+	defer dcmi.SetProvider(nil)
+
+	c := New()
+	c.ensureDevices()
+	metrics := c.collectDevice(npuDevice{cardID: 0, devID: 0}, time.Now())
+
+	m := findMetric(metrics, "card_drop")
+	if m == nil {
+		t.Fatal("missing card_drop metric")
+	}
+	if m.Value != 1 {
+		t.Errorf("card_drop: expected 1 (dropped), got %v", m.Value)
+	}
+	if m.Labels["npu_id"] != "0" {
+		t.Errorf("npu_id label: expected 0, got %q", m.Labels["npu_id"])
+	}
+}
+
+func TestCollectCardDropHealthy(t *testing.T) {
+	mock := &dcmi.MockProvider{
+		CardListVal: []int{0},
+		CardDrops:   map[[2]int]bool{{0, 0}: false},
+	}
+	dcmi.SetProvider(mock)
+	defer dcmi.SetProvider(nil)
+
+	c := New()
+	c.ensureDevices()
+	metrics := c.collectDevice(npuDevice{cardID: 0, devID: 0}, time.Now())
+
+	m := findMetric(metrics, "card_drop")
+	if m == nil {
+		t.Fatal("missing card_drop metric")
+	}
+	if m.Value != 0 {
+		t.Errorf("card_drop: expected 0 (healthy), got %v", m.Value)
+	}
+}
+
 func TestCollectorInterface(t *testing.T) {
 	c := New()
 	if c.Name() != "npu" {

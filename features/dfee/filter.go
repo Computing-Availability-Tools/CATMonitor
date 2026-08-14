@@ -1,36 +1,13 @@
-package dfee
+package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
-
-// ---- snapshot reader (self-contained, does not depend on web package) ----
-
-type snapshot struct {
-	SessionID       string             `json:"session_id"`
-	Timestamp       time.Time          `json:"timestamp"`
-	RefreshInterval int                `json:"refresh_interval_ms"`
-	Metrics         []collector.Metric `json:"metrics"`
-}
-
-func readSnapshot(path string) (*snapshot, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var s snapshot
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
 
 // ---- efficiency filter spec ----
 
@@ -164,7 +141,7 @@ var chartGroups = []chartGroup{
 	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", "", ""},
 	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
-	{"cpu_utilization", "CPU 利用率分解", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
+	{"cpu_utilization", "CPU 利用率", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
 	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", "", ""},
 	{"cpu_power", "CPU 功耗", "cpu", []string{"power"}, "", "", "", ""},
 	// Memory (2 charts, 7 metrics)
