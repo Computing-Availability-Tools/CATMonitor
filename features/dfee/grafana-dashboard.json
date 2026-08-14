@@ -218,12 +218,12 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "内存使用明细 (堆叠)",
+      "title": "内存利用率",
       "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 8 },
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes",
+          "unit": "percent",
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
@@ -234,7 +234,7 @@
             "spanNulls": false,
             "showPoints": "never",
             "pointSize": 5,
-            "stacking": { "mode": "normal", "group": "A" },
+            "stacking": { "mode": "none", "group": "A" },
             "axisPlacement": "auto",
             "axisLabel": "",
             "scaleDistribution": { "type": "linear" },
@@ -245,123 +245,58 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "legend": { "displayMode": "hidden", "placement": "bottom", "calcs": ["lastNotNull"] },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_MemFree_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_Buffers_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_Cached_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_SReclaimable_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "已用",
-          "range": true
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_MemFree_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "空闲",
-          "range": true
-        },
-        {
-          "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_Buffers_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "Buffers",
-          "range": true
-        },
-        {
-          "refId": "D",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_Cached_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "Cached",
-          "range": true
-        },
-        {
-          "refId": "E",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_SReclaimable_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "SReclaimable",
+          "expr": "(node_memory_MemTotal_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_MemFree_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_Buffers_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_Cached_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_SReclaimable_bytes{instance=~\"$instance\",job=~\"$job\"}) / node_memory_MemTotal_bytes{instance=~\"$instance\",job=~\"$job\"} * 100",
+          "legendFormat": "内存利用率",
           "range": true
         }
       ]
     },
     {
       "id": 7,
-      "type": "stat",
-      "title": "内存使用量 / 总量",
+      "type": "timeseries",
+      "title": "交换分区利用率",
       "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 18, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes",
-          "thresholds": { "mode": "absolute", "steps": [] },
-          "color": { "mode": "thresholds" }
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": { "mode": "none", "group": "A" },
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "scaleDistribution": { "type": "linear" },
+            "hideFrom": { "tooltip": false, "viz": false, "legend": false },
+            "thresholdsStyle": { "mode": "off" }
+          }
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
-        "orientation": "auto",
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "showPercentChange": false
+        "legend": { "displayMode": "hidden", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_MemFree_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_Buffers_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_Cached_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_SReclaimable_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "已用 {{instance}}",
-          "range": true
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "总量 {{instance}}",
-          "range": true
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "type": "stat",
-      "title": "Swap 使用量 / 总量",
-      "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-      "gridPos": { "x": 12, "y": 26, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "thresholds": { "mode": "absolute", "steps": [] },
-          "color": { "mode": "thresholds" }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
-        "orientation": "auto",
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "showPercentChange": false
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_SwapTotal_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_SwapFree_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "已用 {{instance}}",
-          "range": true
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "$DS_PROMETHEUS" },
-          "expr": "node_memory_SwapTotal_bytes{instance=~\"$instance\",job=~\"$job\"}",
-          "legendFormat": "总量 {{instance}}",
+          "expr": "(node_memory_SwapTotal_bytes{instance=~\"$instance\",job=~\"$job\"} - node_memory_SwapFree_bytes{instance=~\"$instance\",job=~\"$job\"}) / node_memory_SwapTotal_bytes{instance=~\"$instance\",job=~\"$job\"} * 100",
+          "legendFormat": "交换分区利用率",
           "range": true
         }
       ]
