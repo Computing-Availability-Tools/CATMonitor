@@ -32,9 +32,8 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/memory"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/network"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
-
-const version = "0.3.4"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -52,7 +51,7 @@ func main() {
 	case "list":
 		runList()
 	case "version":
-		fmt.Printf("CATMonitor v%s (Go %s)\n", version, "1.23+")
+		fmt.Printf("CATMonitor v%s (Go %s)\n", version.Version, "1.23+")
 	default:
 		printUsage()
 	}
@@ -287,7 +286,7 @@ func runDaemon() {
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	logger.Info("CATMonitor daemon started", "version", version)
+	logger.Info("CATMonitor daemon started", "version", version.Version)
 	sig := <-sigCh
 	logger.Info("received signal, shutting down", "signal", sig)
 	cancel()

@@ -32,9 +32,9 @@ func TestEvaluateNetworkErrorCountHigh(t *testing.T) {
 
 	score := evaluateNetwork(metrics, 15)
 
-	// error_count>100 → 30% of 15 = 4.5, score = 15 - 4.5 = 10.5 → 10
-	if score.Score != 10 {
-		t.Errorf("expected score 10, got %d", score.Score)
+	// error_count>100 → 45% of 15 = 6.75, score = 15 - 6.75 = 8.25 → 8
+	if score.Score != 8 {
+		t.Errorf("expected score 8, got %d", score.Score)
 	}
 	if len(score.Deductions) != 1 {
 		t.Fatalf("expected 1 deduction, got %d", len(score.Deductions))
@@ -92,15 +92,15 @@ func TestEvaluateNetworkEstabOverload(t *testing.T) {
 
 	score := evaluateNetwork(metrics, 15)
 
-	// estab>10000 → 25% of 15 = 3.75, score = 15 - 3.75 = 11.25 → 11
+	// estab>5000 → 25% of 15 = 3.75, score = 15 - 3.75 = 11.25 → 11
 	if score.Score != 11 {
 		t.Errorf("expected score 11, got %d", score.Score)
 	}
 	if len(score.Deductions) != 1 {
 		t.Fatalf("expected 1 deduction, got %d", len(score.Deductions))
 	}
-	if score.Deductions[0].Rule != "estab>10000" {
-		t.Errorf("expected rule 'estab>10000', got '%s'", score.Deductions[0].Rule)
+	if score.Deductions[0].Rule != "estab>5000" {
+		t.Errorf("expected rule 'estab>5000', got '%s'", score.Deductions[0].Rule)
 	}
 }
 
@@ -113,9 +113,9 @@ func TestEvaluateNetworkAllIssues(t *testing.T) {
 
 	score := evaluateNetwork(metrics, 15)
 
-	// 30% + 30% + 25% = 85% → 15 * 0.85 = 12.75, score = 15 - 12.75 = 2.25 → 2
-	if score.Score != 2 {
-		t.Errorf("expected score 2, got %d", score.Score)
+	// 45% + 30% + 25% = 100% → 15 * 1.0 = 15, score = 15 - 15 = 0
+	if score.Score != 0 {
+		t.Errorf("expected score 0, got %d", score.Score)
 	}
 	if len(score.Deductions) != 3 {
 		t.Fatalf("expected 3 deductions, got %d", len(score.Deductions))

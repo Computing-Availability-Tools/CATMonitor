@@ -12,10 +12,10 @@ func TestEvaluateChassisHealthy(t *testing.T) {
 		makeMetric("chassis", "outlet_temp", 42.0, nil),
 	}
 
-	score := evaluateChassis(metrics, 5)
+	score := evaluateChassis(metrics, 10)
 
-	if score.Score != 5 {
-		t.Errorf("expected score 5 (no deductions), got %d", score.Score)
+	if score.Score != 10 {
+		t.Errorf("expected score 10 (no deductions), got %d", score.Score)
 	}
 	if len(score.Deductions) != 0 {
 		t.Errorf("expected 0 deductions, got %d", len(score.Deductions))
@@ -28,11 +28,11 @@ func TestEvaluateChassisInletHigh(t *testing.T) {
 		makeMetric("chassis", "outlet_temp", 42.0, nil),
 	}
 
-	score := evaluateChassis(metrics, 5)
+	score := evaluateChassis(metrics, 10)
 
-	// inlet_temp>40 → 40% of 5 = 2.0, score = 5 - 2 = 3
-	if score.Score != 3 {
-		t.Errorf("expected score 3, got %d", score.Score)
+	// inlet_temp>40 → 50% of 10 = 5, score = 10 - 5 = 5
+	if score.Score != 5 {
+		t.Errorf("expected score 5, got %d", score.Score)
 	}
 	if len(score.Deductions) != 1 {
 		t.Fatalf("expected 1 deduction, got %d", len(score.Deductions))
@@ -48,11 +48,11 @@ func TestEvaluateChassisInletModerate(t *testing.T) {
 		makeMetric("chassis", "outlet_temp", 42.0, nil),
 	}
 
-	score := evaluateChassis(metrics, 5)
+	score := evaluateChassis(metrics, 10)
 
-	// inlet_temp>35 → 20% of 5 = 1.0, score = 5 - 1 = 4
-	if score.Score != 4 {
-		t.Errorf("expected score 4, got %d", score.Score)
+	// inlet_temp>35 → 25% of 10 = 2.5, score = 10 - 2.5 = 7.5 → 7
+	if score.Score != 7 {
+		t.Errorf("expected score 7, got %d", score.Score)
 	}
 	if len(score.Deductions) != 1 {
 		t.Fatalf("expected 1 deduction, got %d", len(score.Deductions))
@@ -68,11 +68,11 @@ func TestEvaluateChassisOutletHigh(t *testing.T) {
 		makeMetric("chassis", "outlet_temp", 65.0, nil),
 	}
 
-	score := evaluateChassis(metrics, 5)
+	score := evaluateChassis(metrics, 10)
 
-	// outlet_temp>60 → 40% of 5 = 2.0, score = 5 - 2 = 3
-	if score.Score != 3 {
-		t.Errorf("expected score 3, got %d", score.Score)
+	// outlet_temp>60 → 50% of 10 = 5, score = 10 - 5 = 5
+	if score.Score != 5 {
+		t.Errorf("expected score 5, got %d", score.Score)
 	}
 	if len(score.Deductions) != 1 {
 		t.Fatalf("expected 1 deduction, got %d", len(score.Deductions))
@@ -88,11 +88,11 @@ func TestEvaluateChassisOutletModerate(t *testing.T) {
 		makeMetric("chassis", "outlet_temp", 55.0, nil),
 	}
 
-	score := evaluateChassis(metrics, 5)
+	score := evaluateChassis(metrics, 10)
 
-	// outlet_temp>50 → 20% of 5 = 1.0, score = 5 - 1 = 4
-	if score.Score != 4 {
-		t.Errorf("expected score 4, got %d", score.Score)
+	// outlet_temp>50 → 25% of 10 = 2.5, score = 10 - 2.5 = 7.5 → 7
+	if score.Score != 7 {
+		t.Errorf("expected score 7, got %d", score.Score)
 	}
 	if len(score.Deductions) != 1 {
 		t.Fatalf("expected 1 deduction, got %d", len(score.Deductions))
@@ -108,11 +108,11 @@ func TestEvaluateChassisAllIssues(t *testing.T) {
 		makeMetric("chassis", "outlet_temp", 65.0, nil),
 	}
 
-	score := evaluateChassis(metrics, 5)
+	score := evaluateChassis(metrics, 10)
 
-	// 40% + 40% = 80% → 5 * 0.80 = 4.0, score = 5 - 4 = 1
-	if score.Score != 1 {
-		t.Errorf("expected score 1, got %d", score.Score)
+	// 50% + 50% = 100% → 10 * 1.0 = 10, score = 10 - 10 = 0
+	if score.Score != 0 {
+		t.Errorf("expected score 0, got %d", score.Score)
 	}
 	if len(score.Deductions) != 2 {
 		t.Fatalf("expected 2 deductions, got %d", len(score.Deductions))

@@ -3,6 +3,7 @@
 package disk
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +14,13 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/smartctl"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/statfs"
 )
+
+func init() {
+	if _, err := os.Stat("/host/proc/mounts"); err == nil {
+		proc.SetMountsPath("/host/proc/mounts")
+		statfs.SetHostPrefix("/host")
+	}
+}
 
 var deviceFilter = regexp.MustCompile(`^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+)$`)
 

@@ -28,7 +28,7 @@ const METRIC_NAMES = {
   memory_usage: '显存使用率', memory_detail: '明细',
   power_draw: '功耗', fan_speed: '风扇', ecc_errors: 'ECC 错误',
   clock_frequency: '频率', utilization: '使用率', health_status: '健康状态',
-  swap_usage: 'Swap 使用率', oom_count: 'OOM 次数', page_faults: '页错误',
+  swap_usage: 'Swap 使用率', swap_detail: 'Swap 明细', oom_count: 'OOM 次数', page_faults: '页错误',
   rx_bytes_total: '接收字节', tx_bytes_total: '发送字节',
   error_count: '错误计数', connection_count: '连接数',
   interface_status: '接口状态', usage_detail: '明细', packet_count: '包计数',
@@ -84,6 +84,8 @@ const RULE_TEXT = {
   'cpu_ce_error':  'CPU 发生可纠正 ECC 错误',
   'cpu_uce_error': 'CPU 发生不可纠正 ECC 错误',
   // Memory
+  'usage>90%':       '内存使用率超过 90%',
+  'usage>80%':       '内存使用率超过 80%',
   'swap>50%':       '交换分区使用率超过 50%',
   'ce_error':       '内存可纠正 ECC 错误',
   'uce_error':      '内存不可纠正 ECC 错误',
@@ -99,6 +101,7 @@ const RULE_TEXT = {
   'util>95%':   '利用率超过 95%',
   'ecc_error':  '发生 ECC 错误',
   // NPU
+  'card_drop':       'NPU 卡掉线',
   'health_alarm':    'NPU 健康状态告警',
   'health_warning':  'NPU 健康状态预警',
   'hbm_double_ecc':  'HBM 发生双比特 ECC 错误',
@@ -110,7 +113,8 @@ const RULE_TEXT = {
   'error_count>100': '网络错误包数超过 100',
   'error_count>10':  '网络错误包数超过 10',
   'time_wait>2000':  'TIME_WAIT 连接数超过 2000',
-  'estab>10000':     'ESTABLISHED 连接数超过 10000',
+  'estab>5000':     'ESTABLISHED 连接数超过 5000',
+  'estab>3000':     'ESTABLISHED 连接数超过 3000',
   // Chassis
   'inlet_temp>40':  '进风口温度超过 40°C',
   'inlet_temp>35':  '进风口温度超过 35°C',
@@ -151,12 +155,198 @@ const SERIES_LABELS = {
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
 
+function metricSortCmp(a, b) {
+  const la = a.labels || {}, lb = b.labels || {};
+  for (const key of [
+    'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
+    'interface', 'device', 'mount_point', 'mc', 'locator', 'sensor',
+    'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
+    'kind', 'interval', 'state', 'status',
+  ]) {
+    const va = la[key], vb = lb[key];
+    if (va === undefined && vb === undefined) continue;
+    if (va === undefined) return 1;
+    if (vb === undefined) return -1;
+    if (va === vb) continue;
+    if (va === 'total') return -1;
+    if (vb === 'total') return 1;
+    const na = parseFloat(va), nb = parseFloat(vb);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    const da = parseFloat(va.replace(/\D/g, '')), db = parseFloat(vb.replace(/\D/g, ''));
+    if (!isNaN(da) && !isNaN(db) && da !== db) return da - db;
+    return va < vb ? -1 : 1;
+  }
+  return 0;
+}
+
+function renderErrorCountGroup(items) {
+  const drops = items.filter(m => (m.labels || {}).type && m.labels.type.includes('drop'));
+  const errs = items.filter(m => (m.labels || {}).type && m.labels.type.includes('err'));
+  const container = el('div');
+  if (errs.length) container.appendChild(renderRxTxSubGroup('错包计数', errs));
+  if (drops.length) container.appendChild(renderRxTxSubGroup('丢包计数', drops));
+  return container;
+}
+
+function renderRxTxSubGroup(title, items) {
+  const byIface = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    if (!byIface[iface]) { byIface[iface] = {}; order.push(iface); }
+    const dir = lb.type || '';
+    if (dir.startsWith('rx')) byIface[iface].rx = mt.value;
+    if (dir.startsWith('tx')) byIface[iface].tx = mt.value;
+  }
+  const sub = el('div', 'error-sub-group');
+  sub.appendChild(elText('div', 'error-sub-title', title));
+  for (const iface of order) {
+    const d = byIface[iface];
+    const rx = d.rx !== undefined ? fmt(d.rx) : '--';
+    const tx = d.tx !== undefined ? fmt(d.tx) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">接收 ' + rx + '</span>' +
+      '<span class="rw-write">发送 ' + tx + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    sub.appendChild(row);
+  }
+  return sub;
+}
+
+function renderInterfaceDirectionGroup(items) {
+  const byIface = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    if (!byIface[iface]) { byIface[iface] = {}; order.push(iface); }
+    byIface[iface][lb.direction || ''] = mt.value;
+  }
+  order.sort();
+  const container = el('div');
+  for (const iface of order) {
+    const d = byIface[iface];
+    const rx = d.rx !== undefined ? fmt(d.rx) : '--';
+    const tx = d.tx !== undefined ? fmt(d.tx) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">接收 ' + rx + '</span>' +
+      '<span class="rw-write">发送 ' + tx + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderInterfaceStatusGroup(items) {
+  const container = el('div');
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    const isUp = mt.value > 0;
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">' + (isUp ? 'up' : 'down') + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderDeviceDirectionGroup(items) {
+  const byDev = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const dev = lb.device || '';
+    if (!byDev[dev]) { byDev[dev] = {}; order.push(dev); }
+    byDev[dev][lb.direction || ''] = mt.value;
+  }
+  order.sort((a, b) => {
+    const na = parseInt(a.replace(/\D/g, ''), 10);
+    const nb = parseInt(b.replace(/\D/g, ''), 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return a < b ? -1 : 1;
+  });
+  const container = el('div');
+  for (const dev of order) {
+    const d = byDev[dev];
+    const rd = d.read !== undefined ? fmt(d.read) : '--';
+    const wr = d.write !== undefined ? fmt(d.write) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">读 ' + rd + '</span>' +
+      '<span class="rw-write">写 ' + wr + '</span>' +
+      '<span class="metric-labels">' + dev + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderSwapDetailGroup(items) {
+  const fields = {};
+  for (const mt of items) {
+    const f = (mt.labels || {}).field || '';
+    fields[f] = mt.value;
+  }
+  const total = fields.total ? fmtMB(fields.total) : '--';
+  const used = fields.used !== undefined ? fmtMB(fields.used) : '--';
+  const free = fields.free ? fmtMB(fields.free) : '--';
+  const row = el('div', 'metric-row space-detail-row');
+  row.innerHTML =
+    '<span class="metric-val">' + total + '</span>' +
+    '<span class="space-detail-used">' + used + ' used</span>' +
+    '<span class="space-detail-avail">' + free + ' free</span>';
+  const container = el('div');
+  container.appendChild(row);
+  return container;
+}
+
+function renderSpaceDetailGroup(items) {
+  const byMount = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const key = (lb.device || '') + '|' + (lb.mount_point || '');
+    if (!byMount[key]) { byMount[key] = {}; order.push(key); }
+    byMount[key][lb.field] = mt.value;
+    byMount[key].device = lb.device;
+    byMount[key].mount_point = lb.mount_point;
+    byMount[key].fstype = lb.fstype;
+  }
+  order.sort((a, b) => {
+    const pa = byMount[a].mount_point || '';
+    const pb = byMount[b].mount_point || '';
+    if (pa === '/') return -1;
+    if (pb === '/') return 1;
+    return pa < pb ? -1 : 1;
+  });
+  const container = el('div');
+  for (const key of order) {
+    const d = byMount[key];
+    const total = d.total ? fmtMB(d.total) : '--';
+    const used = d.used ? fmtMB(d.used) : '--';
+    const avail = d.available ? fmtMB(d.available) : '--';
+    const pct = (d.total && d.used) ? Math.round(d.used / d.total * 100) : 0;
+    const row = el('div', 'metric-row space-detail-row');
+    row.innerHTML =
+      '<span class="metric-val">' + total + '</span>' +
+      '<span class="space-detail-used">' + used + ' used</span>' +
+      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount_point || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
 // ---- state ----
 let collectors = [];
 let lastSnapshot = null;
 let refreshIntervalMs = 5000;
 let pollTimer = null;
 let autoOn = true;
+let appVersion = '';
 
 // ---- helpers ----
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -533,6 +723,63 @@ function specsGroup(comp, arr) {
   return sec;
 }
 
+function specsGroupMemory(specs) {
+  const sec = el('div', 'specs-group');
+  const tbl = document.createElement('table');
+  tbl.className = 'table';
+  tbl.innerHTML = '<thead><tr><th>插槽</th><th>容量</th><th>类型</th><th>速率</th><th>厂商</th></tr></thead>';
+  const tb = document.createElement('tbody');
+
+  const sizes = {};
+  const infos = {};
+  const order = [];
+  let memTotal = null;
+
+  for (const m of specs) {
+    if (m.name === 'mem_total') { memTotal = m; continue; }
+    const loc = (m.labels || {}).locator || '';
+    if (m.name === 'module_size') {
+      sizes[loc] = m;
+      if (!order.includes(loc)) order.push(loc);
+    } else if (m.name === 'module_info') {
+      infos[loc] = m;
+      if (!order.includes(loc)) order.push(loc);
+    }
+  }
+
+  if (memTotal) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>合计</td><td>' + (memTotal.labels || {}).capacity + '</td><td colspan="3"></td>';
+    tb.appendChild(tr);
+  }
+
+  order.sort(metricLocatorCmp);
+  for (const loc of order) {
+    const sz = sizes[loc], info = infos[loc];
+    const lb = (info || sz || {}).labels || {};
+    const sizeStr = sz ? fmtMB(sz.value) : (lb.capacity || '--');
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + (loc || '--') + '</td>' +
+      '<td>' + sizeStr + '</td>' +
+      '<td>' + (lb.type || '--') + '</td>' +
+      '<td>' + (lb.speed || '--') + '</td>' +
+      '<td>' + (lb.manufacturer || '--') + '</td>';
+    tb.appendChild(tr);
+  }
+
+  tbl.appendChild(tb);
+  sec.appendChild(tbl);
+  return sec;
+}
+
+function metricLocatorCmp(a, b) {
+  const na = parseInt(a.replace(/\D/g, ''), 10);
+  const nb = parseInt(b.replace(/\D/g, ''), 10);
+  if (!isNaN(na) && !isNaN(nb)) return na - nb;
+  return a < b ? -1 : 1;
+}
+
 // ---- overview ----
 function renderOverview(snap) {
   const page = document.getElementById('page');
@@ -554,8 +801,7 @@ function renderOverview(snap) {
   const info = el('div', 'hero-info');
   info.innerHTML =
     '<div>服务器类型: <b>' + (SERVER_TYPE_TEXT[h.server_type] || h.server_type || '--') + '</b></div>' +
-    '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>' +
-    '<div>采集间隔: <b>' + (snap.refresh_interval_ms ? snap.refresh_interval_ms / 1000 + 's' : '--') + '</b></div>';
+    '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>';
   const comps = orderedComponents(snap);
   if (comps.length) {
     const chips = el('div', 'hero-components');
@@ -688,6 +934,32 @@ function renderDetail(compKey, snap) {
     page.appendChild(dpanel);
   }
 
+  // hardware specs for this component
+  const allSpecs = snap.specs || [];
+  const compSpecs = allSpecs.filter(m => m.component === compKey);
+  if (compKey === 'memory') {
+    const mt = memoryTotalMB(snap);
+    if (mt) {
+      compSpecs.push({ component: 'memory', name: 'mem_total', value: mt,
+        labels: { capacity: fmtMB(mt) }, synthetic: true });
+    }
+  }
+  if (compSpecs.length) {
+    const spanel = el('div', 'panel');
+    const sph = el('div', 'panel-head');
+    sph.appendChild(elText('span', '', '硬件信息'));
+    sph.appendChild(elText('span', 'sub', compSpecs.length + ' 条'));
+    spanel.appendChild(sph);
+    const sbody = el('div', 'panel-body');
+    if (compKey === 'memory') {
+      sbody.appendChild(specsGroupMemory(compSpecs));
+    } else {
+      sbody.appendChild(specsGroup(compKey, compSpecs));
+    }
+    spanel.appendChild(sbody);
+    page.appendChild(spanel);
+  }
+
   // trends
   const series = componentSeries(compKey, snap.history || {});
   if (series.length) {
@@ -727,27 +999,46 @@ function renderDetail(compKey, snap) {
     }
     for (const name of order) {
       const items = groups[name];
+      items.sort(metricSortCmp);
       const dispName = METRIC_NAMES[name] || name;
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
       const gh = el('div', 'metric-group-head');
+      const groupKey = compKey + ':' + name;
+      const collapsed = localStorage.getItem('mg:' + groupKey) === '1';
       gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
         (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
         '<span class="metric-group-count">' + items.length + ' 条</span>' +
-        '<span class="metric-group-toggle">▾</span>';
+        '<span class="metric-group-toggle">' + (collapsed ? '▸' : '▾') + '</span>';
       const gb = el('div', 'metric-group-body');
-      for (const mt of items) {
-        const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
-        const row = el('div', 'metric-row');
-        row.innerHTML =
-          '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
-          '<span class="metric-labels">' + labels + '</span>';
-        gb.appendChild(row);
+      if (collapsed) gb.style.display = 'none';
+      if (compKey === 'disk' && name === 'space_detail') {
+        gb.appendChild(renderSpaceDetailGroup(items));
+      } else if (compKey === 'memory' && name === 'swap_detail') {
+        gb.appendChild(renderSwapDetailGroup(items));
+      } else if (compKey === 'disk' && (name === 'iops' || name === 'throughput')) {
+        gb.appendChild(renderDeviceDirectionGroup(items));
+      } else if (compKey === 'network' && (name === 'throughput' || name === 'packet_count')) {
+        gb.appendChild(renderInterfaceDirectionGroup(items));
+      } else if (compKey === 'network' && name === 'interface_status') {
+        gb.appendChild(renderInterfaceStatusGroup(items));
+      } else if (compKey === 'network' && name === 'error_count') {
+        gb.appendChild(renderErrorCountGroup(items));
+      } else {
+        for (const mt of items) {
+          const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+          const row = el('div', 'metric-row');
+          row.innerHTML =
+            '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
+            '<span class="metric-labels">' + labels + '</span>';
+          gb.appendChild(row);
+        }
       }
       gh.onclick = () => {
         const open = gb.style.display !== 'none';
         gb.style.display = open ? 'none' : '';
         gh.querySelector('.metric-group-toggle').textContent = open ? '▸' : '▾';
+        localStorage.setItem('mg:' + groupKey, open ? '1' : '0');
       };
       grp.appendChild(gh);
       grp.appendChild(gb);
@@ -798,6 +1089,21 @@ async function fetchConfigData() {
     const c = await r.json();
     refreshIntervalMs = c.refresh_interval_ms || 5000;
     document.getElementById('intervalInput').value = Math.round(refreshIntervalMs / 1000);
+    if (c.version) {
+      appVersion = c.version;
+      const el = document.querySelector('.brand .subtitle');
+      if (el) el.textContent = 'v' + appVersion + ' · 设备健康度';
+    }
+    if (c.started_at) {
+      const prev = sessionStorage.getItem('webStartedAt');
+      if (prev && prev !== String(c.started_at)) {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('mg:')) localStorage.removeItem(k);
+        }
+      }
+      sessionStorage.setItem('webStartedAt', String(c.started_at));
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -812,20 +1118,9 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 async function applyInterval() {
   const sec = parseInt(document.getElementById('intervalInput').value, 10);
   if (!sec || sec < 1) { showBanner('请输入有效的刷新间隔（秒）', true); return; }
-  const ms = sec * 1000;
-  try {
-    const r = await fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_interval_ms: ms }),
-    });
-    if (!r.ok) { const t = await r.text(); showBanner('应用失败：' + t, true); return; }
-    const c = await r.json();
-    refreshIntervalMs = c.refresh_interval_ms || ms;
-    startPolling();
-    showBanner('刷新间隔已更新为 ' + (refreshIntervalMs / 1000) + ' 秒', false);
-  } catch (e) {
-    showBanner('应用失败：' + e.message, true);
-  }
+  refreshIntervalMs = sec * 1000;
+  startPolling();
+  showBanner('刷新间隔已更新为 ' + sec + ' 秒', false);
 }
 
 async function manualRefresh() {

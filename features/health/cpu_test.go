@@ -99,16 +99,16 @@ func TestEvaluateCPUCEErrors(t *testing.T) {
 
 	score := evaluateCPU(metrics, 30)
 
-	// 3 CE errors * 2 = -6 → 24
-	if score.Score != 24 {
-		t.Errorf("expected score 24 (3 CE errors), got %d", score.Score)
+	// 3 CE errors → -10% of 30 = -3 → 27
+	if score.Score != 27 {
+		t.Errorf("expected score 27 (3 CE errors), got %d", score.Score)
 	}
 	found := false
 	for _, d := range score.Deductions {
 		if d.Rule == "cpu_ce_error" {
 			found = true
-			if d.Penalty != 6 {
-				t.Errorf("expected penalty 6, got %f", d.Penalty)
+			if d.Penalty != 3 {
+				t.Errorf("expected penalty 3, got %f", d.Penalty)
 			}
 		}
 	}
@@ -125,9 +125,9 @@ func TestEvaluateCPUUCErrors(t *testing.T) {
 
 	score := evaluateCPU(metrics, 30)
 
-	// 1 UCE error * 10 = -10 → 20
-	if score.Score != 20 {
-		t.Errorf("expected score 20 (1 UCE error), got %d", score.Score)
+	// 1 UCE error → -20% of 30 = -6 → 24
+	if score.Score != 24 {
+		t.Errorf("expected score 24 (1 UCE error), got %d", score.Score)
 	}
 }
 
@@ -157,9 +157,9 @@ func TestEvaluateCPULoadDynamicTrigger(t *testing.T) {
 
 	score := evaluateCPU(metrics, 30)
 
-	// load 20 > 16 → -10% of 30 = -3 → 27
-	if score.Score != 27 {
-		t.Errorf("expected score 27 (load above dynamic threshold), got %d", score.Score)
+	// load 20 > 16 → -20% of 30 = -6 → 24
+	if score.Score != 24 {
+		t.Errorf("expected score 24 (load above dynamic threshold), got %d", score.Score)
 	}
 }
 
@@ -172,8 +172,8 @@ func TestEvaluateCPULoadFallback(t *testing.T) {
 
 	score := evaluateCPU(metrics, 30)
 
-	// load 10 > 8 (fallback) → -3 → 27
-	if score.Score != 27 {
-		t.Errorf("expected score 27 (load above fallback threshold 8), got %d", score.Score)
+	// load 10 > 8 (fallback) → -20% of 30 = -6 → 24
+	if score.Score != 24 {
+		t.Errorf("expected score 24 (load above fallback threshold 8), got %d", score.Score)
 	}
 }

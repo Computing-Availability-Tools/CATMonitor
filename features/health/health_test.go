@@ -60,7 +60,7 @@ func TestEvaluateFullCPUOnly(t *testing.T) {
 
 	result := evaluator.Evaluate(metrics)
 
-	// All healthy: CPU 22 + Memory 33 + Disk 25 + Network 15 + Chassis 5 = 100
+	// All healthy: CPU 25 + Memory 25 + Disk 30 + Network 10 + Chassis 10 = 100
 	if result.Score != 100 {
 		t.Errorf("expected total score 100, got %d", result.Score)
 	}
@@ -87,15 +87,15 @@ func TestEvaluateFullCPUOnlyWithIssues(t *testing.T) {
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU: 22 - 4.4 (usage>90% 20%) = 17.6 → 17
-	// Memory: 33 - 9.9 (usage>90% 30%) - 4 (2 CE * 2) = 19.1 → 19
-	// Disk: 25 - 5 (space>80% 20%) = 20
-	// Total: 17 + 19 + 20 = 56
-	if result.Score != 56 {
-		t.Errorf("expected total score 60, got %d", result.Score)
+	// CPU: 25 - 5 (usage>90% 20%) = 20
+	// Memory: 25 - 6.25 (usage>90% 25%) - 1.25 (ce_error 5%) = 17.5 → 17
+	// Disk: 30 - 4.5 (space>80% 15%) = 25.5 → 25
+	// Total: 20 + 17 + 25 = 62
+	if result.Score != 62 {
+		t.Errorf("expected total score 62, got %d", result.Score)
 	}
-	if result.Grade != "Critical" {
-		t.Errorf("expected grade 'Critical', got '%s'", result.Grade)
+	if result.Grade != "Warning" {
+		t.Errorf("expected grade 'Warning', got '%s'", result.Grade)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestEvaluateAcceleratedScheme(t *testing.T) {
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU 8 + Memory 12 + Disk 10 + GPU 50 + Network 15 + Chassis 5 = 100
+	// CPU 15 + Memory 15 + Disk 15 + GPU 35 + Network 10 + Chassis 10 = 100
 	if result.Score != 100 {
 		t.Errorf("expected total score 100, got %d", result.Score)
 	}
@@ -128,22 +128,22 @@ func TestEvaluateAcceleratedScheme(t *testing.T) {
 
 func TestGetScheme(t *testing.T) {
 	s := GetScheme("cpu_only")
-	if s.CPU != 22 || s.Memory != 33 || s.Disk != 25 || s.GPU != 0 || s.Network != 15 || s.Chassis != 5 {
+	if s.CPU != 25 || s.Memory != 25 || s.Disk != 30 || s.GPU != 0 || s.Network != 10 || s.Chassis != 10 {
 		t.Error("cpu_only scheme mismatch")
 	}
 
 	s = GetScheme("accelerated_8card")
-	if s.CPU != 8 || s.Memory != 12 || s.Disk != 10 || s.GPU != 50 || s.Network != 15 || s.Chassis != 5 {
+	if s.CPU != 15 || s.Memory != 15 || s.Disk != 15 || s.GPU != 35 || s.Network != 10 || s.Chassis != 10 {
 		t.Error("accelerated_8card scheme mismatch")
 	}
 
 	s = GetScheme("accelerated_4card")
-	if s.CPU != 8 || s.Memory != 12 || s.Disk != 10 || s.GPU != 50 || s.Network != 15 || s.Chassis != 5 {
+	if s.CPU != 15 || s.Memory != 15 || s.Disk != 20 || s.GPU != 30 || s.Network != 10 || s.Chassis != 10 {
 		t.Error("accelerated_4card scheme mismatch")
 	}
 
 	s = GetScheme("unknown")
-	if s.CPU != 22 {
+	if s.CPU != 25 {
 		t.Error("unknown scheme should default to cpu_only")
 	}
 }

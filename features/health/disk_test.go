@@ -25,9 +25,9 @@ func TestEvaluateDiskSpaceHigh(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// space > 80%: -20% of 30 = -6
-	if score.Score != 24 {
-		t.Errorf("expected score 24 (space>80%%), got %d", score.Score)
+	// space > 80%: -15% of 30 = -4.5 → 25
+	if score.Score != 25 {
+		t.Errorf("expected score 25 (space>80%%), got %d", score.Score)
 	}
 }
 
@@ -38,9 +38,9 @@ func TestEvaluateDiskSpaceCritical(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// space > 90%: -40% of 30 = -12
-	if score.Score != 18 {
-		t.Errorf("expected score 18 (space>90%%), got %d", score.Score)
+	// space > 90%: -35% of 30 = -10.5 → 19
+	if score.Score != 19 {
+		t.Errorf("expected score 19 (space>90%%), got %d", score.Score)
 	}
 }
 
@@ -53,9 +53,9 @@ func TestEvaluateDiskSpaceWorstMount(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// worst mount 92 > 90 → -12 → 18
-	if score.Score != 18 {
-		t.Errorf("expected score 18 (worst mount>90%%), got %d", score.Score)
+	// worst mount 92 > 90 → -10.5 → 19
+	if score.Score != 19 {
+		t.Errorf("expected score 19 (worst mount>90%%), got %d", score.Score)
 	}
 }
 
@@ -68,9 +68,9 @@ func TestEvaluateDiskSmartFailed(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// SMART FAILED → -30% of 30 = -9 → 21
-	if score.Score != 21 {
-		t.Errorf("expected score 21 (smart_failed), got %d", score.Score)
+	// SMART FAILED → -50% of 30 = -15 → 15
+	if score.Score != 15 {
+		t.Errorf("expected score 15 (smart_failed), got %d", score.Score)
 	}
 	found := false
 	for _, d := range score.Deductions {
@@ -93,9 +93,9 @@ func TestEvaluateDiskSmartSingleDeduction(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// single -9, not -18 → 21
-	if score.Score != 21 {
-		t.Errorf("expected score 21 (single smart deduction), got %d", score.Score)
+	// single -15, not -30 → 15
+	if score.Score != 15 {
+		t.Errorf("expected score 15 (single smart deduction), got %d", score.Score)
 	}
 	count := 0
 	for _, d := range score.Deductions {
