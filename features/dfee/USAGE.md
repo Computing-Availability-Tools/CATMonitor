@@ -158,10 +158,12 @@ scrape_configs:
     scrape_interval: 2s
     scrape_timeout: 2s
     static_configs:
-      - targets: ["123.60.231.86:9333"]
+      - targets: ["<dfee_exporter_ip>:9333"]
         labels:
-          instance: 123.60.231.86
+          instance: <dfee_exporter_ip>
 ```
+
+> 将 `<dfee_exporter_ip>` 替换为运行 dfee exporter 的机器 IP。
 
 > 修改配置后重启容器：`docker restart prometheus`
 >
