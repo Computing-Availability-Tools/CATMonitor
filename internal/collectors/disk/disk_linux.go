@@ -38,16 +38,21 @@ func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 	now := time.Now()
 	var metrics []collector.Metric
 
-	// space_usage per real mount point.
+	// space_usage per real device (deduplicated, one row per partition).
 	if collector.AnyWanted("disk", []string{"space_usage", "space_detail"}) {
 		mounts, err := proc.Default().Mounts()
 		if err != nil {
 			return nil, err
 		}
+		seen := map[string]bool{}
 		for _, m := range mounts {
 			if virtualFS[m.Fstype] {
 				continue
 			}
+			if seen[m.Device] {
+				continue
+			}
+			seen[m.Device] = true
 			spaceMetrics, err := c.collectSpaceUsage(m.Device, m.MountPoint, m.Fstype, now)
 			if err != nil {
 				continue
