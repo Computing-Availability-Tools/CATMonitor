@@ -28,7 +28,7 @@ const METRIC_NAMES = {
   memory_usage: '显存使用率', memory_detail: '明细',
   power_draw: '功耗', fan_speed: '风扇', ecc_errors: 'ECC 错误',
   clock_frequency: '频率', utilization: '使用率', health_status: '健康状态',
-  swap_usage: 'Swap 使用率', oom_count: 'OOM 次数', page_faults: '页错误',
+  swap_usage: 'Swap 使用率', swap_detail: 'Swap 明细', oom_count: 'OOM 次数', page_faults: '页错误',
   rx_bytes_total: '接收字节', tx_bytes_total: '发送字节',
   error_count: '错误计数', connection_count: '连接数',
   interface_status: '接口状态', usage_detail: '明细', packet_count: '包计数',
@@ -172,11 +172,174 @@ function metricSortCmp(a, b) {
     if (vb === 'total') return 1;
     const na = parseFloat(va), nb = parseFloat(vb);
     if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    const da = parseFloat(va.replace(/\D/g, '')), db = parseFloat(vb.replace(/\D/g, ''));
+    if (!isNaN(da) && !isNaN(db) && da !== db) return da - db;
     return va < vb ? -1 : 1;
   }
   return 0;
 }
 
+function renderErrorCountGroup(items) {
+  const drops = items.filter(m => (m.labels || {}).type && m.labels.type.includes('drop'));
+  const errs = items.filter(m => (m.labels || {}).type && m.labels.type.includes('err'));
+  const container = el('div');
+  if (errs.length) container.appendChild(renderRxTxSubGroup('错包计数', errs));
+  if (drops.length) container.appendChild(renderRxTxSubGroup('丢包计数', drops));
+  return container;
+}
+
+function renderRxTxSubGroup(title, items) {
+  const byIface = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    if (!byIface[iface]) { byIface[iface] = {}; order.push(iface); }
+    const dir = lb.type || '';
+    if (dir.startsWith('rx')) byIface[iface].rx = mt.value;
+    if (dir.startsWith('tx')) byIface[iface].tx = mt.value;
+  }
+  const sub = el('div', 'error-sub-group');
+  sub.appendChild(elText('div', 'error-sub-title', title));
+  for (const iface of order) {
+    const d = byIface[iface];
+    const rx = d.rx !== undefined ? fmt(d.rx) : '--';
+    const tx = d.tx !== undefined ? fmt(d.tx) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">接收 ' + rx + '</span>' +
+      '<span class="rw-write">发送 ' + tx + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    sub.appendChild(row);
+  }
+  return sub;
+}
+
+function renderInterfaceDirectionGroup(items) {
+  const byIface = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    if (!byIface[iface]) { byIface[iface] = {}; order.push(iface); }
+    byIface[iface][lb.direction || ''] = mt.value;
+  }
+  order.sort();
+  const container = el('div');
+  for (const iface of order) {
+    const d = byIface[iface];
+    const rx = d.rx !== undefined ? fmt(d.rx) : '--';
+    const tx = d.tx !== undefined ? fmt(d.tx) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">接收 ' + rx + '</span>' +
+      '<span class="rw-write">发送 ' + tx + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderInterfaceStatusGroup(items) {
+  const container = el('div');
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    const isUp = mt.value > 0;
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">' + (isUp ? 'up' : 'down') + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderDeviceDirectionGroup(items) {
+  const byDev = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const dev = lb.device || '';
+    if (!byDev[dev]) { byDev[dev] = {}; order.push(dev); }
+    byDev[dev][lb.direction || ''] = mt.value;
+  }
+  order.sort((a, b) => {
+    const na = parseInt(a.replace(/\D/g, ''), 10);
+    const nb = parseInt(b.replace(/\D/g, ''), 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return a < b ? -1 : 1;
+  });
+  const container = el('div');
+  for (const dev of order) {
+    const d = byDev[dev];
+    const rd = d.read !== undefined ? fmt(d.read) : '--';
+    const wr = d.write !== undefined ? fmt(d.write) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">读 ' + rd + '</span>' +
+      '<span class="rw-write">写 ' + wr + '</span>' +
+      '<span class="metric-labels">' + dev + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderSwapDetailGroup(items) {
+  const fields = {};
+  for (const mt of items) {
+    const f = (mt.labels || {}).field || '';
+    fields[f] = mt.value;
+  }
+  const total = fields.total ? fmtMB(fields.total) : '--';
+  const used = fields.used !== undefined ? fmtMB(fields.used) : '--';
+  const free = fields.free ? fmtMB(fields.free) : '--';
+  const row = el('div', 'metric-row space-detail-row');
+  row.innerHTML =
+    '<span class="metric-val">' + total + '</span>' +
+    '<span class="space-detail-used">' + used + ' used</span>' +
+    '<span class="space-detail-avail">' + free + ' free</span>';
+  const container = el('div');
+  container.appendChild(row);
+  return container;
+}
+
+function renderSpaceDetailGroup(items) {
+  const byMount = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const key = (lb.device || '') + '|' + (lb.mount_point || '');
+    if (!byMount[key]) { byMount[key] = {}; order.push(key); }
+    byMount[key][lb.field] = mt.value;
+    byMount[key].device = lb.device;
+    byMount[key].mount_point = lb.mount_point;
+    byMount[key].fstype = lb.fstype;
+  }
+  order.sort((a, b) => {
+    const pa = byMount[a].mount_point || '';
+    const pb = byMount[b].mount_point || '';
+    if (pa === '/') return -1;
+    if (pb === '/') return 1;
+    return pa < pb ? -1 : 1;
+  });
+  const container = el('div');
+  for (const key of order) {
+    const d = byMount[key];
+    const total = d.total ? fmtMB(d.total) : '--';
+    const used = d.used ? fmtMB(d.used) : '--';
+    const avail = d.available ? fmtMB(d.available) : '--';
+    const pct = (d.total && d.used) ? Math.round(d.used / d.total * 100) : 0;
+    const row = el('div', 'metric-row space-detail-row');
+    row.innerHTML =
+      '<span class="metric-val">' + total + '</span>' +
+      '<span class="space-detail-used">' + used + ' used</span>' +
+      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount_point || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
 // ---- state ----
 let collectors = [];
 let lastSnapshot = null;
@@ -849,13 +1012,27 @@ function renderDetail(compKey, snap) {
         '<span class="metric-group-toggle">' + (collapsed ? '▸' : '▾') + '</span>';
       const gb = el('div', 'metric-group-body');
       if (collapsed) gb.style.display = 'none';
-      for (const mt of items) {
-        const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
-        const row = el('div', 'metric-row');
-        row.innerHTML =
-          '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
-          '<span class="metric-labels">' + labels + '</span>';
-        gb.appendChild(row);
+      if (compKey === 'disk' && name === 'space_detail') {
+        gb.appendChild(renderSpaceDetailGroup(items));
+      } else if (compKey === 'memory' && name === 'swap_detail') {
+        gb.appendChild(renderSwapDetailGroup(items));
+      } else if (compKey === 'disk' && (name === 'iops' || name === 'throughput')) {
+        gb.appendChild(renderDeviceDirectionGroup(items));
+      } else if (compKey === 'network' && (name === 'throughput' || name === 'packet_count')) {
+        gb.appendChild(renderInterfaceDirectionGroup(items));
+      } else if (compKey === 'network' && name === 'interface_status') {
+        gb.appendChild(renderInterfaceStatusGroup(items));
+      } else if (compKey === 'network' && name === 'error_count') {
+        gb.appendChild(renderErrorCountGroup(items));
+      } else {
+        for (const mt of items) {
+          const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+          const row = el('div', 'metric-row');
+          row.innerHTML =
+            '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
+            '<span class="metric-labels">' + labels + '</span>';
+          gb.appendChild(row);
+        }
       }
       gh.onclick = () => {
         const open = gb.style.display !== 'none';
@@ -916,6 +1093,16 @@ async function fetchConfigData() {
       appVersion = c.version;
       const el = document.querySelector('.brand .subtitle');
       if (el) el.textContent = 'v' + appVersion + ' · 设备健康度';
+    }
+    if (c.started_at) {
+      const prev = sessionStorage.getItem('webStartedAt');
+      if (prev && prev !== String(c.started_at)) {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('mg:')) localStorage.removeItem(k);
+        }
+      }
+      sessionStorage.setItem('webStartedAt', String(c.started_at));
     }
   } catch (e) { /* ignore */ }
 }

@@ -20,6 +20,8 @@ import (
 // series length.
 const historyPoints = 60
 
+var webStartup = time.Now().Unix()
+
 type Server struct {
 	dir    string
 	logger *slog.Logger
@@ -139,6 +141,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"version":             version.Version,
+		"started_at":          webStartup,
 		"refresh_interval_ms": g.RefreshInterval,
 		"history_points":      historyPoints,
 	})
