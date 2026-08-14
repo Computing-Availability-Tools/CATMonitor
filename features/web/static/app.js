@@ -978,7 +978,7 @@ function renderDetail(compKey, snap) {
       item.innerHTML =
         '<span class="deduction-icon">⚠</span>' +
         '<span class="deduction-text">' + text + '</span>' +
-        '<span class="deduction-value">-' + dd.penalty + ' 分</span>';
+        '<span class="deduction-value">-' + (Math.round(dd.penalty * 10) / 10) + ' 分</span>';
       d.appendChild(item);
     }
     dbody.appendChild(d);
