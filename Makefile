@@ -1,5 +1,6 @@
 .PHONY: all build test test-verbose test-coverage test-stress-build \
-	test-stress-build-cpu test-stress-build-npu lint clean web dfee
+	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
+	audit-stress-release lint clean web dfee
 
 GO ?= go
 BIN=bin/catmonitor
@@ -39,7 +40,7 @@ test-verbose:
 test-coverage:
 	$(GO) test -cover ./...
 
-test-stress-build: test-stress-build-cpu test-stress-build-npu
+test-stress-build: test-stress-build-cpu test-stress-build-npu test-stress-deployment
 
 test-stress-build-cpu:
 	bash scripts/stress/tests/build_cpu_benchmarks_test.sh
@@ -48,6 +49,12 @@ test-stress-build-npu:
 	bash scripts/stress/tests/ascend_env_test.sh
 	bash scripts/stress/tests/build_npu_burn_image_test.sh
 	bash scripts/stress/tests/create_npu_burn_container_test.sh
+
+test-stress-deployment:
+	bash scripts/stress/tests/generate_stress_deployment_test.sh
+
+audit-stress-release:
+	bash scripts/stress/audit_stress_release.sh
 
 lint:
 	$(GO) vet ./...

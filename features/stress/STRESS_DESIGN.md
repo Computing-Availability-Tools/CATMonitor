@@ -26,12 +26,14 @@ Manager 并调用 `stress.Register`；它不恢复进程内采集、Web YAML 或
 CPU benchmark 的源码构建不属于 Go feature 或节点运行适配器：
 
 ```text
-管理员构建期                          节点部署期                  用户运行期
-build_cpu_benchmarks.sh              benchmark_check.sh         catmonitor stress
+管理员构建期                          节点部署期                         用户运行期
+build_cpu_benchmarks.sh              generate_stress_deployment.sh      catmonitor stress
   ├─ STREAM/HPL/HPCG 源码              ├─ 绝对资产路径             ├─ 选择固定 benchmark
   ├─ GCC/MPI/OpenBLAS                  ├─ MPI/NUMA/线程 profile     ├─ 互斥、超时与取消
   ├─ 安装 runtime 资产                 ├─ describe 当前节点事实     └─ 解析与保存报告
-  └─ build-manifest.json               └─ execute
+  └─ build-manifest.json               ├─ benchmark_check.sh + YAML
+                                       ├─ deployment manifest
+                                       └─ catmonitor stress doctor
 ```
 
 `scripts/stress/build_cpu_benchmarks.sh` 只接受管理员明确提供的源码、配置、工具链和
@@ -51,6 +53,12 @@ ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。HPCG 从独立 build 目录执�
 状态。分项构建会保留其他已安装项目的可信 manifest 片段。manifest 是构建时事实；
 运行期 `describe` 仍以当前文件、动态库、launcher 和节点资源为准，不用静态清单
 替代实时预检。
+
+`generate_stress_deployment.sh` 是构建与运行之间的唯一可重复组装层。它消费 CPU/NPU
+构建 manifest 和管理员提供的节点 profile，把模板变量安全渲染进源码目录外的 adapter，
+同时生成四项配置及部署 manifest。它不接管 asset build、容器生命周期或 benchmark
+执行。`stress doctor` 再通过 Manager 读取生成结果并执行实时只读预检；Web 配置 API
+复用同一判据，避免部署脚本、CLI 与页面形成三套可用性定义。
 
 NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是镜像：
 

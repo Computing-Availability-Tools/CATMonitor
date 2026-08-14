@@ -182,6 +182,61 @@ func TestHandlerDoesNotDescribeDisabledBenchmark(t *testing.T) {
 	}
 }
 
+func TestHandlerReportsFourBenchmarkDeploymentAvailable(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "benchmark_check.sh")
+	content := `#!/usr/bin/env bash
+CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1
+if [ "${1-}" != describe ]; then exit 2; fi
+case "${2-}" in stream|hpl|hpcg|npu_burn) ;; *) exit 2 ;; esac
+printf '{"protocol_version":1,"benchmark":"%s","parameters":[],"resources":{"mpi_processes":0,"threads_per_process":0,"total_workers":0,"runtime_seconds":0},"assets":[],"mpi":{"required":false,"implementation":"none","executable_abi":"not_applicable","status":"pass","message":"not required"},"preflight":{"status":"pass","message":"deployment precheck passed"}}\n' "$2"
+`
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	benchmarks := map[string]BenchmarkConfig{}
+	for _, name := range []string{"stream", "hpl", "hpcg", "npu_burn"} {
+		benchmarks[name] = BenchmarkConfig{Enabled: true, Timeout: time.Minute}
+	}
+	hpcg := benchmarks["hpcg"]
+	hpcg.ResultDir = dir
+	benchmarks["hpcg"] = hpcg
+	manager := NewManager(Config{
+		Enabled: true, WebEnabled: true, ScriptPath: script,
+		ReportPath: filepath.Join(dir, "stress-latest.json"), Benchmarks: benchmarks,
+	})
+	mux := http.NewServeMux()
+	Register(mux, manager, "127.0.0.1:9527", slog.Default())
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body, status := handlerGet(t, server.Client(), server.URL+"/api/stress/config")
+	if status != http.StatusOK {
+		t.Fatalf("config status=%d body=%s", status, body)
+	}
+	var response struct {
+		Enabled    bool `json:"enabled"`
+		Benchmarks []struct {
+			Name      string            `json:"name"`
+			Enabled   bool              `json:"enabled"`
+			Available bool              `json:"available"`
+			Profile   *ExecutionProfile `json:"profile"`
+		} `json:"benchmarks"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Enabled || len(response.Benchmarks) != 4 {
+		t.Fatalf("benchmarks=%d body=%s", len(response.Benchmarks), body)
+	}
+	for _, item := range response.Benchmarks {
+		if !item.Enabled || !item.Available || item.Profile == nil ||
+			item.Profile.Preflight.Status != CheckPass {
+			t.Fatalf("benchmark is not fully available: %+v", item)
+		}
+	}
+}
+
 func handlerMutation(t *testing.T, url, body string) *http.Request {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))

@@ -21,9 +21,21 @@ import (
 
 // Run parses and executes the top-level catmonitor stress command.
 func Run(args []string, logger *slog.Logger, stdout, stderr io.Writer) int {
+	mode := "run"
+	if len(args) > 0 && args[0] == "doctor" {
+		mode = "doctor"
+		args = args[1:]
+	}
 	if helpRequested(args) {
-		printUsage(stdout)
+		if mode == "doctor" {
+			printDoctorUsage(stdout)
+		} else {
+			printUsage(stdout)
+		}
 		return 0
+	}
+	if mode == "doctor" {
+		return runDoctor(args, logger, stdout, stderr)
 	}
 
 	configPath, names, output, err := parseArgs(args)
@@ -80,6 +92,7 @@ func helpRequested(args []string) bool {
 func printUsage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
   catmonitor stress [--bench hpl,hpcg,stream,npu_burn] [-c config.yaml] [-o json|table]
+  catmonitor stress doctor [-c config.yaml] [-o json|table]
 
 Run explicitly enabled Linux stress benchmarks.
 Without --bench, run default_benchmarks from the CATMonitor configuration.
@@ -90,6 +103,142 @@ Options:
   -c, --config      CATMonitor configuration file path
   -o, --output      json (default) or table
   -h, --help        Show this help`)
+}
+
+func printDoctorUsage(output io.Writer) {
+	fmt.Fprintln(output, `Usage:
+  catmonitor stress doctor [-c config.yaml] [-o json|table]
+
+Run read-only deployment checks for every configured stress benchmark.
+The command never starts a benchmark, container, or MPI workload.
+
+Options:
+  -c, --config      CATMonitor configuration file path
+  -o, --output      json (default) or table
+  -h, --help        Show this help`)
+}
+
+type doctorResult struct {
+	Status         string       `json:"status"`
+	FeatureEnabled bool         `json:"feature_enabled"`
+	WebEnabled     bool         `json:"web_enabled"`
+	ScriptPath     string       `json:"script_path,omitempty"`
+	ReportPath     string       `json:"report_path,omitempty"`
+	Benchmarks     []doctorItem `json:"benchmarks"`
+}
+
+type doctorItem struct {
+	Name         string                   `json:"name"`
+	Enabled      bool                     `json:"enabled"`
+	Available    bool                     `json:"available"`
+	Status       stress.CheckStatus       `json:"status"`
+	Message      string                   `json:"message"`
+	Profile      *stress.ExecutionProfile `json:"profile,omitempty"`
+	ProfileError string                   `json:"profile_error,omitempty"`
+}
+
+func runDoctor(args []string, logger *slog.Logger, stdout, stderr io.Writer) int {
+	configPath, output, err := parseDoctorArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress doctor:", err)
+		return 2
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress doctor: load config:", err)
+		return 1
+	}
+
+	manager := stress.NewManagerWithLogger(cfg.Stress, logger)
+	result := doctorResult{
+		Status:         "pass",
+		FeatureEnabled: cfg.Stress.Enabled,
+		WebEnabled:     cfg.Stress.WebEnabled,
+		ScriptPath:     cfg.Stress.ScriptPath,
+		ReportPath:     cfg.Stress.ReportPath,
+	}
+	names := make([]string, 0, len(cfg.Stress.Benchmarks))
+	for name := range cfg.Stress.Benchmarks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	enabledCount := 0
+	for _, name := range names {
+		benchmark := cfg.Stress.Benchmarks[name]
+		available, message := manager.Availability(name)
+		item := doctorItem{
+			Name: name, Enabled: benchmark.Enabled, Available: available,
+			Status: stress.CheckFail, Message: message,
+		}
+		if !benchmark.Enabled {
+			item.Status = stress.CheckUnsupported
+		} else {
+			enabledCount++
+			if cfg.Stress.Enabled {
+				profile, profileErr := manager.Describe(name)
+				item.Profile = profile
+				if profileErr != nil {
+					item.ProfileError = profileErr.Error()
+				}
+				if available {
+					item.Status = stress.CheckPass
+					if profileErr != nil || (profile != nil && profile.Preflight.Status == stress.CheckWarn) {
+						item.Status = stress.CheckWarn
+					}
+				}
+			}
+			if !available {
+				result.Status = "fail"
+			}
+		}
+		result.Benchmarks = append(result.Benchmarks, item)
+	}
+	if !cfg.Stress.Enabled || enabledCount == 0 {
+		result.Status = "fail"
+	}
+
+	if output == "table" {
+		printDoctorTable(stdout, result)
+	} else {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(stdout, string(data))
+	}
+	if result.Status != "pass" {
+		return 1
+	}
+	return 0
+}
+
+func parseDoctorArgs(args []string) (string, string, error) {
+	fs := flag.NewFlagSet("stress doctor", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := platform.ConfigPath()
+	output := "json"
+	fs.StringVar(&configPath, "config", configPath, "CATMonitor configuration file")
+	fs.StringVar(&configPath, "c", configPath, "CATMonitor configuration file")
+	fs.StringVar(&output, "output", output, "json or table")
+	fs.StringVar(&output, "o", output, "json or table")
+	if err := fs.Parse(args); err != nil {
+		return "", "", err
+	}
+	if fs.NArg() != 0 {
+		return "", "", fmt.Errorf("unknown argument %q", fs.Arg(0))
+	}
+	if output != "json" && output != "table" {
+		return "", "", fmt.Errorf("output must be json or table")
+	}
+	return configPath, output, nil
+}
+
+func printDoctorTable(output io.Writer, result doctorResult) {
+	fmt.Fprintf(output, "\nCATMonitor Stress Doctor  %s\n", strings.ToUpper(result.Status))
+	w := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Benchmark\tEnabled\tAvailable\tPreflight\tMessage")
+	for _, item := range result.Benchmarks {
+		fmt.Fprintf(w, "%s\t%t\t%t\t%s\t%s\n",
+			item.Name, item.Enabled, item.Available, strings.ToUpper(string(item.Status)), item.Message)
+	}
+	_ = w.Flush()
 }
 
 func parseArgs(args []string) (string, []string, string, error) {

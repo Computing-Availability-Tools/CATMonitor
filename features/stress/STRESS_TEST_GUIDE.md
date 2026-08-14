@@ -35,7 +35,9 @@
 bash -n features/stress/benchmark_check.sh
 bash -n scripts/stress/build_cpu_benchmarks.sh
 bash -n scripts/stress/build_npu_burn_image.sh
+bash -n scripts/stress/generate_stress_deployment.sh
 make test-stress-build
+make audit-stress-release
 gofmt -w features/stress features/stress/cli
 go test ./features/stress/... ./features/web ./cmd/catmonitor ./internal/config
 go test -race ./features/stress/... ./features/web
@@ -449,16 +451,64 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
 
 ## 4. 新装节点脚本
 
-仅在节点还没有正式脚本时，从模板创建部署副本：
+推荐从已经验收的 CPU runtime、CPU build manifest、NPU image manifest 和固定
+容器生成完整部署，而不是手工编辑模板。生成器不构建资产、不创建或启动容器、
+不运行 benchmark，也不会自行选择 `/etc`；它只写 `--output-dir`：
 
 ```bash
-install -d -m 0750 /etc/catmonitor /var/lib/catmonitor
-install -m 0750 \
-  "$CAT_ROOT/features/stress/benchmark_check.sh" \
-  /etc/catmonitor/benchmark_check.sh
+install -d -m 0750 /etc/catmonitor/stress /var/lib/catmonitor
+
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/stress \
+  --runtime-root /opt/catmonitor/benchmarks/runtime \
+  --cpu-manifest /opt/catmonitor/benchmarks/manifests/build-manifest.json \
+  --npu-manifest /var/tmp/catmonitor-npu-build/manifests/npu-burn-image-manifest.json \
+  --numactl /usr/bin/numactl \
+  --mpi-launcher /absolute/mpi/bin/mpirun \
+  --hpl-library-dir /absolute/openblas/lib \
+  --hpl-processes 8 --hpl-threads 12 \
+  --hpcg-processes 96 --hpcg-threads 1 \
+  --npu-runtime /usr/bin/docker \
+  --npu-container catmonitor-npuburn \
+  --npu-image catmonitor/npuburn:approved \
+  --npu-output-dir /var/lib/catmonitor/npu-burn-output \
+  --npu-device 0 \
+  --npu-chip-generation A3 \
+  --npu-cann '<实际版本>' \
+  --npu-torch-npu '<实际版本>' \
+  --npu-soc '<实际型号>' \
+  --npu-run-case quant_matmul
 ```
 
-编辑脚本顶部配置区，写入节点真实值：
+示例数值不是跨节点推荐配置。MPI 数量、线程数、NPU logical ID、代际和 workload
+必须替换为本节点已经验证并预留的值。生成结果为：
+
+```text
+/etc/catmonitor/stress/benchmark_check.sh
+/etc/catmonitor/stress/catmonitor-stress.yaml
+/etc/catmonitor/stress/stress-deployment-manifest.json
+```
+
+`catmonitor-stress.yaml` 是包含顶层 `stress:` 的有效配置片段，可直接用 `-c` 做
+验收，也可由配置管理合并进唯一的 CATMonitor 主配置。默认不授权 Web；完成取消、
+异常退出和资源隔离验收后，重新生成时显式加 `--enable-web`。已有输出默认拒绝覆盖，
+确认替换时使用 `--force`。仓库还提供仅用于结构参考的
+`configs/stress-full.example.yaml`，生产路径仍应由生成器产生。
+
+生成后先运行无负载检查：
+
+```bash
+./bin/catmonitor stress doctor \
+  -c /etc/catmonitor/stress/catmonitor-stress.yaml \
+  -o table
+```
+
+四项均为 `Available=true` 后，才进入逐项实机验收。Web 的
+`GET /api/stress/config` 使用相同 `Availability/Describe` 判据，因此 doctor 通过
+但 Web 不一致时，应先检查两者是否读取了同一份主配置和同一个脚本。
+
+只有在调试生成器本身或尚未具备完整 NPU 部署时，才直接从模板创建候选并手工维护
+顶部变量。手工模式必须完整填写：
 
 - STREAM：执行器、`numactl` 和线程数；
 - HPL：工作目录、执行器、库目录、MPI launcher、进程数和线程数；
@@ -714,6 +764,17 @@ fi
 ```
 
 ## 6. `describe` 无副作用预检
+
+优先执行聚合检查：
+
+```bash
+./bin/catmonitor stress doctor -c /etc/catmonitor/catmonitor.yaml -o table
+```
+
+`doctor` 检查所有已配置项目，但只把启用项目纳入整体 PASS/FAIL；feature 关闭、
+没有任何启用项目或任一启用项目不可用时返回 1。它不运行 benchmark、MPI 负载或
+NPU Burn，只执行与 Web 配置页相同的只读 `Availability/Describe`。JSON 输出会保留
+完整 profile，适合自动化验收。
 
 启用的 benchmark 必须先通过描述检查；NPU 节点配置完成后共四项：
 
@@ -1015,7 +1076,9 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] 管理员 bootstrap 动态映射全部现有 `/dev/davinciN`，固定容器 profile/结果 bind 正确且重复执行幂等
 - [ ] 固定容器 restart policy 符合部署选择（默认 `unless-stopped`），并通过既有容器一致性校验
 - [ ] A3 首次构建使用 `compat-profile=none`；任何补丁都有命名 profile、审计文件和哈希
+- [ ] 完整部署由 generator 生成 adapter、四项 YAML 和 deployment manifest，输入的 CPU/NPU manifest 哈希可追溯
 - [ ] 正式节点脚本位于源码目录外并通过 `bash -n`
+- [ ] `catmonitor stress doctor -o table` 显示四项已启用、可用且无 fail preflight
 - [ ] 所有启用项目（含 NPU Burn）的 `describe` 无副作用且无阻断性资产/ABI 错误
 - [ ] Docker/容器缺失时 CLI 与 Web 直接显示失败资产、路径和原因，禁用项不执行 describe
 - [ ] `describe npu_burn` 显示 logical namespace/有效 IDs，并在 workload 前拒绝 `npu-smi` Phy-ID
@@ -1029,6 +1092,7 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] profile 展开状态不被自动刷新清除
 - [ ] CLI 与 Web 双向共享报告并拒绝并发作业
 - [ ] 单次缩短超时会改变执行配置哈希但不修改 YAML
+- [ ] `audit_stress_release.sh` 通过；若发布包携带外部二进制，已另行生成最终产物 SBOM 和许可证清单
 - [ ] 回滚文件和操作步骤已验证
 
 ### 14.1 V5 pristine A3 topology 与产品链闭环

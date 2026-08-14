@@ -164,12 +164,29 @@ ID，容器探测失败时不得回退宿主机。describe v1 通过 `topology_s
 必需资产失败，并提示有效 logical IDs。describe v1 可通过新增参数
 `device_namespace=npu_burn_logical` 与 `available_devices` 向旧消费者兼容地暴露事实。
 
+### 1.4 完整部署生成契约
+
+仓库必须提供 `scripts/stress/generate_stress_deployment.sh`，把已经生成的 CPU build
+manifest、NPU image manifest、CPU runtime 根目录、MPI/线程规模和管理员固定 NPU
+容器 profile 组合为完整节点部署。输出必须至少包含：
+
+- 从当前仓库模板渲染、可通过 `bash -n` 的 `benchmark_check.sh`；
+- 顶层 `stress:` 下四项全部启用的 YAML；
+- 记录两份输入 manifest 哈希、adapter/config 哈希及有效资源规模的部署 manifest。
+
+生成器不得下载/构建 benchmark、创建/启动容器、运行负载、自动选择 NPU、修改
+源码目录或默认写入 `/etc`。输出目录必须显式提供；已有文件默认拒绝覆盖，只有
+`--force` 可替换。HPL/HPCG launcher/线程规模、NPU logical ID、芯片代际和 workload
+必须由管理员显式给出。主配置的安全默认值继续保持全部关闭；完整启用示例放在
+`configs/stress-full.example.yaml`，不改变未部署资产节点的默认行为。
+
 ## 2. CLI 与配置
 
 规范命令为：
 
 ```bash
 catmonitor stress -o table
+catmonitor stress doctor -o table
 ```
 
 无参数时从主配置读取 `default_benchmarks` 并启动作业；`--help` 只显示帮助。
@@ -177,6 +194,12 @@ catmonitor stress -o table
 配置、资产、执行或结果错误返回 1。`-o json` 回显完整报告，`-o table`
 将状态映射为 `OK` 等表格标签并把各数值拆成独立行。
 命令行适配实现位于 `features/stress/cli`；`cmd/catmonitor` 只负责顶层命令分发。
+
+`stress doctor` 是只读部署验收命令：它不得提交作业，而应对配置中的每个 benchmark
+复用 Manager 的 `Availability/Describe` 判据，输出启用状态、可用性、preflight、
+原因和 profile。feature 未启用、没有启用项目或任一启用项目不可用时返回 1；参数
+错误返回 2；全部启用项目可用时返回 0。禁用项目只显示，不触发 describe 或容器探测。
+`-o json|table` 与默认配置路径规则和运行命令一致。
 
 唯一领域配置位于 CATMonitor 主配置顶层：
 
@@ -356,6 +379,12 @@ Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义�
 构建；Windows 交叉构建。容器节点还必须实测正常结束、外层超时、用户取消和
 Web 进程异常退出后的容器内残留进程。真实性能只在资产与拓扑匹配的 Linux
 节点验收。
+
+完整部署测试必须覆盖四项 adapter 渲染、YAML/manifest、已有输出拒绝覆盖、非法
+资源参数和缺失 manifest；CLI `stress doctor` 与 Web `/api/stress/config` 必须用
+四项 fixture 验证全部 `available=true`，并验证 feature/benchmark 禁用时不触发
+describe。发布审计必须机械校验 bundled NPU Burn 来源、逐文件哈希、许可证复制和
+runtime package 清单，同时明确不把外部 CPU/NPU 构建 manifest 冒充为 SBOM。
 
 构建工具测试还必须覆盖 CPU 三项事务安装，以及 NPU 镜像默认内置来源、开发
 覆盖来源、来源元数据缺失/非法、逐文件篡改、无补丁/显式补丁、源码不变、拒绝

@@ -6,6 +6,7 @@ CLI 参数解析与结果展示位于 `features/stress/cli` 子包，主程序�
 
 ```bash
 catmonitor stress -o table
+catmonitor stress doctor -o table
 ```
 
 Web 入口为 `http://127.0.0.1:9527/stress/`。它拥有自己的嵌入式 SPA 和
@@ -172,10 +173,13 @@ sudo bash scripts/stress/build_cpu_benchmarks.sh \
   --openblas-lib /absolute/path/to/openblas/lib
 ```
 
-构建完成后，管理员仍需把已安装的绝对路径和实际运行规模写入源码目录外的
-`/etc/catmonitor/benchmark_check.sh`，再执行逐项 `describe` 和实机验收。构建
-manifest 记录编译时事实；`describe` 报告当前节点事实，两者职责不同。完整参数、
-增量构建、覆盖策略和验收步骤见 [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)。
+CPU 资产和固定 NPU 容器准备完成后，使用
+`scripts/stress/generate_stress_deployment.sh` 一次生成源码目录外的完整
+`benchmark_check.sh`、四项配置和部署 manifest，不再靠逐行手工复制节点变量。
+随后执行 `catmonitor stress doctor -o table`，在不启动任何负载的情况下按与 Web
+相同的判据检查四项可用性。构建 manifest 记录构建时事实；部署 manifest 记录配置
+输入；`describe/doctor` 报告当前节点事实，三者职责不同。完整参数、增量构建、
+覆盖策略和验收步骤见 [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)。
 
 ## 文档
 
@@ -184,3 +188,5 @@ manifest 记录编译时事实；`describe` 报告当前节点事实，两者职
 | [STRESS_SPEC.md](STRESS_SPEC.md) | 功能、配置、状态、CLI 与 API 契约 |
 | [STRESS_DESIGN.md](STRESS_DESIGN.md) | 包边界、执行、互斥、持久化和 Web 设计 |
 | [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md) | CPU/NPU 资产构建、新装/升级、candidate 迁移、实机验收与回滚 |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | 仓库分发物与管理员外部资产的许可证边界 |
+| [OSS_RELEASE_AUDIT.md](OSS_RELEASE_AUDIT.md) | 发布审计命令、检查范围和 SBOM 闭环条件 |
