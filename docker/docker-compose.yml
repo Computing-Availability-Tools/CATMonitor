@@ -9,6 +9,7 @@ services:
       dockerfile: docker/Dockerfile.npu
     privileged: true
     network: host              # share host network namespace (see real NICs in /sys/class/net)
+    pid: host                  # share host PID namespace (read host /proc/1/mounts for disk space)
     # --privileged already grants access to all devices (including /dev/davinci*).
     # To use tighter security instead, replace privileged with:
     #   devices:
@@ -16,10 +17,9 @@ services:
     #     - /dev/davinci_manager
     volumes:
       # Host mounts for accurate disk space metrics in container mode:
-      # /proc/mounts gives the host's real mount point list; / gives statfs
-      # access to the host filesystem. Without these, disk metrics reflect
+      # / gives statfs access to host filesystems; host /proc/1/mounts is read
+      # via pid:host (no bind-mount needed). Without these, disk metrics reflect
       # container bind mounts instead of host filesystems.
-      - /proc/1/mounts:/host/proc/mounts:ro
       - /:/host:ro
       # NPU driver + nnae + toolkit — remove these lines on non-NPU environments
       - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
