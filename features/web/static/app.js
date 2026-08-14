@@ -24,9 +24,10 @@ const METRIC_NAMES = {
   process_count: '进程数', model_info: '型号', temperature: '温度', frequency: '频率',
   space_usage: '空间使用率', space_detail: '空间明细', throughput: '吞吐量',
   io_wait: 'IO Wait', io_errors: 'IO 错误', iops: 'IOPS',
-  smart_status: 'SMART', smart_temperature: 'SMART 温度',
+  smart_status: 'SMART 状态', smart_temperature: 'SMART 温度',
   memory_usage: '显存使用率', memory_detail: '明细',
-  power_draw: '功耗', fan_speed: '风扇', ecc_errors: 'ECC 错误',
+  power_draw: '功耗', fan_speed: '风扇转速', ecc_errors: 'ECC 错误',
+  inlet_temp: '进风口温度', outlet_temp: '出风口温度', fan_power: '风扇功率',
   clock_frequency: '频率', utilization: '使用率', health_status: '健康状态',
   swap_usage: 'Swap 使用率', swap_detail: 'Swap 明细', oom_count: 'OOM 次数', page_faults: '页错误',
   rx_bytes_total: '接收字节', tx_bytes_total: '发送字节',
@@ -250,6 +251,44 @@ function renderInterfaceStatusGroup(items) {
     row.innerHTML =
       '<span class="rw-read">' + (isUp ? 'up' : 'down') + '</span>' +
       '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderFanSpeedGroup(items) {
+  const byFan = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const fan = lb.fan || '';
+    if (!byFan[fan]) { byFan[fan] = {}; order.push(fan); }
+    byFan[fan][lb.direction || ''] = mt.value;
+  }
+  order.sort((a, b) => parseInt(a) - parseInt(b));
+  const container = el('div');
+  for (const fan of order) {
+    const d = byFan[fan];
+    const parts = [];
+    if (d.F !== undefined) parts.push('<span class="rw-read">前 ' + fmt(d.F) + '</span>');
+    if (d.R !== undefined) parts.push('<span class="rw-write">后 ' + fmt(d.R) + '</span>');
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML = parts.join('') + '<span class="metric-labels">风扇 ' + fan + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderSmartStatusGroup(items) {
+  const container = el('div');
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const passed = mt.value >= 1;
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read" style="color:' + (passed ? 'var(--ok)' : 'var(--crit)') + '">' +
+      (passed ? 'PASSED' : 'FAILED') + '</span>' +
+      '<span class="metric-labels">' + (lb.device || '--') + '</span>';
     container.appendChild(row);
   }
   return container;
@@ -1022,6 +1061,10 @@ function renderDetail(compKey, snap) {
         gb.appendChild(renderInterfaceDirectionGroup(items));
       } else if (compKey === 'network' && name === 'interface_status') {
         gb.appendChild(renderInterfaceStatusGroup(items));
+      } else if (compKey === 'chassis' && name === 'fan_speed') {
+        gb.appendChild(renderFanSpeedGroup(items));
+      } else if (compKey === 'disk' && name === 'smart_status') {
+        gb.appendChild(renderSmartStatusGroup(items));
       } else if (compKey === 'network' && name === 'error_count') {
         gb.appendChild(renderErrorCountGroup(items));
       } else {
