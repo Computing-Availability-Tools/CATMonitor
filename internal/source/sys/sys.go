@@ -55,6 +55,28 @@ type NetIfaceInfo struct {
 // /sys/block/<dev>/. Works without root and without smartmontools, so disk
 // count + capacity + model are available even on virtual machines where
 // smartctl/dmidecode are absent.
+
+// virtualInterfacePrefixes lists interface name prefixes that are filtered
+// out by IsVirtualInterface. These are virtual/software interfaces (Docker,
+// Kubernetes Calico/CNI, libvirt, flannel, OVS, dummy) with no hardware
+// identity and no monitoring value.
+var virtualInterfacePrefixes = []string{
+	"lo", "cali", "cni", "veth", "br-", "virbr", "flannel",
+	"ovs-system", "dummy", "endvnic",
+}
+
+// IsVirtualInterface reports whether the interface name matches a known
+// virtual/software prefix. Used by both the network collector (Collect) and
+// the snapshot hwinfo (netInfo) to ensure consistent filtering.
+func IsVirtualInterface(name string) bool {
+	for _, p := range virtualInterfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 type BlockDev struct {
 	Name      string // "sda", "nvme0n1", ...
 	Model     string // /sys/block/<dev>/device/model (empty for some virt devs)
@@ -397,7 +419,8 @@ func isRealBlockDevice(name string) bool {
 		strings.HasPrefix(name, "ram") ||
 		strings.HasPrefix(name, "sr") ||
 		strings.HasPrefix(name, "zram") ||
-		strings.HasPrefix(name, "md") {
+		strings.HasPrefix(name, "md") ||
+		strings.HasPrefix(name, "dm-") {
 		return false
 	}
 	return true

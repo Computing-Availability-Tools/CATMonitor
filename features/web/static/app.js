@@ -710,7 +710,13 @@ function openSpecsModal(snap) {
   const seen = {};
   for (const comp of order) {
     seen[comp] = true;
-    if (groups[comp] && groups[comp].length) body.appendChild(specsGroup(comp, groups[comp]));
+    if (groups[comp] && groups[comp].length) {
+      if (comp === 'memory') {
+        body.appendChild(specsGroupMemory(groups[comp]));
+      } else {
+        body.appendChild(specsGroup(comp, groups[comp]));
+      }
+    }
   }
   for (const comp in groups) {
     if (!seen[comp] && groups[comp].length) body.appendChild(specsGroup(comp, groups[comp]));
@@ -910,7 +916,14 @@ function summaryCard(compKey, snap) {
       const mm = pickMetric(metrics, spec);
       if (!mm) continue;
       kv.appendChild(elText('div', 'k', METRIC_NAMES[mm.name] || mm.name));
-      const v = el('div', 'v'); v.textContent = fmt(mm.value) + ' ' + (mm.unit || '');
+      const v = el('div', 'v');
+      if (mm.name === 'smart_status') {
+        v.textContent = mm.value >= 1 ? 'PASSED' : 'FAILED';
+      } else if (mm.name === 'interface_status') {
+        v.textContent = mm.value > 0 ? 'up' : 'down';
+      } else {
+        v.textContent = fmt(mm.value) + ' ' + (mm.unit || '');
+      }
       kv.appendChild(v);
     }
     body.appendChild(kv);
@@ -965,7 +978,7 @@ function renderDetail(compKey, snap) {
       item.innerHTML =
         '<span class="deduction-icon">⚠</span>' +
         '<span class="deduction-text">' + text + '</span>' +
-        '<span class="deduction-value">-' + dd.penalty + ' 分</span>';
+        '<span class="deduction-value">-' + (Math.round(dd.penalty * 10) / 10) + ' 分</span>';
       d.appendChild(item);
     }
     dbody.appendChild(d);

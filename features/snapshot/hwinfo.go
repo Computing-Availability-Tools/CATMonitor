@@ -266,7 +266,7 @@ func (c *hwCollector) netInfo(now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	idx := 0
 	for _, iface := range ifaces {
-		if iface == "lo" {
+		if sys.IsVirtualInterface(iface) {
 			continue
 		}
 		info, err := sys.Default().NetInterfaceInfo(iface)
