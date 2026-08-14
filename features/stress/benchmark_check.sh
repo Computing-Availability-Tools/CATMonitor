@@ -320,9 +320,11 @@ probe_npu_logical_devices() {
                     /bin/sh -c '
                         lspci_path=$(command -v lspci) || exit 127
                         output=$("$lspci_path" -D -d 19e5:) || exit 70
+                        # Keep both predicates aligned with the two-stage
+                        # filtering in upstream get_npu_numa_topology().
                         printf "%s\n" "$output" |
                             LC_ALL=C sort |
-                            awk '\''/Processing accelerators/ && /Device/ { print count; count++ }'\''
+                            awk '\''BEGIN { count = 0 } /Processing accelerators/ && /Device/ { print count; count++ }'\''
                     ' 2>/dev/null
             ) || {
                 NPU_DEVICE_MESSAGE="cannot enumerate NPU Burn PCI topology in the fixed container; ensure pciutils/lspci is installed and executable"

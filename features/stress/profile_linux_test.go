@@ -4,6 +4,7 @@ package stress
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,6 +244,11 @@ func TestDispatcherAcceptsDevice14OnSixteenDevicePCITopology(t *testing.T) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	var lspciOutput strings.Builder
+	for id := 0; id < 16; id++ {
+		fmt.Fprintf(&lspciOutput, "0000:%02x:00.0 Processing accelerators: Huawei Technologies Co., Ltd. Device d803\n", id)
+	}
+	writeExecutable(t, dir, "lspci", "#!/bin/sh\nprintf '%s' "+shellLiteral(lspciOutput.String())+"\n")
 	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
 case "$1" in
   inspect) printf 'true|catmonitor/npuburn:a3-v5\n' ;;
@@ -250,7 +256,7 @@ case "$1" in
     if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
       seq 0 15
     elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
-      seq 0 15
+      PATH=`+shellLiteral(dir)+`:"$PATH" /bin/sh -c "$5"
     elif [ "${5-}" = '/usr/bin/test -x "$1"' ]; then
       exit 0
     else

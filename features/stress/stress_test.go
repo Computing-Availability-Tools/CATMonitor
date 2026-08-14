@@ -178,6 +178,7 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		`probe_npu_container`,
 		`/usr/bin/test -x "$1"`,
 		`lspci_path=$(command -v lspci)`,
+		`BEGIN { count = 0 } /Processing accelerators/ && /Device/ { print count; count++ }`,
 		`summarize_npu_burn_csv`,
 		`--sdc_detect`,
 	} {
@@ -209,6 +210,43 @@ func TestBundledDispatcherIsGenericHostTemplate(t *testing.T) {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("benchmark_check.sh contains host-specific or unsupported value %q", forbidden)
 		}
+	}
+}
+
+func TestDispatcherPCILogicalIDEnumerationIsZeroBased(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("awk-based PCI enumeration is Linux-only")
+	}
+	const program = `BEGIN { count = 0 } /Processing accelerators/ && /Device/ { print count; count++ }`
+	seen := make(map[string]bool)
+	for _, commandName := range []string{"awk", "mawk", "gawk"} {
+		commandPath, err := exec.LookPath(commandName)
+		if err != nil || seen[commandPath] {
+			continue
+		}
+		seen[commandPath] = true
+		for _, acceleratorCount := range []int{1, 16} {
+			t.Run(commandName+"_"+strconv.Itoa(acceleratorCount), func(t *testing.T) {
+				var input strings.Builder
+				var expected strings.Builder
+				for id := 0; id < acceleratorCount; id++ {
+					fmt.Fprintf(&input, "0000:%02x:00.0 Processing accelerators: Huawei Technologies Co., Ltd. Device d803\n", id)
+					fmt.Fprintln(&expected, id)
+				}
+				cmd := exec.Command(commandPath, program)
+				cmd.Stdin = strings.NewReader(input.String())
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("%s failed: %v: %s", commandName, err, output)
+				}
+				if string(output) != expected.String() {
+					t.Fatalf("%s emitted %q, want %q", commandName, output, expected.String())
+				}
+			})
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("no awk implementation is available")
 	}
 }
 
