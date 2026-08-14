@@ -19,7 +19,7 @@ services:
       # /proc/mounts gives the host's real mount point list; / gives statfs
       # access to the host filesystem. Without these, disk metrics reflect
       # container bind mounts instead of host filesystems.
-      - /proc/mounts:/host/proc/mounts:ro
+      - /proc/1/mounts:/host/proc/mounts:ro
       - /:/host:ro
       # NPU driver + nnae + toolkit — remove these lines on non-NPU environments
       - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro

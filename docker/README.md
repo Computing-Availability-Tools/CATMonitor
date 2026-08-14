@@ -93,7 +93,7 @@ docker volume create cm-data
 
 ```bash
 docker run -d --name catmonitor --privileged --network host \
-  -v /proc/mounts:/host/proc/mounts:ro \
+  -v /proc/1/mounts:/host/proc/mounts:ro \
   -v /:/host:ro \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
@@ -230,7 +230,7 @@ docker/docker/build.sh generic
 
 # 启动（不需要 driver/nnae 挂载、device、LD_LIBRARY_PATH）
 docker run -d --name catmonitor --privileged --network host \
-  -v /proc/mounts:/host/proc/mounts:ro \
+  -v /proc/1/mounts:/host/proc/mounts:ro \
   -v /:/host:ro \
   -v /etc/os-release:/etc/os-release:ro \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
