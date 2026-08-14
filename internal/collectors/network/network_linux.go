@@ -3,7 +3,6 @@
 package network
 
 import (
-	"strings"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
@@ -11,19 +10,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
 
-var virtualInterfacePrefixes = []string{
-	"lo", "cali", "cni", "veth", "br-", "virbr", "flannel",
-	"ovs-system", "dummy", "endvnic",
-}
-
-func isVirtualInterface(name string) bool {
-	for _, p := range virtualInterfacePrefixes {
-		if strings.HasPrefix(name, p) {
-			return true
-		}
-	}
-	return false
-}
+func isVirtualInterface(name string) bool { return sys.IsVirtualInterface(name) }
 
 func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 	if !collector.AnyWanted("network", []string{"throughput", "packet_count", "error_count", "rx_bytes_total", "tx_bytes_total", "connection_count", "interface_status"}) {
