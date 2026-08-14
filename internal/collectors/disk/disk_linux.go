@@ -16,8 +16,8 @@ import (
 )
 
 func init() {
-	if _, err := os.Stat("/host/proc/mounts"); err == nil {
-		proc.SetMountsPath("/host/proc/mounts")
+	if _, err := os.Stat("/host"); err == nil {
+		proc.SetMountsPath("/proc/1/mounts")
 		statfs.SetHostPrefix("/host")
 	}
 }
