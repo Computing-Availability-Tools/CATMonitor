@@ -40,6 +40,8 @@ func evaluateCPU(metrics []collector.Metric, maxScore int) ComponentScore {
 	threshold := 8.0
 	if cn := findMetric(metrics, "cpu", "core_num", "", ""); cn != nil && cn.Value > 0 {
 		threshold = cn.Value * 2
+	} else if cn := findMetric(metrics, "cpu", "online_core_num", "", ""); cn != nil && cn.Value > 0 {
+		threshold = cn.Value * 2
 	}
 	if load := findMetric(metrics, "cpu", "load_average", "interval", "1m"); load != nil && load.Value > threshold {
 		d := Deduction{Rule: "load>cores*2", Penalty: float64(maxScore) * 0.20}
