@@ -677,7 +677,7 @@ func TestManagerRunsConfiguredStreamScript(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
 	streamOutput := "#!/bin/sh\necho 'Copy: 1000.1'\necho 'Scale: 900.2'\necho 'Add: 800.3'\necho 'Triad: 700.4'\n"
-	if err := os.WriteFile(script, []byte(streamOutput), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture(streamOutput)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -700,7 +700,7 @@ func TestManagerRunsConfiguredStreamScript(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if report.Status != StatusHealthy || report.HealthCondition != "Healthy" {
+	if report.Status != StatusHealthy {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	if got := report.Benchmarks[0].Values["copy_mb_s"]; got != 1000.1 {
@@ -727,7 +727,7 @@ echo "WR00R2R4 20000 128 2 2 30.50 1.0000e+02"
 echo "1 tests completed and passed residual checks,"
 echo "0 tests completed and failed residual checks,"
 `
-	if err := os.WriteFile(script, []byte(hplOutput), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture(hplOutput)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -750,7 +750,7 @@ echo "0 tests completed and failed residual checks,"
 			t.Fatal(err)
 		}
 	}
-	if report.Status != StatusHealthy || report.HealthCondition != "Healthy" {
+	if report.Status != StatusHealthy {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	values := report.Benchmarks[0].Values
@@ -776,7 +776,7 @@ printf '%s\n' \
   'Final Summary::Results are valid but execution time (sec) is=61' \
   > '` + resultPath + `'
 `
-	if err := os.WriteFile(script, []byte(hpcgOutput), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture(hpcgOutput)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -799,7 +799,7 @@ printf '%s\n' \
 			t.Fatal(err)
 		}
 	}
-	if report.Status != StatusHealthy || report.HealthCondition != "Healthy" {
+	if report.Status != StatusHealthy {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	result := report.Benchmarks[0]
@@ -843,7 +843,7 @@ func TestManagerTreatsConfiguredTimeLimitAsSuccessfulBenchmark(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nwhile :; do :; done\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -868,7 +868,7 @@ func TestManagerTreatsConfiguredTimeLimitAsSuccessfulBenchmark(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if report.Status != StatusHealthy || report.HealthCondition != "Healthy" {
+	if report.Status != StatusHealthy {
 		t.Fatalf("unexpected time-limit report: %+v", report)
 	}
 	for _, result := range report.Benchmarks {
@@ -884,7 +884,7 @@ func TestManagerRejectsAscendNPUBurnOuterTimeout(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nwhile :; do :; done\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -913,7 +913,7 @@ func TestManagerRetainsAscendNPUBurnFailureMetrics(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
 	content := "#!/bin/sh\nprintf '%s\\n' 'CATMONITOR_NPU_BURN_SUMMARY devices=1 cases=2 passed=1 failed=1 errors=1 case_time_seconds=4.5'\nexit 1\n"
-	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture(content)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -943,7 +943,7 @@ func TestManagerRejectsUnwritableInitialReport(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nexit 0\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	notDirectory := filepath.Join(dir, "not-a-directory")
@@ -970,7 +970,7 @@ func TestManagerReportsLaterPersistenceFailure(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'Copy: 1\\nScale: 2\\nAdd: 3\\nTriad: 4\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nprintf 'Copy: 1\\nScale: 2\\nAdd: 3\\nTriad: 4\\n'\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -1009,7 +1009,7 @@ func TestManagerRejectsConcurrentJobAndCancelsActiveJob(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nwhile :; do :; done\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -1044,7 +1044,7 @@ func TestManagerReloadsPersistedReport(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
 	reportPath := filepath.Join(dir, "stress-latest.json")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'Copy: 1\\nScale: 2\\nAdd: 3\\nTriad: 4\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nprintf 'Copy: 1\\nScale: 2\\nAdd: 3\\nTriad: 4\\n'\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := Config{
@@ -1171,7 +1171,7 @@ func TestManagersShareLinuxJobLockAndLiveReport(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nwhile :; do :; done\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := Config{
@@ -1313,7 +1313,7 @@ func TestManagerShutdownCancelsActiveJob(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nwhile :; do :; done\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
@@ -1388,7 +1388,7 @@ func TestManagerEmitsStructuredLifecycleLogs(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'Copy: 1\\nScale: 2\\nAdd: 3\\nTriad: 4\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nprintf 'Copy: 1\\nScale: 2\\nAdd: 3\\nTriad: 4\\n'\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
@@ -1492,6 +1492,23 @@ func writeExecutable(t *testing.T, dir, name, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// benchmarkFixture adds the mandatory, read-only describe v1 protocol to a
+// workload-only script used by Manager tests. Tests that exercise malformed or
+// missing describe behavior deliberately use writeExecutable directly.
+func benchmarkFixture(content string) string {
+	newline := strings.IndexByte(content, '\n')
+	if newline < 0 || !strings.HasPrefix(content, "#!") {
+		panic("benchmark fixture must start with a shebang")
+	}
+	describe := `CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1
+if [ "${1-}" = "describe" ]; then
+  printf '{"protocol_version":1,"benchmark":"%s","parameters":[],"resources":{"mpi_processes":0,"threads_per_process":0,"total_workers":0,"runtime_seconds":0},"assets":[],"mpi":{"required":false,"implementation":"none","executable_abi":"not_applicable","status":"pass","message":"not required"},"preflight":{"status":"pass","message":"deployment precheck passed"}}\n' "$2"
+  exit 0
+fi
+`
+	return content[:newline+1] + describe + content[newline+1:]
 }
 
 func shellLiteral(value string) string {

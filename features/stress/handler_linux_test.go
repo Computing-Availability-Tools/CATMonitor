@@ -18,7 +18,7 @@ import (
 func TestHandlerOwnsStandaloneUIAndAPI(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "benchmark_check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture("#!/bin/sh\nsleep 2\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := Config{

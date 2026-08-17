@@ -131,7 +131,10 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 	}
 	profiles := make(map[string]*ExecutionProfile, len(selected))
 	for _, name := range selected {
-		profile, _ := m.describeWithTimeout(name, options.Timeout)
+		profile, err := m.describeWithTimeout(name, options.Timeout)
+		if err != nil {
+			return Report{}, fmt.Errorf("benchmark %q describe/preflight failed: %w", name, err)
+		}
 		profiles[name] = profile
 	}
 	releaseLock, err := acquireJobLock(m.cfg.ReportPath)
@@ -157,7 +160,6 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 		Platform:            runtime.GOOS,
 		TimeoutSeconds:      options.Timeout.Milliseconds() / 1000,
 		Status:              StatusRunning,
-		HealthCondition:     "Running",
 		ConfigurationSHA256: aggregateConfigurationSHA256(selected, profiles),
 	}
 	for _, name := range selected {
@@ -283,7 +285,7 @@ func (m *Manager) run(ctx context.Context, jobID string, names []string, timeout
 	report := job.report
 	report.FinishedAt = time.Now()
 	report.Timestamp = report.FinishedAt
-	report.Status, report.HealthCondition = aggregateReportStatus(report.Benchmarks)
+	report.Status = aggregateReportStatus(report.Benchmarks)
 	_ = m.persistReportLocked(&report)
 	if err := m.appendHistoryFile(report); err != nil {
 		m.logError("stress history persistence failed", "job_id", report.JobID, "error", err)
@@ -297,18 +299,16 @@ func (m *Manager) run(ctx context.Context, jobID string, names []string, timeout
 	m.logInfo("stress job finished", "job_id", report.JobID, "initiator", report.Initiator, "status", report.Status, "duration_ms", report.FinishedAt.Sub(report.StartedAt).Milliseconds(), "report_error", report.ReportError)
 }
 
-func aggregateReportStatus(benchmarks []BenchmarkResult) (Status, string) {
+func aggregateReportStatus(benchmarks []BenchmarkResult) Status {
 	allHealthy := len(benchmarks) > 0
-	hasTimeout, hasCancelled := false, false
+	hasCancelled := false
 	hasUnavailable, hasUnsupported := false, false
 	for _, benchmark := range benchmarks {
 		switch benchmark.Status {
 		case StatusHealthy, StatusTimeLimitReached:
 			continue
 		case StatusUnhealthy:
-			return StatusUnhealthy, "Unhealthy"
-		case StatusTimeout:
-			hasTimeout = true
+			return StatusUnhealthy
 		case StatusCancelled:
 			hasCancelled = true
 		case StatusUnavailable:
@@ -316,26 +316,23 @@ func aggregateReportStatus(benchmarks []BenchmarkResult) (Status, string) {
 		case StatusUnsupported:
 			hasUnsupported = true
 		default:
-			return StatusUnhealthy, "Unhealthy"
+			return StatusUnhealthy
 		}
 		allHealthy = false
 	}
 	if allHealthy {
-		return StatusHealthy, "Healthy"
-	}
-	if hasTimeout {
-		return StatusTimeout, "Incomplete"
+		return StatusHealthy
 	}
 	if hasCancelled {
-		return StatusCancelled, "Incomplete"
+		return StatusCancelled
 	}
 	if hasUnavailable {
-		return StatusUnavailable, "Unavailable"
+		return StatusUnavailable
 	}
 	if hasUnsupported {
-		return StatusUnsupported, "Unsupported"
+		return StatusUnsupported
 	}
-	return StatusUnhealthy, "Unhealthy"
+	return StatusUnhealthy
 }
 
 func (m *Manager) runBenchmark(ctx context.Context, name string, timeoutOverride time.Duration, profile *ExecutionProfile) BenchmarkResult {
@@ -451,9 +448,9 @@ func effectiveTimeout(configured time.Duration) time.Duration {
 }
 
 // Availability combines the basic CATMonitor deployment checks with the
-// dispatcher's read-only describe/preflight protocol. Legacy host adapters
-// remain runnable but are reported with a compatibility warning until they
-// implement describe.
+// dispatcher's read-only describe/preflight protocol. A missing or invalid
+// describe response blocks execution because CATMonitor cannot safely verify
+// the effective workload and required assets.
 func (m *Manager) Availability(name string) (bool, string) {
 	if runtime.GOOS != "linux" {
 		return false, "stress execution is supported on Linux only"
@@ -479,7 +476,7 @@ func (m *Manager) Availability(name string) (bool, string) {
 	}
 	profile, err := m.Describe(name)
 	if err != nil {
-		return true, "basic deployment precheck passed; describe protocol unavailable: " + err.Error()
+		return false, "describe/preflight failed: " + err.Error()
 	}
 	switch profile.Preflight.Status {
 	case CheckFail:

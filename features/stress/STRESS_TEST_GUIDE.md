@@ -628,7 +628,7 @@ NPU_BURN_EXECUTABLE="/usr/local/bin/catmonitor-npu-burn"
 NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
 NPU_BURN_RUN_CASE="quant_matmul"
 NPU_BURN_GROUP=""
-NPU_BURN_DEVICE="14"
+NPU_BURN_DEVICE="0"
 NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
 NPU_BURN_CHIP_GENERATION="A3"
 ```
@@ -636,23 +636,13 @@ NPU_BURN_CHIP_GENERATION="A3"
 对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用固定
 容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical device ID，不是
 `npu-smi` 的 Phy-ID，也不能根据 PyTorch logical device count 推导。必须明确选择
-管理员已经预留的设备，例如 `14` 或 `14,15`；不得依靠脚本自动选择所谓空闲卡。
-上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。当前 A3 V5 实机
-已经确认的事实为：
-
-| 编号来源 | 本次节点 | 用途 |
-|---|---|---|
-| Linux device node | `/dev/davinci0`～`/dev/davinci15` | 固定容器 identity map |
-| `lspci -D -d 19e5:` | 16 个 Ascend accelerator | upstream topology 输入 |
-| NPU Burn `--device` | 已验证 `0`～`15` | V5 实机 topology logical ID |
-| `torch.npu.device_count()` | `16` | 辅助事实，不单独用于参数校验 |
-| `npu-smi` Phy-ID | `0`～`15` | 运维物理编号，不可直接填入本参数 |
-
-旧镜像缺少 `lspci` 时出现的 `0`～`7` 是 upstream fallback，不是 A3 硬件范围。
-V5 实机已经确认容器内 16 个 PCI accelerator、`/dev/davinci0`～`15` 和 upstream
-logical ID `0`～`15` 一致；device 14、15 的 `quant_matmul` int32/int8 均 PASS，
-device 16 在 workload 前以 RC=255 拒绝。NPU Burn logical ID 最终作为 torch_npu device index；
-它与 `/dev/davinciN`、`npu-smi` Phy-ID 的对应只对本机实测负责，不写成跨平台规则。
+管理员已经预留的设备，例如 `0` 或 `0,1`；不得依靠脚本自动选择所谓空闲卡。
+上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。有效范围必须来自
+当前固定容器中 `/dev/davinciN` 与 `lspci` topology 的交叉预检，并以
+`describe npu_burn` 返回的 `available_devices` 为准。旧镜像缺少 `lspci` 时出现的
+固定八设备范围只是 upstream fallback，不是硬件范围。NPU Burn logical ID 最终
+作为 torch_npu device index；它与 `/dev/davinciN`、`npu-smi` Phy-ID 的对应只对
+当前节点实测负责，不能写成跨平台规则。
 改变 logical device 只需修改节点脚本并重新 describe，不需要重建镜像或容器。
 
 `NPU_BURN_CHIP_GENERATION` 与 `NPU_BURN_RUN_CASE` 必须显式、成对设置，适配器
@@ -1105,36 +1095,25 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] `audit_stress_release.sh` 通过；若发布包携带外部二进制，已另行生成最终产物 SBOM 和许可证清单
 - [ ] 回滚文件和操作步骤已验证
 
-### 14.1 V5 pristine A3 topology 与产品链闭环
+### 14.1 NPU topology 与产品链闭环
 
-V5 的镜像、16-device topology 和裸 NPU Burn 边界测试已在 A3 实机完成；还必须完成
-以下 CATMonitor 产品链路：
+每个目标节点都必须用自身事实完成以下验收，不能复制另一台机器的设备范围或结果值：
 
-1. 镜像构建 manifest 必须显示 `runtime.pciutils=true`、实际 source/path/version、
-   `required_packages=["pciutils"]`；正常构建 network 为 `default`，离线包路径自动为
-   `none`。离线包输入由构建器自动记录，不要求用户计算哈希，代理值不得出现。
-2. 用全新名称执行 bootstrap，创建 V5 fixed candidate；再次执行同一命令应幂等
-   复用，不重建、不覆盖、不删除容器。
-3. 容器内 `/dev/davinciN`、`lspci -D -d 19e5:` 和 NPU Burn topology 都必须是
-   16 个 logical device；`describe npu_burn` 应显示 `topology_source=container_lspci`、
-   `available_devices=0,...,15` 和相同的 `pci_topology_devices`。
-4. 将节点脚本设置为管理员确认空闲的 logical device `14`；describe 应通过。
-   临时配置 `16` 应在 workload 前失败并列出有效 logical IDs，随后恢复 `14`。
-5. 必须通过完整入口执行：
-
-   ```bash
-   catmonitor stress -b npu_burn -o table
-   ```
-
-   当前 V5 `quant_matmul` 验收预期为整体 `Healthy`，并从本次 CSV 得到
-   `devices=1`、`cases=2`、`passed=2`、`failed=0`、`errors=0`；同时核对 int32、
-   int8 均为 PASS、`run_count=100`、`err_count=0`。这些数值是本次 V5 profile 的
-   验收基线，不是所有 NPU Burn 用例的通用固定值。
-6. 运行 device 14 时同步观察 `npu-smi`，记录本机 logical ID、device node 和
-   Phy-ID 的实测对应；该记录不得推广成其他机型的固定规则。
+1. 镜像构建 manifest 显示 `runtime.pciutils=true`、实际 source/path/version、
+   `required_packages=["pciutils"]` 和实际 build network；代理值不得出现。
+2. 用全新名称执行 bootstrap 创建 fixed candidate；再次执行同一命令应幂等复用，
+   不重建、不覆盖、不删除容器。
+3. 容器内 `/dev/davinciN` 集合、`lspci -D -d 19e5:` 结果和 NPU Burn logical
+   topology 必须一致；`describe npu_burn` 应显示 `topology_source=container_lspci`
+   以及一致的 `available_devices`、`pci_topology_devices`。
+4. 选择管理员确认空闲且属于 `available_devices` 的一个 logical ID，describe 应
+   通过；再选择一个超出已发现集合的 ID，必须在 workload 前失败并列出有效 ID。
+5. 通过 `catmonitor stress -b npu_burn -o table` 运行节点版本实际支持的短用例，
+   核对报告、CSV 中的设备数、用例数和 PASS/FAIL/ERROR 计数。
+6. 同步观察 `npu-smi`，在节点内部记录 logical ID、device node 和 Phy-ID 的实测
+   对应；不得把该记录推广成其他机型的固定规则。
 7. Web 应展示同一报告中的 topology source、PCI logical devices、available devices
-   和 `2 / 2 PASS`；
-   Web 不提供 device、image、container 或 run case 编辑入口。
+   和用例通过摘要；Web 不提供 device、image、container 或 run case 编辑入口。
 
 推荐顺序：
 
@@ -1147,7 +1126,7 @@ V5 的镜像、16-device topology 和裸 NPU Burn 边界测试已在 A3 实机�
 → 迁移节点变量
 → candidate describe
 → 原子切换
-→ CLI：STREAM → HPCG → HPL → NPU 单卡短测 → NPU 正式验收
+→ CLI：STREAM → HPCG → HPL → NPU 单设备短测 → NPU 正式验收
 → 检查 report/history/profile/hash
 → 启动 Web
 → 验证页面、单次超时与跨进程互斥

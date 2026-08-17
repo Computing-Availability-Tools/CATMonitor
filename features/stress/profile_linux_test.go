@@ -697,7 +697,7 @@ func TestManagerPersistsProfileAndConfigurationHash(t *testing.T) {
 	}
 }
 
-func TestManagerFallsBackForLegacyDispatcher(t *testing.T) {
+func TestManagerRejectsDispatcherWithoutDescribeProtocol(t *testing.T) {
 	dir := t.TempDir()
 	script := writeExecutable(t, dir, "benchmark_check.sh", "#!/bin/sh\nexit 1\n")
 	manager := NewManager(Config{
@@ -707,13 +707,15 @@ func TestManagerFallsBackForLegacyDispatcher(t *testing.T) {
 		},
 	})
 	profile, err := manager.Describe("stream")
-	if err == nil || profile == nil || !profile.DescribeProtocolFallback ||
-		profile.Preflight.Status != CheckUnsupported || profile.ConfigurationSHA256 == "" {
-		t.Fatalf("unexpected legacy fallback: profile=%+v err=%v", profile, err)
+	if err == nil || profile != nil || !strings.Contains(err.Error(), "does not declare describe protocol") {
+		t.Fatalf("dispatcher without describe protocol was not rejected: profile=%+v err=%v", profile, err)
 	}
 	available, message := manager.Availability("stream")
-	if !available || !strings.Contains(message, "describe protocol unavailable") {
-		t.Fatalf("legacy dispatcher should remain runnable with a warning: %v %q", available, message)
+	if available || !strings.Contains(message, "describe/preflight failed") {
+		t.Fatalf("dispatcher without describe protocol should be unavailable: %v %q", available, message)
+	}
+	if _, err := manager.Start([]string{"stream"}); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("dispatcher without describe protocol should not start: %v", err)
 	}
 }
 
@@ -728,9 +730,12 @@ printf '{"protocol_version":1,"benchmark":"stream","unknown":true}\n'
 		Benchmarks: map[string]BenchmarkConfig{"stream": {Enabled: true, Timeout: time.Minute}},
 	})
 	profile, err := manager.Describe("stream")
-	if err == nil || profile == nil || !profile.DescribeProtocolFallback ||
-		!strings.Contains(err.Error(), "unknown field") {
+	if err == nil || profile != nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("malformed describe JSON was not rejected: profile=%+v err=%v", profile, err)
+	}
+	available, message := manager.Availability("stream")
+	if available || !strings.Contains(message, "describe/preflight failed") {
+		t.Fatalf("malformed describe JSON should block availability: %v %q", available, message)
 	}
 }
 

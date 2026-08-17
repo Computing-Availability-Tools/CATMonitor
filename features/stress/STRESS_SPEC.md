@@ -272,8 +272,8 @@ benchmark_check.sh describe npu_burn
 对象。对象包含实际参数、资源规模、必需资产、MPI launcher 实现、二进制 ABI
 识别结果和总预检状态。资产缺失或明确 ABI 不匹配为 `fail`；静态链接、厂商
 MPI 等无法可靠识别的情况为 `warn`，不得误判为失败。CATMonitor 对 JSON
-字段、版本、benchmark 名和状态做严格校验。未声明协议的旧脚本使用基础预检
-兼容运行，但必须暴露 `unsupported` 警告。
+字段、版本、benchmark 名和状态做严格校验。未声明协议、执行失败、超时或返回
+无效 JSON 的脚本必须被判定为不可用，不得生成降级 profile 或继续启动压测。
 
 NPU Burn 的 profile 必须通过参数数组暴露实际 backend、device namespace、选定及
 可用 logical IDs。容器模式还应暴露固定
@@ -296,8 +296,7 @@ Manager 同时只运行一个作业，所选项目按顺序执行。Linux 使用
 - `unhealthy`：命令提前失败，或正常退出后结果协议不完整；
 - `cancelled`：用户/服务关闭主动取消；
 - `unavailable`：配置或资产不可用；
-- `unsupported`：平台不支持；
-- `timeout`：仅兼容旧报告，新作业不产生。
+- `unsupported`：平台不支持。
 
 全部 benchmark 为 `healthy` 或 `time_limit_reached` 时，作业整体为
 `healthy`。运行态和最近报告必须原子写入 `report_path`，包含 `job_id`、
@@ -377,7 +376,7 @@ Ascend NPU Burn 显示设备数、结果行数、通过/失败数、错误数和
 
 自动化测试必须覆盖解析、按时限通过、取消、进程组清理、报告原子写入与错误、
 历史上限/排序/输出裁剪、防御性复制、跨进程锁、共享报告刷新、describe
-无副作用/严格 JSON/超时/旧版降级、资产和 MPI ABI 预检、NPU logical device
+无副作用/严格 JSON/超时/失败关闭、资产和 MPI ABI 预检、NPU logical device
 范围/错误提示、profile 哈希持久化、
 Web 安全策略、CLI 退出码、NPU Burn PASS/FAIL CSV 和外层超时语义及独立 SPA 资源。Linux 执行单元测试、竞态检查和
 构建；Windows 交叉构建。容器节点还必须实测正常结束、外层超时、用户取消和

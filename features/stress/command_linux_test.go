@@ -20,7 +20,7 @@ func TestTimeLimitKillsBenchmarkProcessGroup(t *testing.T) {
 	script := filepath.Join(dir, "benchmark_check.sh")
 	childPID := filepath.Join(dir, "child.pid")
 	content := "#!/bin/sh\nsleep 30 &\necho $! > '" + childPID + "'\nwait\n"
-	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(benchmarkFixture(content)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{

@@ -46,15 +46,14 @@ func (m *Manager) Describe(name string) (*ExecutionProfile, error) {
 
 func (m *Manager) describeWithTimeout(name string, timeoutOverride time.Duration) (*ExecutionProfile, error) {
 	if runtime.GOOS != "linux" {
-		return fallbackProfile(m, name, timeoutOverride, "describe is supported on Linux only"),
-			errors.New("describe is supported on Linux only")
+		return nil, errors.New("describe is supported on Linux only")
 	}
 	if !supportedBenchmark(name) {
 		return nil, fmt.Errorf("unsupported benchmark %q", name)
 	}
 	info, err := os.Stat(m.cfg.ScriptPath)
 	if err != nil {
-		return fallbackProfile(m, name, timeoutOverride, "benchmark dispatcher script is unavailable"), err
+		return nil, fmt.Errorf("benchmark dispatcher script is unavailable: %w", err)
 	}
 
 	m.profileMu.Lock()
@@ -69,10 +68,9 @@ func (m *Manager) describeWithTimeout(name string, timeoutOverride time.Duration
 	m.profileMu.Unlock()
 
 	profile, describeErr := m.readDescribeProfile(name)
-	if describeErr != nil {
-		profile = fallbackProfile(m, name, 0, describeErr.Error())
+	if describeErr == nil {
+		profile = m.applyRunConfiguration(profile, name, 0)
 	}
-	profile = m.applyRunConfiguration(profile, name, 0)
 
 	m.profileMu.Lock()
 	m.profileCache[name] = profileCacheEntry{
@@ -81,7 +79,10 @@ func (m *Manager) describeWithTimeout(name string, timeoutOverride time.Duration
 		scriptMod: info.ModTime(), scriptLen: info.Size(),
 	}
 	m.profileMu.Unlock()
-	return m.applyRunConfiguration(copyExecutionProfile(profile), name, timeoutOverride), describeErr
+	if describeErr != nil {
+		return nil, describeErr
+	}
+	return m.applyRunConfiguration(copyExecutionProfile(profile), name, timeoutOverride), nil
 }
 
 func (m *Manager) readDescribeProfile(name string) (*ExecutionProfile, error) {
@@ -197,23 +198,6 @@ func validCheckStatus(status CheckStatus) bool {
 	default:
 		return false
 	}
-}
-
-func fallbackProfile(m *Manager, name string, timeoutOverride time.Duration, message string) *ExecutionProfile {
-	profile := &ExecutionProfile{
-		ProtocolVersion:          0,
-		Benchmark:                name,
-		DescribeProtocolFallback: true,
-		MPI: MPICheck{
-			Implementation: "unknown", ExecutableABI: "unknown",
-			Status: CheckUnsupported, Message: "describe protocol unavailable",
-		},
-		Preflight: PreflightResult{
-			Status:  CheckUnsupported,
-			Message: "only basic deployment checks are available: " + message,
-		},
-	}
-	return m.applyRunConfiguration(profile, name, timeoutOverride)
 }
 
 func (m *Manager) applyRunConfiguration(profile *ExecutionProfile, name string, timeoutOverride time.Duration) *ExecutionProfile {

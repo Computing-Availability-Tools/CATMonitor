@@ -157,8 +157,9 @@ benchmark 编译时的 MPI 实现匹配；确需绑核或传输调优时，只�
 适配脚本用显式 marker 声明 describe v1。Manager 通过
 `bash script describe benchmark` 获取严格 JSON，命令限时 2 秒；Web 配置
 轮询使用 10 秒短缓存，并以脚本 mtime/size 变化使缓存失效。没有 marker 的
-旧脚本不会被试探执行，直接生成带 `unsupported` 的兼容 profile，避免轮询
-误触发任意旧脚本。
+脚本不会被试探执行，并被直接判定为不可用，避免轮询误触发任意脚本。describe
+超时、退出失败、输出无效或预检失败同样阻止作业提交；Manager 不生成猜测性的
+降级 profile。
 
 脚本检查可执行文件、目录和输入文件，计算可用文件 SHA-256，并用 launcher
 `--version` 与 benchmark 动态链接信息识别 MPI 实现。明确 MPICH/OpenMPI

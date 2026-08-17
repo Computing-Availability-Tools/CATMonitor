@@ -32,8 +32,8 @@ Web 入口为 `http://127.0.0.1:9527/stress/`。它拥有自己的嵌入式 SPA 
 `benchmark_check.sh describe <stream|hpl|hpcg|npu_burn>`。它不会启动 benchmark，
 只返回实际路径、线程/MPI 规模、HPL/HPCG 问题规模、资产状态及 MPI ABI
 预检 JSON。Web 在启动前展示这份 profile；作业报告和历史保存 profile、
-脚本/输入资产 SHA-256 及聚合配置哈希，便于复现实机结果。旧脚本可继续运行，
-但页面会提示 describe 不可用，直到部署副本合入新协议。
+脚本/输入资产 SHA-256 及聚合配置哈希，便于复现实机结果。未实现、未声明或
+返回无效 describe v1 的部署脚本会被判定为不可用，不能启动压测。
 
 仓库模板的 HPL/HPCG 启动命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的
 `-np`，并依赖已 `export` 的线程变量。部署时应先确认 launcher 与 benchmark

@@ -30,11 +30,9 @@ const (
 	StatusHealthy          Status = "healthy"
 	StatusTimeLimitReached Status = "time_limit_reached"
 	StatusUnhealthy        Status = "unhealthy"
-	// StatusTimeout is retained only for reports written by older releases.
-	StatusTimeout     Status = "timeout"
-	StatusUnavailable Status = "unavailable"
-	StatusUnsupported Status = "unsupported"
-	StatusCancelled   Status = "cancelled"
+	StatusUnavailable      Status = "unavailable"
+	StatusUnsupported      Status = "unsupported"
+	StatusCancelled        Status = "cancelled"
 )
 
 // Config is shared by the CLI and Web job manager. Paths are deployment
@@ -77,18 +75,17 @@ const (
 // benchmark_check.sh "describe" protocol. It records the effective workload
 // without allowing Web requests to alter host paths, MPI arguments, or scripts.
 type ExecutionProfile struct {
-	ProtocolVersion          int                `json:"protocol_version"`
-	Benchmark                string             `json:"benchmark"`
-	Parameters               []ProfileParameter `json:"parameters"`
-	Resources                ResourceProfile    `json:"resources"`
-	Assets                   []AssetCheck       `json:"assets"`
-	MPI                      MPICheck           `json:"mpi"`
-	Preflight                PreflightResult    `json:"preflight"`
-	TimeoutSeconds           int64              `json:"timeout_seconds"`
-	ResultDirectory          string             `json:"result_directory,omitempty"`
-	ScriptSHA256             string             `json:"script_sha256,omitempty"`
-	ConfigurationSHA256      string             `json:"configuration_sha256"`
-	DescribeProtocolFallback bool               `json:"describe_protocol_fallback,omitempty"`
+	ProtocolVersion     int                `json:"protocol_version"`
+	Benchmark           string             `json:"benchmark"`
+	Parameters          []ProfileParameter `json:"parameters"`
+	Resources           ResourceProfile    `json:"resources"`
+	Assets              []AssetCheck       `json:"assets"`
+	MPI                 MPICheck           `json:"mpi"`
+	Preflight           PreflightResult    `json:"preflight"`
+	TimeoutSeconds      int64              `json:"timeout_seconds"`
+	ResultDirectory     string             `json:"result_directory,omitempty"`
+	ScriptSHA256        string             `json:"script_sha256,omitempty"`
+	ConfigurationSHA256 string             `json:"configuration_sha256"`
 }
 
 type ProfileParameter struct {
@@ -162,12 +159,8 @@ type Report struct {
 	ConfigurationSHA256 string `json:"configuration_sha256,omitempty"`
 	// ReportError is set when a running/final in-memory report could not be
 	// persisted. Initial persistence failures reject the job submission.
-	ReportError string `json:"report_error,omitempty"`
-	// HealthCondition is the legacy, derived aggregate view of Benchmarks. New
-	// callers should use Status for job state and each BenchmarkResult.Status
-	// for the reason a specific benchmark did or did not complete.
-	HealthCondition string            `json:"health_condition"`
-	Benchmarks      []BenchmarkResult `json:"benchmarks"`
+	ReportError string            `json:"report_error,omitempty"`
+	Benchmarks  []BenchmarkResult `json:"benchmarks"`
 	// Cancellable is a response-only view set by the serving process. It is
 	// false for jobs started by another process, such as CLI jobs observed by
 	// Web.

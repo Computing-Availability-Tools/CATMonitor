@@ -277,7 +277,7 @@ func parseArgs(args []string) (string, []string, string, error) {
 }
 
 func printTable(output io.Writer, report stress.Report) {
-	fmt.Fprintf(output, "\nCATMonitor Stress Report  %s\n", report.HealthCondition)
+	fmt.Fprintf(output, "\nCATMonitor Stress Report  %s\n", statusLabel(report.Status))
 	w := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "Benchmark\tStatus\tDuration\tMetric\tValue\tMessage")
 	for _, result := range report.Benchmarks {
