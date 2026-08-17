@@ -38,7 +38,7 @@ const (
 	nameCacheTTL       = 24 * time.Hour
 	execTimeout        = 60 * time.Second
 	sensorGetTimeout   = 5 * time.Second
-	defaultCacheDir    = "features/web/data"
+	defaultCacheDir    = "/var/lib/catmonitor"
 	sensorMapFilename  = "ipmi_sensor_map.json"
 )
 

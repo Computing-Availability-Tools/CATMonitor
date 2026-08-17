@@ -185,7 +185,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	// --- 5.4 power_draw ---
 	if src.Available() {
 		if v, err := src.Power(card, devID); err == nil {
-			metrics = append(metrics, collector.Metric{Component: "npu", Name: "power_draw", Value: float64(v), Unit: "W", Labels: label, Timestamp: now})
+			metrics = append(metrics, collector.Metric{Component: "npu", Name: "power_draw", Value: float64(v) / 10.0, Unit: "W", Labels: label, Timestamp: now})
 		}
 	}
 

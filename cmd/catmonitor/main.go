@@ -35,7 +35,7 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
 )
 
-const version = "0.3.3"
+const version = "0.3.4"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -116,14 +116,14 @@ func loadConfig() *config.Config {
 	// last-wins, not min).
 	featurePaths := make([]string, 0, len(cfg.Features))
 	for _, f := range cfg.Features {
-		p := filepath.Join("features", f, "metrics.yaml")
-		featurePaths = append(featurePaths, p)
-		if err := metrics.LoadModuleOverride(p); err != nil {
-			slog.Error("feature metrics override failed", "feature", f, "path", p, "error", err)
-		}
+		featurePaths = append(featurePaths, filepath.Join("features", f, "metrics.yaml"))
 	}
-	// Scoped collection: when features non-empty, only metrics listed by some
-	// enabled feature (AND priority >= min_priority) are collected. Empty -> unscoped.
+	// Feature overrides: higher priority wins when multiple features define
+	// the same metric. Scoped collection: only metrics listed by some enabled
+	// feature (AND priority >= min_priority) are collected.
+	if err := metrics.LoadFeatureOverrides(featurePaths); err != nil {
+		slog.Error("feature metrics override failed", "error", err)
+	}
 	metrics.SetFeatureScope(featurePaths)
 	return cfg
 }

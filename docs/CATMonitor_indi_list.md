@@ -3,10 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.3.3 ｜ **更新日期**: 2026-08-05 ｜ **指标总数**: 205（High 26 / Medium 120 / Low 59）
+> **版本**: v0.3.3 ｜ **更新日期**: 2026-08-10 ｜ **指标总数**: 210（High 26 / Medium 125 / Low 59）
 > **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
 > **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。v0.3.3 起 `collection.min_priority`（low/medium/high）按优先级阈值预过滤；v0.3.3 后续 `features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法。
-> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:9527）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表，只读消费 snapshot，:9528）+ `features/exporter`（Prometheus 导出 :9100/metrics）+ `features/faultsub`（故障订阅推送 :9101）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
+> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:9527）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表 + 内置 Prometheus exporter :9333/metrics，只读消费 snapshot，:9528）+ `features/exporter`（daemon 内置 Prometheus 导出 :9100/metrics）+ `features/faultsub`（故障订阅推送 :9101）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
 
 ---
 
@@ -26,12 +26,12 @@
 |------|--------|------|--------|-----|
 | CPU | 40 | 4 | 12 | 24 |
 | Memory | 19 | 4 | 7 | 8 |
-| Disk | 9 | 1 | 5 | 3 |
-| GPU | 7 | 3 | 3 | 1 |
+| Disk | 13 | 1 | 9 | 3 |
+| GPU | 8 | 3 | 4 | 1 |
 | NPU | 120 | 11 | 87 | 22 |
 | Network | 5 | 1 | 3 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **205** | **26** | **120** | **59** |
+| **合计** | **210** | **26** | **125** | **59** |
 
 ---
 
@@ -736,6 +736,10 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 3.7 | smart_status | SMART健康状态 | Medium | 60s | 否 | - | smartctl -H |
 | 3.8 | smart_temperature | 硬盘温度 | Low | 60s | 否 | °C | smartctl -A |
 | 3.9 | io_errors | I/O错误计数 | Low | 30s | 否 | 次 | /proc/diskstats, dmesg |
+| 3.10 | read_sectors_total | 磁盘读扇区总数 | Medium | 5s | 是 | - | /proc/diskstats (field 3) |
+| 3.11 | written_sectors_total | 磁盘写扇区总数 | Medium | 5s | 是 | - | /proc/diskstats (field 7) |
+| 3.12 | read_time_total | 磁盘读耗时总计 | Medium | 5s | 是 | ms | /proc/diskstats (field 4) |
+| 3.13 | write_time_total | 磁盘写耗时总计 | Medium | 5s | 是 | ms | /proc/diskstats (field 8) |
 
 ### 指标详情
 
@@ -831,6 +835,46 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"disk","name":"io_errors","value":0,"unit":"次","labels":{"device":"sda","type":"read_err"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
+#### 3.10 read_sectors_total（磁盘读扇区总数）
+
+- **数据来源**：`/proc/diskstats` 第 3 字段（sectors read，累计值）
+- **采集方法**：读取各块设备的第 3 字段累计扇区读数，原始累计计数器（counter），不差分。仅采集 `AnyWanted("disk", ...)` 声明的真实块设备（经 `deviceFilter` 过滤）
+- **Labels**：`device`（"sda", "sdb", ...）
+- **输出示例**：
+```json
+{"component":"disk","name":"read_sectors_total","value":9472,"unit":"","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 3.11 written_sectors_total（磁盘写扇区总数）
+
+- **数据来源**：`/proc/diskstats` 第 7 字段（sectors written，累计值）
+- **采集方法**：读取各块设备的第 7 字段累计扇区写数，原始累计计数器（counter），不差分。仅采集真实块设备
+- **Labels**：`device`（"sda", "sdb", ...）
+- **输出示例**：
+```json
+{"component":"disk","name":"written_sectors_total","value":4096,"unit":"","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 3.12 read_time_total（磁盘读耗时总计）
+
+- **数据来源**：`/proc/diskstats` 第 4 字段（time spent reading, ms，累计值）
+- **采集方法**：读取各块设备的第 4 字段累计读耗时（毫秒），原始累计计数器（counter），不差分。仅采集真实块设备
+- **Labels**：`device`（"sda", "sdb", ...）
+- **输出示例**：
+```json
+{"component":"disk","name":"read_time_total","value":547652,"unit":"ms","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 3.13 write_time_total（磁盘写耗时总计）
+
+- **数据来源**：`/proc/diskstats` 第 8 字段（time spent writing, ms，累计值）
+- **采集方法**：读取各块设备的第 8 字段累计写耗时（毫秒），原始累计计数器（counter），不差分。仅采集真实块设备
+- **Labels**：`device`（"sda", "sdb", ...）
+- **输出示例**：
+```json
+{"component":"disk","name":"write_time_total","value":318424,"unit":"ms","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
 ---
 
 ## 4. GPU 采集指标（NVIDIA）
@@ -846,6 +890,7 @@ GPU 采集器通过调用 `nvidia-smi` 命令获取 NVIDIA GPU 运行状态。�
 | 4.5 | fan_speed | 风扇转速 | Medium | 10s | 是 | % | nvidia-smi |
 | 4.6 | ecc_errors | ECC错误数 | Medium | 30s | 是 | 次 | nvidia-smi |
 | 4.7 | clock_frequency | 时钟频率 | Low | 10s | 否 | MHz | nvidia-smi |
+| 4.8 | memory_detail | 显存明细 | Medium | 10s | 是 | MB | nvidia-smi |
 
 ### 采集方法
 
@@ -931,6 +976,17 @@ nvidia-smi \
 - **输出示例**：
 ```json
 {"component":"gpu","name":"clock_frequency","value":1545,"unit":"MHz","labels":{"gpu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 4.8 memory_detail（显存明细）
+
+- **数据来源**：`nvidia-smi --query-gpu=memory.used,memory.total`
+- **采集方法**：获取各 GPU 显存使用明细，按 field 区分 total/used，输出绝对值（MB）
+- **Labels**：`gpu_id`（"0", "1", ...）、`field`（"total"、"used"）
+- **输出示例**：
+```json
+{"component":"gpu","name":"memory_detail","value":24576,"unit":"MB","labels":{"gpu_id":"0","field":"total"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"gpu","name":"memory_detail","value":16384,"unit":"MB","labels":{"gpu_id":"0","field":"used"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
 ---
@@ -1954,7 +2010,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 
 ## 附录B：已实现采集指标清单
 
-> 以下 205 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、Disk 扩展至 9、NPU 扩展至 120 个指标（含 `card_drop` 掉卡检测），Chassis 新增 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
+> 以下 210 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、Disk 扩展至 13（含累计 raw counters）、GPU 扩展至 8（含 `memory_detail`）、NPU 扩展至 120 个指标（含 `card_drop` 掉卡检测），Chassis 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
 ### CPU（40 个）
 
@@ -2025,7 +2081,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 18 | module_info | 内存条静态信息 | Low | - |
 | 19 | power | 内存功率 | Medium | W |
 
-### Disk（9 个）
+### Disk（13 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2038,8 +2094,12 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 7 | smart_status | SMART健康状态 | Medium | - |
 | 8 | smart_temperature | 硬盘温度 | Low | °C |
 | 9 | io_errors | I/O错误计数 | Low | 次 |
+| 10 | read_sectors_total | 磁盘读扇区总数 | Medium | - |
+| 11 | written_sectors_total | 磁盘写扇区总数 | Medium | - |
+| 12 | read_time_total | 磁盘读耗时总计 | Medium | ms |
+| 13 | write_time_total | 磁盘写耗时总计 | Medium | ms |
 
-### GPU（7 个）
+### GPU（8 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2050,6 +2110,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 5 | fan_speed | 风扇转速 | Medium | % |
 | 6 | ecc_errors | ECC错误数 | Medium | 次 |
 | 7 | clock_frequency | 时钟频率 | Low | MHz |
+| 8 | memory_detail | 显存明细 | Medium | MB |
 
 ### NPU（120 个）
 
@@ -2202,9 +2263,9 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 |------|--------|------|--------|-----|
 | CPU | 40 | 4 | 12 | 24 |
 | Memory | 19 | 4 | 7 | 8 |
-| Disk | 9 | 1 | 5 | 3 |
-| GPU | 7 | 3 | 3 | 1 |
+| Disk | 13 | 1 | 9 | 3 |
+| GPU | 8 | 3 | 4 | 1 |
 | NPU | 120 | 11 | 87 | 22 |
 | Network | 5 | 1 | 3 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **205** | **26** | **120** | **59** |
+| **合计** | **210** | **26** | **125** | **59** |

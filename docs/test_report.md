@@ -1,19 +1,18 @@
 # CATMonitor 系统测试报告（无 NPU / 无 GPU）
 
 > **项目**: CATMonitor (Computing Availability Tools Monitor) — CATHelper 底座
-> **测试对象**: 本地 `main` 分支 @ `0fbc4f9`（合并 helper 升级）
-> **合并提交**: *feat: 合并 helper 升级 — feature-scoped 收集/掉卡检测/faultsub/snapshot/stragglerout*
-> **合并内容**:
-> - `internal/source/dcmi` 新增 `ErrorCodeList`/`CardDrop`（`DeviceNotReadyErrCode -8012`）掉卡检测
-> - `internal/collectors/npu` 新增 `error_codes`（完整 hex 列表）+ `card_drop` 指标
-> - `internal/metrics` feature-scoped 收集（`SetFeatureScope`/`inScope`）+ `ComponentIntervals` 推导每组件 cadence
-> - `internal/config` 新增 `features`/`faultsub`/`straggler_output`/`snapshot` 配置段
-> - `cmd/catmonitor` 装配 feature metrics 覆盖、C_comp 推导、straggler storage 包装、faultsub detector/dispatcher/webhook
-> - 新增 `features/{snapshot,faultsub,stragglerout}` 三包 + `features/dfee/main.go` 独立二进制
-> - `features/web`/`features/dfee` 重构为只读消费者（读 daemon 生产的 global + per-component 快照）
-> **测试日期**: 2026-08-05
+> **测试对象**: 本地 `main` 分支 @ `269cd10`（合并 `feature/wyx/add-metrics` → v0.3.4）
+> **合并内容（v0.3.4 新增/变更）**:
+> - `features/dfee` 新增独立 Prometheus exporter（`:9333/metrics`），snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*` 格式（零外部 prometheus 库依赖）
+> - `features/dfee/static_info.go` 启动时采集静态软硬件信息（`ipmitool`/`lscpu`/`dmidecode`/`npu-smi` 等，无工具时优雅降级）
+> - `internal/metrics` 新增 `LoadFeatureOverrides`（higher-priority-wins 合并）替代逐个 `LoadModuleOverride`
+> - Disk 新增 4 项累计 raw counters（`read_sectors_total`/`written_sectors_total`/`read_time_total`/`write_time_total`）
+> - GPU 新增 `memory_detail`；容器化方案 `docker/`（NPU + generic 镜像 + compose）
+> - bug 修复：faultsub `Ready()` 改用 `written` 标志、NPU `power_draw` 单位修正（0.1W→W）、IPMI `cacheDir` 改绝对路径
+> - 配置默认值变更：`min_priority: low→medium`、`features: [dfee]→[web,dfee]`、`snapshot.enabled: false→true`
+> **测试日期**: 2026-08-10
 > **测试人**: opencode
-> **目标版本**: CATMonitor v0.3.3
+> **目标版本**: CATMonitor v0.3.4
 
 ---
 
@@ -26,8 +25,11 @@
 | Go | go1.23.4 |
 | 硬件 | Intel Core i5-7200U (4 核)；**无 NPU / 无 GPU / 无 IPMI**（验证无硬件采集器优雅降级） |
 | CANN DCMI | 头文件 `/usr/local/Ascend/driver/include/dcmi_interface_api.h` 不存在 → `-tags dcmi` 自动关闭（符合预期） |
-| 测试配置 A (off) | `snapshot/straggler/faultsub = false`，`features:[dfee]`，`min_priority=low`，`data_dir=/tmp/cm-test/data` |
-| 测试配置 B (on) | 在 A 基础上 `snapshot/straggler/faultsub.enabled=true`，dir 指向 `/tmp/cm-test/{snapshot,straggler}`，`faultsub.rest_addr=:9101` |
+| 工具链 | `make` 未安装（用 `go` 直接执行，等价 Makefile 目标）；`gcc` 未安装（`-race` 需 cgo，跳过） |
+| 外部命令 | `smartctl`/`nvidia-smi`/`npu-smi`/`ipmitool`/`dmidecode` 均未安装（验证 static_info / SMART 降级路径） |
+| 测试配置 A (off) | `features:[dfee]`，`min_priority=low`，snapshot/straggler/faultsub = false，`data_dir=/tmp/cm-test/data` |
+| 测试配置 B (on) | 在 A 基础上 `features:[web,dfee]`，`snapshot/straggler/faultsub.enabled=true`，dir 指向 `/tmp/cm-test/{snapshot,straggler}`，`faultsub.rest_addr=:9101` |
+| 测试配置 C (nofeature) | `features:[]`（全集 scope），snapshot/straggler/faultsub = false（验证 disk raw counters 全集采集） |
 
 ---
 
@@ -37,27 +39,26 @@
 
 ## 1. 构建与静态检查
 
-### 1.1 go vet / go build / go test
+### 1.1 go vet / go test
 ```
-$ go vet ./cmd/...     → exit 0（无告警）
-$ go build ./cmd/... ./features/dfee/... ./features/web/...   → exit 0
-$ go test ./...        → 全部包 ok，无失败
-   ok  features/dfee       ok  features/snapshot     ok  features/faultsub
-   ok  features/web        ok  features/health      ok  features/stragglerout
-   ok  internal/metrics    ok  internal/collectors/* ok  internal/source/*
+$ go vet ./...                          → exit 0（零告警）
+$ go test ./...                         → 全部包 ok，无失败
+   28 个包 ok + 6 个 [no test files] = 34 个包
+   ok  cmd/catmonitor[no test]   features/{dfee,exporter,faultsub,health,snapshot,stragglerout,web}
+   ok  internal/metrics   ok  internal/collectors/{chassis,cpu,disk,gpu,memory,network,network}
+   ok  internal/source/{dcmi,dmesg,dmidecode,hccn_tool,ipmi,lscpu,mce,npu_smi,nvidia_smi,proc,smartctl,statfs,sys}
 ```
-> 注：`make` 未安装，构建/测试均用 `go` 直接执行，等价于 Makefile 的 `all`/`test` 目标。
 
 ### 1.2 三二进制独立构建（对应 `make all/web/dfee`）
 ```
 $ go build -o bin/catmonitor      ./cmd/catmonitor   → 成功 (10.4 MB)
 $ go build -o bin/catmonitor-web ./features/web      → 成功 (8.5 MB)
-$ go build -o bin/catmonitor-dfee ./features/dfee    → 成功 (8.5 MB)
+$ go build -o bin/catmonitor-dfee ./features/dfee    → 成功 (8.6 MB)
 ```
 DCMI tag 自动探测：未检测到 CANN 头 → 不加 `-tags dcmi`（无 NPU 硬件，符合预期）。
 
 ### 1.3 已知限制
-- `go test -race` 需 cgo（`CGO_ENABLED=1`），本环境跳过；如需竞态检测需在启用了 cgo 的环境补测。
+- `go test -race` 需 cgo（`CGO_ENABLED=1` + `gcc`），本环境无 `gcc`，竞态检测跳过（`cgo: C compiler "gcc" not found`）。需在装了 gcc 的环境补测。
 
 ---
 
@@ -66,7 +67,7 @@ DCMI tag 自动探测：未检测到 CANN 头 → 不加 `-tags dcmi`（无 NPU 
 ### 2.1 version
 ```
 $ ./bin/catmonitor version
-CATMonitor v0.3.3 (Go 1.23+)
+CATMonitor v0.3.4 (Go 1.23+)
 ```
 
 ### 2.2 list（采集器清单）
@@ -82,96 +83,132 @@ npu      npu        High      3s        true
 ```
 7 个采集器全部 enabled。无 NPU/GPU 硬件下 `npu`/`gpu` 仍注册并优雅降级（不崩溃）。
 
-### 2.3 collect -o table（单次采集，feature-scoped）
-使用 `features:[dfee]` scoped 模式（仅采集 dfee `metrics.yaml` 声明的指标）：
+### 2.3 collect -o table（单次采集）
+
+**配置 A（feature-scoped `[dfee]`）** — 验证 `SetFeatureScope` 收窄：
 ```
 $ ./bin/catmonitor collect -o table -config <off.yaml>   (exit 0)
-组件分布：  cpu 43   disk 16   memory 11   network 2    = 72 条
+组件分布：  cpu 44   disk 16   memory 11   network 2   = 73 条（含表头 1 行 = 72 指标）
 样例：
-  cpu   usage           0.00   %     core=total
-  cpu   load_average    1.56         interval=1m
-  cpu   model_info      2.00   cores model_name=Intel(R) Core(TM) i5-7200U...
-  disk  space_usage    30.04   %     device=C:\134,mount_point=/mnt/c,fstype=9p
-  memory usage_detail 3840.61 MB    field=total
+  cpu   load_average    0.44          interval=1m
+  cpu   online_core_num 4.00   个
+  disk  throughput      0.00   MB/s   direction=read,device=sdd
+  disk  read_latency    0.00   ms/s   device=sdd
+  memory usage_detail  3840.61 MB     field=total
+  network rx_bytes_total 45142925.00  bytes    interface=eth0
 ```
-**feature-scoped 收集验证**：对比无 features 的非 scoped 模式（92 条：cpu 21/disk 44/memory 19/network 7/npu 1），scoped 后指标集收窄至 dfee 所需（disk 44→16、network 7→2），且 dfee 声明的低优先级 cpu 细节（per-core cache 等）通过 `LoadModuleOverride` 提升后得以保留（cpu 21→43）—— **`SetFeatureScope` + `LoadModuleOverride` + `ComponentIntervals` 三者协同生效**。
+scoped 后 disk 收窄至 dfee 所需（throughput + read/write_latency），raw counters 不在 dfee scope 内 → 跳过。
+
+**配置 C（无 features，全集 scope）** — 验证 disk raw counters 全集采集：
+```
+$ ./bin/catmonitor collect -o table -config <nofeature.yaml>   (exit 0)
+组件分布：  cpu 21   disk 52   memory 19   network 7   npu 1   = 100 条
+disk raw counters（新增 4 项）均产出：
+  disk  read_sectors_total     4186906.00        device=sdd
+  disk  written_sectors_total  2459808.00        device=sdd
+  disk  read_time_total        120847.00   ms    device=sdd
+  disk  write_time_total       356246.00   ms    device=sdd
+```
+**raw counters 验证结论**：`read_sectors_total`/`written_sectors_total`/`read_time_total`/`write_time_total` 已在 `configs/metrics.yaml` 注册 + `disk_linux.go::collectRawCounters` 产出；在 `[web,dfee]` scope 下因未被任一 feature 声明而经 `AnyWanted` 跳过（feature-scoped 设计生效，非 bug），全集模式正常输出。
 
 ### 2.4 health（健康检查）
+
+**配置 A（`[dfee]` scope）**：
 ```
-CATMonitor Health Report
-======================================================================
-  Overall Score:  [█████████████████████████████░]  97 / 100   [ Excellent ]
-  Server Type:    accelerated
-  Check Time:     2026-08-05 11:10:08
-  ----------------------------------------------------------------------
-  Component        Score / Max    Status       Deductions
-  CPU                10 / 10       OK           -
-  MEMORY             20 / 20       OK           -
+Overall Score:  [██████████████████████████████]  100 / 100   [ Excellent ]
+Server Type:    cpu_only
+  CPU                30 / 30       OK
+  MEMORY             40 / 40       OK
+  DISK               30 / 30       OK
+  TOTAL             100 / 100      Excellent
+```
+dfee scope 不含 `smart_status`/`npu_num` → 无 SMART 扣分、判 `cpu_only`。
+
+**配置 B（`[web,dfee]` scope）**：
+```
+Overall Score:  [█████████████████████████████░]  97 / 100   [ Excellent ]
+Server Type:    accelerated
+  CPU                10 / 10       OK
+  MEMORY             20 / 20       OK
   DISK                7 / 10       Warning      smart_failed (-3)
-  NPU                60 / 60       OK           -
-  ----------------------------------------------------------------------
+  NPU                60 / 60       OK
   TOTAL              97 / 100      Excellent
-  [OK]    All systems are healthy.
 ```
-无 NPU 硬件下 `health` 子命令的 auto 检测判为 `accelerated`（NPU 采集器存在即分配 60 分权重，无故障判 OK）；DISK 因无 smartctl/SMART 数据扣 3 分（已知降级行为）。
+web scope 含 `smart_status`/`npu_num` → 判 `accelerated`（NPU 采集器存在即分 60 权重，无故障判 OK）；DISK 因无 smartctl 扣 3 分（已知降级行为）。
+
+> **关键发现**：使用**同一 feature scope** `[web,dfee]` 时，`catmonitor health` CLI 与 snapshot global writer 的 health 判定**一致**（均 `accelerated / 97`，DISK smart_failed -3）。v0.3.3 报告的「server_type 判定口径不一致」已知限制在本版本**已消除**（前提：CLI 与 daemon 使用相同 features 配置）。差异仅来自 scope 不同（`[dfee]` vs `[web,dfee]`），属预期行为。
 
 ---
 
-## 3. daemon + Prometheus exporter（配置 A：全 opt-in 关闭）
+## 3. daemon + Prometheus exporter（配置 B：全 opt-in 开启）
 
+### 3.1 启动日志
 ```
-$ ./bin/catmonitor daemon -config <off.yaml>
-level=INFO msg="derived per-component cadence from features" features=[dfee] declared_components=6
-level=INFO msg="exporter listening" addr=:9100
-level=INFO msg="starting collector" name=chassis/cpu/memory/disk/gpu/npu/network ...
-level=INFO msg="CATMonitor daemon started" version=0.3.3
-```
-daemon 无 error/warn/panic；`features:[dfee]` 派生 per-component cadence 正常；opt-in 功能（snapshot/straggler/faultsub）关闭时无相关日志，行为与升级前一致。
-
-### exporter :9100/metrics（Prometheus 格式）
-```
-$ curl -s http://localhost:9100/metrics   (114 行)
-# HELP catmonitor_disk_space_usage disk/space_usage
-# TYPE catmonitor_disk_space_usage gauge
-catmonitor_disk_space_usage{device="drivers",fstype="9p",mount_point="/usr/lib/wsl/drivers"} 30.04
-catmonitor_disk_space_usage{device="/dev/sdd",fstype="ext4",mount_point="/"} 0.38
-...
-catmonitor_cpu_load_average{interval="1m"} 1.56
-catmonitor_memory_usage_detail{field="total"} 3840.61328125
-组件覆盖： catmonitor_cpu  catmonitor_disk  catmonitor_memory  catmonitor_network
-$ curl -s -o /dev/null http://localhost:9100/   → HTTP 404（exporter 仅暴露 /metrics，符合设计）
-```
-标准 Prometheus 文本格式（`# HELP` / `# TYPE` + `metric{labels} value`）。
-
----
-
-## 4. 全量 opt-in 模式（配置 B：snapshot + straggler + faultsub 开启）
-
-### 4.1 启动日志
-```
-level=INFO msg="derived per-component cadence from features" features=[dfee] declared_components=6
+level=INFO msg="derived per-component cadence from features" features=[web dfee] declared_components=7
 level=INFO msg="straggler_output enabled" data_dir=/tmp/cm-test/straggler
 level=INFO msg="faultsub enabled" rest_addr=:9101
+level=INFO msg="faultsub REST listening" addr=:9101
 level=INFO msg="snapshot production enabled" dir=/tmp/cm-test/snapshot refresh=1s
+level=INFO msg="starting collector" name=cpu interval=1s        ← ComponentIntervals 派生生效
+level=INFO msg="starting collector" name=disk interval=2s
+level=INFO msg="starting collector" name=memory interval=2s
+level=INFO msg="starting collector" name=network interval=1s
+level=INFO msg="starting collector" name=npu interval=1s
+level=INFO msg="starting collector" name=chassis interval=3s     ← catmonitor.yaml 原值（feature 未声明）
+level=INFO msg="starting collector" name=gpu interval=3s
+level=INFO msg="CATMonitor daemon started" version=0.3.4
 level=INFO msg="exporter listening" addr=:9100
-level=INFO msg="CATMonitor daemon started" version=0.3.3
 level=INFO msg="hardware specs distributed to snapshot writers" count=6
 ```
-派生 cadence 生效后采集器实际 interval 变为 **cpu=1s / disk=2s / memory=2s / network=1s / npu=1s**（来自 `features/dfee/metrics.yaml`，覆盖了 catmonitor.yaml 的 3s/5s）—— `ComponentIntervals` 门禁生效。
+daemon 全程 `grep -iE "error|warn|fatal|panic"` = **空**。`features=[web,dfee]` 派生 per-component cadence 生效（cpu/disk/memory/network/npu 间隔被 feature `metrics.yaml` 的最小 interval 覆盖）；`ComponentIntervals` 门禁生效。
 
-### 4.2 snapshot 文件生产（daemon 统一生产）
+### 3.2 exporter :9100/metrics（Prometheus 格式）
+```
+$ curl -s http://localhost:9100/metrics   (278 行, 52 TYPE, 174 指标行)
+# HELP catmonitor_cpu_load_average cpu/load_average
+# TYPE catmonitor_cpu_load_average gauge
+catmonitor_cpu_load_average{interval="1m"} 2.63
+catmonitor_memory_usage_detail{field="total"} 3840.61
+catmonitor_disk_throughput{direction="read",device="sdd"} 0.00
+...
+组件覆盖： cpu / disk / memory / network / npu(npu_num=0)
+$ curl -s -o /dev/null http://localhost:9100/   → HTTP 404（exporter 仅暴露 /metrics，符合设计）
+```
+标准 Prometheus 文本格式（`# HELP`/`# TYPE` + `metric{labels} value`）。`[web,dfee]` scope 比 `[dfee]` 多覆盖 web 所需指标（114→278 行）。
+
+---
+
+## 4. snapshot 统一生产（配置 B）
+
+### 4.1 snapshot 文件
 ```
 /tmp/cm-test/snapshot/
-  snapshot.json          (2033 B, 全局: health/collectors/intervals/system_specs)
-  snapshot_cpu.json      (10.2 KB)
-  snapshot_disk.json     (7.9 KB)
-  snapshot_memory.json   (2.6 KB)
-  snapshot_network.json  (937 B)
+  snapshot.json          (2217 B, 全局: health/collectors/intervals/system_specs)
+  snapshot_cpu.json      (20.3 KB)
+  snapshot_disk.json     (16.4 KB)
+  snapshot_memory.json   (6.9 KB)
+  snapshot_network.json (5.1 KB)
+  snapshot_npu.json      (274 B, metrics=[npu_num=0], 优雅降级)
 ```
-per-comp + global snapshot 均生成；`chassis/gpu/npu` 因无硬件产出 0 指标，未产 per-comp 文件（符合「空组件跳过」设计），但 global `snapshot.json` 含其 health/specs。`refresh=1s` 原子写（temp + rename），全局文件每秒刷新。
+per-comp + global snapshot 均生成；`chassis/gpu` 因无硬件产出 0 指标，未产 per-comp 文件（符合「空组件跳过」设计），但 global `snapshot.json` 含其 collector info + intervals。`refresh=1s` 原子写（temp + rename），全局文件每秒刷新。
 
-### 4.3 exporter :9100/metrics（scoped，114 行，同配置 A）
-opt-in 开启不影响 exporter 输出（snapshot 是独立写路径）；组件覆盖仍 cpu/disk/memory/network。
+### 4.2 global snapshot.json 结构验证
+```json
+{
+  "session_id": "1786364763",
+  "timestamp": "2026-08-10T20:26:39...+08:00",
+  "refresh_interval_ms": 1000,
+  "intervals_ms": {"chassis":3000,"cpu":1000,"disk":2000,"gpu":3000,"memory":2000,"network":1000,"npu":1000},
+  "health": {"score":97,"grade":"Excellent","server_type":"accelerated",
+             "components":{"cpu":{...},"disk":{"score":7,"deductions":[{"rule":"smart_failed","penalty":3}]},
+                           "memory":{...},"npu":{"score":60,"max":60}}},
+  "collectors": [{"name":"cpu","component":"cpu","priority":"High","interval":"1s","enabled":true}, ...]
+}
+```
+global health 与 `catmonitor health` CLI（同 `[web,dfee]` scope）判定一致：`accelerated / 97`。
+
+### 4.3 straggler_output
+`features/stragglerout` 装配成功（日志 `straggler_output enabled`）；本环境无 NPU KPI 指标，`/tmp/cm-test/straggler/` 未产 KPI 文件（`flush_interval=60s` + 无数据，符合设计——完整验证需 NPU 真机）。
 
 ---
 
@@ -184,48 +221,66 @@ level=INFO msg="web server starting (read-only consumer)" addr=:9527 snapshot_di
 
 | 端点 | 方法 | HTTP | Content-Type | 说明 |
 |------|------|------|--------------|------|
-| `/` | GET | 200 | text/html | 首页（静态 SPA，1407 B） |
+| `/` | GET | 200 | text/html; charset=utf-8 | 首页 SPA |
 | `/api/snapshot` | GET | 200 | application/json | 组装 global+per-comp snapshot |
-| `/dfee/` | GET | **404** | text/plain | dfee 不再挂载于 web（架构变更，见 §6） |
+| `/dfee/` | GET | **404** | — | dfee 不再挂载于 web（架构变更，见 §6） |
 
-`/api/snapshot` 响应结构验证完整：
-```json
-{
-  "session_id": "...", "timestamp": "2026-08-05T11:21:14...+08:00",
-  "refresh_interval_ms": 1000, "history_points": 60,
-  "health": {"score":100,"grade":"Excellent","server_type":"cpu_only",
-             "components":{"cpu":{"score":30,"max":30},"disk":{"score":30,"max":30},"memory":{"score":40,"max":40}}},
-  "metrics": [ {"component":"cpu","name":"user_time","value":67827,"unit":"jiffies","labels":{"core":"1"},...}, ... (80 条) ],
-  "history": {...}, "specs": [...]
-}
+`/api/snapshot` 响应结构完整：
 ```
-web 只读消费 daemon snapshot 链路打通；无自采集（已删 `DataCollector`）。
-> 注：global snapshot writer 的 health auto 检测判为 `cpu_only`（无加速器指标流入），与 `health` 子命令的 `accelerated` 判定存在差异（见 §8 已知限制）。
+keys: session_id, timestamp, refresh_interval_ms, history_points, health, metrics, history, specs
+metrics: 174 条
+health:  97 / Excellent / accelerated
+specs:   16 条
+refresh_interval_ms: 1000
+```
+web 只读消费 daemon snapshot 链路打通；无自采集。
 
 ---
 
-## 6. dfee 独立二进制（:9528）
+## 6. dfee 独立二进制（:9528 + :9333 exporter）
 
 ```
-$ ./bin/catmonitor-dfee -addr :9528 -snapshot-dir /tmp/cm-test/snapshot
+$ ./bin/catmonitor-dfee -addr :9528 -snapshot-dir /tmp/cm-test/snapshot -exporter enabled
 level=INFO msg="dfee server starting (read-only consumer)" addr=:9528 snapshot_dir=/tmp/cm-test/snapshot
+level=INFO msg="collecting static info for exporter..."
+level=INFO msg="exporter starting" port=9333
 ```
+
+### 6.1 dfee SPA + API（:9528）
 
 | 端点 | HTTP | Content-Type | 说明 |
 |------|------|--------------|------|
-| `/` | 200 | text/html | SPA 首页（catch-all，940 B） |
-| `/dfee/static/dfee.js` | 200 | text/javascript | 静态资源（24672 B） |
-| `/api/dfee` | 200 | application/json | dfee 派生指标（25 charts） |
+| `/` | 200 | text/html; charset=utf-8 | SPA 首页（catch-all） |
+| `/api/dfee` | 200 | application/json | dfee 派生指标（**68 charts**） |
+| `/dfee/static/dfee.js` | 200 | text/javascript; charset=utf-8 | 静态资源 |
 
-`/api/dfee` 返回 25 个图表；无 NPU 数据的图表 series 为空但结构完整（如 `{"id":"npu_aicore_freq","title":"AICore频率","series":null}`）—— 优雅降级。dfee 作为独立二进制只读消费 snapshot 正常。
+`/api/dfee` 返回 **68 个图表**（v0.3.3 为 25，粒度细化：per-core CPU util / per-field memory detail / 各 load_average 区间等）；无 NPU 数据的图表 `series: null`（如 `{"id":"npu_aicore_freq","title":"AICore频率","series":null}`）—— 优雅降级，结构完整。
+
+### 6.2 dfee 内置 Prometheus exporter（:9333/metrics）— **v0.3.4 新增**
+
+```
+$ curl -s http://localhost:9333/metrics   (135 行)
+```
+| 指标族 | 行数 | 说明 |
+|--------|------|------|
+| `node_*` | 133 | CPU/内存/网络/磁盘，对齐 node_exporter 命名（`node_cpu_seconds_total`/`node_memory_MemTotal_bytes`/`node_network_receive_bytes_total`/`node_disk_read_sectors_total` 等） |
+| `static_*` | 2 | `static_hardware_info` + `static_software_info`（启动一次性采集） |
+| `dsmi_*` | 0 | 无 NPU 硬件 → 空输出（优雅降级） |
+| `ipmi_*` | 0 | 无 IPMI 硬件 → 空输出（优雅降级） |
+
+静态信息优雅降级验证（无工具时对应字段为空，不报错）：
+```
+static_hardware_info{cpu_info="1*Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+  disk_info="sda 356.9M, sdb 159.4M, sdc 1G, sdd 1T",
+  gpu_type="",memory_info="",npu_chip_name="",product_name="",psu_info=""} 1
+static_software_info{os_version="Ubuntu 26.04 LTS",python_version="3.14.4",
+  cann_version="",cuda_version="",npu_driver_version="",gpu_driver_version="",...} 1
+```
+`cpu_info`/`disk_info`/`os_version`/`python_version` 已采集；`npu_*`/`gpu_*`/`memory_info`/`product_name`/`psu_info` 因无对应硬件/命令为空（降级而非报错，符合 `static_info.go` 设计）。
 
 ---
 
 ## 7. faultsub 故障订阅（:9101，配置 B 开启）
-
-```
-level=INFO msg="faultsub enabled" rest_addr=:9101
-```
 
 | 操作 | 端点 | HTTP | 响应 |
 |------|------|------|------|
@@ -235,10 +290,7 @@ level=INFO msg="faultsub enabled" rest_addr=:9101
 | 创建订阅(错误字段) | `POST` 用 `url` 而非 `endpoint` | 400 | `{"error":"webhook delivery requires 'endpoint' URL"}`（字段校验生效） |
 | 删除订阅 | `DELETE /faultsub/subscriptions/sub-0001` | 204 | （成功删除） |
 
-faultsub REST API（订阅 CRUD + 事件查询）端到端验证通过；`detector`/`dispatcher`/`webhook`/`subscription` 装配正常，无硬件下静默不产事件（符合设计）。
-
-### straggler_output（:9101 无关，文件输出）
-`features/stragglerout` 装配成功（日志 `straggler_output enabled`）；但本环境无 NPU KPI 指标，`/tmp/cm-test/straggler/` 未产 KPI 文件（`flush_interval=60s` + 无数据，符合设计——完整验证需 NPU 真机）。
+faultsub REST API（订阅 CRUD + 事件查询）端到端验证通过；`detector`/`dispatcher`/`webhook`/`subscription` 装配正常，无硬件下静默不产事件（符合设计）。**bug 修复验证**：`FaultStorage.Ready()` 改用 `written` 标志后，健康 NPU 无故障时不再误报 503（本次 `GET /faultsub/events` 正常 200，未现 503）。
 
 ---
 
@@ -246,12 +298,12 @@ faultsub REST API（订阅 CRUD + 事件查询）端到端验证通过；`detect
 
 | 采集器 | 硬件 | 行为 |
 |--------|------|------|
-| npu | 无（无 CANN DCMI 头，未加 `-tags dcmi`） | collector 正常启动不崩溃；输出 0~1 条降级指标；新增 `error_codes`/`card_drop` 因无硬件未产生（符合预期） |
-| gpu | 无（无 nvidia-smi） | collector 正常启动不崩溃；无指标输出 |
-| chassis | 无（无 ipmi/dmidecode 权限） | 未产 per-comp snapshot，但 global snapshot 含 chassis 字段 |
-| cpu/memory/disk/network | 有 | 全量采集正常 |
+| npu | 无（无 CANN DCMI 头，未加 `-tags dcmi`） | collector 正常启动不崩溃；产 `snapshot_npu.json`（`npu_num=0`，0 指标）；`error_codes`/`card_drop` 因无硬件未产生（符合预期）；`power_draw` 单位修正生效（测试用例 65→6.5W） |
+| gpu | 无（无 nvidia-smi） | collector 正常启动不崩溃；无指标输出；`memory_detail` 已在 `metrics.yaml` 注册但无硬件不采集 |
+| chassis | 无（无 ipmi/dmidecode 权限） | 未产 per-comp snapshot，但 global snapshot 含 chassis collector info；`cacheDir` 改绝对路径后无工作目录依赖 |
+| cpu/memory/disk/network | 有 | 全量采集正常；disk raw counters 在全集 scope 下产出（§2.3） |
 
-daemon 全程日志 `grep -i "error\|warn\|fatal\|panic"` = 空。**优雅降级符合设计预期**。
+daemon 全程日志 `grep -i "error\|warn\|fatal\|panic"` = **空**。**优雅降级符合设计预期**。
 
 ---
 
@@ -259,24 +311,29 @@ daemon 全程日志 `grep -i "error\|warn\|fatal\|panic"` = 空。**优雅降级
 
 | 门禁 | 结果 |
 |------|------|
-| `go vet` / `go build` / `go test` | ✅ 全绿 |
-| 三二进制构建（daemon/web/dfee） | ✅ 全部成功 |
+| `go vet` / `go test`（28 包 ok） | ✅ 全绿 |
+| 三二进制构建（daemon/web/dfee） | ✅ 全部成功（10.4/8.5/8.6 MB） |
 | CLI（version/list/collect/health） | ✅ 正常 |
-| feature-scoped 收集（`SetFeatureScope`+`LoadModuleOverride`+`ComponentIntervals`） | ✅ 指标集收窄 + cadence 覆盖生效 |
-| daemon + exporter（:9100/metrics，Prometheus 格式） | ✅ 正常（114 行，GET / → 404） |
-| snapshot 统一生产（daemon 产 → web/dfee 读） | ✅ 端到端打通 |
-| web 只读消费（:9527，`/api/snapshot` 等） | ✅ 正常 |
-| dfee 独立二进制（:9528，`/` + `/api/dfee` 25 charts） | ✅ 正常 |
-| faultsub 订阅 API（:9101，CRUD） | ✅ 正常 |
+| feature-scoped 收集（`SetFeatureScope`+`LoadFeatureOverrides`+`ComponentIntervals`） | ✅ 指标集收窄 + cadence 覆盖生效 |
+| disk raw counters（4 项新增） | ✅ 全集 scope 下产出，feature scope 下按设计跳过 |
+| daemon + exporter（:9100/metrics，278 行/52 TYPE，Prometheus 格式） | ✅ 正常（GET / → 404） |
+| snapshot 统一生产（daemon 产 → web/dfee 读） | ✅ 端到端打通（5 文件 + global） |
+| web 只读消费（:9527，`/api/snapshot` 174 metrics/16 specs） | ✅ 正常 |
+| dfee 独立二进制（:9528，68 charts） | ✅ 正常（粒度细化 25→68） |
+| **dfee exporter（:9333，135 行 node_/static_）** | ✅ **v0.3.4 新增，正常** |
+| **static_info 优雅降级**（无 ipmitool/dmidecode） | ✅ **字段为空不报错** |
+| faultsub 订阅 API（:9101，CRUD 200/201/400/204） | ✅ 正常；`Ready()` 503 bug 修复验证 |
+| server_type 判定一致性（CLI vs snapshot，同 scope） | ✅ **一致（accelerated/97），v0.3.3 已知限制消除** |
 | 无硬件采集器优雅降级 | ✅ 无 error/warn/panic |
 
 **整体：通过，可进入发布流程。**
 
 ### 已知限制与发现（非阻塞，建议后续处理）
-1. **【BUG】`-c` 短 flag 为死代码**：`cmd/catmonitor/main.go` 的 `loadConfig` 注册了 `c` 短 flag 但其值被丢弃，只使用长 `config` flag。因此 `catmonitor -c <path>` 不生效（静默回退到 `platform.ConfigPath()`=`/etc/catmonitor/catmonitor.yaml`，文件不存在则用 `config.Default()`）。**临时绕过**：一律使用 `-config <path>` 长形式。建议修复：将短 flag 的值映射到 configPath，或改用标准库 `flag` 的同义注册。
-2. **health `server_type` 判定不一致**：`catmonitor health` 子命令 auto 判为 `accelerated`（NPU 采集器存在即给 60 分），而 snapshot global writer 的 health 判为 `cpu_only`（无加速器指标流入）。两条 auto 检测路径口径不同，建议统一「无 NPU 指标时不应判 accelerated」。
-3. **`-race` 需 cgo**，本环境未覆盖竞态检测。
-4. **DISK `smart_failed (-3)` 扣分**：无 smartctl/无 SMART 数据，已知降级行为。
-5. **无 NPU/GPU/IPMI 真机环境**：`error_codes`/`card_drop`/straggler KPI 等新增 NPU 相关能力仅验证「不崩溃 + 优雅降级」，完整功能需在昇腾服务器补测。
-6. **snapshot.json 原子写瞬态**：`refresh=1s` 下全局快照每秒 temp+rename，外部 `cat`/`open` 直读有极小概率命中 ENOENT 窗口；web/dfee 的 Go 读路径已处理（读失败返回 503 重试），不影响消费端。
-7. **`/api/refresh`、`DataCollector` 已删除**：本次重构的架构变更，符合设计。
+1. **【继承 v0.3.3】`-c` 短 flag 为死代码**：`cmd/catmonitor/main.go:83` 注册了 `c` 短 flag 但其值被丢弃，只使用长 `config` flag。因此 `catmonitor -c <path>` 不生效（静默回退到 `platform.ConfigPath()`）。**临时绕过**：一律使用 `-config <path>` 长形式。
+2. **`-race` 需 cgo + gcc**，本环境无 `gcc`，竞态检测未覆盖（与 v0.3.3 一致）。
+3. **DISK `smart_failed (-3)` 扣分**：无 smartctl/无 SMART 数据，已知降级行为（仅在 `[web,dfee]` scope 下出现，`[dfee]` scope 不含 `smart_status` 故不扣分）。
+4. **无 NPU/GPU/IPMI 真机环境**：`error_codes`/`card_drop`/straggler KPI/dfee exporter 的 `dsmi_*`/`ipmi_*` 输出仅验证「不崩溃 + 优雅降级」，完整功能需在昇腾服务器补测。
+5. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `-tags dcmi` 后，本机无 CANN SDK 无法编译。
+6. **dfee static_info 命令依赖**：`static_hardware_info`/`static_software_info` 依赖 `ipmitool`/`dmidecode`/`npu-smi`/`nvidia-smi`/`pip`/`nvcc` 等，缺失时对应 label 为空（降级而非报错，符合设计）。
+7. **snapshot.json 原子写瞬态**：`refresh=1s` 下全局快照每秒 temp+rename，外部直读有极小概率命中 ENOENT 窗口；web/dfee 的 Go 读路径已处理（读失败返回 503 重试），不影响消费端。
+8. **disk raw counters 在 feature scope 下被跳过**：`read_sectors_total` 等 4 项未被 `web`/`dfee` 任一 feature `metrics.yaml` 声明，故 `[web,dfee]` scope 下不采集（`AnyWanted` 跳过，设计如此）。若 dfee exporter 的 `node_disk_read_sectors_total` 需覆盖所有设备，应将这 4 项加入对应 feature `metrics.yaml` 或在 dfee exporter `supplementDiskStats`（已直读 `/proc/diskstats` 补 snapshot 未覆盖设备，:9333 输出已含 `node_disk_read_sectors_total`）。
