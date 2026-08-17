@@ -181,6 +181,25 @@ CPU 资产和固定 NPU 容器准备完成后，使用
 输入；`describe/doctor` 报告当前节点事实，三者职责不同。完整参数、增量构建、
 覆盖策略和验收步骤见 [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)。
 
+## 自动化测试
+
+stress 遵循主项目的测试组织方式：Go UT/组件测试与实现包就近放置，构建工具的
+无硬件 fixture 放在 `scripts/stress/tests`，只有跨真实二进制和 HTTP 边界的产品链
+测试放在顶层 `tests/e2e`。常用入口：
+
+```bash
+make test-stress-ut       # Go UT/组件测试
+make test-stress-build    # CPU/NPU 构建、部署和发布审计 fixture
+make test-stress-e2e      # 编译真实 CLI/Web 后验证完整产品链（Linux，无硬件负载）
+make test-stress-race     # Manager/Web 并发与竞态检查
+make test-stress          # UT + 构建 fixture + E2E
+```
+
+仓库 E2E 使用临时 host adapter，只验证四类结果解析、CLI/Web 配置和路由、共享
+报告/历史及跨进程互斥，不声称验证真实性能、MPI 实现、CANN ABI 或 NPU SDC。
+STREAM/HPL/HPCG 和 NPU Burn 的真实执行仍必须按测试指南在对应 Linux/A2/A3 节点
+完成。
+
 ## 文档
 
 | 文档 | 内容 |

@@ -396,3 +396,9 @@ runtime package 清单，同时明确不把外部 CPU/NPU 构建 manifest 冒充
 bootstrap 测试必须覆盖设备动态枚举、控制设备缺失、结果目录、image/profile
 不匹配、运行/停止容器的幂等行为，以及不得复制 image ENV。模拟 Docker 测试
 不能替代真实基础镜像构建或 A3 NPU 实机验收。
+
+仓库级 Linux E2E 必须从当前源码编译真实 `catmonitor` 和 `catmonitor-web` 二进制，
+使用临时 CATMonitor 配置和无硬件 host adapter，至少贯通 STREAM/HPL/HPCG/
+NPU Burn 四类解析、CLI 写入、Web 读取 CLI 报告、Web 提交、历史记录和 CLI/Web
+跨进程互斥。E2E 不得下载或执行第三方 benchmark，不得把 fixture 结果声明为性能、
+MPI、CANN 或 NPU 硬件验收结论。

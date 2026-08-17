@@ -22,6 +22,19 @@ revision. A previously available ZIP contained nine additional legacy
 documentation files that were not tracked by this revision; those files were
 not imported because they could not be attributed to the fixed Git tree.
 
+The complete tracked tree is stored directly rather than as a Git submodule,
+a build-time download, or an opaque archive. This keeps CATMonitor source
+archives self-contained on restricted nodes, makes the reviewed source visible
+in the same change, and allows offline checksum verification. Upstream tests,
+documentation, and development metadata are retained because removing them
+would create a CATMonitor-specific source fork; GitHub marks the tree as
+vendored so it does not distort repository language statistics.
+
+Generic CATMonitor CI verifies the exact file set, checksums, wheel build,
+installation, imports, image metadata, and CATMonitor integration. It does not
+claim to run upstream tests that require a compatible CANN/torch_npu stack and
+physical NPU. Those workload gates remain explicit A2/A3 node acceptance.
+
 Mulan PSL v2 permits distribution in source or executable form when recipients
 receive a copy of the license and the copyright, patent, trademark, and
 disclaimer statements are retained. The vendored component remains under its

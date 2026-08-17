@@ -36,13 +36,18 @@ bash -n features/stress/benchmark_check.sh
 bash -n scripts/stress/build_cpu_benchmarks.sh
 bash -n scripts/stress/build_npu_burn_image.sh
 bash -n scripts/stress/generate_stress_deployment.sh
+make test-stress-ut
 make test-stress-build
+make test-stress-e2e
+make test-stress-race
 make audit-stress-release
 gofmt -w features/stress features/stress/cli
-go test ./features/stress/... ./features/web ./cmd/catmonitor ./internal/config
-go test -race ./features/stress/... ./features/web
 go vet ./features/stress/... ./features/web ./cmd/catmonitor ./internal/config
 ```
+
+`make test-stress-e2e` 会在临时目录编译真实 CLI/Web，通过无硬件 adapter 验证四项
+解析、共享报告/历史、Web API 和跨进程锁；它不会运行真实性能负载。开发机自动化
+测试通过后，仍须执行本文后续 CPU/MPI/NPU 实机验收。
 
 按目标架构验证构建：
 

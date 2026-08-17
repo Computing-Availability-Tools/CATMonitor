@@ -265,3 +265,20 @@ MPI 实现负责。
 
 stress 在进入主干前没有发布旧的 health 子命令或 API，因此只提供
 `catmonitor stress`、`/stress/` 和 `/api/stress/*`，不保留未发布预览接口。
+
+## 7. 测试分层
+
+测试按故障定位边界分为四层：
+
+| 层级 | 位置 | 验证内容 | 是否需要硬件 |
+|---|---|---|---|
+| Go UT/组件测试 | `features/stress/*_test.go`、`features/stress/cli/*_test.go` | 解析、状态、超时、进程组、报告、历史、锁、profile、API 安全 | 否 |
+| 构建/部署 fixture | `scripts/stress/tests` | CPU 构建事务、NPU 镜像输入、固定容器、部署生成和发布审计 | 否，Docker 使用受控 fixture |
+| 产品链 E2E | `tests/e2e/stress_e2e_test.sh` | 编译真实 CLI/Web，贯通配置、四项 adapter、HTTP、共享报告/历史和跨进程锁 | 否，但仅支持 Linux |
+| 实机验收 | 部署侧记录 | 官方 CPU benchmark、MPI ABI、CANN/torch_npu、PCI topology、NPU SDC 和清理 | 是 |
+
+产品链 E2E 生成临时 adapter，不调用真实 benchmark，因此可以在通用 Linux CI 中
+稳定运行。它不能替代实机验收；反过来，实机跑通也不能替代解析、错误路径、HTTP
+安全和并发的自动化测试。固定的上游 NPU Burn 自带测试仍保留在 vendored source
+中，但普通 CATMonitor CI 不直接运行依赖特定 CANN/torch_npu/NPU 的上游测试；
+镜像构建负责 wheel、安装和 import gate，真实 workload 由 A2/A3 验收负责。

@@ -1,4 +1,5 @@
-.PHONY: all build test test-verbose test-coverage test-stress-build \
+.PHONY: all build test test-verbose test-coverage test-stress test-stress-ut \
+	test-stress-race test-stress-e2e test-stress-build \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
 	test-stress-audit audit-stress-release lint clean web dfee
 
@@ -39,6 +40,21 @@ test-verbose:
 
 test-coverage:
 	$(GO) test -cover ./...
+
+# Stress has three intentionally separate automated test layers:
+# package-local Go unit/component tests, hermetic build/deployment fixtures,
+# and a Linux binary-level CLI/Web end-to-end test. Real benchmark performance
+# and NPU workload execution remain explicit hardware acceptance gates.
+test-stress: test-stress-ut test-stress-build test-stress-e2e
+
+test-stress-ut:
+	$(GO) test ./features/stress/... ./features/web ./internal/config
+
+test-stress-race:
+	$(GO) test -race ./features/stress/... ./features/web
+
+test-stress-e2e:
+	GO_BIN="$(GO)" bash tests/e2e/stress_e2e_test.sh
 
 test-stress-build: test-stress-build-cpu test-stress-build-npu test-stress-deployment test-stress-audit
 

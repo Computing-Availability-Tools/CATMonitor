@@ -71,7 +71,6 @@ catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 # 单次采集 / 健康检查 / 采集器列表
 catmonitor collect -o table
 catmonitor health -o table
-catmonitor stress -o table
 catmonitor list
 ```
 
@@ -89,6 +88,13 @@ RPM/DEB 依赖闭包离线注入；
 创建管理员维护的固定容器；CATMonitor 会交叉检查容器 `/dev/davinciN` 与 upstream
 `lspci` PCI topology，管理员必须显式选择验证后的 NPU Burn logical ID，不使用
 `npu-smi` Phy-ID，`all` 仅用于整节点独占压测。
+
+完成 stress 资产部署、节点脚本适配并在主配置中显式启用后，再执行：
+
+```bash
+catmonitor stress doctor -o table
+catmonitor stress -o table
+```
 
 > 完整安装、配置、命令、Web 仪表盘、dfee 能效监控、Prometheus 接入与示例见 [使用手册](docs/User_Manual.md)。
 
