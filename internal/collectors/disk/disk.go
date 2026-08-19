@@ -38,7 +38,7 @@ func parseSmartOutput(dev, output string, now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	lower := strings.ToLower(output)
 	status := 0
-	if strings.Contains(lower, "passed") {
+	if strings.Contains(lower, "passed") || strings.Contains(lower, "health status: ok") {
 		status = 1
 	}
 	statusStr := "FAILED"

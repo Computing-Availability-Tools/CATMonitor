@@ -13,12 +13,15 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
 
 // historyPoints is the per-component history ring depth the daemon uses
 // (fixed; not configurable). Reported to the frontend so it knows the trend
 // series length.
 const historyPoints = 60
+
+var webStartup = time.Now().Unix()
 
 type Server struct {
 	dir        string
@@ -143,6 +146,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
+		"version":             version.Version,
+		"started_at":          webStartup,
 		"refresh_interval_ms": g.RefreshInterval,
 		"history_points":      historyPoints,
 	})

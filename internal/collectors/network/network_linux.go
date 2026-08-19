@@ -10,6 +10,8 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
 
+func isVirtualInterface(name string) bool { return sys.IsVirtualInterface(name) }
+
 func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 	if !collector.AnyWanted("network", []string{"throughput", "packet_count", "error_count", "rx_bytes_total", "tx_bytes_total", "connection_count", "interface_status"}) {
 		return nil, nil
@@ -23,7 +25,7 @@ func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 	}
 
 	for iface, curr := range current {
-		if iface == "lo" {
+		if isVirtualInterface(iface) {
 			continue
 		}
 
@@ -58,17 +60,20 @@ func (c *NetworkCollector) Collect() ([]collector.Metric, error) {
 				Labels:    map[string]string{"interface": iface, "direction": "tx"},
 				Timestamp: now,
 			})
+
+			metrics = append(metrics,
+				collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.RxErrs - prev.RxErrs), Unit: "次",
+					Labels: map[string]string{"interface": iface, "type": "rx_err"}, Timestamp: now},
+				collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.RxDrop - prev.RxDrop), Unit: "次",
+					Labels: map[string]string{"interface": iface, "type": "rx_drop"}, Timestamp: now},
+				collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.TxErrs - prev.TxErrs), Unit: "次",
+					Labels: map[string]string{"interface": iface, "type": "tx_err"}, Timestamp: now},
+				collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.TxDrop - prev.TxDrop), Unit: "次",
+					Labels: map[string]string{"interface": iface, "type": "tx_drop"}, Timestamp: now},
+			)
 		}
 
 		metrics = append(metrics,
-			collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.RxErrs), Unit: "次",
-				Labels: map[string]string{"interface": iface, "type": "rx_err"}, Timestamp: now},
-			collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.RxDrop), Unit: "次",
-				Labels: map[string]string{"interface": iface, "type": "rx_drop"}, Timestamp: now},
-			collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.TxErrs), Unit: "次",
-				Labels: map[string]string{"interface": iface, "type": "tx_err"}, Timestamp: now},
-			collector.Metric{Component: "network", Name: "error_count", Value: float64(curr.TxDrop), Unit: "次",
-				Labels: map[string]string{"interface": iface, "type": "tx_drop"}, Timestamp: now},
 			collector.Metric{Component: "network", Name: "rx_bytes_total", Value: float64(curr.RxBytes), Unit: "bytes",
 				Labels: map[string]string{"interface": iface}, Timestamp: now},
 			collector.Metric{Component: "network", Name: "tx_bytes_total", Value: float64(curr.TxBytes), Unit: "bytes",
@@ -111,7 +116,7 @@ func (c *NetworkCollector) collectInterfaceStatus(now time.Time) ([]collector.Me
 	}
 	var metrics []collector.Metric
 	for _, iface := range ifaces {
-		if iface == "lo" {
+		if isVirtualInterface(iface) {
 			continue
 		}
 		state, err := sys.Default().NetOperstate(iface)

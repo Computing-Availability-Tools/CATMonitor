@@ -158,6 +158,11 @@ func New(root string) Source {
 // root is the swappable root path of the singleton.
 var root = "/proc"
 
+// mountsPath is the path to the mounts file. Defaults to <root>/mounts but
+// can be overridden via SetMountsPath for container environments where the
+// host's /proc/mounts is mounted at a different location (e.g. /host/proc/mounts).
+var mountsPath string
+
 // Default returns the process-wide Source singleton backed by the current
 // root path (default "/proc").
 func Default() Source {
@@ -168,6 +173,12 @@ func Default() Source {
 // Used by tests to point at testdata fixtures.
 func SetRoot(r string) {
 	root = r
+}
+
+// SetMountsPath overrides the mounts file path. Used in container
+// environments to read the host's /proc/mounts (e.g. "/host/proc/mounts").
+func SetMountsPath(p string) {
+	mountsPath = p
 }
 
 func (s *defaultSource) readFile(name string) (string, error) {
@@ -446,7 +457,11 @@ func (s *defaultSource) Buddyinfo() ([]BuddyInfo, error) {
 }
 
 func (s *defaultSource) Mounts() ([]Mount, error) {
-	f, err := os.Open(filepath.Join(s.root, "mounts"))
+	mp := mountsPath
+	if mp == "" {
+		mp = filepath.Join(s.root, "mounts")
+	}
+	f, err := os.Open(mp)
 	if err != nil {
 		return nil, err
 	}

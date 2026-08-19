@@ -61,8 +61,8 @@ func TestLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Link failed: %v", err)
 	}
-	if link != "ACTIVE" {
-		t.Errorf("Link: expected 'ACTIVE', got %q", link)
+	if link != "UP" {
+		t.Errorf("Link: expected 'UP', got %q", link)
 	}
 }
 

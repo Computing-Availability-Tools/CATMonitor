@@ -26,7 +26,7 @@ import (
 // stress feature may execute only when explicitly enabled in the shared
 // CATMonitor config and the Web listener is loopback-only.
 func main() {
-	addr := flag.String("addr", ":9527", "listen address (port taken => auto +1)")
+	addr := flag.String("addr", ":19322", "listen address (port taken => auto +1)")
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
 	configPath := flag.String("config", platform.ConfigPath(), "CATMonitor config path (default: platform path or CATMONITOR_CONFIG)")
 	flag.Parse()

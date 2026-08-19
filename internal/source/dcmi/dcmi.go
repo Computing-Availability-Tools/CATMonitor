@@ -89,10 +89,11 @@ type DvppRatio struct {
 
 // FetchProvider mirrors the DCMI C calls, returning Go types. The CGo binding
 // (dcmi_cgo.go) implements this; tests use MockProvider.
-type FetchProvider interface {
+type 	FetchProvider interface {
 	Init() error
 	CardList() (cardNum int, cardList []int, err error)
 	DeviceNumInCard(card int) (int, error)
+	DeviceIDInCard(card int) (deviceIDMax, mcuID, cpuID int, err error)
 	// per-device
 	Temperature(card, dev int) (int, error)
 	Power(card, dev int) (int, error)
@@ -129,6 +130,7 @@ type Source interface {
 	Init() error
 	CardList() (int, []int, error)
 	DeviceNumInCard(card int) (int, error)
+	DeviceIDInCard(card int) (deviceIDMax, mcuID, cpuID int, err error)
 	// Per-device DCMI queries (return errNotAvailable if no provider)
 	Temperature(card, dev int) (int, error)
 	Power(card, dev int) (int, error)
@@ -185,6 +187,10 @@ func (s *defaultSource) CardList() (int, []int, error) {
 func (s *defaultSource) DeviceNumInCard(card int) (int, error) {
 	if s.provider == nil { return 0, s.notAvail() }
 	return s.provider.DeviceNumInCard(card)
+}
+func (s *defaultSource) DeviceIDInCard(card int) (int, int, int, error) {
+	if s.provider == nil { return 0, 0, 0, s.notAvail() }
+	return s.provider.DeviceIDInCard(card)
 }
 func (s *defaultSource) Temperature(card, dev int) (int, error) {
 	if s.provider == nil { return 0, s.notAvail() }

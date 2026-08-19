@@ -18,11 +18,20 @@ var npuTempNames = map[string]bool{
 }
 
 // evaluateNPU evaluates NPU health and returns the component score.
+// Budget: card_drop 20%, temperature 15%, health 15%, HBM ECC 15%, DDR ECC 15%,
+//         memory 8%, utilization 5%, error_code 7%.
 func evaluateNPU(metrics []collector.Metric, maxScore int) ComponentScore {
 	score := float64(maxScore)
 	var deductions []Deduction
 
-	// Worst temperature across cards and sub-component temp sensors.
+	// Card drop: 20% budget. >0: 20%.
+	if hasAnyPositive(metrics, "card_drop") {
+		d := Deduction{Rule: "card_drop", Penalty: float64(maxScore) * 0.20}
+		score -= d.Penalty
+		deductions = append(deductions, d)
+	}
+
+	// Temperature: 15% budget. >80°C: 8%, >90°C: 15%.
 	worstTemp := 0.0
 	for _, m := range metrics {
 		if npuTempNames[m.Name] && m.Value > worstTemp {
@@ -31,23 +40,16 @@ func evaluateNPU(metrics []collector.Metric, maxScore int) ComponentScore {
 	}
 	switch {
 	case worstTemp > 90:
-		d := Deduction{Rule: "temp>90C", Penalty: float64(maxScore) * 0.30}
+		d := Deduction{Rule: "temp>90C", Penalty: float64(maxScore) * 0.15}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	case worstTemp > 80:
-		d := Deduction{Rule: "temp>80C", Penalty: float64(maxScore) * 0.15}
+		d := Deduction{Rule: "temp>80C", Penalty: float64(maxScore) * 0.08}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}
 
-	// Worst HBM memory usage across cards.
-	if worstMem, ok := worstValue(metrics, "memory_usage"); ok && worstMem > 95 {
-		d := Deduction{Rule: "mem>95%", Penalty: float64(maxScore) * 0.10}
-		score -= d.Penalty
-		deductions = append(deductions, d)
-	}
-
-	// Health status: worst (max) across cards. OK=1, Warning=2, Alarm=3, Critical=4.
+	// Health status: 15% budget. OK=1, Warning=2, Alarm=3, Critical=4.
 	worstHS := 0.0
 	for _, m := range metrics {
 		if m.Name == "health_status" && m.Value > worstHS {
@@ -56,17 +58,45 @@ func evaluateNPU(metrics []collector.Metric, maxScore int) ComponentScore {
 	}
 	switch {
 	case worstHS >= 3:
-		d := Deduction{Rule: "health_alarm", Penalty: float64(maxScore) * 0.30}
+		d := Deduction{Rule: "health_alarm", Penalty: float64(maxScore) * 0.15}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	case worstHS == 2:
-		d := Deduction{Rule: "health_warning", Penalty: float64(maxScore) * 0.15}
+		d := Deduction{Rule: "health_warning", Penalty: float64(maxScore) * 0.08}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}
 
-	// Worst utilization across cards (AICore utilization merged with npu_util
-	// to avoid double-counting the two overlapping High metrics).
+	// HBM ECC: 15% budget. single: 5%, double: 15%.
+	if hasAnyPositive(metrics, "hbm_double_ecc") {
+		d := Deduction{Rule: "hbm_double_ecc", Penalty: float64(maxScore) * 0.15}
+		score -= d.Penalty
+		deductions = append(deductions, d)
+	} else if hasAnyPositive(metrics, "hbm_single_ecc") {
+		d := Deduction{Rule: "hbm_single_ecc", Penalty: float64(maxScore) * 0.05}
+		score -= d.Penalty
+		deductions = append(deductions, d)
+	}
+
+	// DDR ECC: 15% budget. single: 5%, double: 15%.
+	if hasAnyPositive(metrics, "ddr_double_ecc") {
+		d := Deduction{Rule: "ddr_double_ecc", Penalty: float64(maxScore) * 0.15}
+		score -= d.Penalty
+		deductions = append(deductions, d)
+	} else if hasAnyPositive(metrics, "ddr_single_ecc") {
+		d := Deduction{Rule: "ddr_single_ecc", Penalty: float64(maxScore) * 0.05}
+		score -= d.Penalty
+		deductions = append(deductions, d)
+	}
+
+	// Memory: 8% budget. >95%: 8%.
+	if worstMem, ok := worstValue(metrics, "memory_usage"); ok && worstMem > 95 {
+		d := Deduction{Rule: "mem>95%", Penalty: float64(maxScore) * 0.08}
+		score -= d.Penalty
+		deductions = append(deductions, d)
+	}
+
+	// Utilization: 5% budget. >95%: 5%.
 	worstUtil := 0.0
 	for _, m := range metrics {
 		if (m.Name == "utilization" || m.Name == "npu_util") && m.Value > worstUtil {
@@ -74,38 +104,14 @@ func evaluateNPU(metrics []collector.Metric, maxScore int) ComponentScore {
 		}
 	}
 	if worstUtil > 95 {
-		d := Deduction{Rule: "util>95%", Penalty: float64(maxScore) * 0.10}
+		d := Deduction{Rule: "util>95%", Penalty: float64(maxScore) * 0.05}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}
 
-	// HBM double-bit ECC (UCE, severe): any card.
-	if hasAnyPositive(metrics, "hbm_double_ecc") {
-		d := Deduction{Rule: "hbm_double_ecc", Penalty: float64(maxScore) * 0.20}
-		score -= d.Penalty
-		deductions = append(deductions, d)
-	}
-	// DDR double-bit ECC (UCE): any card.
-	if hasAnyPositive(metrics, "ddr_double_ecc") {
-		d := Deduction{Rule: "ddr_double_ecc", Penalty: float64(maxScore) * 0.20}
-		score -= d.Penalty
-		deductions = append(deductions, d)
-	}
-	// HBM single-bit ECC (CE): any card.
-	if hasAnyPositive(metrics, "hbm_single_ecc") {
-		d := Deduction{Rule: "hbm_single_ecc", Penalty: float64(maxScore) * 0.10}
-		score -= d.Penalty
-		deductions = append(deductions, d)
-	}
-	// DDR single-bit ECC (CE): any card.
-	if hasAnyPositive(metrics, "ddr_single_ecc") {
-		d := Deduction{Rule: "ddr_single_ecc", Penalty: float64(maxScore) * 0.10}
-		score -= d.Penalty
-		deductions = append(deductions, d)
-	}
-	// Device error code: any card.
+	// Error code: 7% budget. >0: 7%.
 	if hasAnyPositive(metrics, "error_code") {
-		d := Deduction{Rule: "error_code", Penalty: float64(maxScore) * 0.10}
+		d := Deduction{Rule: "error_code", Penalty: float64(maxScore) * 0.07}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}

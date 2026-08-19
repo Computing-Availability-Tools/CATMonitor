@@ -36,9 +36,9 @@ func TestEvaluateNPUTempHigh(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// temp > 90°C: -30% of 60 = -18 → 42
-	if score.Score != 42 {
-		t.Errorf("expected score 42 (temp>90C), got %d", score.Score)
+	// temp > 90°C: -15% of 60 = -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (temp>90C), got %d", score.Score)
 	}
 }
 
@@ -53,9 +53,9 @@ func TestEvaluateNPUTempWorstSubtemp(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// worst 92 > 90 → -30% of 60 = -18 → 42
-	if score.Score != 42 {
-		t.Errorf("expected score 42 (worst subtemp 92>90), got %d", score.Score)
+	// worst 92 > 90 → -15% of 60 = -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (worst subtemp 92>90), got %d", score.Score)
 	}
 }
 
@@ -66,9 +66,9 @@ func TestEvaluateNPUMemoryHigh(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// mem > 95%: -10% of 60 = -6 → 54
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (mem>95%%), got %d", score.Score)
+	// mem > 95%: -8% of 60 = -4.8 → 55
+	if score.Score != 55 {
+		t.Errorf("expected score 55 (mem>95%%), got %d", score.Score)
 	}
 }
 
@@ -79,9 +79,9 @@ func TestEvaluateNPUHealthWarning(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// health == 2: -15% of 60 = -9 → 51
-	if score.Score != 51 {
-		t.Errorf("expected score 51 (health_warning), got %d", score.Score)
+	// health == 2: -8% of 60 = -4.8 → 55
+	if score.Score != 55 {
+		t.Errorf("expected score 55 (health_warning), got %d", score.Score)
 	}
 }
 
@@ -92,9 +92,9 @@ func TestEvaluateNPUHealthAlarm(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// health >= 3: -30% of 60 = -18 → 42
-	if score.Score != 42 {
-		t.Errorf("expected score 42 (health_alarm), got %d", score.Score)
+	// health >= 3: -15% of 60 = -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (health_alarm), got %d", score.Score)
 	}
 }
 
@@ -107,9 +107,9 @@ func TestEvaluateNPUHealthWorstCard(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// worst 3 ≥ 3 → -18 → 42
-	if score.Score != 42 {
-		t.Errorf("expected score 42 (worst card alarm), got %d", score.Score)
+	// worst 3 ≥ 3 → -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (worst card alarm), got %d", score.Score)
 	}
 }
 
@@ -120,9 +120,9 @@ func TestEvaluateNPUUtilizationHigh(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// util > 95%: -10% of 60 = -6 → 54
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (util>95%%), got %d", score.Score)
+	// util > 95%: -5% of 60 = -3 → 57
+	if score.Score != 57 {
+		t.Errorf("expected score 57 (util>95%%), got %d", score.Score)
 	}
 }
 
@@ -136,9 +136,9 @@ func TestEvaluateNPUUtilMerge(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// worst 97 > 95 → single -6 → 54 (not -12)
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (merged util, single deduction), got %d", score.Score)
+	// worst 97 > 95 → single -3 → 57 (not -6)
+	if score.Score != 57 {
+		t.Errorf("expected score 57 (merged util, single deduction), got %d", score.Score)
 	}
 	count := 0
 	for _, d := range score.Deductions {
@@ -158,9 +158,9 @@ func TestEvaluateNPUHbmDoubleEcc(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// -20% of 60 = -12 → 48
-	if score.Score != 48 {
-		t.Errorf("expected score 48 (hbm_double_ecc), got %d", score.Score)
+	// -15% of 60 = -9 → 51
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (hbm_double_ecc), got %d", score.Score)
 	}
 }
 
@@ -171,8 +171,8 @@ func TestEvaluateNPUDdrDoubleEcc(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	if score.Score != 48 {
-		t.Errorf("expected score 48 (ddr_double_ecc), got %d", score.Score)
+	if score.Score != 51 {
+		t.Errorf("expected score 51 (ddr_double_ecc), got %d", score.Score)
 	}
 }
 
@@ -183,9 +183,9 @@ func TestEvaluateNPUHbmSingleEcc(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// -10% of 60 = -6 → 54
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (hbm_single_ecc), got %d", score.Score)
+	// -5% of 60 = -3 → 57
+	if score.Score != 57 {
+		t.Errorf("expected score 57 (hbm_single_ecc), got %d", score.Score)
 	}
 }
 
@@ -196,8 +196,8 @@ func TestEvaluateNPUDdrSingleEcc(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (ddr_single_ecc), got %d", score.Score)
+	if score.Score != 57 {
+		t.Errorf("expected score 57 (ddr_single_ecc), got %d", score.Score)
 	}
 }
 
@@ -208,9 +208,9 @@ func TestEvaluateNPUErrorCode(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// -10% of 60 = -6 → 54
-	if score.Score != 54 {
-		t.Errorf("expected score 54 (error_code), got %d", score.Score)
+	// -7% of 60 = -4.2 → 55
+	if score.Score != 55 {
+		t.Errorf("expected score 55 (error_code), got %d", score.Score)
 	}
 }
 
@@ -226,9 +226,9 @@ func TestEvaluateNPUStacked(t *testing.T) {
 
 	score := evaluateNPU(metrics, 60)
 
-	// 60 - 18 - 6 - 18 - 6 - 12 = 0 (clamped)
-	if score.Score != 0 {
-		t.Errorf("expected score 0 (clamped), got %d", score.Score)
+	// 60 - 9 - 4.8 - 9 - 3 - 9 = 25.2 → 25
+	if score.Score != 25 {
+		t.Errorf("expected score 25, got %d", score.Score)
 	}
 }
 
@@ -245,11 +245,15 @@ func TestEvaluateFullNPUAccelerated(t *testing.T) {
 		npuMetric("memory_usage", 50.0),
 		npuMetric("utilization", 50.0),
 		npuMetric("health_status", 1.0),
+		makeMetric("network", "error_count", 0, map[string]string{"interface": "eth0", "type": "rx_err"}),
+		makeMetric("network", "connection_count", 100, map[string]string{"state": "ESTABLISHED"}),
+		makeMetric("chassis", "inlet_temp", 28.0, nil),
+		makeMetric("chassis", "outlet_temp", 42.0, nil),
 	}
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU 10 + Memory 20 + Disk 10 + NPU 60 = 100
+	// CPU 20 + Memory 20 + Disk 20 + NPU 20 + Network 10 + Chassis 10 = 100
 	if result.Score != 100 {
 		t.Errorf("expected total score 100, got %d", result.Score)
 	}

@@ -3,6 +3,7 @@
 package disk
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,13 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/statfs"
 )
 
+func init() {
+	if _, err := os.Stat("/host"); err == nil {
+		proc.SetMountsPath("/proc/1/mounts")
+		statfs.SetHostPrefix("/host")
+	}
+}
+
 var deviceFilter = regexp.MustCompile(`^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+)$`)
 
 var virtualFS = map[string]bool{
@@ -23,23 +31,29 @@ var virtualFS = map[string]bool{
 	"hugetlbfs": true, "rpc_pipefs": true, "binfmt_misc": true,
 	"securityfs": true, "pstore": true, "bpf": true, "tracefs": true,
 	"debugfs": true, "configfs": true, "autofs": true, "fuse": true,
-	"fuse.gvfsd-fuse": true,
+	"fuse.gvfsd-fuse": true, "nfsd": true, "nsfs": true, "efivarfs": true,
+	"selinuxfs": true,
 }
 
 func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 	now := time.Now()
 	var metrics []collector.Metric
 
-	// space_usage per real mount point.
+	// space_usage per real device (deduplicated, one row per partition).
 	if collector.AnyWanted("disk", []string{"space_usage", "space_detail"}) {
 		mounts, err := proc.Default().Mounts()
 		if err != nil {
 			return nil, err
 		}
+		seen := map[string]bool{}
 		for _, m := range mounts {
 			if virtualFS[m.Fstype] {
 				continue
 			}
+			if seen[m.Device] {
+				continue
+			}
+			seen[m.Device] = true
 			spaceMetrics, err := c.collectSpaceUsage(m.Device, m.MountPoint, m.Fstype, now)
 			if err != nil {
 				continue
@@ -248,7 +262,7 @@ func (c *DiskCollector) collectSMART(now time.Time) ([]collector.Metric, error) 
 	var metrics []collector.Metric
 	for dev := range devs {
 		output, err := smartctl.Default().Health(dev)
-		if err != nil {
+		if err != nil || output == "" {
 			continue
 		}
 		metrics = append(metrics, parseSmartOutput(dev, output, now)...)

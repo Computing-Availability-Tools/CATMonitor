@@ -33,9 +33,8 @@ import (
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/memory"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/network"
 	_ "github.com/Computing-Availability-Tools/CATMonitor/internal/collectors/npu"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
-
-const version = "0.3.4"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -57,7 +56,7 @@ func main() {
 	case "list":
 		runList()
 	case "version":
-		fmt.Printf("CATMonitor v%s (Go %s)\n", version, "1.23+")
+		fmt.Printf("CATMonitor v%s (Go %s)\n", version.Version, "1.23+")
 	default:
 		printUsage()
 	}
@@ -85,8 +84,9 @@ Flags:
 
 func loadConfig() *config.Config {
 	fs := flag.NewFlagSet("catmonitor", flag.ContinueOnError)
-	configPath := fs.String("config", platform.ConfigPath(), "Config file path")
-	fs.String("c", platform.ConfigPath(), "Config file path (short)")
+	var configPath string
+	fs.StringVar(&configPath, "config", platform.ConfigPath(), "Config file path")
+	fs.StringVar(&configPath, "c", platform.ConfigPath(), "Config file path (short)")
 	fs.String("o", "", "Output format: json|table")
 	fs.String("output", "", "Output format: json|table")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -97,7 +97,7 @@ func loadConfig() *config.Config {
 	// next to the catmonitor config > dev fallback configs/metrics.yaml.
 	metricsPaths := []string{
 		os.Getenv("CATMONITOR_METRICS"),
-		filepath.Join(filepath.Dir(*configPath), "metrics.yaml"),
+		filepath.Join(filepath.Dir(configPath), "metrics.yaml"),
 		"configs/metrics.yaml",
 	}
 	if err := metrics.Init(metricsPaths...); err != nil {
@@ -105,10 +105,10 @@ func loadConfig() *config.Config {
 		os.Exit(1)
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Error("failed to load config, using defaults", "error", err)
-		return config.Default()
+		slog.Error("failed to load config", "path", configPath, "error", err)
+		os.Exit(1)
 	}
 	// Load each enabled feature's metrics.yaml override (priority/selectivity):
 	// unions the metrics each feature needs so they survive metrics.Filter.
@@ -286,14 +286,14 @@ func runDaemon() {
 	scheduler.SetFilter(metrics.Filter)
 
 	// Prometheus exporter endpoint
-	go exporter.ServeMetrics(":9100", cacheStore, logger)
+	go exporter.ServeMetrics(":19320", cacheStore, logger)
 
 	scheduler.Start(ctx, collectorCfgs)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	logger.Info("CATMonitor daemon started", "version", version)
+	logger.Info("CATMonitor daemon started", "version", version.Version)
 	sig := <-sigCh
 	logger.Info("received signal, shutting down", "signal", sig)
 	cancel()

@@ -63,14 +63,14 @@ collection:
 # min across the listed features' declared intervals (falling back to
 # collectors.<name>.interval for components no feature declares). Empty = use the
 # default catalog (configs/metrics.yaml) + collectors.interval only.
-features: [web, dfee]
+features: [web, dfee, health]
 
 # Fault subscription & push mechanism (features/faultsub). Default off; enable
 # to let external fault managers (e.g. EEP) subscribe to NPU fault events via
 # HTTP webhook and a REST API. See features/faultsub/faultsub_SPEC.md.
 faultsub:
   enabled: false
-  rest_addr: ":9101"            # subscription REST API listen address
+  rest_addr: ":19321"           # subscription REST API listen address
   webhook_timeout: 5s          # per-request webhook push timeout
   webhook_retry: 1              # failed-webhook retry count
   event_buffer: 1024           # recent-event ring buffer (GET /faultsub/events)

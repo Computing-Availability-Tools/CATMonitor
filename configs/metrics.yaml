@@ -23,7 +23,7 @@ components:
         static: false
       - name: context_switches
         cn_name: "上下文切换次数"
-        priority: Low
+        priority: Medium
         unit: "次/s"
         static: false
       - name: process_count
@@ -38,42 +38,42 @@ components:
         static: true
       - name: user_time
         cn_name: "用户态运行时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: nice_time
         cn_name: "低优先级用户进程时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: system_time
         cn_name: "内核态运行时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: idle_time
         cn_name: "空闲时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: iowait_time
         cn_name: "等待IO时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: irq_time
         cn_name: "硬中断处理时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: softirq_time
         cn_name: "软中断处理时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: steal_time
         cn_name: "被窃取时间"
-        priority: Low
+        priority: Medium
         unit: "jiffies"
         static: false
       - name: user_util
@@ -280,17 +280,17 @@ components:
         static: false
       - name: module_num
         cn_name: "内存条数量"
-        priority: Low
+        priority: Medium
         unit: "个"
         static: true
       - name: module_size
         cn_name: "内存条大小"
-        priority: Low
+        priority: Medium
         unit: "MB"
         static: true
       - name: module_info
         cn_name: "内存条静态信息"
-        priority: Low
+        priority: Medium
         unit: "-"
         static: true
       - name: power
@@ -1000,8 +1000,18 @@ components:
         priority: Medium
         unit: "个"
         static: false
-      - name: roce_new_pkt_rty
+      - name: roce_new_pkt_rty_num
         cn_name: "ROCE重传报文数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: mac_rx_fcs_err_pkt_num
+        cn_name: "MAC层FCS校验错误包数"
+        priority: Medium
+        unit: "个"
+        static: false
+      - name: roce_ecn_db_num
+        cn_name: "RoCE ECN标记丢弃计数"
         priority: Medium
         unit: "个"
         static: false

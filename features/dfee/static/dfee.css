@@ -217,7 +217,12 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   gap: 5px;
   font-size: 11px;
   color: var(--text);
+  cursor: pointer;
+  transition: opacity 0.15s;
 }
+.legend-item:hover { opacity: 0.7; }
+.legend-hidden { opacity: 0.3; text-decoration: line-through; }
+.legend-hidden:hover { opacity: 0.5; }
 .legend-dot {
   width: 8px;
   height: 8px;

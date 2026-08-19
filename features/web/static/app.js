@@ -15,6 +15,8 @@ const MANIFEST = {
          key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
   network: { title: '网络', headline: null,
              key: [ 'throughput', 'packet_count', 'error_count', 'connection_count' ] },
+  chassis: { title: '机箱', headline: null,
+             key: [ 'power', 'inlet_temp', 'outlet_temp', 'fan_speed', 'fan_power' ] },
 };
 
 const METRIC_NAMES = {
@@ -22,11 +24,12 @@ const METRIC_NAMES = {
   process_count: '进程数', model_info: '型号', temperature: '温度', frequency: '频率',
   space_usage: '空间使用率', space_detail: '空间明细', throughput: '吞吐量',
   io_wait: 'IO Wait', io_errors: 'IO 错误', iops: 'IOPS',
-  smart_status: 'SMART', smart_temperature: 'SMART 温度',
+  smart_status: 'SMART 状态', smart_temperature: 'SMART 温度',
   memory_usage: '显存使用率', memory_detail: '明细',
-  power_draw: '功耗', fan_speed: '风扇', ecc_errors: 'ECC 错误',
+  power_draw: '功耗', fan_speed: '风扇转速', ecc_errors: 'ECC 错误',
+  inlet_temp: '进风口温度', outlet_temp: '出风口温度', fan_power: '风扇功率',
   clock_frequency: '频率', utilization: '使用率', health_status: '健康状态',
-  swap_usage: 'Swap 使用率', oom_count: 'OOM 次数', page_faults: '页错误',
+  swap_usage: 'Swap 使用率', swap_detail: 'Swap 明细', oom_count: 'OOM 次数', page_faults: '页错误',
   rx_bytes_total: '接收字节', tx_bytes_total: '发送字节',
   error_count: '错误计数', connection_count: '连接数',
   interface_status: '接口状态', usage_detail: '明细', packet_count: '包计数',
@@ -64,6 +67,60 @@ const LABEL_NAMES = {
   locator: '插槽', type: '类型',
   model_name: '型号', cache_size: '缓存', core: '核心', node: '节点', die: 'Die',
   pretty_name: 'OS', version_id: '版本号', kernel: '内核',
+  npu_id: 'NPU ID', chip_id: '芯片 ID',
+};
+
+const SERVER_TYPE_TEXT = {
+  cpu_only: '仅 CPU',
+  accelerated: '加速型（含 GPU/NPU）',
+};
+
+const RULE_TEXT = {
+  // CPU
+  'usage>90%': 'CPU 使用率超过 90%',
+  'usage>80%': 'CPU 使用率超过 80%',
+  'temp>85C':  'CPU 温度超过 85°C',
+  'temp>75C':  'CPU 温度超过 75°C',
+  'load>cores*2': '系统负载超过核心数 × 2',
+  'cpu_ce_error':  'CPU 发生可纠正 ECC 错误',
+  'cpu_uce_error': 'CPU 发生不可纠正 ECC 错误',
+  // Memory
+  'usage>90%':       '内存使用率超过 90%',
+  'usage>80%':       '内存使用率超过 80%',
+  'swap>50%':       '交换分区使用率超过 50%',
+  'ce_error':       '内存可纠正 ECC 错误',
+  'uce_error':      '内存不可纠正 ECC 错误',
+  'saturation>80%': '内存饱和度超过 80%',
+  'fragmentation>80%': '内存碎片率超过 80%',
+  // Disk
+  'space>90%':   '磁盘空间使用率超过 90%',
+  'space>80%':   '磁盘空间使用率超过 80%',
+  'io_wait>20%': '磁盘 IO 等待超过 20%',
+  'smart_failed': 'SMART 健康检查未通过',
+  // GPU
+  'mem>95%':    '显存使用率超过 95%',
+  'util>95%':   '利用率超过 95%',
+  'ecc_error':  '发生 ECC 错误',
+  // NPU
+  'card_drop':       'NPU 卡掉线',
+  'health_alarm':    'NPU 健康状态告警',
+  'health_warning':  'NPU 健康状态预警',
+  'hbm_double_ecc':  'HBM 发生双比特 ECC 错误',
+  'ddr_double_ecc':  'DDR 发生双比特 ECC 错误',
+  'hbm_single_ecc':  'HBM 发生单比特 ECC 错误',
+  'ddr_single_ecc':  'DDR 发生单比特 ECC 错误',
+  'error_code':      'NPU 存在错误代码',
+  // Network
+  'error_count>100': '网络错误包数超过 100',
+  'error_count>10':  '网络错误包数超过 10',
+  'time_wait>2000':  'TIME_WAIT 连接数超过 2000',
+  'estab>5000':     'ESTABLISHED 连接数超过 5000',
+  'estab>3000':     'ESTABLISHED 连接数超过 3000',
+  // Chassis
+  'inlet_temp>40':  '进风口温度超过 40°C',
+  'inlet_temp>35':  '进风口温度超过 35°C',
+  'outlet_temp>60': '出风口温度超过 60°C',
+  'outlet_temp>50': '出风口温度超过 50°C',
 };
 
 // Maps a static spec metric name to (display type, the label key that holds
@@ -99,12 +156,236 @@ const SERIES_LABELS = {
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
 
+function metricSortCmp(a, b) {
+  const la = a.labels || {}, lb = b.labels || {};
+  for (const key of [
+    'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
+    'interface', 'mount_point', 'device', 'mc', 'locator', 'sensor',
+    'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
+    'kind', 'interval', 'state', 'status',
+  ]) {
+    const va = la[key], vb = lb[key];
+    if (va === undefined && vb === undefined) continue;
+    if (va === undefined) return 1;
+    if (vb === undefined) return -1;
+    if (va === vb) continue;
+    if (va === 'total') return -1;
+    if (vb === 'total') return 1;
+    const na = parseFloat(va), nb = parseFloat(vb);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    const da = parseFloat(va.replace(/\D/g, '')), db = parseFloat(vb.replace(/\D/g, ''));
+    if (!isNaN(da) && !isNaN(db) && da !== db) return da - db;
+    return va < vb ? -1 : 1;
+  }
+  return 0;
+}
+
+function renderErrorCountGroup(items) {
+  const drops = items.filter(m => (m.labels || {}).type && m.labels.type.includes('drop'));
+  const errs = items.filter(m => (m.labels || {}).type && m.labels.type.includes('err'));
+  const container = el('div');
+  if (errs.length) container.appendChild(renderRxTxSubGroup('错包计数', errs));
+  if (drops.length) container.appendChild(renderRxTxSubGroup('丢包计数', drops));
+  return container;
+}
+
+function renderRxTxSubGroup(title, items) {
+  const byIface = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    if (!byIface[iface]) { byIface[iface] = {}; order.push(iface); }
+    const dir = lb.type || '';
+    if (dir.startsWith('rx')) byIface[iface].rx = mt.value;
+    if (dir.startsWith('tx')) byIface[iface].tx = mt.value;
+  }
+  const sub = el('div', 'error-sub-group');
+  sub.appendChild(elText('div', 'error-sub-title', title));
+  for (const iface of order) {
+    const d = byIface[iface];
+    const rx = d.rx !== undefined ? fmt(d.rx) : '--';
+    const tx = d.tx !== undefined ? fmt(d.tx) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">接收 ' + rx + '</span>' +
+      '<span class="rw-write">发送 ' + tx + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    sub.appendChild(row);
+  }
+  return sub;
+}
+
+function renderInterfaceDirectionGroup(items) {
+  const byIface = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    if (!byIface[iface]) { byIface[iface] = {}; order.push(iface); }
+    byIface[iface][lb.direction || ''] = mt.value;
+  }
+  order.sort();
+  const container = el('div');
+  for (const iface of order) {
+    const d = byIface[iface];
+    const rx = d.rx !== undefined ? fmt(d.rx) : '--';
+    const tx = d.tx !== undefined ? fmt(d.tx) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">接收 ' + rx + '</span>' +
+      '<span class="rw-write">发送 ' + tx + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderInterfaceStatusGroup(items) {
+  const container = el('div');
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const iface = lb.interface || '';
+    const isUp = mt.value > 0;
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">' + (isUp ? 'up' : 'down') + '</span>' +
+      '<span class="metric-labels">' + iface + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderFanSpeedGroup(items) {
+  const byFan = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const fan = lb.fan || '';
+    if (!byFan[fan]) { byFan[fan] = {}; order.push(fan); }
+    byFan[fan][lb.direction || ''] = mt.value;
+  }
+  order.sort((a, b) => parseInt(a) - parseInt(b));
+  const container = el('div');
+  for (const fan of order) {
+    const d = byFan[fan];
+    const parts = [];
+    if (d.F !== undefined) parts.push('<span class="rw-read">前 ' + fmt(d.F) + '</span>');
+    if (d.R !== undefined) parts.push('<span class="rw-write">后 ' + fmt(d.R) + '</span>');
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML = parts.join('') + '<span class="metric-labels">风扇 ' + fan + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderSmartStatusGroup(items) {
+  const container = el('div');
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const passed = mt.value >= 1;
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read" style="color:' + (passed ? 'var(--ok)' : 'var(--crit)') + '">' +
+      (passed ? 'PASSED' : 'FAILED') + '</span>' +
+      '<span class="metric-labels">' + (lb.device || '--') + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderDeviceDirectionGroup(items) {
+  const byDev = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const dev = lb.device || '';
+    if (!byDev[dev]) { byDev[dev] = {}; order.push(dev); }
+    byDev[dev][lb.direction || ''] = mt.value;
+  }
+  order.sort((a, b) => {
+    const na = parseInt(a.replace(/\D/g, ''), 10);
+    const nb = parseInt(b.replace(/\D/g, ''), 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return a < b ? -1 : 1;
+  });
+  const container = el('div');
+  for (const dev of order) {
+    const d = byDev[dev];
+    const rd = d.read !== undefined ? fmt(d.read) : '--';
+    const wr = d.write !== undefined ? fmt(d.write) : '--';
+    const row = el('div', 'metric-row rw-row');
+    row.innerHTML =
+      '<span class="rw-read">读 ' + rd + '</span>' +
+      '<span class="rw-write">写 ' + wr + '</span>' +
+      '<span class="metric-labels">' + dev + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
+
+function renderSwapDetailGroup(items) {
+  const fields = {};
+  for (const mt of items) {
+    const f = (mt.labels || {}).field || '';
+    fields[f] = mt.value;
+  }
+  const total = fields.total ? fmtMB(fields.total) : '--';
+  const used = fields.used !== undefined ? fmtMB(fields.used) : '--';
+  const free = fields.free ? fmtMB(fields.free) : '--';
+  const row = el('div', 'metric-row space-detail-row');
+  row.innerHTML =
+    '<span class="metric-val">' + total + '</span>' +
+    '<span class="space-detail-used">' + used + ' used</span>' +
+    '<span class="space-detail-avail">' + free + ' free</span>';
+  const container = el('div');
+  container.appendChild(row);
+  return container;
+}
+
+function renderSpaceDetailGroup(items) {
+  const byMount = {};
+  const order = [];
+  for (const mt of items) {
+    const lb = mt.labels || {};
+    const key = (lb.device || '') + '|' + (lb.mount_point || '');
+    if (!byMount[key]) { byMount[key] = {}; order.push(key); }
+    byMount[key][lb.field] = mt.value;
+    byMount[key].device = lb.device;
+    byMount[key].mount_point = lb.mount_point;
+    byMount[key].fstype = lb.fstype;
+  }
+  order.sort((a, b) => {
+    const pa = byMount[a].mount_point || '';
+    const pb = byMount[b].mount_point || '';
+    if (pa === '/') return -1;
+    if (pb === '/') return 1;
+    return pa < pb ? -1 : 1;
+  });
+  const container = el('div');
+  for (const key of order) {
+    const d = byMount[key];
+    const total = d.total ? fmtMB(d.total) : '--';
+    const used = d.used ? fmtMB(d.used) : '--';
+    const avail = d.available ? fmtMB(d.available) : '--';
+    const pct = (d.total && d.used) ? Math.round(d.used / d.total * 100) : 0;
+    const row = el('div', 'metric-row space-detail-row');
+    row.innerHTML =
+      '<span class="metric-val">' + total + '</span>' +
+      '<span class="space-detail-used">' + used + ' used</span>' +
+      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount_point || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
+    container.appendChild(row);
+  }
+  return container;
+}
 // ---- state ----
 let collectors = [];
 let lastSnapshot = null;
 let refreshIntervalMs = 5000;
 let pollTimer = null;
 let autoOn = true;
+let appVersion = '';
 
 // ---- helpers ----
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -255,11 +536,19 @@ function pickMetric(metrics, spec) {
   return first;
 }
 
-function orderedComponents() {
+function orderedComponents(snap) {
   // The "system" collector emits static identity metrics (device_model etc.
   // attributed to gpu/npu/disk/network) but has no dynamic page of its own, so
   // hide it from the nav and overview grid.
-  return collectors.filter(c => c.component !== 'system').slice().sort((a, b) => {
+  let comps = collectors.filter(c => c.component !== 'system');
+  if (snap) {
+    comps = comps.filter(c => {
+      const hasMetrics = (snap.metrics || []).some(m => m.component === c.component);
+      const hasHealth = snap.health && snap.health.components && snap.health.components[c.component];
+      return hasMetrics || hasHealth;
+    });
+  }
+  return comps.slice().sort((a, b) => {
     const oa = navOrder(a.component), ob = navOrder(b.component);
     if (oa !== ob) return oa - ob;
     return a.component < b.component ? -1 : 1;
@@ -302,7 +591,7 @@ function renderNav() {
   const aOverview = el('a'); aOverview.href = '#/'; aOverview.textContent = '概览';
   if (route === 'overview') aOverview.className = 'active';
   nav.appendChild(aOverview);
-  for (const c of orderedComponents()) {
+  for (const c of orderedComponents(lastSnapshot)) {
     const a = el('a'); a.href = '#/' + c.component; a.textContent = compTitle(c.component);
     if (route === c.component) a.className = 'active';
     nav.appendChild(a);
@@ -423,7 +712,13 @@ function openSpecsModal(snap) {
   const seen = {};
   for (const comp of order) {
     seen[comp] = true;
-    if (groups[comp] && groups[comp].length) body.appendChild(specsGroup(comp, groups[comp]));
+    if (groups[comp] && groups[comp].length) {
+      if (comp === 'memory') {
+        body.appendChild(specsGroupMemory(groups[comp]));
+      } else {
+        body.appendChild(specsGroup(comp, groups[comp]));
+      }
+    }
   }
   for (const comp in groups) {
     if (!seen[comp] && groups[comp].length) body.appendChild(specsGroup(comp, groups[comp]));
@@ -475,6 +770,63 @@ function specsGroup(comp, arr) {
   return sec;
 }
 
+function specsGroupMemory(specs) {
+  const sec = el('div', 'specs-group');
+  const tbl = document.createElement('table');
+  tbl.className = 'table';
+  tbl.innerHTML = '<thead><tr><th>插槽</th><th>容量</th><th>类型</th><th>速率</th><th>厂商</th></tr></thead>';
+  const tb = document.createElement('tbody');
+
+  const sizes = {};
+  const infos = {};
+  const order = [];
+  let memTotal = null;
+
+  for (const m of specs) {
+    if (m.name === 'mem_total') { memTotal = m; continue; }
+    const loc = (m.labels || {}).locator || '';
+    if (m.name === 'module_size') {
+      sizes[loc] = m;
+      if (!order.includes(loc)) order.push(loc);
+    } else if (m.name === 'module_info') {
+      infos[loc] = m;
+      if (!order.includes(loc)) order.push(loc);
+    }
+  }
+
+  if (memTotal) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>合计</td><td>' + (memTotal.labels || {}).capacity + '</td><td colspan="3"></td>';
+    tb.appendChild(tr);
+  }
+
+  order.sort(metricLocatorCmp);
+  for (const loc of order) {
+    const sz = sizes[loc], info = infos[loc];
+    const lb = (info || sz || {}).labels || {};
+    const sizeStr = sz ? fmtMB(sz.value) : (lb.capacity || '--');
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + (loc || '--') + '</td>' +
+      '<td>' + sizeStr + '</td>' +
+      '<td>' + (lb.type || '--') + '</td>' +
+      '<td>' + (lb.speed || '--') + '</td>' +
+      '<td>' + (lb.manufacturer || '--') + '</td>';
+    tb.appendChild(tr);
+  }
+
+  tbl.appendChild(tb);
+  sec.appendChild(tbl);
+  return sec;
+}
+
+function metricLocatorCmp(a, b) {
+  const na = parseInt(a.replace(/\D/g, ''), 10);
+  const nb = parseInt(b.replace(/\D/g, ''), 10);
+  if (!isNaN(na) && !isNaN(nb)) return na - nb;
+  return a < b ? -1 : 1;
+}
+
 // ---- overview ----
 function renderOverview(snap) {
   const page = document.getElementById('page');
@@ -495,10 +847,9 @@ function renderOverview(snap) {
 
   const info = el('div', 'hero-info');
   info.innerHTML =
-    '<div>服务器类型: <b>' + (h.server_type || '--') + '</b></div>' +
-    '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>' +
-    '<div>采集间隔: <b>' + (snap.refresh_interval_ms ? snap.refresh_interval_ms / 1000 + 's' : '--') + '</b></div>';
-  const comps = orderedComponents();
+    '<div>服务器类型: <b>' + (SERVER_TYPE_TEXT[h.server_type] || h.server_type || '--') + '</b></div>' +
+    '<div>更新时间: <b>' + (snap.timestamp ? new Date(snap.timestamp).toLocaleString('zh-CN') : '--') + '</b></div>';
+  const comps = orderedComponents(snap);
   if (comps.length) {
     const chips = el('div', 'hero-components');
     for (const c of comps) {
@@ -548,8 +899,7 @@ function summaryCard(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    // Collected but not part of health evaluation (e.g. network).
-    sc.innerHTML = '<span class="badge na">不评估</span>';
+    sc.innerHTML = '<span class="badge na">无数据</span>';
   }
   head.appendChild(t); head.appendChild(sc);
   card.appendChild(head);
@@ -568,7 +918,14 @@ function summaryCard(compKey, snap) {
       const mm = pickMetric(metrics, spec);
       if (!mm) continue;
       kv.appendChild(elText('div', 'k', METRIC_NAMES[mm.name] || mm.name));
-      const v = el('div', 'v'); v.textContent = fmt(mm.value) + ' ' + (mm.unit || '');
+      const v = el('div', 'v');
+      if (mm.name === 'smart_status') {
+        v.textContent = mm.value >= 1 ? 'PASSED' : 'FAILED';
+      } else if (mm.name === 'interface_status') {
+        v.textContent = mm.value > 0 ? 'up' : 'down';
+      } else {
+        v.textContent = fmt(mm.value) + ' ' + (mm.unit || '');
+      }
       kv.appendChild(v);
     }
     body.appendChild(kv);
@@ -584,7 +941,7 @@ function renderDetail(compKey, snap) {
 
   if (!collectors.some(c => c.component === compKey)) {
     const head = el('div', 'detail-head');
-    head.appendChild(anchor('#/', '← 概览', 'back'));
+  head.appendChild(anchor('#/', '← 概览', 'btn'));
     head.appendChild(elText('span', 'detail-title', '未找到该部件'));
     page.appendChild(head);
     page.appendChild(elText('div', 'empty', '部件 "' + compKey + '" 未注册'));
@@ -604,16 +961,57 @@ function renderDetail(compKey, snap) {
     sc.innerHTML = '<b style="color:' + st.color + '">' + compHealth.score + '</b> / ' + compHealth.max +
       ' <span class="badge" style="background:' + st.color + '">' + st.label + '</span>';
   } else {
-    // Collected but not part of health evaluation (e.g. network).
-    sc.innerHTML = '<span class="badge na">不评估</span>';
+    sc.innerHTML = '<span class="badge na">无数据</span>';
   }
   head.appendChild(sc);
   page.appendChild(head);
 
   if (compHealth && compHealth.deductions && compHealth.deductions.length) {
-    const d = el('div', 'deductions');
-    for (const dd of compHealth.deductions) d.appendChild(elText('div', '', dd.rule + ' (-' + dd.penalty + ')'));
-    page.appendChild(d);
+    const dpanel = el('div', 'panel deductions-panel');
+    const dph = el('div', 'panel-head');
+    dph.appendChild(elText('span', '', '扣分项'));
+    dph.appendChild(elText('span', 'sub', compHealth.deductions.length + ' 条'));
+    dpanel.appendChild(dph);
+    const dbody = el('div', 'panel-body');
+    const d = el('div', 'deductions-list');
+    for (const dd of compHealth.deductions) {
+      const text = RULE_TEXT[dd.rule] || dd.rule;
+      const item = el('div', 'deduction-item');
+      item.innerHTML =
+        '<span class="deduction-icon">⚠</span>' +
+        '<span class="deduction-text">' + text + '</span>' +
+        '<span class="deduction-value">-' + (Math.round(dd.penalty * 10) / 10) + ' 分</span>';
+      d.appendChild(item);
+    }
+    dbody.appendChild(d);
+    dpanel.appendChild(dbody);
+    page.appendChild(dpanel);
+  }
+
+  // hardware specs for this component
+  const allSpecs = snap.specs || [];
+  const compSpecs = allSpecs.filter(m => m.component === compKey);
+  if (compKey === 'memory') {
+    const mt = memoryTotalMB(snap);
+    if (mt) {
+      compSpecs.push({ component: 'memory', name: 'mem_total', value: mt,
+        labels: { capacity: fmtMB(mt) }, synthetic: true });
+    }
+  }
+  if (compSpecs.length) {
+    const spanel = el('div', 'panel');
+    const sph = el('div', 'panel-head');
+    sph.appendChild(elText('span', '', '硬件信息'));
+    sph.appendChild(elText('span', 'sub', compSpecs.length + ' 条'));
+    spanel.appendChild(sph);
+    const sbody = el('div', 'panel-body');
+    if (compKey === 'memory') {
+      sbody.appendChild(specsGroupMemory(compSpecs));
+    } else {
+      sbody.appendChild(specsGroup(compKey, compSpecs));
+    }
+    spanel.appendChild(sbody);
+    page.appendChild(spanel);
   }
 
   // trends
@@ -637,7 +1035,7 @@ function renderDetail(compKey, snap) {
     page.appendChild(panel);
   }
 
-  // all metrics
+  // all metrics (grouped by name)
   const mpanel = el('div', 'panel');
   const mph = el('div', 'panel-head');
   mph.appendChild(elText('span', '', '全部指标'));
@@ -647,21 +1045,63 @@ function renderDetail(compKey, snap) {
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
   } else {
-    const tbl = document.createElement('table');
-    tbl.className = 'table';
-    tbl.innerHTML = '<thead><tr><th>指标</th><th>值</th><th>标签</th></tr></thead>';
-    const tb = document.createElement('tbody');
+    const groups = {};
+    const order = [];
     for (const mt of metrics) {
-      const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td class="m-name">' + (METRIC_NAMES[mt.name] || mt.name) + '</td>' +
-        '<td class="m-val">' + fmt(mt.value) + ' ' + (mt.unit || '') + '</td>' +
-        '<td class="m-labels">' + labels + '</td>';
-      tb.appendChild(tr);
+      if (!groups[mt.name]) { groups[mt.name] = []; order.push(mt.name); }
+      groups[mt.name].push(mt);
     }
-    tbl.appendChild(tb);
-    mbody.appendChild(tbl);
+    for (const name of order) {
+      const items = groups[name];
+      items.sort(metricSortCmp);
+      const dispName = METRIC_NAMES[name] || name;
+      const unit = items[0].unit || '';
+      const grp = el('div', 'metric-group');
+      const gh = el('div', 'metric-group-head');
+      const groupKey = compKey + ':' + name;
+      const collapsed = localStorage.getItem('mg:' + groupKey) === '1';
+      gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
+        (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
+        '<span class="metric-group-count">' + items.length + ' 条</span>' +
+        '<span class="metric-group-toggle">' + (collapsed ? '▸' : '▾') + '</span>';
+      const gb = el('div', 'metric-group-body');
+      if (collapsed) gb.style.display = 'none';
+      if (compKey === 'disk' && name === 'space_detail') {
+        gb.appendChild(renderSpaceDetailGroup(items));
+      } else if (compKey === 'memory' && name === 'swap_detail') {
+        gb.appendChild(renderSwapDetailGroup(items));
+      } else if (compKey === 'disk' && (name === 'iops' || name === 'throughput')) {
+        gb.appendChild(renderDeviceDirectionGroup(items));
+      } else if (compKey === 'network' && (name === 'throughput' || name === 'packet_count')) {
+        gb.appendChild(renderInterfaceDirectionGroup(items));
+      } else if (compKey === 'network' && name === 'interface_status') {
+        gb.appendChild(renderInterfaceStatusGroup(items));
+      } else if (compKey === 'chassis' && name === 'fan_speed') {
+        gb.appendChild(renderFanSpeedGroup(items));
+      } else if (compKey === 'disk' && name === 'smart_status') {
+        gb.appendChild(renderSmartStatusGroup(items));
+      } else if (compKey === 'network' && name === 'error_count') {
+        gb.appendChild(renderErrorCountGroup(items));
+      } else {
+        for (const mt of items) {
+          const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+          const row = el('div', 'metric-row');
+          row.innerHTML =
+            '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
+            '<span class="metric-labels">' + labels + '</span>';
+          gb.appendChild(row);
+        }
+      }
+      gh.onclick = () => {
+        const open = gb.style.display !== 'none';
+        gb.style.display = open ? 'none' : '';
+        gh.querySelector('.metric-group-toggle').textContent = open ? '▸' : '▾';
+        localStorage.setItem('mg:' + groupKey, open ? '1' : '0');
+      };
+      grp.appendChild(gh);
+      grp.appendChild(gb);
+      mbody.appendChild(grp);
+    }
   }
   mpanel.appendChild(mbody);
   page.appendChild(mpanel);
@@ -707,6 +1147,21 @@ async function fetchConfigData() {
     const c = await r.json();
     refreshIntervalMs = c.refresh_interval_ms || 5000;
     document.getElementById('intervalInput').value = Math.round(refreshIntervalMs / 1000);
+    if (c.version) {
+      appVersion = c.version;
+      const el = document.querySelector('.brand .subtitle');
+      if (el) el.textContent = 'v' + appVersion + ' · 设备健康度';
+    }
+    if (c.started_at) {
+      const prev = sessionStorage.getItem('webStartedAt');
+      if (prev && prev !== String(c.started_at)) {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('mg:')) localStorage.removeItem(k);
+        }
+      }
+      sessionStorage.setItem('webStartedAt', String(c.started_at));
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -721,20 +1176,9 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 async function applyInterval() {
   const sec = parseInt(document.getElementById('intervalInput').value, 10);
   if (!sec || sec < 1) { showBanner('请输入有效的刷新间隔（秒）', true); return; }
-  const ms = sec * 1000;
-  try {
-    const r = await fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_interval_ms: ms }),
-    });
-    if (!r.ok) { const t = await r.text(); showBanner('应用失败：' + t, true); return; }
-    const c = await r.json();
-    refreshIntervalMs = c.refresh_interval_ms || ms;
-    startPolling();
-    showBanner('刷新间隔已更新为 ' + (refreshIntervalMs / 1000) + ' 秒', false);
-  } catch (e) {
-    showBanner('应用失败：' + e.message, true);
-  }
+  refreshIntervalMs = sec * 1000;
+  startPolling();
+  showBanner('刷新间隔已更新为 ' + sec + ' 秒', false);
 }
 
 async function manualRefresh() {

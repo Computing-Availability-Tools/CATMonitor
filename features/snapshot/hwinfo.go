@@ -199,6 +199,12 @@ func (c *hwCollector) npuInfo(now time.Time) []collector.Metric {
 		if id == "" {
 			continue
 		}
+		// Skip non-NPU data lines: valid bus_id contains ":" (e.g. "0000:C1:00.0").
+		// Other sections of npu-smi output (error codes, card IDs) produce
+		// numeric bus IDs without ":" — these are not NPU info lines.
+		if !strings.Contains(bus, ":") {
+			continue
+		}
 		metrics = append(metrics, collector.Metric{
 			Component: "npu", Name: "npu_info", Value: parseFloat(id), Unit: "",
 			Labels: map[string]string{
@@ -260,7 +266,7 @@ func (c *hwCollector) netInfo(now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	idx := 0
 	for _, iface := range ifaces {
-		if iface == "lo" {
+		if sys.IsVirtualInterface(iface) {
 			continue
 		}
 		info, err := sys.Default().NetInterfaceInfo(iface)

@@ -24,7 +24,7 @@ components:
         static: false
       - name: context_switches
         cn_name: "上下文切换次数"
-        priority: Low
+        priority: Medium
         unit: "次/s"
         static: false
       - name: process_count
@@ -282,17 +282,17 @@ components:
         static: false
       - name: module_num
         cn_name: "内存条数量"
-        priority: Low
+        priority: Medium
         unit: "个"
         static: true
       - name: module_size
         cn_name: "内存条大小"
-        priority: Low
+        priority: Medium
         unit: "MB"
         static: true
       - name: module_info
         cn_name: "内存条静态信息"
-        priority: Low
+        priority: Medium
         unit: "-"
         static: true
       - name: power

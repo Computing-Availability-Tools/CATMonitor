@@ -52,11 +52,15 @@ func TestEvaluateFullCPUOnly(t *testing.T) {
 		makeMetric("memory", "ecc_ce_errors", 0, map[string]string{"mc": "mc0"}),
 		makeMetric("memory", "ecc_uce_errors", 0, map[string]string{"mc": "mc0"}),
 		makeMetric("disk", "space_usage", 50.0, map[string]string{"mount_point": "/"}),
+		makeMetric("network", "error_count", 0, map[string]string{"interface": "eth0", "type": "rx_err"}),
+		makeMetric("network", "connection_count", 100, map[string]string{"state": "ESTABLISHED"}),
+		makeMetric("chassis", "inlet_temp", 28.0, nil),
+		makeMetric("chassis", "outlet_temp", 42.0, nil),
 	}
 
 	result := evaluator.Evaluate(metrics)
 
-	// All healthy: CPU 30 + Memory 40 + Disk 30 = 100
+	// All healthy: CPU 25 + Memory 25 + Disk 30 + Network 10 + Chassis 10 = 100
 	if result.Score != 100 {
 		t.Errorf("expected total score 100, got %d", result.Score)
 	}
@@ -66,8 +70,8 @@ func TestEvaluateFullCPUOnly(t *testing.T) {
 	if result.ServerType != "cpu_only" {
 		t.Errorf("expected server_type 'cpu_only', got '%s'", result.ServerType)
 	}
-	if len(result.Components) != 3 {
-		t.Errorf("expected 3 components, got %d", len(result.Components))
+	if len(result.Components) != 5 {
+		t.Errorf("expected 5 components, got %d", len(result.Components))
 	}
 }
 
@@ -83,12 +87,12 @@ func TestEvaluateFullCPUOnlyWithIssues(t *testing.T) {
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU: 30 - 6 (usage>90%%) = 24
-	// Memory: 40 - 12 (usage>90%%) - 4 (2 CE errors) = 24
-	// Disk: 30 - 6 (space>80%%) = 24
-	// Total: 24 + 24 + 24 = 72
-	if result.Score != 72 {
-		t.Errorf("expected total score 72, got %d", result.Score)
+	// CPU: 25 - 5 (usage>90% 20%) = 20
+	// Memory: 25 - 6.25 (usage>90% 25%) - 1.25 (ce_error 5%) = 17.5 → 17
+	// Disk: 30 - 4.5 (space>80% 15%) = 25.5 → 25
+	// Total: 20 + 17 + 25 = 62
+	if result.Score != 62 {
+		t.Errorf("expected total score 62, got %d", result.Score)
 	}
 	if result.Grade != "Warning" {
 		t.Errorf("expected grade 'Warning', got '%s'", result.Grade)
@@ -105,11 +109,15 @@ func TestEvaluateAcceleratedScheme(t *testing.T) {
 		makeMetric("gpu", "temperature", 70.0, map[string]string{"gpu_id": "0"}),
 		makeMetric("gpu", "memory_usage", 50.0, map[string]string{"gpu_id": "0"}),
 		makeMetric("gpu", "ecc_errors", 0, map[string]string{"gpu_id": "0"}),
+		makeMetric("network", "error_count", 0, map[string]string{"interface": "eth0", "type": "rx_err"}),
+		makeMetric("network", "connection_count", 100, map[string]string{"state": "ESTABLISHED"}),
+		makeMetric("chassis", "inlet_temp", 28.0, nil),
+		makeMetric("chassis", "outlet_temp", 42.0, nil),
 	}
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU 10 + Memory 20 + Disk 10 + GPU 60 = 100
+	// CPU 15 + Memory 15 + Disk 15 + GPU 35 + Network 10 + Chassis 10 = 100
 	if result.Score != 100 {
 		t.Errorf("expected total score 100, got %d", result.Score)
 	}
@@ -120,22 +128,22 @@ func TestEvaluateAcceleratedScheme(t *testing.T) {
 
 func TestGetScheme(t *testing.T) {
 	s := GetScheme("cpu_only")
-	if s.CPU != 30 || s.Memory != 40 || s.Disk != 30 || s.GPU != 0 {
+	if s.CPU != 25 || s.Memory != 25 || s.Disk != 30 || s.GPU != 0 || s.Network != 10 || s.Chassis != 10 {
 		t.Error("cpu_only scheme mismatch")
 	}
 
 	s = GetScheme("accelerated_8card")
-	if s.CPU != 10 || s.Memory != 20 || s.Disk != 10 || s.GPU != 60 {
+	if s.CPU != 15 || s.Memory != 15 || s.Disk != 15 || s.GPU != 35 || s.Network != 10 || s.Chassis != 10 {
 		t.Error("accelerated_8card scheme mismatch")
 	}
 
 	s = GetScheme("accelerated_4card")
-	if s.CPU != 10 || s.Memory != 20 || s.Disk != 10 || s.GPU != 60 {
+	if s.CPU != 15 || s.Memory != 15 || s.Disk != 20 || s.GPU != 30 || s.Network != 10 || s.Chassis != 10 {
 		t.Error("accelerated_4card scheme mismatch")
 	}
 
 	s = GetScheme("unknown")
-	if s.CPU != 30 {
+	if s.CPU != 25 {
 		t.Error("unknown scheme should default to cpu_only")
 	}
 }
