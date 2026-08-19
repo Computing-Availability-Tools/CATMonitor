@@ -11,7 +11,7 @@ components:
       - name: frequency
         priority: Medium
       - name: context_switches
-        priority: Low
+        priority: Medium
       - name: process_count
         priority: Low
       - name: model_info

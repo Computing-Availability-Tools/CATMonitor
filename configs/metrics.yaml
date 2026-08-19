@@ -23,7 +23,7 @@ components:
         static: false
       - name: context_switches
         cn_name: "上下文切换次数"
-        priority: Low
+        priority: Medium
         unit: "次/s"
         static: false
       - name: process_count
