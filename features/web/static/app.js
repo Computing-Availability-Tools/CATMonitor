@@ -138,20 +138,20 @@ const SPEC_DEFS = {
 };
 
 const SERIES_LABELS = {
-  cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '负载 (1m)',
+  cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '系统负载 1m',
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
-  disk_space_usage: '磁盘使用率 (%)',
+  disk_space_usage: '磁盘空间使用率最高 (%)',
   gpu_utilization: 'GPU 使用率 (%)', gpu_memory_usage: 'GPU 显存使用率 (%)', gpu_temperature: 'GPU 温度 (°C)',
   npu_utilization: 'NPU 使用率 (%)', npu_memory_usage: 'NPU 显存使用率 (%)', npu_temperature: 'NPU 温度 (°C)',
   // v0.2.0 trends.
-  cpu_temperature: 'CPU 温度 (°C)', cpu_power: 'CPU 功耗 (W)',
+  cpu_temperature: 'CPU 最高温度 (°C)', cpu_power: 'CPU 最高功耗 (W)',
   cpu_avg_freq: 'CPU 平均频率 (MHz)', cpu_context_switches: '上下文切换 (次/s)',
-  cpu_ce_errors: 'CPU CE 错误 (次)',
-  memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化 (%)',
+  cpu_ce_errors: 'CPU CE 错误最大值 (次)',
+  memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化最大 (%)',
   memory_swap_in: 'Swap 入页 (次/s)', memory_power: '内存功耗 (W)',
-  disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS (次/s)', disk_throughput: '磁盘吞吐 (MB/s)',
-  network_throughput: '网络吞吐 (bytes/s)', network_packet_count: '网络包速率 (个/s)',
-  network_error_count: '网络错误 (次)',
+  disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',
+  network_throughput: '网络吞吐最大 (bytes/s)', network_packet_count: '网络包速率最大 (个/s)',
+  network_error_count: '网络错误最大 (次)',
 };
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
