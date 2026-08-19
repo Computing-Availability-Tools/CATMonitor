@@ -22,6 +22,14 @@ import (
 func main() {
 	addr := flag.String("addr", ":19323", "listen address (port taken => auto +1)")
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
+	exporter := flag.String("exporter", "disabled", "enable Prometheus exporter: enabled|disabled")
+	exporterPort := flag.String("exporter-port", "9333", "exporter listen port")
+	device := flag.String("device", "", "NPU device filter (comma-separated, e.g. 0,1); empty = all")
+	dockerContainer := flag.String("docker-container", "", "docker container name for software version collection")
+	csvEnabled := flag.String("csv", "disabled", "enable CSV output: enabled|disabled")
+	csvDir := flag.String("csv-dir", "/var/lib/catmonitor/csv", "CSV output directory")
+	csvInterval := flag.String("csv-interval", "10s", "CSV write interval")
+	maxRuntime := flag.String("max-runtime", "0", "max runtime duration (e.g. 10m, 1h); 0 = run forever")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -38,6 +46,22 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	if *maxRuntime != "0" && *maxRuntime != "" {
+		if d, err := time.ParseDuration(*maxRuntime); err == nil && d > 0 {
+			logger.Info("max runtime set, will exit after", "duration", d)
+			go func() {
+				timer := time.NewTimer(d)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					logger.Info("max runtime reached, shutting down", "duration", d)
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
 	go func() {
 		logger.Info("dfee server starting (read-only consumer)", "addr", bound, "snapshot_dir", *dir)
 		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -46,11 +70,51 @@ func main() {
 		}
 	}()
 
+	// Start Prometheus exporter if enabled.
+	var exporterServer *http.Server
+	var exp *Exporter
+	if *exporter == "enabled" {
+		logger.Info("collecting static info for exporter...")
+		exp = NewExporter(*dir, *device, *dockerContainer)
+		expMux := http.NewServeMux()
+		expMux.Handle("/metrics", exp)
+		exporterServer = &http.Server{Addr: ":" + *exporterPort, Handler: expMux}
+		go func() {
+			logger.Info("exporter starting", "port", *exporterPort)
+			if err := exporterServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("exporter server error", "error", err)
+			}
+		}()
+	}
+
+	// Start CSV writer if enabled.
+	var csvW *CSVWriter
+	if *csvEnabled == "enabled" {
+		if exp == nil {
+			exp = NewExporter(*dir, *device, *dockerContainer)
+		}
+		interval, err := time.ParseDuration(*csvInterval)
+		if err != nil || interval <= 0 {
+			interval = 10 * time.Second
+		}
+		csvW = NewCSVWriter(exp, *csvDir, interval)
+		go func() {
+			logger.Info("csv writer starting", "dir", *csvDir, "interval", interval)
+			csvW.Run(ctx)
+		}()
+	}
+
 	<-ctx.Done()
 	logger.Info("shutting down", "signal", ctx.Err())
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = httpServer.Shutdown(shutCtx)
+	if exporterServer != nil {
+		_ = exporterServer.Shutdown(shutCtx)
+	}
+	if csvW != nil {
+		csvW.Close()
+	}
 }
 
 // listenWithFallback tries to listen on initialAddr; if the port is already in
