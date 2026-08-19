@@ -484,7 +484,7 @@ function updateBuffers(data) {
 function updateLegend(chart) {
   const legend = legendMap[chart.id];
   if (!legend) return;
-  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isSeriesVisible(chart, s));
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
   legend.innerHTML = '';
   for (let i = 0; i < series.length; i++) {
     const s = series[i];
