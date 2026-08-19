@@ -480,15 +480,25 @@ function updateBuffers(data) {
   }
 }
 
+function buildColorMap(chart) {
+  const allWithData = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const map = {};
+  for (let i = 0; i < allWithData.length; i++) {
+    map[allWithData[i].id] = PALETTE[i % PALETTE.length];
+  }
+  return map;
+}
+
 // ---- legend update (HTML) ----
 function updateLegend(chart) {
   const legend = legendMap[chart.id];
   if (!legend) return;
   const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const colorMap = buildColorMap(chart);
   legend.innerHTML = '';
   for (let i = 0; i < series.length; i++) {
     const s = series[i];
-    const color = PALETTE[i % PALETTE.length];
+    const color = colorMap[s.id];
     const val = buffers[s.id][buffers[s.id].length - 1];
     const unit = s.unit ? ' ' + s.unit : '';
 
@@ -530,6 +540,8 @@ function renderChart(canvas, chart) {
 
   const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isSeriesVisible(chart, s));
   if (series.length === 0) return;
+
+  const colorMap = buildColorMap(chart);
 
   // Y axis range
   let min = Infinity, max = -Infinity;
@@ -588,7 +600,7 @@ function renderChart(canvas, chart) {
     const data = buffers[s.id];
     const n = data.length;
     if (n < 2) continue;
-    ctx.strokeStyle = PALETTE[si % PALETTE.length];
+    ctx.strokeStyle = colorMap[s.id];
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
