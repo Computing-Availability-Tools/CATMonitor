@@ -63,7 +63,7 @@ function getFilterIds(charts, segmentIndex) {
   }
   return [...ids].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
 }
-function isSeriesVisible(chart, series) {
+function isLegendVisible(chart, series) {
   for (const sec of SECTIONS) {
     if (sec.filterKey && chart.id.startsWith(sec.filterKey)) {
       const parts = series.id.split(':');
@@ -75,6 +75,10 @@ function isSeriesVisible(chart, series) {
       }
     }
   }
+  return true;
+}
+function isSeriesVisible(chart, series) {
+  if (!isLegendVisible(chart, series)) return false;
   const hidden = hiddenSeries[chart.id];
   if (hidden && hidden.has(series.id)) return false;
   return true;
@@ -481,7 +485,7 @@ function updateBuffers(data) {
 }
 
 function buildColorMap(chart) {
-  const allWithData = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const allWithData = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isLegendVisible(chart, s));
   const map = {};
   for (let i = 0; i < allWithData.length; i++) {
     map[allWithData[i].id] = PALETTE[i % PALETTE.length];
@@ -493,7 +497,7 @@ function buildColorMap(chart) {
 function updateLegend(chart) {
   const legend = legendMap[chart.id];
   if (!legend) return;
-  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0);
+  const series = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isLegendVisible(chart, s));
   const colorMap = buildColorMap(chart);
   legend.innerHTML = '';
   for (let i = 0; i < series.length; i++) {
