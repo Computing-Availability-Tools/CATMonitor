@@ -231,16 +231,24 @@ func isCPUTimeMetric(m collector.Metric) bool {
 // frontend as the rolling buffer key. The key is stable across polls as long
 // as the metric's identifying labels don't change.
 func seriesID(m collector.Metric) string {
-	// Secondary label that differentiates instances of the same metric
-	// (e.g. disk read/write direction).
 	suffix := ""
 	if v, ok := m.Labels["direction"]; ok {
 		suffix = ":" + v
 	}
-	for _, key := range []string{"npu_id", "interface", "device", "fan"} {
-		if v, ok := m.Labels[key]; ok {
-			return v + ":" + m.Name + suffix
+	if npuID, ok := m.Labels["npu_id"]; ok {
+		if chipID, hasChip := m.Labels["chip_id"]; hasChip {
+			return npuID + ":" + chipID + ":" + m.Name + suffix
 		}
+		return npuID + "::" + m.Name + suffix
+	}
+	if v, ok := m.Labels["interface"]; ok {
+		return v + ":" + m.Name + suffix
+	}
+	if v, ok := m.Labels["device"]; ok {
+		return v + ":" + m.Name + suffix
+	}
+	if v, ok := m.Labels["fan"]; ok {
+		return v + ":" + m.Name + suffix
 	}
 	if v, ok := m.Labels["field"]; ok {
 		return m.Name + ":" + v + suffix
@@ -308,7 +316,11 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 		for _, key := range []string{"npu_id", "interface", "device", "fan"} {
 			if v, ok := m.Labels[key]; ok {
 				if key == "npu_id" {
-					return "NPU " + v
+					chipStr := ""
+					if cv, ok := m.Labels["chip_id"]; ok {
+						chipStr = " Chip " + cv
+					}
+					return "NPU " + v + chipStr
 				}
 				return v
 			}
@@ -329,10 +341,14 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 	for _, key := range []string{"npu_id", "interface", "device", "fan"} {
 		if v, ok := m.Labels[key]; ok {
 			prefix := key
+			suffix2 := ""
 			if key == "npu_id" {
 				prefix = "NPU"
+				if cv, ok := m.Labels["chip_id"]; ok {
+					suffix2 = " Chip " + cv
+				}
 			}
-			return display + dirStr + " [" + prefix + " " + v + "]"
+			return display + dirStr + " [" + prefix + " " + v + suffix2 + "]"
 		}
 	}
 	if v, ok := m.Labels["field"]; ok {

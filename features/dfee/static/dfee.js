@@ -6,7 +6,7 @@ const PALETTE = [
 ];
 
 const SECTIONS = [
-  { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3 }, filterLabel: 'NPU CARD ID', filterKey: 'npu_', filterPrefix: 'NPU ' },
+  { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3 }, filterLabel: 'NPU ID', filterKey: 'npu_', filterPrefix: 'NPU ', filterSegment: 0, filterLabel2: 'CHIP ID', filterKey2: 'npu_chip_', filterPrefix2: 'Chip ', filterSegment2: 1 },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
@@ -51,12 +51,13 @@ function saveFilterSet(key) {
   const set = filterSets[key];
   localStorage.setItem('dfee-filter-' + key, set ? JSON.stringify([...set]) : '[]');
 }
-function getFilterIds(charts) {
+function getFilterIds(charts, segmentIndex) {
+  segmentIndex = segmentIndex || 0;
   const ids = new Set();
   for (const c of charts) {
     for (const s of (c.series || [])) {
       const parts = s.id.split(':');
-      if (parts.length > 1) ids.add(parts[0]);
+      if (parts.length > segmentIndex && parts[segmentIndex] !== '') ids.add(parts[segmentIndex]);
     }
   }
   return [...ids].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
@@ -64,9 +65,14 @@ function getFilterIds(charts) {
 function isSeriesVisible(chart, series) {
   for (const sec of SECTIONS) {
     if (sec.filterKey && chart.id.startsWith(sec.filterKey)) {
-      const set = filterSets[sec.filterKey];
-      if (!set) return true;
-      return set.has(series.id.split(':')[0]);
+      const parts = series.id.split(':');
+      const set1 = filterSets[sec.filterKey];
+      if (set1 && !set1.has(parts[sec.filterSegment || 0])) return false;
+      if (sec.filterKey2) {
+        const set2 = filterSets[sec.filterKey2];
+        if (set2 && !set2.has(parts[sec.filterSegment2 || 1])) return false;
+      }
+      return true;
     }
   }
   return true;
@@ -76,14 +82,18 @@ function filterDisplayLabel(key) {
   if (!set) return '全部';
   return [...set].sort((a, b) => a.localeCompare(b, undefined, {numeric: true})).join(', ');
 }
-function buildFilterDropdown(sec, ids) {
+function buildFilterDropdown(sec, ids, filterIdx) {
+  filterIdx = filterIdx || 0;
+  const fKey = filterIdx === 0 ? sec.filterKey : sec.filterKey2;
+  const fLabel = filterIdx === 0 ? sec.filterLabel : sec.filterLabel2;
+  const fPrefix = filterIdx === 0 ? (sec.filterPrefix || '') : (sec.filterPrefix2 || '');
   const wrap = el('div', 'npu-filter');
-  const label = elText('span', 'filter-label', sec.filterLabel);
+  const label = elText('span', 'filter-label', fLabel);
   const dropdown = el('div', 'npu-dropdown');
   const trigger = el('button', 'npu-dropdown-trigger');
   trigger.type = 'button';
-  trigger.title = filterDisplayLabel(sec.filterKey);
-  const textSpan = elText('span', 'npu-dropdown-text', filterDisplayLabel(sec.filterKey));
+  trigger.title = filterDisplayLabel(fKey);
+  const textSpan = elText('span', 'npu-dropdown-text', filterDisplayLabel(fKey));
   trigger.appendChild(textSpan);
   const arrow = elText('span', 'npu-dropdown-arrow', '\u25BE');
   trigger.appendChild(arrow);
@@ -94,10 +104,10 @@ function buildFilterDropdown(sec, ids) {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = id;
-    cb.checked = !filterSets[sec.filterKey] || filterSets[sec.filterKey].has(id);
-    cb.onchange = () => onFilterCheckboxChange(sec, ids, trigger, menu);
+    cb.checked = !filterSets[fKey] || filterSets[fKey].has(id);
+    cb.onchange = () => onFilterCheckboxChange(fKey, ids, trigger, menu);
     item.appendChild(cb);
-    item.appendChild(document.createTextNode(' ' + (sec.filterPrefix || '') + id));
+    item.appendChild(document.createTextNode(' ' + fPrefix + id));
     menu.appendChild(item);
   }
   trigger.onclick = (e) => {
@@ -113,19 +123,19 @@ function buildFilterDropdown(sec, ids) {
   dropdown.appendChild(menu);
   return wrap;
 }
-function onFilterCheckboxChange(sec, ids, trigger, menu) {
+function onFilterCheckboxChange(fKey, ids, trigger, menu) {
   const checked = ids.filter(id => {
     const cb = menu.querySelector('input[value="' + CSS.escape(id) + '"]');
     return cb && cb.checked;
   });
   if (checked.length === 0 || checked.length === ids.length) {
-    filterSets[sec.filterKey] = null;
+    filterSets[fKey] = null;
   } else {
-    filterSets[sec.filterKey] = new Set(checked);
+    filterSets[fKey] = new Set(checked);
   }
-  saveFilterSet(sec.filterKey);
-  trigger.firstChild.textContent = filterDisplayLabel(sec.filterKey);
-  trigger.title = filterDisplayLabel(sec.filterKey);
+  saveFilterSet(fKey);
+  trigger.firstChild.textContent = filterDisplayLabel(fKey);
+  trigger.title = filterDisplayLabel(fKey);
   renderAllCharts();
 }
 
@@ -223,9 +233,15 @@ function buildSections(charts) {
       head.appendChild(filter);
     }
     if (sec.filterKey) {
-      const filterIds = getFilterIds(secCharts);
+      const filterIds = getFilterIds(secCharts, sec.filterSegment || 0);
       if (filterIds.length > 1) {
-        head.appendChild(buildFilterDropdown(sec, filterIds));
+        head.appendChild(buildFilterDropdown(sec, filterIds, 0));
+      }
+    }
+    if (sec.filterKey2) {
+      const filterIds2 = getFilterIds(secCharts, sec.filterSegment2 || 1);
+      if (filterIds2.length > 1) {
+        head.appendChild(buildFilterDropdown(sec, filterIds2, 1));
       }
     }
     section.appendChild(head);
@@ -629,6 +645,7 @@ async function pollTick() {
       localStorage.removeItem('dfee-collapsed');
       for (const sec of SECTIONS) {
         if (sec.filterKey) localStorage.removeItem('dfee-filter-' + sec.filterKey);
+        if (sec.filterKey2) localStorage.removeItem('dfee-filter-' + sec.filterKey2);
       }
       cardOrders = {};
       cardSizes = {};
@@ -679,6 +696,7 @@ document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
   loadCardLayout();
   for (const sec of SECTIONS) {
     if (sec.filterKey) loadFilterSet(sec.filterKey);
+    if (sec.filterKey2) loadFilterSet(sec.filterKey2);
   }
   await pollTick();
   startPolling();

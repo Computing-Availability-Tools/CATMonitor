@@ -78,8 +78,9 @@ Flags:
 
 func loadConfig() *config.Config {
 	fs := flag.NewFlagSet("catmonitor", flag.ContinueOnError)
-	configPath := fs.String("config", platform.ConfigPath(), "Config file path")
-	fs.String("c", platform.ConfigPath(), "Config file path (short)")
+	var configPath string
+	fs.StringVar(&configPath, "config", platform.ConfigPath(), "Config file path")
+	fs.StringVar(&configPath, "c", platform.ConfigPath(), "Config file path (short)")
 	fs.String("o", "", "Output format: json|table")
 	fs.String("output", "", "Output format: json|table")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -90,7 +91,7 @@ func loadConfig() *config.Config {
 	// next to the catmonitor config > dev fallback configs/metrics.yaml.
 	metricsPaths := []string{
 		os.Getenv("CATMONITOR_METRICS"),
-		filepath.Join(filepath.Dir(*configPath), "metrics.yaml"),
+		filepath.Join(filepath.Dir(configPath), "metrics.yaml"),
 		"configs/metrics.yaml",
 	}
 	if err := metrics.Init(metricsPaths...); err != nil {
@@ -98,10 +99,10 @@ func loadConfig() *config.Config {
 		os.Exit(1)
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Error("failed to load config, using defaults", "error", err)
-		return config.Default()
+		slog.Error("failed to load config", "path", configPath, "error", err)
+		os.Exit(1)
 	}
 	// Load each enabled feature's metrics.yaml override (priority/selectivity):
 	// unions the metrics each feature needs so they survive metrics.Filter.

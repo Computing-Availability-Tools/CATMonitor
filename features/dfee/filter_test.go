@@ -133,13 +133,13 @@ func TestGroupForChart(t *testing.T) {
 
 // TestSeriesIDStability verifies that series IDs are deterministic.
 func TestSeriesIDStability(t *testing.T) {
-	m := emetric("npu", "temperature", 55, map[string]string{"npu_id": "0"})
+	m := emetric("npu", "temperature", 55, map[string]string{"npu_id": "0", "chip_id": "0"})
 	id1 := seriesID(m)
 	id2 := seriesID(m)
 	if id1 != id2 {
 		t.Errorf("series ID not stable: %s != %s", id1, id2)
 	}
-	if id1 != "0:temperature" {
+	if id1 != "0:0:temperature" {
 		t.Errorf("expected '0:temperature', got %q", id1)
 	}
 	// Memory field
