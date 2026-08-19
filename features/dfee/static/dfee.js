@@ -23,6 +23,7 @@ let canvasMap = {};
 let legendMap = {};
 let badgeMap = {};
 let filterSets = {}; // {filterKey: Set or null} — null = all visible
+let hiddenSeries = {}; // {chartId: Set of series.id} — user-hidden via legend click
 let cardOrders = {}; // {sectionTitle: [chartId, ...]}
 let cardSizes = {}; // {chartId: {span: N, height: N}}
 let dragSource = null;
@@ -72,9 +73,10 @@ function isSeriesVisible(chart, series) {
         const set2 = filterSets[sec.filterKey2];
         if (set2 && !set2.has(parts[sec.filterSegment2 || 1])) return false;
       }
-      return true;
     }
   }
+  const hidden = hiddenSeries[chart.id];
+  if (hidden && hidden.has(series.id)) return false;
   return true;
 }
 function filterDisplayLabel(key) {
@@ -491,6 +493,7 @@ function updateLegend(chart) {
     const unit = s.unit ? ' ' + s.unit : '';
 
     const item = el('span', 'legend-item');
+    item.style.cursor = 'pointer';
     const dot = el('span', 'legend-dot');
     dot.style.background = color;
     item.appendChild(dot);
@@ -498,6 +501,17 @@ function updateLegend(chart) {
     const valSpan = el('span', 'legend-val');
     valSpan.textContent = ' ' + fmt(val) + unit;
     item.appendChild(valSpan);
+    const hidden = hiddenSeries[chart.id];
+    if (hidden && hidden.has(s.id)) item.classList.add('legend-hidden');
+    item.onclick = () => {
+      if (!hiddenSeries[chart.id]) hiddenSeries[chart.id] = new Set();
+      const hs = hiddenSeries[chart.id];
+      if (hs.has(s.id)) hs.delete(s.id);
+      else hs.add(s.id);
+      renderChart(canvasMap[chart.id], chart);
+      updateLegend(chart);
+      updateBadge(chart);
+    };
     legend.appendChild(item);
   }
 }
@@ -650,6 +664,7 @@ async function pollTick() {
       cardOrders = {};
       cardSizes = {};
       filterSets = {};
+      hiddenSeries = {};
     }
     localStorage.setItem('dfee-session-id', data.session_id);
   }
