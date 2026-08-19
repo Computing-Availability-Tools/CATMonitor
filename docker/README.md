@@ -15,7 +15,7 @@ CATMonitor 容器化方案支持两种镜像：
 |------|---------|------|
 | `catmonitor` (daemon) | 19320, 19321 | 采集指标 + Prometheus 导出 + snapshot 写入 + faultsub |
 | `web` | 19322 | Web 仪表盘（读 snapshot） |
-| `dfee` | 19323 | 能效监控 SPA |
+| `dfee` | 19323, 9333 | 能效监控 SPA + Prometheus exporter + CSV 输出 |
 
 daemon 是 snapshot 唯一生产者；web/dfee 是只读消费者，不自行采集。三容器共享一个 snapshot 卷。
 
@@ -138,18 +138,43 @@ docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/w
 #### 步骤 5：启动 dfee
 
 ```bash
+# 基础模式（仅 SPA + API）
 docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
   catmonitor-npu -snapshot-dir /var/lib/catmonitor/snapshot
+
+# 含 Prometheus exporter + CSV 输出
+docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-csv:/var/lib/catmonitor/csv \
+  catmonitor-npu \
+  -snapshot-dir /var/lib/catmonitor/snapshot \
+  -exporter=enabled \
+  -exporter-port=9333 \
+  -csv=enabled \
+  -csv-dir=/var/lib/catmonitor/csv \
+  -csv-interval=10s
 ```
 
 ### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
 
 ```bash
+# 基础模式
 docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
   -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
   catmonitor-npu \
   -snapshot-dir /var/lib/catmonitor/snapshot
+
+# 含 exporter + CSV
+docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
+  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v /var/lib/catmonitor/csv:/var/lib/catmonitor/csv \
+  catmonitor-npu \
+  -snapshot-dir /var/lib/catmonitor/snapshot \
+  -exporter=enabled \
+  -exporter-port=9333 \
+  -csv=enabled \
+  -csv-dir=/var/lib/catmonitor/csv
 ```
 
 ## 4. 端口说明
@@ -160,6 +185,7 @@ docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
 | 19321 | faultsub REST API（可选） | `/faultsub/events` 等 |
 | 19322 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
 | 19323 | dfee SPA | `/`、`/dfee/` |
+| 9333 | dfee Prometheus exporter | `/metrics` |
 
 如需自定义端口映射（如映射到不同主机端口）：
 
@@ -241,7 +267,11 @@ docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/w
 
 docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-generic -snapshot-dir /var/lib/catmonitor/snapshot
+  catmonitor-generic \
+  -snapshot-dir /var/lib/catmonitor/snapshot \
+  -exporter=enabled \
+  -csv=enabled \
+  -csv-dir=/var/lib/catmonitor/csv
 ```
 
 如果使用 docker-compose，修改 `docker-compose.yml`：
@@ -358,6 +388,7 @@ collection:
 | `cm-snapshot` | daemon | web, dfee | snapshot.json + snapshot_*.json |
 | `cm-data` | daemon | — | JSONL 历史数据 |
 | `cm-straggler` | daemon | — | straggler KPI 文件（可选） |
+| `cm-csv` | dfee | — | dfee CSV 输出（可选，`-csv=enabled` 时） |
 
 ## 10. 停止与清理
 
@@ -366,7 +397,7 @@ collection:
 docker rm -f catmonitor catmonitor-web catmonitor-dfee
 
 # 清理数据卷（保留数据则跳过）
-docker volume rm cm-snapshot cm-data
+docker volume rm cm-snapshot cm-data cm-csv
 
 # 删除镜像
 docker rmi catmonitor-npu catmonitor-generic
@@ -437,3 +468,94 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
     apt-get update && apt-get install -y --no-install-recommends \
     ipmitool smartmontools util-linux dmidecode && rm -rf /var/lib/apt/lists/*
 ```
+
+## 13. dfee Prometheus Exporter + Grafana
+
+dfee 支持独立的 Prometheus exporter（`:9333`），输出 CPU/内存/磁盘/网络/NPU/机箱指标的 `node_*`/`dsmi_*`/`ipmi_*` 格式，可直接接入 Prometheus + Grafana。
+
+### dfee 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-addr` | `:19323` | dfee SPA + API 监听地址 |
+| `-snapshot-dir` | `/var/lib/catmonitor/snapshot` | daemon snapshot 目录 |
+| `-exporter` | `disabled` | `enabled` 开启 Prometheus exporter |
+| `-exporter-port` | `9333` | exporter 监听端口 |
+| `-device` | `""` | NPU 设备过滤（如 `0,1`），空=全部 |
+| `-csv` | `disabled` | `enabled` 开启 CSV 输出 |
+| `-csv-dir` | `/var/lib/catmonitor/csv` | CSV 输出目录 |
+| `-csv-interval` | `10s` | CSV 写入间隔 |
+| `-max-runtime` | `0` | 最大运行时长（如 `10m`、`1h`），0=永久 |
+
+### Docker Compose
+
+`docker-compose.yml` 中 dfee 服务已默认开启 exporter。如需关闭，将 `-exporter=enabled` 改为 `-exporter=disabled`。
+
+### 手动 Docker 启动
+
+```bash
+docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-csv:/var/lib/catmonitor/csv \
+  catmonitor-npu \
+  -snapshot-dir /var/lib/catmonitor/snapshot \
+  -exporter=enabled \
+  -exporter-port=9333 \
+  -csv=enabled \
+  -csv-dir=/var/lib/catmonitor/csv
+```
+
+### 安装 Prometheus + Grafana
+
+```bash
+# 1. Prometheus
+docker pull prom/prometheus
+
+mkdir -p $PWD/prometheus/data
+touch $PWD/prometheus/prometheus.yml
+chown -R 65534:65534 $PWD/prometheus/data
+chown 65534:65534 $PWD/prometheus/prometheus.yml
+
+docker run -d \
+  --name prometheus \
+  -v $PWD/prometheus/data:/prometheus \
+  -v $PWD/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+  -p 9090:9090 \
+  prom/prometheus
+
+# 编辑配置（targets 改为 dfee exporter 地址）
+# vim $PWD/prometheus/prometheus.yml
+# scrape_configs:
+#   - job_name: "CATMonitor"
+#     scrape_interval: 2s
+#     static_configs:
+#       - targets: ["<dfee_exporter_ip>:9333"]
+#         labels:
+#           instance: <dfee_exporter_ip>
+
+# 2. Grafana
+docker pull grafana/grafana
+
+mkdir $PWD/grafana-storage
+chown -R 472:472 $PWD/grafana-storage
+
+docker run -d \
+  --name=grafana \
+  --restart=always \
+  -p 3000:3000 \
+  -v $PWD/grafana-storage:/var/lib/grafana \
+  grafana/grafana
+```
+
+### 导入 Grafana Dashboard
+
+1. 浏览器访问 `http://localhost:3000`（默认账号 `admin / admin`）
+2. **Configuration → Data Sources → Add data source → Prometheus**
+3. URL 填入 `http://<prometheus_ip>:9090`，点击 **Save & Test**
+4. **Dashboards → Import → Upload JSON file**
+5. 选择 `features/dfee/grafana-dashboard.json`
+6. 在导入页面选择 Prometheus 数据源，点击 **Import**
+
+Dashboard 包含 24 个面板（CPU/内存/网络/磁盘/NPU/机箱），支持 `instance`、`job`、`npu_id`、`chip_id` 变量过滤。
+
+> 完整使用文档见 `features/dfee/USAGE.md`。
