@@ -382,7 +382,7 @@ function renderSpaceDetailGroup(items) {
 // ---- state ----
 let collectors = [];
 let lastSnapshot = null;
-let refreshIntervalMs = 5000;
+let refreshIntervalMs = 3000;
 let pollTimer = null;
 let autoOn = true;
 let appVersion = '';
@@ -1143,7 +1143,6 @@ async function fetchConfigData() {
     const r = await fetch('/api/config', { cache: 'no-store' });
     if (!r.ok) return;
     const c = await r.json();
-    refreshIntervalMs = c.refresh_interval_ms || 5000;
     document.getElementById('intervalInput').value = Math.round(refreshIntervalMs / 1000);
     if (c.version) {
       appVersion = c.version;
