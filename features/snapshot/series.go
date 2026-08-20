@@ -61,7 +61,7 @@ var TrackedSeries = []seriesSpec{
 var StaticMetricNames = map[string]bool{
 	// CPU model + topology (lscpu / /proc/cpuinfo).
 	"model_info": true, "numa_node_num": true, "core_num": true,
-	"die_core_num": true, "numa_core_num": true, "cpu_num": true,
+	"numa_core_num": true, "cpu_num": true,
 	// CPU frequency range + cache sizes (/sys).
 	"min_freq": true, "max_freq": true,
 	"l1d_cache_size": true, "l1i_cache_size": true,

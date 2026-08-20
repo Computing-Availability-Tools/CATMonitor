@@ -127,11 +127,6 @@ components:
         priority: Low
         unit: "个"
         static: true
-      - name: die_core_num
-        cn_name: "单个die核数量"
-        priority: Low
-        unit: "个"
-        static: true
       - name: numa_core_num
         cn_name: "NUMA核数量"
         priority: Low
