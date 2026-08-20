@@ -71,8 +71,8 @@ const LABEL_NAMES = {
 };
 
 const SERVER_TYPE_TEXT = {
-  cpu_only: '仅 CPU',
-  accelerated: '加速型（含 GPU/NPU）',
+  cpu_only: '通用服务器',
+  accelerated: 'AI 服务器（含 NPU/GPU）',
 };
 
 const RULE_TEXT = {
