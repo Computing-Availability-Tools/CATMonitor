@@ -157,9 +157,9 @@ const SERIES_LABELS = {
 
 const METRIC_DESCRIPTIONS = {
   // CPU
-  usage: 'CPU 使用率',
+  'cpu:usage': 'CPU 使用率',
   load_average: '系统平均负载，过去 N 分钟运行队列平均进程数',
-  temperature: 'CPU 温度',
+  'cpu:temperature': 'CPU 温度',
   frequency: '每核当前频率',
   context_switches: '上下文切换次数，每秒切换次数',
   process_count: '运行进程数',
@@ -197,7 +197,7 @@ const METRIC_DESCRIPTIONS = {
   numa_order_num: 'NUMA 节点 buddy order 数量，可用内存块规格数',
   numa_info: 'NUMA 节点最大可用连续 order，值越大碎片越少',
   // Memory
-  usage: '内存使用率',
+  'memory:usage': '内存使用率',
   swap_usage: 'Swap 使用率',
   swap_detail: 'Swap 原始值（总量/已用/空闲）',
   swap_in: '换入页数，每秒从 Swap 换入内存的页数',
@@ -220,7 +220,7 @@ const METRIC_DESCRIPTIONS = {
   space_usage: '分区空间使用率',
   space_detail: '分区空间明细（总量/已用/可用）',
   iops: '每秒读写 IOPS（输入输出操作数）',
-  throughput: '读写吞吐量',
+  'disk:throughput': '读写吞吐量',
   read_latency: '读耗时，每秒读 IO 花费的时间',
   write_latency: '写耗时，每秒写 IO 花费的时间',
   io_wait: 'IO 等待占比，CPU 等待磁盘 IO 的时间占比',
@@ -234,7 +234,7 @@ const METRIC_DESCRIPTIONS = {
   // GPU
   utilization: 'GPU 使用率',
   memory_usage: 'GPU 显存使用率',
-  temperature: 'GPU 温度',
+  'gpu:temperature': 'GPU 温度',
   power_draw: 'GPU 功耗',
   fan_speed: '风扇转速',
   ecc_errors: 'GPU ECC 错误数',
@@ -360,7 +360,7 @@ const METRIC_DESCRIPTIONS = {
   nic_rx_all_pkg_num: 'NIC 接收总报文数',
   nic_rx_all_oct_num: 'NIC 接收总字节数',
   // Network
-  throughput: '网络吞吐量',
+  'network:throughput': '网络吞吐量',
   packet_count: '包收发速率',
   error_count: '错误包计数（丢包/错包）',
   interface_status: '网卡接口状态（up/down）',
@@ -1515,7 +1515,7 @@ function renderDetail(compKey, snap) {
       const gh = el('div', 'metric-group-head');
       const groupKey = compKey + ':' + name;
       const collapsed = localStorage.getItem('mg:' + groupKey) === '1';
-      const desc = METRIC_DESCRIPTIONS[name] || '';
+      const desc = METRIC_DESCRIPTIONS[compKey + ':' + name] || METRIC_DESCRIPTIONS[name] || '';
       gh.title = desc;
       gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
         (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
