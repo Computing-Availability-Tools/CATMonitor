@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
@@ -10,12 +11,13 @@ import (
 // new metric, append a spec here — it then appears on that component's detail
 // page automatically (the frontend renders every "<component>_*" series key).
 type seriesSpec struct {
-	component string
-	name      string
-	labelKey  string // optional label filter ("" = any)
-	labelVal  string
-	key       string // must be "<component>_<suffix>" so detail pages can group it
-	mode      int    // 0 = first matching, 1 = max across matching
+	component   string
+	name        string
+	labelKey    string // optional label filter ("" = any)
+	labelVal    string
+	labelPrefix string // if set + labelKey set, m.Labels[labelKey] must start with this
+	key         string // must be "<component>_<suffix>" so detail pages can group it
+	mode        int    // 0 = first matching, 1 = max across matching
 }
 
 // TrackedSeries is the single place to extend which metrics get trend history.
@@ -25,7 +27,7 @@ var TrackedSeries = []seriesSpec{
 	{component: "cpu", name: "load_average", labelKey: "interval", labelVal: "1m", key: "cpu_load_average", mode: 0},
 	{component: "memory", name: "usage", key: "memory_usage", mode: 0},
 	{component: "memory", name: "swap_usage", key: "memory_swap_usage", mode: 0},
-	{component: "disk", name: "space_usage", key: "disk_space_usage", mode: 1},
+	{component: "disk", name: "space_usage", labelKey: "device", labelPrefix: "/dev/", key: "disk_space_usage", mode: 1},
 	{component: "gpu", name: "utilization", key: "gpu_utilization", mode: 0},
 	{component: "gpu", name: "memory_usage", key: "gpu_memory_usage", mode: 0},
 	{component: "gpu", name: "temperature", key: "gpu_temperature", mode: 0},
@@ -111,8 +113,17 @@ func (h *History) Update(metrics []collector.Metric) map[string][]float64 {
 			if m.Component != spec.component || m.Name != spec.name {
 				continue
 			}
-			if spec.labelKey != "" && m.Labels[spec.labelKey] != spec.labelVal {
-				continue
+			if spec.labelKey != "" {
+				v, ok := m.Labels[spec.labelKey]
+				if !ok {
+					continue
+				}
+				if spec.labelVal != "" && v != spec.labelVal {
+					continue
+				}
+				if spec.labelPrefix != "" && !strings.HasPrefix(v, spec.labelPrefix) {
+					continue
+				}
 			}
 			switch spec.mode {
 			case 1: // max across matching entries

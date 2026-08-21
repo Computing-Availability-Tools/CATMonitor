@@ -6,7 +6,7 @@ const MANIFEST = {
   memory: { title: '内存', headline: 'memory_usage', headlineLabel: '内存使用率 (%)',
             key: [ 'usage', 'swap_usage', 'saturation', 'fragmentation',
                    'module_num', 'ecc_ce_errors', 'oom_count', 'page_faults' ] },
-  disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '磁盘使用率 (%)',
+  disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '分区空间使用率最高 (%)',
           key: [ 'space_usage', 'throughput', 'iops', 'io_wait',
                  'io_errors', 'smart_status' ] },
   gpu: { title: 'GPU', headline: 'gpu_utilization', headlineLabel: 'GPU 使用率 (%)',
@@ -148,7 +148,7 @@ const CPU_SPEC_ORDER = {
 const SERIES_LABELS = {
   cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '系统负载 1m',
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
-  disk_space_usage: '磁盘空间使用率最高 (%)',
+  disk_space_usage: '分区空间使用率最高 (%)',
   gpu_utilization: 'GPU 使用率 (%)', gpu_memory_usage: 'GPU 显存使用率 (%)', gpu_temperature: 'GPU 温度 (°C)',
   npu_utilization: 'NPU 使用率 (%)', npu_memory_usage: 'NPU 显存使用率 (%)', npu_temperature: 'NPU 温度 (°C)',
   // v0.2.0 trends.
