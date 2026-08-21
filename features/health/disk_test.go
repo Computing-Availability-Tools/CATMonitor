@@ -6,9 +6,17 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 )
 
+func makeSpaceDetail(device, field string, value float64) collector.Metric {
+	return collector.Metric{
+		Component: "disk", Name: "space_detail", Value: value, Unit: "MB",
+		Labels: map[string]string{"device": device, "field": field},
+	}
+}
+
 func TestEvaluateDiskHealthy(t *testing.T) {
 	metrics := []collector.Metric{
-		makeMetric("disk", "space_usage", 50.0, map[string]string{"mount_point": "/"}),
+		makeSpaceDetail("/dev/sda1", "total", 500000),
+		makeSpaceDetail("/dev/sda1", "used", 250000),
 	}
 
 	score := evaluateDisk(metrics, 30)
@@ -20,12 +28,13 @@ func TestEvaluateDiskHealthy(t *testing.T) {
 
 func TestEvaluateDiskSpaceHigh(t *testing.T) {
 	metrics := []collector.Metric{
-		makeMetric("disk", "space_usage", 85.0, map[string]string{"mount_point": "/"}),
+		makeSpaceDetail("/dev/sda1", "total", 100),
+		makeSpaceDetail("/dev/sda1", "used", 85),
 	}
 
 	score := evaluateDisk(metrics, 30)
 
-	// space > 80%: -15% of 30 = -4.5 → 25
+	// physical disk usage 85% > 80%: -15% of 30 = -4.5 → 25
 	if score.Score != 25 {
 		t.Errorf("expected score 25 (space>80%%), got %d", score.Score)
 	}
@@ -33,35 +42,60 @@ func TestEvaluateDiskSpaceHigh(t *testing.T) {
 
 func TestEvaluateDiskSpaceCritical(t *testing.T) {
 	metrics := []collector.Metric{
-		makeMetric("disk", "space_usage", 95.0, map[string]string{"mount_point": "/"}),
+		makeSpaceDetail("/dev/sda1", "total", 100),
+		makeSpaceDetail("/dev/sda1", "used", 95),
 	}
 
 	score := evaluateDisk(metrics, 30)
 
-	// space > 90%: -35% of 30 = -10.5 → 19
+	// physical disk usage 95% > 90%: -35% of 30 = -10.5 → 19
 	if score.Score != 19 {
 		t.Errorf("expected score 19 (space>90%%), got %d", score.Score)
 	}
 }
 
-// TestEvaluateDiskSpaceWorstMount verifies the worst (max) across mount points.
-func TestEvaluateDiskSpaceWorstMount(t *testing.T) {
+func TestEvaluateDiskSpaceWorstPhysicalDisk(t *testing.T) {
 	metrics := []collector.Metric{
-		makeMetric("disk", "space_usage", 50.0, map[string]string{"mount_point": "/"}),
-		makeMetric("disk", "space_usage", 92.0, map[string]string{"mount_point": "/data"}),
+		// sda (sda1 + sda2): total=200, used=100 → 50%
+		makeSpaceDetail("/dev/sda1", "total", 100),
+		makeSpaceDetail("/dev/sda1", "used", 50),
+		makeSpaceDetail("/dev/sda2", "total", 100),
+		makeSpaceDetail("/dev/sda2", "used", 50),
+		// sdb (sdb1 only): total=100, used=92 → 92%
+		makeSpaceDetail("/dev/sdb1", "total", 100),
+		makeSpaceDetail("/dev/sdb1", "used", 92),
 	}
 
 	score := evaluateDisk(metrics, 30)
 
-	// worst mount 92 > 90 → -10.5 → 19
+	// worst physical disk sdb 92% > 90% → -10.5 → 19
 	if score.Score != 19 {
-		t.Errorf("expected score 19 (worst mount>90%%), got %d", score.Score)
+		t.Errorf("expected score 19 (worst disk>90%%), got %d", score.Score)
+	}
+}
+
+func TestEvaluateDiskSpaceAggregatePartitions(t *testing.T) {
+	metrics := []collector.Metric{
+		// sda has 2 partitions: sda1=95% full, sda2=10% full
+		// aggregated: total=200, used=105 → 52.5% (below 80%, no deduction)
+		makeSpaceDetail("/dev/sda1", "total", 100),
+		makeSpaceDetail("/dev/sda1", "used", 95),
+		makeSpaceDetail("/dev/sda2", "total", 100),
+		makeSpaceDetail("/dev/sda2", "used", 10),
+	}
+
+	score := evaluateDisk(metrics, 30)
+
+	// aggregated disk usage 52.5% < 80% → no deduction → 30
+	if score.Score != 30 {
+		t.Errorf("expected score 30 (aggregated <80%%), got %d", score.Score)
 	}
 }
 
 func TestEvaluateDiskSmartFailed(t *testing.T) {
 	metrics := []collector.Metric{
-		makeMetric("disk", "space_usage", 50.0, map[string]string{"mount_point": "/"}),
+		makeSpaceDetail("/dev/sda1", "total", 500),
+		makeSpaceDetail("/dev/sda1", "used", 250),
 		// smart_status: 1=PASSED, 0=FAILED
 		makeMetric("disk", "smart_status", 0.0, map[string]string{"device": "sda", "status": "FAILED"}),
 	}
@@ -83,8 +117,6 @@ func TestEvaluateDiskSmartFailed(t *testing.T) {
 	}
 }
 
-// TestEvaluateDiskSmartSingleDeduction verifies multiple failing devices yield a
-// single deduction (not per-device stacking).
 func TestEvaluateDiskSmartSingleDeduction(t *testing.T) {
 	metrics := []collector.Metric{
 		makeMetric("disk", "smart_status", 0.0, map[string]string{"device": "sda"}),
@@ -110,7 +142,8 @@ func TestEvaluateDiskSmartSingleDeduction(t *testing.T) {
 
 func TestEvaluateDiskSmartPassedNoDeduction(t *testing.T) {
 	metrics := []collector.Metric{
-		makeMetric("disk", "space_usage", 50.0, map[string]string{"mount_point": "/"}),
+		makeSpaceDetail("/dev/sda1", "total", 500),
+		makeSpaceDetail("/dev/sda1", "used", 250),
 		makeMetric("disk", "smart_status", 1.0, map[string]string{"device": "sda", "status": "PASSED"}),
 	}
 
