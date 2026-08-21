@@ -1566,17 +1566,18 @@ function renderDetail(compKey, snap) {
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
   } else {
+    var diskNetMetrics = null;
     if (compKey === 'disk') {
       var classified = classifySpaceMetrics(metrics);
-      var physGroup = renderPhysicalDiskGroups(classified.local);
-      if (physGroup) mbody.appendChild(physGroup);
-      var netGroup = renderNetworkStorageGroup(classified.network);
-      if (netGroup) mbody.appendChild(netGroup);
+      diskNetMetrics = classified.network;
     }
     const groups = {};
     const order = [];
     for (const mt of metrics) {
-      if (compKey === 'disk' && (mt.name === 'space_usage' || mt.name === 'space_detail')) continue;
+      if (compKey === 'disk' && (mt.name === 'space_usage' || mt.name === 'space_detail')) {
+        var lb = mt.labels || {};
+        if (networkFSTypes[lb.fstype] || !(lb.device || '').startsWith('/dev/')) continue;
+      }
       if (!groups[mt.name]) { groups[mt.name] = []; order.push(mt.name); }
       groups[mt.name].push(mt);
     }
@@ -1655,6 +1656,10 @@ function renderDetail(compKey, snap) {
       grp.appendChild(gh);
       grp.appendChild(gb);
       mbody.appendChild(grp);
+    }
+    if (diskNetMetrics && diskNetMetrics.length > 0) {
+      var netGroup = renderNetworkStorageGroup(diskNetMetrics);
+      if (netGroup) mbody.appendChild(netGroup);
     }
   }
   mpanel.appendChild(mbody);
