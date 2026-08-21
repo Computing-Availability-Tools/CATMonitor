@@ -1436,18 +1436,29 @@ function summaryCard(compKey, snap) {
   card.appendChild(head);
 
   const body = el('div', 'card-body');
+  var sparklineShown = false;
   if (m.headline && snap.history && snap.history[m.headline] && snap.history[m.headline].length > 1) {
-    body.appendChild(elText('div', 'spark-label', m.headlineLabel || ''));
-    body.appendChild(sparkline(snap.history[m.headline], st.color));
+    sparklineShown = true;
+    const histData = snap.history[m.headline];
+    const curVal = histData[histData.length - 1];
+    const meanVal = statBounds(histData).mean;
+    const labelDiv = el('div', 'spark-label');
+    labelDiv.innerHTML = '<span>' + (m.headlineLabel || '') + '</span>' +
+      '<span class="spark-vals"><span class="spark-cur" style="color:' + st.color + '">当前 ' + fmt(curVal) + '</span>' +
+      '<span class="spark-mean">均值 ' + fmt(meanVal) + '</span></span>';
+    body.appendChild(labelDiv);
+    body.appendChild(sparkline(histData, st.color));
   }
   if (metrics.length === 0) {
     body.appendChild(elText('div', 'empty', '无数据'));
   } else {
     const kv = el('div', 'kv');
     const keys = m.key || metrics.slice(0, 4).map(x => x.name);
+    const headlineMetric = sparklineShown && m.headline ? m.headline.replace(/^[a-z]+_/, '') : '';
     for (const spec of keys) {
       const mm = pickMetric(metrics, spec);
       if (!mm) continue;
+      if (mm.name === headlineMetric) continue;
       kv.appendChild(elText('div', 'k', METRIC_NAMES[mm.name] || mm.name));
       const v = el('div', 'v');
       if (mm.name === 'smart_status') {
