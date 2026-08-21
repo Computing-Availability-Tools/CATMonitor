@@ -344,6 +344,11 @@ a { color: inherit; text-decoration: none; }
 .error-sub-group { margin-bottom: 10px; }
 .error-sub-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 
+.disk-grid { display: grid; grid-template-columns: 150px 100px 70px 1fr 1fr 70px 70px; gap: 3px 12px; font-size: 12px; padding: 4px 0; align-items: baseline; }
+.disk-grid-h { color: var(--muted); font-weight: 600; font-size: 11px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 2px; }
+.disk-grid-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.disk-grid-val-bold { font-weight: 600; white-space: nowrap; }
+
 .empty { color: var(--muted); padding: 28px; text-align: center; }
 .foot { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
 

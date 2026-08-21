@@ -685,29 +685,35 @@ function renderDiskGroup(specs) {
   container.appendChild(title);
 
   var body = el('div', 'metric-group-body');
+
+  var grid = el('div', 'disk-grid');
+  var headers = ['设备', '类型', '容量', '型号', '序列号', '固件', '接口'];
+  for (var h = 0; h < headers.length; h++) {
+    var hh = el('div', 'disk-grid-h');
+    hh.textContent = headers[h];
+    grid.appendChild(hh);
+  }
   for (var i = 0; i < diskSpecs.length; i++) {
     var m = diskSpecs[i];
     var lb = m.labels || {};
     var dev = lb.device || '--';
     var model = lb.model || '--';
+    var serial = lb.serial || '--';
     var typeLabel = diskTypeLabel(dev, model);
     var sizeStr = m.value > 0 ? fmtGB(m.value) : '--';
-    var cardHead = el('div', 'metric-row');
-    cardHead.style.fontWeight = '600';
-    cardHead.style.marginTop = '4px';
-    cardHead.innerHTML = '<span class="metric-val">' + model + '</span>' +
-      '<span class="metric-labels">' + typeLabel + '  ' + sizeStr + '</span>';
-    body.appendChild(cardHead);
+    if (model !== '--' && serial !== '--' && model === serial) serial = '--';
 
-    var detailRow = el('div', 'metric-row');
-    detailRow.style.paddingLeft = '16px';
-    var parts = ['设备: /dev/' + dev];
-    if (lb.firmware) parts.push('固件: ' + lb.firmware);
-    if (lb.interface) parts.push('接口: ' + lb.interface);
-    if (lb.serial) parts.push('序列号: ' + lb.serial);
-    detailRow.innerHTML = '<span class="metric-labels">' + parts.join('  ') + '</span>';
-    body.appendChild(detailRow);
+    var cells = [
+      '/dev/' + dev, typeLabel, sizeStr, model, serial,
+      lb.firmware || '--', lb.interface || '--'
+    ];
+    for (var c = 0; c < cells.length; c++) {
+      var cell = el('div', c === 0 ? 'disk-grid-val-bold' : 'disk-grid-val');
+      cell.textContent = cells[c];
+      grid.appendChild(cell);
+    }
   }
+  body.appendChild(grid);
   container.appendChild(body);
   return container;
 }
