@@ -49,6 +49,9 @@ for path in \
     third_party/ascend_npu_burn/SOURCE_SHA256SUMS \
     third_party/ascend_npu_burn/source/LICENSE.md \
     third_party/ascend_npu_burn/source/docs/LICENSE \
+    docker/stress/cpu/Dockerfile \
+    docker/stress/cpu/entrypoint.sh \
+    scripts/stress/build_cpu_runner_image.sh \
     docker/stress/npu/runtime-packages.txt; do
     require_file "$path"
 done
@@ -60,6 +63,14 @@ grep -Fq 'Mulan PSL v2' "$REPO_ROOT/features/stress/THIRD_PARTY_NOTICES.md" ||
 grep -Fq 'COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/LICENSE.md' \
     "$REPO_ROOT/docker/stress/npu/Dockerfile" ||
     die "NPU Burn runtime image no longer copies its license"
+
+grep -Fq 'build_cpu_benchmarks.sh' "$REPO_ROOT/docker/stress/cpu/Dockerfile" ||
+    die "CPU runner image no longer builds benchmarks in its controlled builder stage"
+grep -Fq 'network_mode: none' "$REPO_ROOT/docker/docker-compose.stress.yml" ||
+    die "CPU runner deployment no longer disables networking"
+if grep -Fq '/var/run/docker.sock' "$REPO_ROOT/docker/docker-compose.stress.yml"; then
+    die "CPU runner deployment must not receive the Docker socket"
+fi
 
 (
     cd "$REPO_ROOT/third_party/ascend_npu_burn/source"

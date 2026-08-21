@@ -21,7 +21,7 @@ STREAM 源文件、HPL/HPCG 源码 tar 包、`HPL.dat` 和 `hpcg.dat`，并支�
 指定 output/build root、C/C++/MPI 工具链、OpenBLAS include/lib、并发数、
 STREAM 编译规模、`--only`、`--skip` 和 `--force`。
 
-默认安装根为 `/opt/catmonitor/benchmarks/runtime`，默认临时构建父目录为
+默认安装根为 `/opt/catmonitor/stress/runtime`，默认临时构建父目录为
 `/var/tmp/catmonitor-stress-build`，默认并发为 `min(nproc, 16)`；STREAM 默认
 `STREAM_ARRAY_SIZE=80000000`、`NTIMES=10`，但都必须允许覆盖。线程数、MPI
 进程数、HPCG 网格/时长等运行 profile 不得进入构建参数。
@@ -39,12 +39,26 @@ STREAM 编译规模、`--only`、`--skip` 和 `--force`。
   预定共享变量 `n` 时移除；两种已兼容布局不重复修改；
 - STREAM 完成短实际 smoke；HPL/HPCG 只完成二进制及动态依赖检查，不运行完整压测；
 - 默认拒绝覆盖已有选中资产，显式 `--force` 方可替换；
-- 生成 schema 化 `build-manifest.json`，记录架构、工具链/MPI 输出、源码/配置/
+- 生成 schema 化 `cpu-build-manifest.json`，记录架构、工具链/MPI 输出、源码/配置/
   二进制 SHA-256、编译参数、动态依赖检查和补丁状态；新 manifest 的
   `schema_version` 必须是正 JSON 整数。
 
 构建清单不能代替 `benchmark_check.sh describe`：前者是构建时事实，后者必须继续
 报告当前节点上的实际资产、ABI、资源规模和运行 profile。
+
+### 1.1.1 插件安装与容器边界
+
+Linux 默认插件根必须为 `/opt/catmonitor/stress`，默认状态根必须为
+`/var/lib/catmonitor/stress`。仓库必须提供无负载安装入口
+`scripts/stress/install_stress_runtime.sh`，用于创建目录、安装 adapter，并可选安装
+已构建的 CPU 资产和 manifest。安装器不得编辑主配置、启动服务、拉取镜像或运行
+benchmark。
+
+CATMonitor 主镜像不得内置节点 adapter。基础 Compose 不得挂 stress 插件、状态目录
+或 Docker socket；CPU stress overlay 只读挂插件并读写状态目录；NPU Burn 的
+Docker socket 必须位于单独的显式 overlay。未启用 stress 的部署不应承担这些挂载和
+权限。generic 与 NPU 控制镜像可以共享 Compose 结构，但 DCMI ABI 未插件化前不得
+宣称一个二进制可跨 CPU-only 与 Ascend 节点通用。
 
 ### 1.2 NPU Burn 镜像构建契约
 
@@ -146,7 +160,8 @@ namespace，以及不会退出的 Bash command。它不得复制或硬编码镜�
 torch_npu、PATH、LD_LIBRARY_PATH、ASCEND 或 ATB 环境变量。
 
 工具必须动态枚举宿主机已有 `/dev/davinci[0-9]*`，按数字排序后 identity-map 到
-容器同名路径，不得写死设备数量或补造缺失 ID；还必须校验并映射
+容器同名路径，不得写死设备数量或补造缺失 ID；这些名称属于设备节点 namespace，
+不等同于 NPU Burn 的 PCI logical namespace。工具还必须校验并映射
 `davinci_manager`、`devmm_svm`、`hisi_hdc`，已验证的 driver/DCMI/npu-smi 路径，
 以及 host output directory 到镜像默认输出目录。已有匹配运行容器必须幂等成功；
 匹配但停止的容器可以安全启动；名称相同但镜像或 profile 不一致时必须失败，且
@@ -157,14 +172,15 @@ torch_npu、PATH、LD_LIBRARY_PATH、ASCEND 或 ATB 环境变量。
 `docker_exec` 的 NPU Burn logical ID 来自 upstream 对 Ascend PCI accelerator 的
 `lspci` 枚举、排序和编号，并最终作为 torch_npu device index 使用。CATMonitor 必须
 同时枚举容器内 `/dev/davinciN` 与同一容器的 upstream-compatible PCI topology；
-两个 logical ID 集合完全一致时才能通过 preflight，缺失 `lspci`、没有 PCI 结果或
-集合不一致时必须失败，不能接受 upstream 的固定八设备 fallback。该 ID 不是
+设备节点 ID 与 logical ID 是不同 namespace，节点数量与 PCI topology 数量一致时
+才能通过 preflight。缺失 `lspci`、没有 PCI 结果或数量不一致时必须失败，不能接受
+upstream 的固定八设备 fallback。该 ID 不是
 `npu-smi` Phy-ID，也不能只用 PyTorch 报告的 device count 验证。模板不得默认选择设备；管理员必须
 显式选择一个或多个已预留 logical ID。`all` 仅允许在整节点由本压测独占时显式
 配置，不得作为共享节点推荐值。describe 和正式执行前，native backend 必须从
 宿主机、`docker_exec` backend 必须从固定容器内的 `/dev/davinci[0-9]*` 获取可用
-ID，容器探测失败时不得回退宿主机。describe v1 通过 `topology_source` 和
-`pci_topology_devices` 暴露交叉检查结果。空值、重复值、非法格式或越界配置都应作为
+ID，容器探测失败时不得回退宿主机。describe v1 通过 `device_node_ids`、
+`topology_source` 和 `pci_topology_devices` 暴露交叉检查结果。空值、重复值、非法格式或越界配置都应作为
 必需资产失败，并提示有效 logical IDs。describe v1 可通过新增参数
 `device_namespace=npu_burn_logical` 与 `available_devices` 向旧消费者兼容地暴露事实。
 
@@ -178,11 +194,38 @@ manifest、NPU image manifest、CPU runtime 根目录、MPI/线程规模和管�
 - 顶层 `stress:` 下四项全部启用的 YAML；
 - 记录两份输入 manifest 哈希、adapter/config 哈希及有效资源规模的部署 manifest。
 
+当显式选择 `--cpu-backend unix` 时，生成器还必须输出 runner-local adapter，并在
+部署 manifest 记录 CPU runner image、image manifest、Unix Socket 和两份 adapter
+哈希。控制 adapter 只能把固定 CPU benchmark 名称交给 runner；NPU Burn 不得经过
+CPU runner。宿主机 `local` 继续是默认值，现有部署不得因新增 sidecar 被隐式切换。
+
 生成器不得下载/构建 benchmark、创建/启动容器、运行负载、自动选择 NPU、修改
 源码目录或默认写入 `/etc`。输出目录必须显式提供；已有文件默认拒绝覆盖，只有
 `--force` 可替换。HPL/HPCG launcher/线程规模、NPU logical ID、芯片代际和 workload
 必须由管理员显式给出。主配置的安全默认值继续保持全部关闭；完整启用示例放在
 `configs/stress-full.example.yaml`，不改变未部署资产节点的默认行为。
+
+### 1.5 CPU runner 协议与容器契约
+
+可选 CPU runner 必须仅监听文件系统 Unix Socket，不得监听 TCP。协议只允许：
+
+- 读取 runner 健康状态；
+- 读取 `stream|hpl|hpcg` 的 describe v1；
+- 提交上述三个固定 benchmark 名称。
+
+请求不得包含 shell command、可执行路径、额外 argv、环境变量或 benchmark 参数；
+未知字段和 NPU Burn 必须被拒绝。runner 同一时刻最多运行一个作业，断开/取消请求
+必须清理 shell、MPI 和 benchmark 子进程组，输出必须有固定上限。Unix Socket 不得
+授予 other 用户权限，也不得删除同路径的普通文件或符号链接。
+
+runner image 必须在一致的构建/运行发行版中编译 CPU benchmark，并携带匹配的
+MPI、OpenBLAS、OpenMP 和 numactl 运行依赖；不得直接假定宿主机构建资产与镜像 ABI
+兼容。最终容器不得使用 privileged、host PID、host network 或 Docker Socket；入口
+阶段只允许初始化共享卷和切换 UID 所需的最小 capabilities，并必须在 runner/workload
+启动前清空 bounding、inheritable 和 ambient capability 集合。
+benchmark 资产为只读，只有共享状态目录与 socket 目录可写。HPL/HPCG 输入由管理员
+在镜像构建时提供，并在启动时复制到共享工作目录；具体 MPI/线程/问题规模仍通过
+runner-local adapter 固定，不能从 Web 修改。
 
 ## 2. CLI 与配置
 
@@ -211,8 +254,8 @@ catmonitor stress doctor -o table
 stress:
   enabled: true
   web_enabled: false
-  script_path: /etc/catmonitor/benchmark_check.sh
-  report_path: /var/lib/catmonitor/stress-latest.json
+  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
   benchmarks:
     stream: { enabled: true, timeout: 1m }

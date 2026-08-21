@@ -12,8 +12,8 @@ func TestLoadTopLevelStressConfig(t *testing.T) {
 	content := []byte(`stress:
   enabled: true
   web_enabled: true
-  script_path: /etc/catmonitor/benchmark_check.sh
-  report_path: /var/lib/catmonitor/stress-latest.json
+  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
   benchmarks:
     stream: { enabled: true, timeout: 1m }

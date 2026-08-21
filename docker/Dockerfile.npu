@@ -3,15 +3,18 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    docker.io \
     ipmitool \
     smartmontools \
     util-linux \
     dmidecode \
     && rm -rf /var/lib/apt/lists/*
 
-COPY catmonitor /usr/local/bin/catmonitor
-COPY dfee /usr/local/bin/dfee
-COPY web /usr/local/bin/web
+COPY docker/.build/catmonitor /usr/local/bin/catmonitor
+COPY docker/.build/dfee /usr/local/bin/dfee
+COPY docker/.build/web /usr/local/bin/web
+COPY docker/.build/cpu-runner-client /usr/local/bin/catmonitor-stress-cpu-client
 COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
 COPY features/web/metrics.yaml /features/web/metrics.yaml
@@ -19,5 +22,8 @@ COPY features/dfee/metrics.yaml /features/dfee/metrics.yaml
 COPY features/health/metrics.yaml /features/health/metrics.yaml
 COPY features/dfee/grafana-dashboard.json /features/dfee/grafana-dashboard.json
 COPY features/dfee/USAGE.md /features/dfee/USAGE.md
+
+RUN install -d -m 0755 /opt/catmonitor/stress && \
+    install -d -m 0750 /var/lib/catmonitor/stress
 
 ENTRYPOINT ["/usr/local/bin/catmonitor", "daemon", "--config", "/etc/catmonitor/catmonitor.yaml"]

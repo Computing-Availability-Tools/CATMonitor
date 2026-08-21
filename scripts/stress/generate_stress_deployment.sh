@@ -12,11 +12,12 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd -P)
 ADAPTER_TEMPLATE="$REPO_ROOT/features/stress/benchmark_check.sh"
 
-RUNTIME_ROOT=/opt/catmonitor/benchmarks/runtime
+RUNTIME_ROOT=/opt/catmonitor/stress/runtime
+PLUGIN_ROOT=/opt/catmonitor/stress
 OUTPUT_DIR=
 CPU_MANIFEST=
 NPU_MANIFEST=
-REPORT_PATH=/var/lib/catmonitor/stress-latest.json
+REPORT_PATH=/var/lib/catmonitor/stress/stress-latest.json
 NUMACTL=
 MPI_LAUNCHER=
 HPL_LIBRARY_DIR=
@@ -33,7 +34,7 @@ NPU_RUNTIME=
 NPU_CONTAINER=
 NPU_IMAGE=
 NPU_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn
-NPU_OUTPUT_DIR=/var/lib/catmonitor/npu-burn-output
+NPU_OUTPUT_DIR=/var/lib/catmonitor/stress/npu-burn-output
 NPU_DEVICE=
 NPU_RUN_CASE=
 NPU_GROUP=
@@ -44,6 +45,13 @@ NPU_TORCH_NPU=
 NPU_SOC=
 WEB_ENABLED=false
 FORCE=false
+CPU_BACKEND=local
+CPU_RUNNER_IMAGE=
+CPU_RUNNER_MANIFEST=
+CPU_RUNNER_CLIENT=/usr/local/bin/catmonitor-stress-cpu-client
+CPU_RUNNER_SOCKET=/run/catmonitor-stress/cpu-runner.sock
+CPU_RUNNER_RUNTIME_ROOT=/opt/catmonitor/stress/runtime
+CPU_RUNNER_STATE_ROOT=/var/lib/catmonitor/stress
 
 usage() {
     cat <<'EOF'
@@ -69,8 +77,15 @@ Required deployment inputs:
   --npu-group NAME           One upstream group (mutually exclusive with run case)
 
 CPU/runtime inputs:
-  --runtime-root PATH        CPU runtime root (default: /opt/catmonitor/benchmarks/runtime)
-  --cpu-manifest PATH        CPU build manifest (default: sibling manifests/build-manifest.json)
+  --cpu-backend NAME        local (default) or unix
+  --cpu-runner-image IMAGE  Reviewed CPU runner image (required for unix)
+  --cpu-runner-manifest PATH
+                            Manifest from build_cpu_runner_image.sh (unix)
+  --cpu-runner-client PATH  Client path in CATMonitor control image
+  --cpu-runner-socket PATH  Private shared Unix socket path
+  --runtime-root PATH        CPU runtime root (default: /opt/catmonitor/stress/runtime)
+  --plugin-root PATH         Installed plugin root (default: /opt/catmonitor/stress)
+  --cpu-manifest PATH        CPU manifest (default: sibling manifests/cpu-build-manifest.json)
   --numactl PATH             numactl executable (default: resolve from PATH)
   --hpl-library-dir PATH     Optional OpenBLAS runtime library directory
   --stream-threads N         0 leaves OMP_NUM_THREADS unset (default: 0)
@@ -101,7 +116,13 @@ require_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 requires a value"; }
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --output-dir) require_value "$@"; OUTPUT_DIR=$2; shift 2 ;;
+        --cpu-backend) require_value "$@"; CPU_BACKEND=$2; shift 2 ;;
+        --cpu-runner-image) require_value "$@"; CPU_RUNNER_IMAGE=$2; shift 2 ;;
+        --cpu-runner-manifest) require_value "$@"; CPU_RUNNER_MANIFEST=$2; shift 2 ;;
+        --cpu-runner-client) require_value "$@"; CPU_RUNNER_CLIENT=$2; shift 2 ;;
+        --cpu-runner-socket) require_value "$@"; CPU_RUNNER_SOCKET=$2; shift 2 ;;
         --runtime-root) require_value "$@"; RUNTIME_ROOT=$2; shift 2 ;;
+        --plugin-root) require_value "$@"; PLUGIN_ROOT=$2; shift 2 ;;
         --cpu-manifest) require_value "$@"; CPU_MANIFEST=$2; shift 2 ;;
         --npu-manifest) require_value "$@"; NPU_MANIFEST=$2; shift 2 ;;
         --report-path) require_value "$@"; REPORT_PATH=$2; shift 2 ;;
@@ -156,40 +177,68 @@ case "$OUTPUT_DIR" in
     /|/etc|/var|/var/lib) die "--output-dir must be a dedicated child directory" ;;
 esac
 RUNTIME_ROOT=$(absolute_path --runtime-root "$RUNTIME_ROOT")
+PLUGIN_ROOT=$(absolute_path --plugin-root "$PLUGIN_ROOT")
 REPORT_PATH=$(absolute_path --report-path "$REPORT_PATH")
 NPU_MANIFEST=$(absolute_path --npu-manifest "$NPU_MANIFEST")
 NPU_RUNTIME=$(absolute_path --npu-runtime "$NPU_RUNTIME")
 NPU_EXECUTABLE=$(absolute_path --npu-executable "$NPU_EXECUTABLE")
 NPU_OUTPUT_DIR=$(absolute_path --npu-output-dir "$NPU_OUTPUT_DIR")
-MPI_LAUNCHER=$(absolute_path --mpi-launcher "$MPI_LAUNCHER")
-if [ -n "$HPL_LIBRARY_DIR" ]; then HPL_LIBRARY_DIR=$(absolute_path --hpl-library-dir "$HPL_LIBRARY_DIR"); fi
 
-if [ -z "$NUMACTL" ]; then NUMACTL=$(command -v numactl 2>/dev/null || true); fi
-NUMACTL=$(absolute_path --numactl "$NUMACTL")
+case "$CPU_BACKEND" in local|unix) ;; *) die "--cpu-backend must be local or unix" ;; esac
+if [ "$CPU_BACKEND" = local ]; then
+    MPI_LAUNCHER=$(absolute_path --mpi-launcher "$MPI_LAUNCHER")
+    if [ -z "$NUMACTL" ]; then NUMACTL=$(command -v numactl 2>/dev/null || true); fi
+    NUMACTL=$(absolute_path --numactl "$NUMACTL")
+    if [ -n "$HPL_LIBRARY_DIR" ]; then HPL_LIBRARY_DIR=$(absolute_path --hpl-library-dir "$HPL_LIBRARY_DIR"); fi
+else
+    CPU_RUNNER_CLIENT=$(absolute_path --cpu-runner-client "$CPU_RUNNER_CLIENT")
+    CPU_RUNNER_SOCKET=$(absolute_path --cpu-runner-socket "$CPU_RUNNER_SOCKET")
+    CPU_RUNNER_RUNTIME_ROOT=$(absolute_path --cpu-runner-runtime-root "$CPU_RUNNER_RUNTIME_ROOT")
+    CPU_RUNNER_STATE_ROOT=$(absolute_path --cpu-runner-state-root "$CPU_RUNNER_STATE_ROOT")
+    case "$CPU_RUNNER_IMAGE" in ''|-*|*@*|*[!A-Za-z0-9._/:-]*) die "--cpu-runner-image has an invalid value" ;; esac
+    CPU_RUNNER_MANIFEST=$(absolute_path --cpu-runner-manifest "$CPU_RUNNER_MANIFEST")
+    [ -f "$CPU_RUNNER_MANIFEST" ] || die "CPU runner image manifest is unavailable: $CPU_RUNNER_MANIFEST"
+fi
+
 if [ -z "$CPU_MANIFEST" ]; then
-    CPU_MANIFEST="$(dirname -- "$RUNTIME_ROOT")/manifests/build-manifest.json"
+    if [ "$CPU_BACKEND" = unix ]; then
+        CPU_MANIFEST=$CPU_RUNNER_MANIFEST
+    else
+        CPU_MANIFEST="$(dirname -- "$RUNTIME_ROOT")/manifests/cpu-build-manifest.json"
+    fi
 fi
 CPU_MANIFEST=$(absolute_path --cpu-manifest "$CPU_MANIFEST")
 
 [ -x "$ADAPTER_TEMPLATE" ] || [ -f "$ADAPTER_TEMPLATE" ] || die "adapter template is unavailable: $ADAPTER_TEMPLATE"
-[ -x "$NUMACTL" ] || die "numactl is not executable: $NUMACTL"
-[ -x "$MPI_LAUNCHER" ] || die "MPI launcher is not executable: $MPI_LAUNCHER"
+[ "$CPU_BACKEND" = unix ] || [ -x "$NUMACTL" ] || die "numactl is not executable: $NUMACTL"
+[ "$CPU_BACKEND" = unix ] || [ -x "$MPI_LAUNCHER" ] || die "MPI launcher is not executable: $MPI_LAUNCHER"
 [ -x "$NPU_RUNTIME" ] || die "NPU container runtime is not executable: $NPU_RUNTIME"
 [ -f "$CPU_MANIFEST" ] || die "CPU build manifest is unavailable: $CPU_MANIFEST"
 [ -f "$NPU_MANIFEST" ] || die "NPU image manifest is unavailable: $NPU_MANIFEST"
 [ -d "$NPU_OUTPUT_DIR" ] || die "NPU result directory is unavailable: $NPU_OUTPUT_DIR"
-[ -z "$HPL_LIBRARY_DIR" ] || [ -d "$HPL_LIBRARY_DIR" ] || die "HPL library directory is unavailable: $HPL_LIBRARY_DIR"
+[ "$CPU_BACKEND" = unix ] || [ -z "$HPL_LIBRARY_DIR" ] || [ -d "$HPL_LIBRARY_DIR" ] || die "HPL library directory is unavailable: $HPL_LIBRARY_DIR"
 
 STREAM_EXECUTABLE="$RUNTIME_ROOT/stream/stream_omp"
 HPL_WORKDIR="$RUNTIME_ROOT/hpl"
 HPL_EXECUTABLE="$HPL_WORKDIR/xhpl"
 HPCG_WORKDIR="$RUNTIME_ROOT/hpcg"
 HPCG_EXECUTABLE="$HPCG_WORKDIR/xhpcg"
-for executable in "$STREAM_EXECUTABLE" "$HPL_EXECUTABLE" "$HPCG_EXECUTABLE"; do
-    [ -x "$executable" ] || die "CPU benchmark executable is unavailable: $executable"
-done
-[ -f "$HPL_WORKDIR/HPL.dat" ] || die "HPL.dat is unavailable: $HPL_WORKDIR/HPL.dat"
-[ -f "$HPCG_WORKDIR/hpcg.dat" ] || die "hpcg.dat is unavailable: $HPCG_WORKDIR/hpcg.dat"
+if [ "$CPU_BACKEND" = local ]; then
+    for executable in "$STREAM_EXECUTABLE" "$HPL_EXECUTABLE" "$HPCG_EXECUTABLE"; do
+        [ -x "$executable" ] || die "CPU benchmark executable is unavailable: $executable"
+    done
+    [ -f "$HPL_WORKDIR/HPL.dat" ] || die "HPL.dat is unavailable: $HPL_WORKDIR/HPL.dat"
+    [ -f "$HPCG_WORKDIR/hpcg.dat" ] || die "hpcg.dat is unavailable: $HPCG_WORKDIR/hpcg.dat"
+else
+    STREAM_EXECUTABLE="$CPU_RUNNER_RUNTIME_ROOT/stream/stream_omp"
+    HPL_WORKDIR="$CPU_RUNNER_STATE_ROOT/work/hpl"
+    HPL_EXECUTABLE="$CPU_RUNNER_RUNTIME_ROOT/hpl/xhpl"
+    HPL_LIBRARY_DIR=
+    MPI_LAUNCHER=/usr/bin/mpirun
+    NUMACTL=/usr/bin/numactl
+    HPCG_WORKDIR="$CPU_RUNNER_STATE_ROOT/work/hpcg"
+    HPCG_EXECUTABLE="$CPU_RUNNER_RUNTIME_ROOT/hpcg/xhpcg"
+fi
 
 nonnegative_integer "$STREAM_THREADS" || die "--stream-threads must be a non-negative integer"
 for pair in \
@@ -215,9 +264,14 @@ if { [ -n "$NPU_RUN_CASE" ] && [ -n "$NPU_GROUP" ]; } ||
 fi
 
 ADAPTER_PATH="$OUTPUT_DIR/benchmark_check.sh"
+RUNNER_ADAPTER_PATH="$OUTPUT_DIR/cpu-runner-benchmark_check.sh"
+INSTALLED_ADAPTER_PATH="$PLUGIN_ROOT/benchmark_check.sh"
+INSTALLED_RUNNER_ADAPTER_PATH="$PLUGIN_ROOT/cpu-runner-benchmark_check.sh"
 CONFIG_PATH="$OUTPUT_DIR/catmonitor-stress.yaml"
 MANIFEST_PATH="$OUTPUT_DIR/stress-deployment-manifest.json"
-for target in "$ADAPTER_PATH" "$CONFIG_PATH" "$MANIFEST_PATH"; do
+targets=("$ADAPTER_PATH" "$CONFIG_PATH" "$MANIFEST_PATH")
+if [ "$CPU_BACKEND" = unix ]; then targets+=("$RUNNER_ADAPTER_PATH"); fi
+for target in "${targets[@]}"; do
     if [ -e "$target" ] && [ "$FORCE" != true ]; then
         die "generated file already exists; use --force to replace it: $target"
     fi
@@ -226,12 +280,21 @@ done
 
 install -d -m 0750 "$OUTPUT_DIR"
 ADAPTER_TEMP=$(mktemp "$OUTPUT_DIR/.benchmark_check.XXXXXXXX")
+RUNNER_ADAPTER_TEMP=
+if [ "$CPU_BACKEND" = unix ]; then
+    RUNNER_ADAPTER_TEMP=$(mktemp "$OUTPUT_DIR/.cpu-runner-benchmark_check.XXXXXXXX")
+fi
 CONFIG_TEMP=$(mktemp "$OUTPUT_DIR/.catmonitor-stress.XXXXXXXX")
 MANIFEST_TEMP=$(mktemp "$OUTPUT_DIR/.stress-deployment-manifest.XXXXXXXX")
-cleanup() { rm -f -- "$ADAPTER_TEMP" "$CONFIG_TEMP" "$MANIFEST_TEMP"; }
+cleanup() { rm -f -- "$ADAPTER_TEMP" "$RUNNER_ADAPTER_TEMP" "$CONFIG_TEMP" "$MANIFEST_TEMP"; }
 trap cleanup EXIT HUP INT TERM
 
 declare -A OVERRIDE=(
+    [CPU_EXECUTION_BACKEND]="$CPU_BACKEND"
+    [CPU_EXECUTION_PROFILE]="$([ "$CPU_BACKEND" = unix ] && printf container_runner || printf host_local)"
+    [CPU_EXECUTION_IMAGE]="$([ "$CPU_BACKEND" = unix ] && printf '%s' "$CPU_RUNNER_IMAGE" || true)"
+    [CPU_RUNNER_CLIENT]="$([ "$CPU_BACKEND" = unix ] && printf '%s' "$CPU_RUNNER_CLIENT" || true)"
+    [CPU_RUNNER_SOCKET]="$([ "$CPU_BACKEND" = unix ] && printf '%s' "$CPU_RUNNER_SOCKET" || true)"
     [STREAM_EXECUTABLE]="$STREAM_EXECUTABLE"
     [STREAM_NUMACTL]="$NUMACTL"
     [STREAM_THREADS]="$STREAM_THREADS"
@@ -277,6 +340,44 @@ done <"$ADAPTER_TEMPLATE" >"$ADAPTER_TEMP"
 chmod 0750 "$ADAPTER_TEMP"
 bash -n "$ADAPTER_TEMP"
 
+if [ "$CPU_BACKEND" = unix ]; then
+    declare -A RUNNER_OVERRIDE=(
+        [CPU_EXECUTION_BACKEND]=local
+        [CPU_EXECUTION_PROFILE]=container_runner
+        [CPU_EXECUTION_IMAGE]="$CPU_RUNNER_IMAGE"
+        [CPU_RUNNER_CLIENT]=""
+        [CPU_RUNNER_SOCKET]=""
+        [STREAM_EXECUTABLE]="$STREAM_EXECUTABLE"
+        [STREAM_NUMACTL]="$NUMACTL"
+        [STREAM_THREADS]="$STREAM_THREADS"
+        [HPL_WORKDIR]="$HPL_WORKDIR"
+        [HPL_EXECUTABLE]="$HPL_EXECUTABLE"
+        [HPL_LIBRARY_DIR]=""
+        [HPL_MPI_LAUNCHER]="$MPI_LAUNCHER"
+        [HPL_MPI_PROCESSES]="$HPL_PROCESSES"
+        [HPL_THREADS_PER_PROCESS]="$HPL_THREADS"
+        [HPCG_WORKDIR]="$HPCG_WORKDIR"
+        [HPCG_EXECUTABLE]="$HPCG_EXECUTABLE"
+        [HPCG_MPI_LAUNCHER]="$MPI_LAUNCHER"
+        [HPCG_MPI_PROCESSES]="$HPCG_PROCESSES"
+        [HPCG_THREADS_PER_PROCESS]="$HPCG_THREADS"
+        [HPCG_NX]="$HPCG_NX"
+        [HPCG_NY]="$HPCG_NY"
+        [HPCG_NZ]="$HPCG_NZ"
+        [HPCG_RUNTIME_SECONDS]="$HPCG_RUNTIME"
+    )
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^([A-Z][A-Z0-9_]*)= ]] && [ -n "${RUNNER_OVERRIDE[${BASH_REMATCH[1]}]+x}" ]; then
+            key=${BASH_REMATCH[1]}
+            printf '%s=%q\n' "$key" "${RUNNER_OVERRIDE[$key]}"
+        else
+            printf '%s\n' "$line"
+        fi
+    done <"$ADAPTER_TEMPLATE" >"$RUNNER_ADAPTER_TEMP"
+    chmod 0750 "$RUNNER_ADAPTER_TEMP"
+    bash -n "$RUNNER_ADAPTER_TEMP"
+fi
+
 yaml_quote() {
     local value=$1
     value=${value//\\/\\\\}
@@ -291,7 +392,7 @@ yaml_quote() {
     printf 'stress:\n'
     printf '  enabled: true\n'
     printf '  web_enabled: %s\n' "$WEB_ENABLED"
-    printf '  script_path: '; yaml_quote "$ADAPTER_PATH"; printf '\n'
+    printf '  script_path: '; yaml_quote "$INSTALLED_ADAPTER_PATH"; printf '\n'
     printf '  report_path: '; yaml_quote "$REPORT_PATH"; printf '\n'
     printf '  default_benchmarks: [stream]\n'
     printf '  benchmarks:\n'
@@ -314,16 +415,38 @@ json_escape() {
 json_string() { printf '"%s"' "$(json_escape "${1-}")"; }
 
 ADAPTER_SHA256=$(sha256sum -- "$ADAPTER_TEMP" | awk '{print $1}')
+RUNNER_ADAPTER_SHA256=
+if [ "$CPU_BACKEND" = unix ]; then
+    RUNNER_ADAPTER_SHA256=$(sha256sum -- "$RUNNER_ADAPTER_TEMP" | awk '{print $1}')
+fi
 CONFIG_SHA256=$(sha256sum -- "$CONFIG_TEMP" | awk '{print $1}')
 CPU_MANIFEST_SHA256=$(sha256sum -- "$CPU_MANIFEST" | awk '{print $1}')
 NPU_MANIFEST_SHA256=$(sha256sum -- "$NPU_MANIFEST" | awk '{print $1}')
 {
     printf '{"schema_version":1,"feature":"stress","generated_at_utc":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf ',"adapter":{"path":'; json_string "$ADAPTER_PATH"; printf ',"sha256":'; json_string "$ADAPTER_SHA256"; printf '}'
+    printf ',"adapter":{"path":'; json_string "$ADAPTER_PATH"
+    printf ',"installed_path":'; json_string "$INSTALLED_ADAPTER_PATH"
+    printf ',"sha256":'; json_string "$ADAPTER_SHA256"; printf '}'
+    if [ "$CPU_BACKEND" = unix ]; then
+        printf ',"cpu_runner_adapter":{"path":'; json_string "$RUNNER_ADAPTER_PATH"
+        printf ',"installed_path":'; json_string "$INSTALLED_RUNNER_ADAPTER_PATH"
+        printf ',"sha256":'; json_string "$RUNNER_ADAPTER_SHA256"; printf '}'
+    fi
     printf ',"config":{"path":'; json_string "$CONFIG_PATH"; printf ',"sha256":'; json_string "$CONFIG_SHA256"; printf '}'
-    printf ',"inputs":{"cpu_build_manifest":{"path":'; json_string "$CPU_MANIFEST"; printf ',"sha256":'; json_string "$CPU_MANIFEST_SHA256"; printf '}'
+    printf ',"inputs":{'
+    if [ "$CPU_BACKEND" = unix ]; then
+        printf '"cpu_runner_image_manifest":{"path":'
+    else
+        printf '"cpu_build_manifest":{"path":'
+    fi
+    json_string "$CPU_MANIFEST"; printf ',"sha256":'; json_string "$CPU_MANIFEST_SHA256"; printf '}'
     printf ',"npu_image_manifest":{"path":'; json_string "$NPU_MANIFEST"; printf ',"sha256":'; json_string "$NPU_MANIFEST_SHA256"; printf '}}'
-    printf ',"profile":{"stream_threads":%s,"hpl_mpi_processes":%s,"hpl_threads_per_process":%s' "$STREAM_THREADS" "$HPL_PROCESSES" "$HPL_THREADS"
+    printf ',"profile":{"cpu_backend":'; json_string "$CPU_BACKEND"
+    if [ "$CPU_BACKEND" = unix ]; then
+        printf ',"cpu_runner_image":'; json_string "$CPU_RUNNER_IMAGE"
+        printf ',"cpu_runner_socket":'; json_string "$CPU_RUNNER_SOCKET"
+    fi
+    printf ',"stream_threads":%s,"hpl_mpi_processes":%s,"hpl_threads_per_process":%s' "$STREAM_THREADS" "$HPL_PROCESSES" "$HPL_THREADS"
     printf ',"hpcg_mpi_processes":%s,"hpcg_threads_per_process":%s,"hpcg_grid":' "$HPCG_PROCESSES" "$HPCG_THREADS"; json_string "${HPCG_NX}x${HPCG_NY}x${HPCG_NZ}"
     printf ',"hpcg_runtime_seconds":%s,"npu_container":' "$HPCG_RUNTIME"; json_string "$NPU_CONTAINER"
     printf ',"npu_image":'; json_string "$NPU_IMAGE"; printf ',"npu_device":'; json_string "$NPU_DEVICE"
@@ -333,11 +456,15 @@ NPU_MANIFEST_SHA256=$(sha256sum -- "$NPU_MANIFEST" | awk '{print $1}')
 chmod 0640 "$MANIFEST_TEMP"
 
 mv -f -- "$ADAPTER_TEMP" "$ADAPTER_PATH"
+if [ "$CPU_BACKEND" = unix ]; then
+    mv -f -- "$RUNNER_ADAPTER_TEMP" "$RUNNER_ADAPTER_PATH"
+fi
 mv -f -- "$CONFIG_TEMP" "$CONFIG_PATH"
 mv -f -- "$MANIFEST_TEMP" "$MANIFEST_PATH"
 trap - EXIT HUP INT TERM
 
 printf 'Stress adapter: %s\n' "$ADAPTER_PATH"
+if [ "$CPU_BACKEND" = unix ]; then printf 'CPU runner adapter: %s\n' "$RUNNER_ADAPTER_PATH"; fi
 printf 'Stress config: %s\n' "$CONFIG_PATH"
 printf 'Deployment manifest: %s\n' "$MANIFEST_PATH"
-printf 'Next: catmonitor stress doctor -c %s -o table\n' "$CONFIG_PATH"
+printf 'Next: install the generated adapter under %s, merge %s, then run catmonitor stress doctor.\n' "$PLUGIN_ROOT" "$CONFIG_PATH"

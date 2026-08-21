@@ -1,5 +1,6 @@
 .PHONY: all build test test-verbose test-coverage test-stress test-stress-ut \
 	test-stress-race test-stress-e2e test-stress-build \
+	test-stress-container-e2e \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
 	test-stress-audit audit-stress-release lint clean web dfee
 
@@ -55,11 +56,18 @@ test-stress-race:
 
 test-stress-e2e:
 	GO_BIN="$(GO)" bash tests/e2e/stress_e2e_test.sh
+	GO_BIN="$(GO)" bash tests/e2e/stress_cpu_runner_e2e_test.sh
+
+# Requires a running Docker daemon plus prebuilt catmonitor-generic:latest and
+# alpine:latest images. Kept separate because it is intentionally non-hermetic.
+test-stress-container-e2e:
+	bash tests/e2e/stress_container_e2e_test.sh
 
 test-stress-build: test-stress-build-cpu test-stress-build-npu test-stress-deployment test-stress-audit
 
 test-stress-build-cpu:
 	bash scripts/stress/tests/build_cpu_benchmarks_test.sh
+	bash scripts/stress/tests/build_cpu_runner_image_test.sh
 
 test-stress-build-npu:
 	bash scripts/stress/tests/ascend_env_test.sh
@@ -68,6 +76,8 @@ test-stress-build-npu:
 
 test-stress-deployment:
 	bash scripts/stress/tests/generate_stress_deployment_test.sh
+	bash scripts/stress/tests/install_stress_runtime_test.sh
+	bash scripts/stress/tests/container_deployment_test.sh
 
 test-stress-audit:
 	bash scripts/stress/tests/audit_stress_release_test.sh

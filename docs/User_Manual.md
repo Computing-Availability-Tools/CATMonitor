@@ -125,8 +125,8 @@ health:
 stress:
   enabled: false
   web_enabled: false
-  script_path: /etc/catmonitor/benchmark_check.sh
-  report_path: /var/lib/catmonitor/stress-latest.json
+  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
   benchmarks:
     stream: { enabled: false, timeout: 1m }
@@ -298,7 +298,7 @@ catmonitor stress --bench npu_burn -o table # Ascend NPU Burn（需节点安装�
 catmonitor stress -o json                   # 回显完整 JSON 报告
 ```
 
-stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 固定源码随仓库提供，管理员只需准备匹配的原生依赖或 CANN/torch_npu 基础镜像并构建运行环境；脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。完整构建、适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 固定源码随仓库提供，管理员只需准备匹配的原生依赖或 CANN/torch_npu 基础镜像并构建运行环境；脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。日常启用与使用见 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，完整构建、适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 3.6 daemon — 守护进程
 

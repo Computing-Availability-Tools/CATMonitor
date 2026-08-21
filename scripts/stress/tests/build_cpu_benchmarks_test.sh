@@ -113,6 +113,7 @@ EOF
 cat >"$TEST_ROOT/tools/numactl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+[ -z "${FAKE_NUMACTL_MARKER-}" ] || touch "$FAKE_NUMACTL_MARKER"
 [ "${1-}" = --interleave=all ]
 shift
 exec "$@"
@@ -237,7 +238,7 @@ assert_file "$OUTPUT_ROOT/hpl/HPL.dat"
 assert_executable "$OUTPUT_ROOT/hpcg/xhpcg"
 assert_file "$OUTPUT_ROOT/hpcg/hpcg.dat"
 
-MANIFEST="$TEST_ROOT/install/manifests/build-manifest.json"
+MANIFEST="$TEST_ROOT/install/manifests/cpu-build-manifest.json"
 assert_file "$MANIFEST"
 if command -v python3 >/dev/null 2>&1; then
     python3 -m json.tool "$MANIFEST" >/dev/null
@@ -250,6 +251,7 @@ assert_contains "$MANIFEST" '"hpl":{'
 assert_contains "$MANIFEST" '"hpcg":{'
 assert_contains "$MANIFEST" '"openmp_patch_applied":true'
 assert_contains "$MANIFEST" '"-DSTREAM_ARRAY_SIZE=1000"'
+assert_contains "$MANIFEST" '"numa_policy":"interleave_all"'
 assert_contains "$MANIFEST" 'HYDRA build details: Version 4.1.3'
 assert_contains "$MANIFEST" '"implementation":"mpich"'
 
@@ -288,6 +290,19 @@ bash "$BUILD_SCRIPT" \
 assert_contains "$MANIFEST" '"-DSTREAM_ARRAY_SIZE=2000"'
 assert_contains "$MANIFEST" '"hpl":{'
 assert_contains "$MANIFEST" '"hpcg":{'
+
+FAKE_NUMACTL_MARKER="$TEST_ROOT/numactl-must-not-run"
+export FAKE_NUMACTL_MARKER
+bash "$BUILD_SCRIPT" \
+    --only stream \
+    --stream-src "$TEST_ROOT/sources/stream in another tree/stream.c" \
+    --output-root "$TEST_ROOT/no-numa-install/runtime" \
+    --build-root "$TEST_ROOT/no-numa-work/build-parent" \
+    --cc "$TEST_ROOT/tools/fake-cc" \
+    --stream-smoke-numa-policy none
+[ ! -e "$FAKE_NUMACTL_MARKER" ] || fail 'none smoke policy invoked numactl'
+assert_contains "$TEST_ROOT/no-numa-install/manifests/cpu-build-manifest.json" '"numa_policy":"none"'
+unset FAKE_NUMACTL_MARKER
 
 bash "$BUILD_SCRIPT" \
     --only stream,hpl \
@@ -339,7 +354,7 @@ bash "$BUILD_SCRIPT" \
     --build-root "$TEST_ROOT/current-work/build-parent" \
     --mpicxx "$TEST_ROOT/tools/fake-mpicxx" \
     --mpirun "$TEST_ROOT/tools/fake-mpirun"
-assert_contains "$TEST_ROOT/current-install/manifests/build-manifest.json" '"openmp_patch_applied":true'
+assert_contains "$TEST_ROOT/current-install/manifests/cpu-build-manifest.json" '"openmp_patch_applied":true'
 
 CURRENT_FIXED_HPCG="$TEST_ROOT/current-fixed-hpcg/hpcg-3.1"
 install -d -m 0755 "$CURRENT_FIXED_HPCG/setup" "$CURRENT_FIXED_HPCG/src"
@@ -356,7 +371,7 @@ bash "$BUILD_SCRIPT" \
     --build-root "$TEST_ROOT/current-fixed-work/build-parent" \
     --mpicxx "$TEST_ROOT/tools/fake-mpicxx" \
     --mpirun "$TEST_ROOT/tools/fake-mpirun"
-assert_contains "$TEST_ROOT/current-fixed-install/manifests/build-manifest.json" '"openmp_patch_applied":false'
+assert_contains "$TEST_ROOT/current-fixed-install/manifests/cpu-build-manifest.json" '"openmp_patch_applied":false'
 
 BAD_HPCG="$TEST_ROOT/bad-hpcg/hpcg-3.1"
 install -d -m 0755 "$BAD_HPCG/setup" "$BAD_HPCG/src"

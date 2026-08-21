@@ -8,10 +8,11 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 HPL_TEMPLATE="$SCRIPT_DIR/templates/Make.HPL.CATMonitor"
 
-OUTPUT_ROOT=/opt/catmonitor/benchmarks/runtime
+OUTPUT_ROOT=/opt/catmonitor/stress/runtime
 BUILD_ROOT=/var/tmp/catmonitor-stress-build
 STREAM_ARRAY_SIZE=80000000
 STREAM_NTIMES=10
+STREAM_SMOKE_NUMA_POLICY=interleave_all
 JOBS=
 STREAM_SRC=
 HPL_SRC=
@@ -42,7 +43,7 @@ Source and configuration inputs:
   --hpcg-dat PATH            Administrator-provided hpcg.dat
 
 Build and install locations:
-  --output-root PATH         Runtime root (default: /opt/catmonitor/benchmarks/runtime)
+  --output-root PATH         Runtime root (default: /opt/catmonitor/stress/runtime)
   --build-root PATH          Temporary build parent (default: /var/tmp/catmonitor-stress-build)
 
 Toolchain and libraries:
@@ -58,6 +59,8 @@ Toolchain and libraries:
 STREAM compile-time settings:
   --stream-array-size N      STREAM_ARRAY_SIZE (default: 80000000)
   --stream-ntimes N          NTIMES (default: 10)
+  --stream-smoke-numa-policy POLICY
+                             interleave_all (default) or none
 
 Selection and replacement:
   --only NAME[,NAME...]      Build only stream, hpl and/or hpcg; repeatable
@@ -118,6 +121,7 @@ while [ "$#" -gt 0 ]; do
         --jobs) require_value "$@"; JOBS=$2; shift 2 ;;
         --stream-array-size) require_value "$@"; STREAM_ARRAY_SIZE=$2; shift 2 ;;
         --stream-ntimes) require_value "$@"; STREAM_NTIMES=$2; shift 2 ;;
+        --stream-smoke-numa-policy) require_value "$@"; STREAM_SMOKE_NUMA_POLICY=$2; shift 2 ;;
         --only) require_value "$@"; add_selection only "$2"; shift 2 ;;
         --skip) require_value "$@"; add_selection skip "$2"; shift 2 ;;
         --force) FORCE=true; shift ;;
@@ -141,6 +145,10 @@ if [ -z "$JOBS" ]; then
     [ "$JOBS" -le 16 ] || JOBS=16
 fi
 is_positive_integer "$JOBS" || die "jobs must be a positive integer"
+case "$STREAM_SMOKE_NUMA_POLICY" in
+    interleave_all|none) ;;
+    *) die "stream smoke NUMA policy must be interleave_all or none" ;;
+esac
 
 declare -a SELECTED=()
 for benchmark in stream hpl hpcg; do
@@ -246,7 +254,7 @@ case "$BUILD_ROOT" in *$'\n'*|*$'\r'*|*$'\t'*|*' '*) die "--build-root cannot co
 OUTPUT_ROOT=$(readlink -m -- "$OUTPUT_ROOT")
 BUILD_ROOT=$(readlink -m -- "$BUILD_ROOT")
 MANIFEST_DIR=$(readlink -m -- "$(dirname -- "$OUTPUT_ROOT")/manifests")
-MANIFEST_PATH="$MANIFEST_DIR/build-manifest.json"
+MANIFEST_PATH="$MANIFEST_DIR/cpu-build-manifest.json"
 FRAGMENT_DIR="$MANIFEST_DIR/.build-manifest.d"
 ARCHITECTURE=$(uname -m)
 case "$ARCHITECTURE" in ''|*[!A-Za-z0-9_.-]*) die "unsupported architecture name: $ARCHITECTURE" ;; esac
@@ -375,7 +383,9 @@ write_stream_fragment() {
         printf ',"file":'; json_string "$INSPECT_FILE"
         printf ',"ldd":'; json_string "$INSPECT_LDD"
         printf ',"ldd_exit_code":%s' "$INSPECT_LDD_RC"
-        printf ',"smoke":{"status":"passed","omp_threads":4,"numa_policy":"interleave_all"}}\n'
+        printf ',"smoke":{"status":"passed","omp_threads":4,"numa_policy":'
+        json_string "$STREAM_SMOKE_NUMA_POLICY"
+        printf '}}\n'
     } >"$path"
 }
 
@@ -477,10 +487,14 @@ if selected stream; then
     chmod 0755 "$STREAM_BINARY"
     inspect_binary "$STREAM_BINARY"
 
-    NUMACTL_PATH=$(command -v numactl 2>/dev/null || true)
-    [ -n "$NUMACTL_PATH" ] || die "numactl is required for the STREAM smoke check"
+    declare -a STREAM_SMOKE_COMMAND=("$STREAM_BINARY")
+    if [ "$STREAM_SMOKE_NUMA_POLICY" = interleave_all ]; then
+        NUMACTL_PATH=$(command -v numactl 2>/dev/null || true)
+        [ -n "$NUMACTL_PATH" ] || die "numactl is required for the STREAM smoke check"
+        STREAM_SMOKE_COMMAND=("$NUMACTL_PATH" --interleave=all "$STREAM_BINARY")
+    fi
     if ! STREAM_SMOKE_OUTPUT=$(OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE \
-        "$NUMACTL_PATH" --interleave=all "$STREAM_BINARY" 2>&1); then
+        "${STREAM_SMOKE_COMMAND[@]}" 2>&1); then
         die "STREAM smoke check failed: $STREAM_SMOKE_OUTPUT"
     fi
     for marker in Copy Scale Add Triad 'Solution Validates'; do

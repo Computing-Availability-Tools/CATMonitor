@@ -31,7 +31,8 @@ build_cpu_benchmarks.sh              generate_stress_deployment.sh      catmonit
   ├─ STREAM/HPL/HPCG 源码              ├─ 绝对资产路径             ├─ 选择固定 benchmark
   ├─ GCC/MPI/OpenBLAS                  ├─ MPI/NUMA/线程 profile     ├─ 互斥、超时与取消
   ├─ 安装 runtime 资产                 ├─ describe 当前节点事实     └─ 解析与保存报告
-  └─ build-manifest.json               ├─ benchmark_check.sh + YAML
+  └─ cpu-build-manifest.json           ├─ benchmark_check.sh + YAML
+                                       ├─ install_stress_runtime.sh
                                        ├─ deployment manifest
                                        └─ catmonitor stress doctor
 ```
@@ -51,7 +52,7 @@ ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。stock HPL 2.3 顶层 Makefile �
 中显式列出预定共享变量 `n` 时移除，以兼容 GCC 7.3；两种补丁后的布局再次输入
 时保持不变。未知源码布局直接失败，不能宽泛改写。
 
-构建清单位于 `$(dirname output-root)/manifests/build-manifest.json`。每项记录源码、
+构建清单位于 `$(dirname output-root)/manifests/cpu-build-manifest.json`。每项记录源码、
 二进制和输入配置 SHA-256、编译参数、工具链/MPI 身份、动态链接检查及 HPCG 补丁
 状态。分项构建会保留其他已安装项目的可信 manifest 片段。manifest 是构建时事实；
 运行期 `describe` 仍以当前文件、动态库、launcher 和节点资源为准，不用静态清单
@@ -62,6 +63,22 @@ ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。stock HPL 2.3 顶层 Makefile �
 同时生成四项配置及部署 manifest。它不接管 asset build、容器生命周期或 benchmark
 执行。`stress doctor` 再通过 Manager 读取生成结果并执行实时只读预检；Web 配置 API
 复用同一判据，避免部署脚本、CLI 与页面形成三套可用性定义。
+
+容器部署把控制面与压测数据面分开。generic/NPU 主镜像携带 CATMonitor 二进制、
+基础诊断依赖和固定 CPU runner client，不携带 CPU benchmark/MPI/OpenBLAS，也不
+烘焙节点 adapter。`docker-compose.stress.yml` 启动独立 CPU runner image；控制面
+只能通过共享 Unix Socket 提交 `stream|hpl|hpcg` 固定名称，不能提交命令、路径、
+参数或环境变量。runner 无网络、无 host PID、无 privileged；入口仅以最小 capability
+初始化共享卷并切换到专用 UID，workload 启动前清空全部 capability 集合，
+作业串行执行；请求取消会杀死完整 shell/MPI 进程组。runner 镜像内的 benchmark
+和依赖只读，HPL/HPCG 工作目录与报告放在共享状态卷。
+
+宿主机原生 adapter 仍是默认兼容后端。部署生成器在 container runner 模式输出
+控制 adapter 与 runner-local adapter：前者只转发 CPU 请求并保留 NPU 路径，后者
+包含 runner 镜像内的固定 CPU profile。CLI/Web/Manager、超时、解析、latest/history
+和跨进程锁保持不变。CPU 层不含 Docker socket；只有 NPU Burn `docker_exec` 需要叠加
+`docker-compose.stress-npuburn.yml`，把管理员选择的 socket 挂入控制容器。
+固定 NPU Burn 镜像/容器仍是独立数据面，不进入 CATMonitor 主镜像生命周期。
 
 NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是镜像：
 
@@ -104,7 +121,8 @@ PyPI 且不会被基础镜像
 不自带 HAL 时，可显式把宿主机 driver `lib64` 暂存到 builder stage；最终 stage
 重新从原基础镜像开始，只复制已验证 wheel、入口和许可证，不携带宿主机驱动。
 构建器只调用 image inspect/build。`create_npu_burn_container.sh` 位于独立的管理员
-部署面，动态映射全部 `/dev/davinciN`、控制设备、只读 driver/tool 路径和结果目录；
+部署面，动态 identity-map 全部 `/dev/davinciN`、控制设备、只读 driver/tool 路径和
+结果目录；设备节点 ID 与 PCI topology 生成的 NPU Burn logical ID 分开记录。
 它不复制 image ENV，不替换不匹配容器。默认 restart policy 为 `unless-stopped`，
 管理员可以显式覆盖；策略与 image ID、runtime、设备及挂载共同进入 profile 哈希，
 并参与既有容器一致性校验。该工具不由 Manager、CLI 或 Web 调用。
@@ -171,8 +189,9 @@ STREAM/xhpl/xhpcg/npu-burn，不创建结果文件，也不改变配置。
 adapter 还枚举当前环境的 `/dev/davinciN` 并暴露
 `device_namespace=npu_burn_logical` 与 `available_devices`。在 `docker_exec` 下，
 它同时在固定容器内执行与 upstream 相同语义的 `lspci -D -d 19e5:` 过滤，根据
-排序后的 PCI accelerator 数量得到 `pci_topology_devices`。设备节点集合与 PCI
-logical ID 集合必须完全一致，否则拒绝运行，避免 upstream 缺失 `lspci` 时静默
+排序后的 PCI accelerator 数量得到 `pci_topology_devices`。设备节点 ID 与 PCI
+logical ID 属于不同 namespace；adapter 分别展示两者，并要求数量一致，否则拒绝
+运行，避免 upstream 缺失 `lspci` 时静默
 退回固定 `range(8)`。选择值在 describe 和
 正式执行前都必须属于该集合；不能使用 PyTorch device count 或 `npu-smi` Phy-ID
 替代这个 namespace。越界错误作为必需 `logical_devices` 资产展示，因此 CLI 与

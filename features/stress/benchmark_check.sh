@@ -14,6 +14,16 @@
 
 CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1
 
+# CPU benchmarks run directly on the host by default. Containerized CATMonitor
+# deployments may switch only these three fixed benchmarks to the private Unix
+# socket runner. The client protocol never accepts commands, paths or arbitrary
+# arguments from CLI/Web requests.
+CPU_EXECUTION_BACKEND="local"
+CPU_EXECUTION_PROFILE="host_local"
+CPU_EXECUTION_IMAGE=""
+CPU_RUNNER_CLIENT=""
+CPU_RUNNER_SOCKET=""
+
 STREAM_EXECUTABLE=""
 STREAM_NUMACTL=""
 STREAM_THREADS=0
@@ -120,6 +130,32 @@ require_nonnegative_integer() {
             exit 1
             ;;
     esac
+}
+
+dispatch_cpu_runner() {
+    action=$1
+    benchmark=$2
+    case "$CPU_EXECUTION_BACKEND" in
+        local) return 1 ;;
+        unix) ;;
+        *)
+            echo "CPU_EXECUTION_BACKEND must be local or unix."
+            exit 1
+            ;;
+    esac
+    require_absolute_executable "CPU stress runner client" "$CPU_RUNNER_CLIENT"
+    case "$CPU_RUNNER_SOCKET" in
+        /*) ;;
+        *)
+            echo "CPU stress runner socket is not configured with an absolute path."
+            exit 1
+            ;;
+    esac
+    if [ ! -S "$CPU_RUNNER_SOCKET" ]; then
+        echo "CPU stress runner socket is unavailable: $CPU_RUNNER_SOCKET"
+        exit 1
+    fi
+    exec "$CPU_RUNNER_CLIENT" -socket "$CPU_RUNNER_SOCKET" "$action" "$benchmark"
 }
 
 json_escape() {
@@ -281,14 +317,17 @@ emit_npu_container_asset() {
     [ "$NPU_CONTAINER_STATUS" = pass ]
 }
 
-# probe_npu_logical_devices starts from /dev/davinciN names. For docker_exec it
-# also reproduces the upstream lspci filter and requires both logical ID sets
-# to match. It deliberately does not use the PyTorch-reported device count or
-# npu-smi Phy-ID because those are different namespaces on multi-die systems.
+# probe_npu_logical_devices records /dev/davinciN names as device-node
+# evidence. For docker_exec it reproduces the upstream lspci filter and uses
+# the resulting contiguous PCI indexes as the NPU Burn logical namespace. The
+# two namespaces need equal capacity but their numeric labels need not match
+# on sparse/partitioned hosts. It deliberately does not use the
+# PyTorch-reported device count or npu-smi Phy-ID.
 probe_npu_logical_devices() {
     NPU_DEVICE_STATUS=fail
     NPU_DEVICE_MESSAGE="NPU Burn logical device topology is unavailable"
     NPU_AVAILABLE_DEVICES=""
+    NPU_DEVICE_NODE_IDS=""
     NPU_PCI_TOPOLOGY_DEVICES=""
     NPU_TOPOLOGY_SOURCE="device_nodes"
     NPU_DEVICE_ASSET_PATH="$NPU_BURN_DEVICE_ROOT/davinci[0-9]*"
@@ -361,20 +400,26 @@ probe_npu_logical_devices() {
             return
             ;;
     esac
-    NPU_AVAILABLE_DEVICES=$(
+    NPU_DEVICE_NODE_IDS=$(
         printf '%s' "$device_lines" |
             awk '/^[0-9]+$/ { print $1 }' |
             sort -n -u |
             paste -sd, -
     )
-    if [ -z "$NPU_AVAILABLE_DEVICES" ]; then
-        NPU_DEVICE_MESSAGE="no /dev/davinciN logical device nodes are available"
+    if [ -z "$NPU_DEVICE_NODE_IDS" ]; then
+        NPU_DEVICE_MESSAGE="no /dev/davinciN device nodes are available"
         return
     fi
-    if [ "$NPU_BURN_BACKEND" = docker_exec ] &&
-       [ "$NPU_AVAILABLE_DEVICES" != "$NPU_PCI_TOPOLOGY_DEVICES" ]; then
-        NPU_DEVICE_MESSAGE="container device nodes ($NPU_AVAILABLE_DEVICES) do not match NPU Burn lspci topology logical IDs ($NPU_PCI_TOPOLOGY_DEVICES); verify pciutils and the fixed-container device mapping"
-        return
+    if [ "$NPU_BURN_BACKEND" = docker_exec ]; then
+        NPU_AVAILABLE_DEVICES=$NPU_PCI_TOPOLOGY_DEVICES
+        device_node_count=$(printf '%s\n' "$NPU_DEVICE_NODE_IDS" | awk -F, '{ print NF }')
+        pci_topology_count=$(printf '%s\n' "$NPU_PCI_TOPOLOGY_DEVICES" | awk -F, '{ print NF }')
+        if [ "$device_node_count" -ne "$pci_topology_count" ]; then
+            NPU_DEVICE_MESSAGE="container device node count ($device_node_count: $NPU_DEVICE_NODE_IDS) does not match NPU Burn lspci topology count ($pci_topology_count: $NPU_PCI_TOPOLOGY_DEVICES); verify pciutils and the fixed-container device mapping"
+            return
+        fi
+    else
+        NPU_AVAILABLE_DEVICES=$NPU_DEVICE_NODE_IDS
     fi
     case "$NPU_BURN_DEVICE" in
         all)
@@ -576,6 +621,12 @@ describe_stream() {
     MPI_STATUS=pass
     MPI_MESSAGE="MPI is not used by STREAM"
     printf '{"protocol_version":1,"benchmark":"stream","parameters":['
+    emit_parameter execution_backend "Execution backend" "$CPU_EXECUTION_PROFILE"
+    printf ','
+    if [ -n "$CPU_EXECUTION_IMAGE" ]; then
+        emit_parameter runner_image "CPU runner image" "$CPU_EXECUTION_IMAGE"
+        printf ','
+    fi
     emit_parameter executable "Executable" "$STREAM_EXECUTABLE"
     printf ','
     emit_parameter threads "OpenMP threads" "$STREAM_THREADS" threads
@@ -619,6 +670,12 @@ describe_hpl() {
     esac
     total_workers=$((hpl_processes * hpl_threads))
     printf '{"protocol_version":1,"benchmark":"hpl","parameters":['
+    emit_parameter execution_backend "Execution backend" "$CPU_EXECUTION_PROFILE"
+    printf ','
+    if [ -n "$CPU_EXECUTION_IMAGE" ]; then
+        emit_parameter runner_image "CPU runner image" "$CPU_EXECUTION_IMAGE"
+        printf ','
+    fi
     emit_parameter executable "Executable" "$HPL_EXECUTABLE"
     printf ','
     emit_parameter mpi_processes "MPI processes" "$HPL_MPI_PROCESSES" ranks
@@ -674,6 +731,12 @@ describe_hpcg() {
     esac
     total_workers=$((hpcg_processes * hpcg_threads))
     printf '{"protocol_version":1,"benchmark":"hpcg","parameters":['
+    emit_parameter execution_backend "Execution backend" "$CPU_EXECUTION_PROFILE"
+    printf ','
+    if [ -n "$CPU_EXECUTION_IMAGE" ]; then
+        emit_parameter runner_image "CPU runner image" "$CPU_EXECUTION_IMAGE"
+        printf ','
+    fi
     emit_parameter executable "Executable" "$HPCG_EXECUTABLE"
     printf ','
     emit_parameter mpi_processes "MPI processes" "$HPCG_MPI_PROCESSES" ranks
@@ -785,6 +848,8 @@ describe_npu_burn() {
     printf ','
     emit_parameter device_namespace "Device namespace" npu_burn_logical
     printf ','
+    emit_parameter device_node_ids "Visible /dev/davinci node IDs" "$NPU_DEVICE_NODE_IDS"
+    printf ','
     emit_parameter available_devices "Available logical devices" "$NPU_AVAILABLE_DEVICES"
     printf ','
     emit_parameter topology_source "Topology source" "$NPU_TOPOLOGY_SOURCE"
@@ -862,6 +927,21 @@ fi
 
 benchmark_type=$1
 shift
+
+case "$benchmark_type" in
+    describe)
+        if [ "$#" -eq 1 ]; then
+            case "$1" in
+                stream|hpl|hpcg) dispatch_cpu_runner describe "$1" || true ;;
+            esac
+        fi
+        ;;
+    stream|hpl|hpcg)
+        if [ "$#" -eq 0 ]; then
+            dispatch_cpu_runner run "$benchmark_type" || true
+        fi
+        ;;
+esac
 
 case "$benchmark_type" in
     describe)

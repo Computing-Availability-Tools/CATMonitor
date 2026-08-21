@@ -3,7 +3,7 @@ set -euo pipefail
 
 IMAGE=
 CONTAINER_NAME=catmonitor-npuburn
-OUTPUT_DIR=/var/lib/catmonitor/npu-burn-output
+OUTPUT_DIR=/var/lib/catmonitor/stress/npu-burn-output
 DOCKER_BIN=
 RUNTIME=ascend
 RESTART_POLICY=unless-stopped
@@ -21,7 +21,7 @@ Required:
 Options:
   --name NAME            Container name (default: catmonitor-npuburn)
   --output-dir PATH      Host result directory
-                         (default: /var/lib/catmonitor/npu-burn-output)
+                         (default: /var/lib/catmonitor/stress/npu-burn-output)
   --docker-bin PATH      Docker-compatible CLI (default: docker from PATH)
   --runtime NAME         OCI runtime (default: ascend)
   --restart-policy NAME  Container restart policy: no, on-failure, always, or
@@ -29,8 +29,9 @@ Options:
   -h, --help             Show this help
 
 The script maps every host /dev/davinciN node into the container with the same
-logical ID, plus the required manager/devmm/HDC devices and validated Ascend
-driver/tool paths. It inherits environment variables from the image.
+host device-node ID, plus the required manager/devmm/HDC devices and validated
+Ascend driver/tool paths. NPU Burn logical IDs are derived separately from PCI
+topology. The container inherits environment variables from the image.
 
 An existing matching stopped container is started. An existing mismatched
 container is never removed or replaced automatically.

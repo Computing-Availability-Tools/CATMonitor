@@ -1,0 +1,19 @@
+# Additional opt-in overlay for the NPU Burn docker_exec backend.
+# Docker socket access is root-equivalent. Add this file only on an
+# administrator-controlled node that has NPU Burn explicitly enabled.
+services:
+  catmonitor:
+    volumes:
+      - type: bind
+        source: ${CATMONITOR_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+
+  web:
+    volumes:
+      - type: bind
+        source: ${CATMONITOR_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false

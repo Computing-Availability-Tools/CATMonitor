@@ -9,6 +9,7 @@ The repository audit checks only evidence owned by this feature:
 - NPU runtime-image license copy rule;
 - the machine-readable runtime package list;
 - optional CPU and NPU build manifest presence and schema.
+- the optional CPU runner image/deployment security boundary.
 
 Run the repository audit with:
 
@@ -20,7 +21,7 @@ For a deployment bundle, also supply the manifests used by the deployment:
 
 ```bash
 bash scripts/stress/audit_stress_release.sh \
-  --cpu-manifest /opt/catmonitor/benchmarks/manifests/build-manifest.json \
+  --cpu-manifest /opt/catmonitor/stress/manifests/cpu-build-manifest.json \
   --npu-manifest /var/tmp/catmonitor-npu-build/manifests/npu-burn-image-manifest.json \
   --require-runtime-manifests
 ```
@@ -38,6 +39,13 @@ release that includes external CPU assets, MPI/OpenBLAS, an NPU base image, or
 OS packages is not closed by this check. That release must generate an SBOM
 from the final delivered filesystem/image and package its exact third-party
 licenses and notices.
+
+`build_cpu_runner_image.sh` consumes administrator-provided CPU benchmark
+sources and creates a local image; the CATMonitor repository does not vendor
+those CPU sources or publish the resulting image. If that image is distributed,
+its `cpu-runner-image-manifest.json` can be passed as `--cpu-manifest`, but the
+release owner must still inventory Debian, MPI, OpenBLAS and benchmark licenses
+from the concrete final image.
 
 The audit deliberately does not:
 

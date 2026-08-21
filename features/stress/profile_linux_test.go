@@ -142,6 +142,7 @@ esac
 		parameters["tool_output_directory"] != "/opt/catmonitor/npuburn-home/.ascend_npu_burn/output" ||
 		parameters["result_directory"] != outputDir || parameters["sdc_detection"] != "enabled" ||
 		parameters["device_namespace"] != "npu_burn_logical" ||
+		parameters["device_node_ids"] != "0,1,2" ||
 		parameters["available_devices"] != "0,1,2" ||
 		parameters["topology_source"] != "container_lspci" ||
 		parameters["pci_topology_devices"] != "0,1,2" {
@@ -149,6 +150,66 @@ esac
 	}
 	if _, exists := parameters["execution_count"]; exists {
 		t.Fatalf("dead upstream exec_count must not be exposed: parameters=%v", parameters)
+	}
+}
+
+func TestDispatcherAcceptsSparseContainerDeviceNodesWhenPCICapacityMatches(t *testing.T) {
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output")
+	if err := os.Mkdir(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docker := writeExecutable(t, dir, "docker", `#!/bin/bash
+case "$1" in
+  inspect) printf 'true|catmonitor/npuburn:a2-cann83\n' ;;
+  exec)
+    if printf '%s' "${5-}" | grep -Fq '/dev/davinci[0-9]*'; then
+      printf '2\n5\n'
+    elif printf '%s' "${5-}" | grep -Fq 'lspci_path='; then
+      printf '0\n1\n'
+    elif [ "${5-}" = '/usr/bin/test -x "$1"' ]; then
+      exit 0
+    else
+      exit 97
+    fi
+    ;;
+  *) exit 98 ;;
+esac
+`)
+	script := configuredDispatcher(t, dir, map[string]string{
+		"NPU_BURN_BACKEND":                  "docker_exec",
+		"NPU_BURN_EXECUTABLE":               "/usr/local/bin/catmonitor-npu-burn",
+		"NPU_BURN_CONTAINER_RUNTIME":        docker,
+		"NPU_BURN_CONTAINER_NAME":           "catmonitor-npuburn-a2",
+		"NPU_BURN_CONTAINER_IMAGE":          "catmonitor/npuburn:a2-cann83",
+		"NPU_BURN_RUNTIME_CANN":             "8.3.RC2",
+		"NPU_BURN_RUNTIME_TORCH_NPU":        "2.8.0",
+		"NPU_BURN_SOC_MODEL":                "Ascend 910B4",
+		"NPU_BURN_OUTPUT_DIR":               outputDir,
+		"NPU_BURN_RUN_CASE":                 "matmul",
+		"NPU_BURN_DEVICE":                   "1",
+		"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+		"NPU_BURN_CHIP_GENERATION":          "A2",
+	})
+
+	output, err := exec.Command("bash", script, "describe", "npu_burn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile ExecutionProfile
+	if err := json.Unmarshal(output, &profile); err != nil {
+		t.Fatalf("describe output is not JSON: %v: %s", err, output)
+	}
+	parameters := make(map[string]string, len(profile.Parameters))
+	for _, parameter := range profile.Parameters {
+		parameters[parameter.Key] = parameter.Value
+	}
+	if profile.Preflight.Status != CheckPass ||
+		parameters["device_node_ids"] != "2,5" ||
+		parameters["available_devices"] != "0,1" ||
+		parameters["pci_topology_devices"] != "0,1" ||
+		parameters["devices"] != "1" {
+		t.Fatalf("sparse device nodes were not separated from logical IDs: profile=%+v parameters=%v", profile, parameters)
 	}
 }
 
@@ -441,7 +502,7 @@ esac
 	}
 }
 
-func TestDispatcherRejectsContainerAndPCITopologyMismatch(t *testing.T) {
+func TestDispatcherRejectsContainerAndPCIDeviceCountMismatch(t *testing.T) {
 	dir := t.TempDir()
 	outputDir := filepath.Join(dir, "output")
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
@@ -496,9 +557,11 @@ esac
 		}
 	}
 	if profile.Preflight.Status != CheckFail || topology == nil || topology.Status != CheckFail ||
-		parameters["available_devices"] != "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15" ||
+		parameters["device_node_ids"] != "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15" ||
+		parameters["available_devices"] != "0,1,2,3,4,5,6,7" ||
 		parameters["pci_topology_devices"] != "0,1,2,3,4,5,6,7" ||
-		!strings.Contains(topology.Message, "do not match NPU Burn lspci topology") {
+		!strings.Contains(topology.Message, "device node count") ||
+		!strings.Contains(topology.Message, "does not match NPU Burn lspci topology count") {
 		t.Fatalf("container/lspci topology mismatch was not rejected: profile=%+v parameters=%v", profile, parameters)
 	}
 }

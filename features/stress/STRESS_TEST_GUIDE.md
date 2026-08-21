@@ -16,7 +16,7 @@
 
 1. STREAM、HPL、HPCG、Ascend NPU Burn 的绝对路径、环境变量、MPI/NUMA/NPU 参数都放在节点脚本中，
    不允许通过 Web 任意编辑。
-2. `/etc/catmonitor/benchmark_check.sh` 一旦通过实机验证，升级时不得用仓库模板
+2. `/opt/catmonitor/stress/benchmark_check.sh` 一旦通过实机验证，升级时不得用仓库模板
    直接覆盖。
 3. 升级应以新模板生成候选脚本，只迁移旧脚本顶部的节点变量；候选脚本通过
    `describe` 后才能切换。
@@ -86,7 +86,7 @@ sudo bash scripts/stress/build_cpu_benchmarks.sh \
   --mpirun /absolute/mpi/bin/mpirun \
   --openblas-include /absolute/openblas/include \
   --openblas-lib /absolute/openblas/lib \
-  --output-root /opt/catmonitor/benchmarks/runtime
+  --output-root /opt/catmonitor/stress/runtime
 ```
 
 源码和配置无需复制到固定 `packages` 目录，五个输入可以位于完全不同的文件系统。
@@ -106,6 +106,23 @@ manifest。`--only stream`、`--only hpl`、`--only hpcg` 可单项重建，`--s
 记录实际值。HPL/HPCG 构建阶段不会启动完整压测；`HPL.dat` 和 `hpcg.dat` 必须由
 管理员按节点规模准备，脚本不会自动生成。
 
+CPU runner 镜像的构建沙箱通常无权调用 `set_mempolicy`，因此镜像构建固定使用
+`--stream-smoke-numa-policy none` 完成 STREAM 数值 smoke；部署后的真实 STREAM
+作业仍由只读 profile 使用 `numactl --interleave=all`，两者不能混为同一运行策略。
+镜像 builder 同时安装 MPICH 的开发头文件，runtime 阶段只保留匹配的 MPICH
+运行包，避免把编译工具链带入最终 runner 镜像。
+
+runner 容器入口初始化共享目录时临时需要 `CHOWN`、`DAC_OVERRIDE`、`FOWNER`、
+`SETGID`、`SETUID` 和 `SETPCAP`；`FOWNER` 仅用于对已切换到运行 UID 的持久化目录
+恢复固定权限，`SETPCAP` 仅用于让 `setpriv` 清空 capability bounding set。入口完成后
+会清空 bounding、permitted、effective、inheritable 和 ambient 集合，benchmark
+本身不继承这些能力。
+
+容器创建时还声明 `SYS_NICE`，用于让 Docker 默认 seccomp profile 放行
+`set_mempolicy` 等 NUMA policy syscall；入口同样会在 runner 启动前丢弃该 capability。
+缺少这一声明时，`numactl --interleave=all` 会在计算开始前返回
+`Operation not permitted`。
+
 `--jobs` 对 HPL 只用于完成目录初始化与 Makefile 刷新之后的 `build` target。
 不要在节点上改回顶层 `make -j arch=...`：stock HPL 2.3 会并发调度 `startup`、
 `refresh` 和 `build`，可能在架构目录创建前执行复制或进入叶子目录。回归 fixture
@@ -114,14 +131,22 @@ manifest。`--only stream`、`--only hpl`、`--only hpcg` 可单项重建，`--s
 构建后检查：
 
 ```bash
-test -x /opt/catmonitor/benchmarks/runtime/stream/stream_omp
-test -x /opt/catmonitor/benchmarks/runtime/hpl/xhpl
-test -f /opt/catmonitor/benchmarks/runtime/hpl/HPL.dat
-test -x /opt/catmonitor/benchmarks/runtime/hpcg/xhpcg
-test -f /opt/catmonitor/benchmarks/runtime/hpcg/hpcg.dat
+test -x /opt/catmonitor/stress/runtime/stream/stream_omp
+test -x /opt/catmonitor/stress/runtime/hpl/xhpl
+test -f /opt/catmonitor/stress/runtime/hpl/HPL.dat
+test -x /opt/catmonitor/stress/runtime/hpcg/xhpcg
+test -f /opt/catmonitor/stress/runtime/hpcg/hpcg.dat
 
 python3 -m json.tool \
-  /opt/catmonitor/benchmarks/manifests/build-manifest.json
+  /opt/catmonitor/stress/manifests/cpu-build-manifest.json
+```
+
+首次启用插件时创建稳定目录并安装 adapter。该安装器不会构建资产、修改 YAML、
+启动容器或运行压测；如果 CPU builder 已直接写入默认 runtime，省略
+`--runtime-source` 即可：
+
+```bash
+sudo bash scripts/stress/install_stress_runtime.sh
 ```
 
 没有 Python 时可用 `jq .` 或直接审阅 JSON。重点确认 architecture、`mpicc -show`、
@@ -142,11 +167,34 @@ make test-stress-build
 和归档路径穿越拒绝。它不替代目标 Linux 的真实 GCC/MPI/OpenBLAS 构建验收。
 
 构建完成不等于可运行。下一步仍需按本指南后续章节把资产绝对路径、MPI/NUMA/
-线程规模写入 `/etc/catmonitor/benchmark_check.sh`，再执行 `describe` 和逐项实测。
+线程规模写入 `/opt/catmonitor/stress/benchmark_check.sh`，再执行 `describe` 和逐项实测。
 
 该工具面向节点本地构建，不表示 CATMonitor 仓库分发第三方源码或二进制。若后续
 把 STREAM/HPL/HPCG 二进制纳入安装包或镜像，发布流程必须另行核对各上游许可证、
 版权声明和二进制再分发义务，并补充对应 third-party notices。
+
+#### 2.1.1 可选 CPU runner 镜像
+
+容器化 CATMonitor 可把 CPU 数据面放进独立 runner image。该方式不是压测算法的
+要求，而是为了解决宿主机资产与控制镜像 ABI 不一致、依赖交付和升级回退问题。
+输入仍是管理员批准的 STREAM/HPL/HPCG 源码与 HPL.dat/hpcg.dat：
+
+```bash
+sudo bash scripts/stress/build_cpu_runner_image.sh \
+  --image catmonitor/stress-cpu:node-v1 \
+  --stream-src /path/to/stream.c \
+  --hpl-src /path/to/hpl-2.3.tar.gz \
+  --hpl-dat /path/to/HPL.dat \
+  --hpcg-src /path/to/hpcg-3.1.tar.gz \
+  --hpcg-dat /path/to/hpcg.dat \
+  --jobs 16 \
+  --build-root /var/tmp/catmonitor-cpu-runner-build
+```
+
+构建完成只生成 image 和 `cpu-runner-image-manifest.json`，不创建容器、不启动
+STREAM/HPL/HPCG。镜像内构建/运行环境同属 Debian bookworm，避免直接复制宿主机
+MPI 二进制。离线节点需预先 `docker load` Debian/Go builder images 及其 APT 依赖，
+或临时设置标准代理；脚本只转发已设置的变量名，不打印凭据。
 
 ### 2.2 Ascend NPU Burn 镜像构建
 
@@ -430,7 +478,7 @@ BUILD_DIR=/opt/catmonitor/build-stress-$STAMP
 install -d -m 0750 "$BACKUP_ROOT"
 install -d -m 0755 "$BUILD_DIR"
 
-cp -a /etc/catmonitor/benchmark_check.sh "$BACKUP_ROOT/" 2>/dev/null || true
+cp -a /opt/catmonitor/stress/benchmark_check.sh "$BACKUP_ROOT/" 2>/dev/null || true
 cp -a /etc/catmonitor/catmonitor.yaml "$BACKUP_ROOT/" 2>/dev/null || true
 cp -a "$CAT_ROOT/bin/catmonitor" "$BACKUP_ROOT/" 2>/dev/null || true
 cp -a "$CAT_ROOT/bin/catmonitor-web" "$BACKUP_ROOT/" 2>/dev/null || true
@@ -466,12 +514,13 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
 不运行 benchmark，也不会自行选择 `/etc`；它只写 `--output-dir`：
 
 ```bash
-install -d -m 0750 /etc/catmonitor/stress /var/lib/catmonitor
+install -d -m 0750 /etc/catmonitor/stress-deployment /var/lib/catmonitor/stress
 
 sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir /etc/catmonitor/stress \
-  --runtime-root /opt/catmonitor/benchmarks/runtime \
-  --cpu-manifest /opt/catmonitor/benchmarks/manifests/build-manifest.json \
+  --output-dir /etc/catmonitor/stress-deployment \
+  --runtime-root /opt/catmonitor/stress/runtime \
+  --plugin-root /opt/catmonitor/stress \
+  --cpu-manifest /opt/catmonitor/stress/manifests/cpu-build-manifest.json \
   --npu-manifest /var/tmp/catmonitor-npu-build/manifests/npu-burn-image-manifest.json \
   --numactl /usr/bin/numactl \
   --mpi-launcher /absolute/mpi/bin/mpirun \
@@ -481,7 +530,7 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --npu-runtime /usr/bin/docker \
   --npu-container catmonitor-npuburn \
   --npu-image catmonitor/npuburn:approved \
-  --npu-output-dir /var/lib/catmonitor/npu-burn-output \
+  --npu-output-dir /var/lib/catmonitor/stress/npu-burn-output \
   --npu-device 0 \
   --npu-chip-generation A3 \
   --npu-cann '<实际版本>' \
@@ -494,9 +543,9 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
 必须替换为本节点已经验证并预留的值。生成结果为：
 
 ```text
-/etc/catmonitor/stress/benchmark_check.sh
-/etc/catmonitor/stress/catmonitor-stress.yaml
-/etc/catmonitor/stress/stress-deployment-manifest.json
+/etc/catmonitor/stress-deployment/benchmark_check.sh
+/etc/catmonitor/stress-deployment/catmonitor-stress.yaml
+/etc/catmonitor/stress-deployment/stress-deployment-manifest.json
 ```
 
 `catmonitor-stress.yaml` 是包含顶层 `stress:` 的有效配置片段，可直接用 `-c` 做
@@ -505,11 +554,39 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
 确认替换时使用 `--force`。仓库还提供仅用于结构参考的
 `configs/stress-full.example.yaml`，生产路径仍应由生成器产生。
 
+将生成的节点 adapter 和部署清单安装到稳定插件目录：
+
+```bash
+sudo bash scripts/stress/install_stress_runtime.sh \
+  --adapter /etc/catmonitor/stress-deployment/benchmark_check.sh \
+  --deployment-manifest /etc/catmonitor/stress-deployment/stress-deployment-manifest.json \
+  --force
+```
+
+若使用 CPU runner image，生成命令不再传宿主机的 `--runtime-root`、`--numactl`、
+`--mpi-launcher` 和 `--hpl-library-dir`，增加：
+
+```bash
+--cpu-backend unix \
+--cpu-runner-image catmonitor/stress-cpu:node-v1 \
+--cpu-runner-manifest /var/tmp/catmonitor-cpu-runner-build/manifests/cpu-runner-image-manifest.json
+```
+
+并安装额外生成的 runner-local adapter：
+
+```bash
+sudo bash scripts/stress/install_stress_runtime.sh \
+  --adapter /etc/catmonitor/stress-deployment/benchmark_check.sh \
+  --cpu-runner-adapter /etc/catmonitor/stress-deployment/cpu-runner-benchmark_check.sh \
+  --deployment-manifest /etc/catmonitor/stress-deployment/stress-deployment-manifest.json \
+  --force
+```
+
 生成后先运行无负载检查：
 
 ```bash
 ./bin/catmonitor stress doctor \
-  -c /etc/catmonitor/stress/catmonitor-stress.yaml \
+  -c /etc/catmonitor/stress-deployment/catmonitor-stress.yaml \
   -o table
 ```
 
@@ -568,14 +645,15 @@ A3 节点已有 STREAM/HPL/HPCG 时，不要为了接入 NPU Burn 先重编 CPU 
 sudo bash scripts/stress/create_npu_burn_container.sh \
   --image catmonitor/npuburn:a3-candidate \
   --name catmonitor-npuburn-a3 \
-  --output-dir /var/lib/catmonitor/npu-burn-output \
+  --output-dir /var/lib/catmonitor/stress/npu-burn-output \
   --docker-bin /usr/bin/docker \
   --runtime ascend \
   --restart-policy unless-stopped
 ```
 
 工具会检查镜像与 Docker daemon，动态枚举并按数字顺序 identity-map 宿主机全部
-`/dev/davinciN`，同时要求并映射：
+`/dev/davinciN`。这些名称是宿主设备节点 ID，不直接作为 NPU Burn logical ID；后者
+由容器内 PCI topology 生成。工具同时要求并映射：
 
 ```text
 /dev/davinci_manager
@@ -625,7 +703,7 @@ NPU_BURN_SOC_MODEL="<实际 A3 SoC>"
 
 # 这是容器内绝对路径；describe 会用 docker exec /usr/bin/test -x 预检。
 NPU_BURN_EXECUTABLE="/usr/local/bin/catmonitor-npu-burn"
-NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/npu-burn-output"
+NPU_BURN_OUTPUT_DIR="/var/lib/catmonitor/stress/npu-burn-output"
 NPU_BURN_RUN_CASE="quant_matmul"
 NPU_BURN_GROUP=""
 NPU_BURN_DEVICE="0"
@@ -633,12 +711,14 @@ NPU_BURN_INTERNAL_TIMEOUT_SECONDS=120
 NPU_BURN_CHIP_GENERATION="A3"
 ```
 
-对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用固定
-容器内 `/dev/davinciN` 的 `N` 所对应的 NPU Burn logical device ID，不是
-`npu-smi` 的 Phy-ID，也不能根据 PyTorch logical device count 推导。必须明确选择
+对于当前支持并已验证的 fixed-container topology，`NPU_BURN_DEVICE` 使用
+upstream `lspci` topology 生成的 NPU Burn logical device ID。容器内
+`/dev/davinciN` 的 `N` 是设备节点 ID；在连续节点上两者看起来相同，但在稀疏/分区
+节点上可以不同。logical ID 不是 `npu-smi` 的 Phy-ID，也不能根据 PyTorch logical
+device count 推导。必须明确选择
 管理员已经预留的设备，例如 `0` 或 `0,1`；不得依靠脚本自动选择所谓空闲卡。
 上游支持 `all`，但只应在整节点已经由本压测独占时显式使用。有效范围必须来自
-当前固定容器中 `/dev/davinciN` 与 `lspci` topology 的交叉预检，并以
+当前固定容器中 `/dev/davinciN` 数量与 `lspci` topology 数量的交叉预检，并以
 `describe npu_burn` 返回的 `available_devices` 为准。旧镜像缺少 `lspci` 时出现的
 固定八设备范围只是 upstream fallback，不是硬件范围。NPU Burn logical ID 最终
 作为 torch_npu device index；它与 `/dev/davinciN`、`npu-smi` Phy-ID 的对应只对
@@ -677,8 +757,8 @@ Docker 参数输入，因此不会把宿主机控制权扩展给 Web 用户。
 已有实机脚本时，从新模板生成 candidate，再迁移节点变量：
 
 ```bash
-OLD_SCRIPT=/etc/catmonitor/benchmark_check.sh
-CANDIDATE=/etc/catmonitor/benchmark_check.sh.candidate.$STAMP
+OLD_SCRIPT=/opt/catmonitor/stress/benchmark_check.sh
+CANDIDATE=/opt/catmonitor/stress/benchmark_check.sh.candidate.$STAMP
 NEW_TEMPLATE="$CAT_ROOT/features/stress/benchmark_check.sh"
 
 test -f "$OLD_SCRIPT"
@@ -837,9 +917,9 @@ SoC、`NPU_BURN_CHIP_GENERATION=A3`、设备列表、结果目录挂载和 NPU �
 WEB_PID=$(pgrep -xo catmonitor-web || true)
 if [ -n "$WEB_PID" ]; then kill "$WEB_PID"; fi
 
-install -m 0750 "$CANDIDATE" /etc/catmonitor/benchmark_check.sh.new
-mv -f /etc/catmonitor/benchmark_check.sh.new \
-  /etc/catmonitor/benchmark_check.sh
+install -m 0750 "$CANDIDATE" /opt/catmonitor/stress/benchmark_check.sh.new
+mv -f /opt/catmonitor/stress/benchmark_check.sh.new \
+  /opt/catmonitor/stress/benchmark_check.sh
 
 install -d -m 0755 "$CAT_ROOT/bin"
 install -m 0755 "$BUILD_DIR/catmonitor" "$CAT_ROOT/bin/catmonitor.new"
@@ -855,8 +935,8 @@ mv -f "$CAT_ROOT/bin/catmonitor-web.new" "$CAT_ROOT/bin/catmonitor-web"
 stress:
   enabled: true
   web_enabled: false
-  script_path: /etc/catmonitor/benchmark_check.sh
-  report_path: /var/lib/catmonitor/stress-latest.json
+  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
   benchmarks:
     stream: { enabled: true, timeout: 1m }
@@ -892,14 +972,65 @@ Linux 默认主配置为 `/etc/catmonitor/catmonitor.yaml`，因此常规部署�
 非标准路径可用 `CATMONITOR_CONFIG` 环境变量或
 `-config /path/to/catmonitor.yaml` 覆盖，显式 flag 优先。
 
+### 7.1 develop 容器部署
+
+若 develop 版本以容器运行，CLI、Web、adapter 和固定 NPU Burn 容器的职责不变，
+但必须显式建立以下共享边界：
+
+- daemon 和 Web 挂载同一份合并后的完整 `catmonitor.yaml`；
+- daemon 和 Web 挂载同一份 `benchmark_check.sh`；
+- daemon 和 Web 以同一路径读写 `/var/lib/catmonitor/stress`，从而共享 latest、
+  history 和跨进程锁；
+- 只有启用 NPU Burn `docker_exec` 的部署才把宿主机 Docker socket 挂入 daemon
+  和 Web；基础部署不得默认暴露该 socket；
+- daemon/Web 通过共享 Unix Socket 调用独立 CPU runner；控制容器不挂 CPU
+  benchmark、MPI 或 OpenBLAS，也不获得 CPU 任意命令接口；
+- 固定 NPU Burn 容器由管理员提前构建和创建，CATMonitor 作业只执行
+  `docker exec`，不会 `pull`、`run`、重建或删除它。
+
+仓库提供四个可叠加的 Compose 文件：
+
+```text
+docker/docker-compose.yml          通用 daemon/Web/dfee 基础层
+docker/docker-compose.npu.yml      Ascend 采集驱动和运行库挂载
+docker/docker-compose.stress.yml   stress 配置、状态和 CPU runner（无 Docker socket）
+docker/docker-compose.stress-npuburn.yml  NPU Burn 专用 Docker socket
+```
+
+A3 启动形态为：
+
+```bash
+export CATMONITOR_CONFIG=/etc/catmonitor/catmonitor.yaml
+export CATMONITOR_STRESS_ROOT=/opt/catmonitor/stress
+export CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress
+export CATMONITOR_CPU_STRESS_IMAGE=catmonitor/stress-cpu:node-v1
+
+CATMONITOR_IMAGE=catmonitor-npu \
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f docker/docker-compose.stress-npuburn.yml \
+  up -d cpu-stress-runner catmonitor web
+```
+
+生成器的 `catmonitor-stress.yaml` 只有顶层 `stress:` 块。容器化 daemon 启动前必须
+把它合并进包含 `snapshot.enabled: true` 的完整节点主配置，不能直接用该片段替代
+`docker/catmonitor.yaml`，否则 Web 没有 snapshot 数据。daemon 与 Web 最终挂载的是
+同一个合并后文件。
+
+Web 固定监听 `127.0.0.1:19322`，远程访问使用 SSH 隧道。完整构建、生成部署文件、
+CPU runner 构建/挂载、安全说明和无硬件容器 E2E 见
+[`docker/README.md`](../../docker/README.md#8-容器化可靠性压测)。
+
 ## 8. CLI 实机验收
 
 切换后再次验证正式脚本：
 
 ```bash
-bash -n /etc/catmonitor/benchmark_check.sh
+bash -n /opt/catmonitor/stress/benchmark_check.sh
 for benchmark in stream hpl hpcg npu_burn; do
-  /etc/catmonitor/benchmark_check.sh describe "$benchmark" \
+  /opt/catmonitor/stress/benchmark_check.sh describe "$benchmark" \
     | python3 -m json.tool
 done
 ```
@@ -943,7 +1074,7 @@ A3 CATMonitor 全链验收仍按三级推进，不要直接在全部设备运行
 每次作业后检查：
 
 ```bash
-python3 -m json.tool /var/lib/catmonitor/stress-latest.json
+python3 -m json.tool /var/lib/catmonitor/stress/stress-latest.json
 python3 -m json.tool /var/lib/catmonitor/stress-history.json
 pgrep -af '[s]tream_omp|[x]hpl|[x]hpcg|[n]pu-burn|ascend_npu_burn|[m]pirun|[n]umactl' || true
 ```
@@ -1057,7 +1188,7 @@ WEB_PID=$(pgrep -xo catmonitor-web || true)
 if [ -n "$WEB_PID" ]; then kill "$WEB_PID"; fi
 
 install -m 0750 "$BACKUP_ROOT/benchmark_check.sh" \
-  /etc/catmonitor/benchmark_check.sh
+  /opt/catmonitor/stress/benchmark_check.sh
 install -m 0755 "$BACKUP_ROOT/catmonitor" \
   "$CAT_ROOT/bin/catmonitor"
 install -m 0755 "$BACKUP_ROOT/catmonitor-web" \
@@ -1104,8 +1235,9 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 2. 用全新名称执行 bootstrap 创建 fixed candidate；再次执行同一命令应幂等复用，
    不重建、不覆盖、不删除容器。
 3. 容器内 `/dev/davinciN` 集合、`lspci -D -d 19e5:` 结果和 NPU Burn logical
-   topology 必须一致；`describe npu_burn` 应显示 `topology_source=container_lspci`
-   以及一致的 `available_devices`、`pci_topology_devices`。
+   topology 数量必须一致；`describe npu_burn` 应显示
+   `topology_source=container_lspci`、设备节点 ID，以及一致的
+   `available_devices`、`pci_topology_devices` logical ID。
 4. 选择管理员确认空闲且属于 `available_devices` 的一个 logical ID，describe 应
    通过；再选择一个超出已发现集合的 ID，必须在 workload 前失败并列出有效 ID。
 5. 通过 `catmonitor stress -b npu_burn -o table` 运行节点版本实际支持的短用例，
