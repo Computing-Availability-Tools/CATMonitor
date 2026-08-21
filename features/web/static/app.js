@@ -716,6 +716,7 @@ function parentDisk(device) {
   var dev = (device || '').replace('/dev/', '');
   if (/^nvme\d+n\d+p\d+$/.test(dev)) return dev.replace(/p\d+$/, '');
   if (/^(sd|vd|xvd)[a-z]+\d+$/.test(dev)) return dev.replace(/\d+$/, '');
+  if (dev.indexOf('mapper/') === 0) return '/dev/' + dev;
   return dev;
 }
 
@@ -740,8 +741,8 @@ function aggregateByPhysicalDisk(spaceDetailMetrics, spaceUsageMetrics) {
     var m = spaceDetailMetrics[i];
     var lb = m.labels || {};
     var pd = parentDisk(lb.device || '');
-    if (!groups[pd]) { groups[pd] = { parts: [], total: 0, used: 0, avail: 0 }; order.push(pd); }
-    groups[pd].parts.push(lb.device || '');
+    if (!groups[pd]) { groups[pd] = { parts: {}, total: 0, used: 0, avail: 0 }; order.push(pd); }
+    groups[pd].parts[lb.device || ''] = true;
     if (lb.field === 'total') groups[pd].total += m.value;
     if (lb.field === 'used') groups[pd].used += m.value;
     if (lb.field === 'available') groups[pd].avail += m.value;
@@ -758,7 +759,7 @@ function aggregateByPhysicalDisk(spaceDetailMetrics, spaceUsageMetrics) {
     if (!isNaN(na) && !isNaN(nb)) return na - nb;
     return a < b ? -1 : 1;
   });
-  return order.map(function(pd) { return Object.assign({ disk: pd }, groups[pd]); });
+  return order.map(function(pd) { return Object.assign({ disk: pd, parts: Object.keys(groups[pd].parts) }, groups[pd]); });
 }
 
 function renderPhysicalDiskGroups(localMetrics) {
