@@ -20,7 +20,9 @@ import (
 const (
 	describeProtocolVersion = 1
 	describeTimeout         = 2 * time.Second
+	npuDescribeTimeout      = 30 * time.Second
 	describeCacheTTL        = 10 * time.Second
+	npuDescribeCacheTTL     = 60 * time.Second
 	maxDescribeBytes        = 256 * 1024
 	describeProtocolMarker  = "CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1"
 )
@@ -72,10 +74,14 @@ func (m *Manager) describeWithTimeout(name string, timeoutOverride time.Duration
 		profile = m.applyRunConfiguration(profile, name, 0)
 	}
 
+	cacheTTL := describeCacheTTL
+	if name == "npu_burn" {
+		cacheTTL = npuDescribeCacheTTL
+	}
 	m.profileMu.Lock()
 	m.profileCache[name] = profileCacheEntry{
 		profile: copyExecutionProfile(profile), err: describeErr,
-		expiresAt: time.Now().Add(describeCacheTTL),
+		expiresAt: time.Now().Add(cacheTTL),
 		scriptMod: info.ModTime(), scriptLen: info.Size(),
 	}
 	m.profileMu.Unlock()
@@ -93,7 +99,15 @@ func (m *Manager) readDescribeProfile(name string) (*ExecutionProfile, error) {
 	if !bytes.Contains(script, []byte(describeProtocolMarker)) {
 		return nil, errors.New("dispatcher does not declare describe protocol version 1")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), describeTimeout)
+	timeout := describeTimeout
+	if name == "npu_burn" {
+		// The fixed-container preflight imports torch/torch_npu and validates
+		// PCI topology. Real Ascend runtimes take several seconds even though
+		// describe remains read-only, so retain the short generic bound while
+		// giving only NPU Burn a larger, still-bounded window.
+		timeout = npuDescribeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := benchmarkCommand(ctx, "bash", m.cfg.ScriptPath, "describe", name)
 	cmd.Dir = filepath.Dir(m.cfg.ScriptPath)

@@ -848,3 +848,24 @@ wait
 	}
 	t.Fatalf("describe child process %d survived timeout", pid)
 }
+
+func TestManagerDescribeAllowsBoundedNPURuntimePreflight(t *testing.T) {
+	dir := t.TempDir()
+	script := writeExecutable(t, dir, "benchmark_check.sh", `#!/bin/bash
+CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1
+sleep 3
+printf '%s\n' '{"protocol_version":1,"benchmark":"npu_burn","parameters":[],"resources":{"mpi_processes":0,"threads_per_process":0,"total_workers":0,"runtime_seconds":0,"problem_size":""},"assets":[],"mpi":{"required":false,"launcher":"","implementation":"none","version":"","executable_abi":"none","status":"pass","message":"not required"},"preflight":{"status":"pass","message":"runtime preflight passed"}}'
+`)
+	manager := NewManager(Config{
+		Enabled: true, ScriptPath: script,
+		Benchmarks: map[string]BenchmarkConfig{"npu_burn": {Enabled: true, Timeout: time.Minute}},
+	})
+	started := time.Now()
+	profile, err := manager.Describe("npu_burn")
+	if err != nil || profile == nil || profile.Preflight.Status != CheckPass {
+		t.Fatalf("bounded NPU runtime preflight was rejected: profile=%+v err=%v", profile, err)
+	}
+	if elapsed := time.Since(started); elapsed < 3*time.Second || elapsed > 6*time.Second {
+		t.Fatalf("unexpected NPU describe duration: %s", elapsed)
+	}
+}
