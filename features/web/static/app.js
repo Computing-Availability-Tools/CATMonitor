@@ -245,7 +245,7 @@ const METRIC_DESCRIPTIONS = {
   npu_num: 'NPU 设备数量',
   chip_type: 'NPU 芯片类型（如 Ascend910A）',
   driver_version: 'NPU 驱动版本',
-  driver_health: 'NPU 驱动健康状态，0=正常',
+  driver_health: 'NPU 驱动健康状态',
   error_code: 'NPU 错误码，设备级完整错误码列表',
   process_info: 'NPU 进程 PID 列表',
   process_total: 'NPU 进程总数',
@@ -1423,6 +1423,13 @@ function summaryCard(compKey, snap) {
         v.textContent = mm.value >= 1 ? 'PASSED' : 'FAILED';
       } else if (mm.name === 'interface_status') {
         v.textContent = mm.value > 0 ? 'up' : 'down';
+      } else if (mm.name === 'health_status') {
+        const statusMap = {1: 'OK', 2: 'Warning', 3: 'Alarm', 4: 'Critical'};
+        v.textContent = statusMap[mm.value] || '--';
+      } else if (mm.name === 'driver_health') {
+        v.textContent = mm.value === 0 ? '正常' : '异常';
+      } else if (mm.name === 'error_code') {
+        v.textContent = mm.value === 0 ? '无' : ((mm.labels || {}).error_codes || String(mm.value));
       } else {
         v.textContent = fmt(mm.value) + ' ' + (mm.unit || '');
       }
@@ -1602,9 +1609,32 @@ function renderDetail(compKey, snap) {
         for (const mt of items) {
           const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
           const row = el('div', 'metric-row');
+          let valStr;
+          if (mt.name === 'health_status') {
+            const statusMap = {1: 'OK', 2: 'Warning', 3: 'Alarm', 4: 'Critical'};
+            const statusColor = {1: 'var(--ok)', 2: 'var(--warn)', 3: 'var(--crit)', 4: 'var(--crit)'};
+            const statusText = statusMap[mt.value] || '--';
+            valStr = '<span style="color:' + (statusColor[mt.value] || 'var(--muted)') + ';font-weight:600">' + statusText + '</span>';
+          } else if (mt.name === 'driver_health') {
+            valStr = mt.value === 0
+              ? '<span style="color:var(--ok);font-weight:600">正常</span>'
+              : '<span style="color:var(--crit);font-weight:600">异常</span>';
+          } else if (mt.name === 'error_code') {
+            if (mt.value === 0) {
+              valStr = '<span style="color:var(--ok)">无</span>';
+            } else {
+              const codes = (mt.labels || {}).error_codes || '';
+              valStr = '<span style="color:var(--crit);font-weight:600">' + codes + '</span>';
+            }
+          } else {
+            valStr = fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '');
+          }
+          const cleanLabels = mt.labels ? Object.entries(mt.labels)
+            .filter(([k]) => !(mt.name === 'error_code' && k === 'error_codes'))
+            .map(([k, v]) => k + '=' + v).join(', ') : '';
           row.innerHTML =
-            '<span class="metric-val">' + fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '') + '</span>' +
-            '<span class="metric-labels">' + labels + '</span>';
+            '<span class="metric-val">' + valStr + '</span>' +
+            '<span class="metric-labels">' + cleanLabels + '</span>';
           gb.appendChild(row);
         }
       }
