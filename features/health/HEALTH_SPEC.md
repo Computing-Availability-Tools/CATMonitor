@@ -200,9 +200,11 @@ features/health/
 
 | 关注点 | 预算 | 分级 | 数据来源 |
 |--------|:---:|------|---------|
-| Space | 35% | >90%: 35%, >80%: 15% | statfs syscall |
+| Space | 35% | >90%: 35%, >80%: 15% | statfs syscall（所有本地挂载点 sum(used)/sum(total)） |
 | I/O Wait | 15% | >20%: 15% | /proc/stat |
 | SMART | 50% | failed: 50% | smartctl -H |
+
+> Space 关注点按**总空间使用率**计算：所有本地挂载点（`/dev/` 开头）的 `sum(used) / sum(total) × 100`，排除 NFS 等网络存储。避免单个小分区满了就触发扣分。
 
 ### 6.5 GPU 规则
 

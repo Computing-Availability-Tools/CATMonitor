@@ -12,16 +12,16 @@ func evaluateDisk(metrics []collector.Metric, maxScore int) ComponentScore {
 	score := float64(maxScore)
 	var deductions []Deduction
 
-	// Space: 35% budget. Aggregate by physical disk, take worst disk usage.
+	// Space: 35% budget. Total local disk usage (sum used / sum total).
 	// >90%: 35%, >80%: 15%.
-	worstDiskUsage := computePhysicalDiskUsage(metrics)
-	if worstDiskUsage > 0 {
+	totalUsage := computeTotalDiskUsage(metrics)
+	if totalUsage > 0 {
 		switch {
-		case worstDiskUsage > 90:
+		case totalUsage > 90:
 			d := Deduction{Rule: "space>90%", Penalty: float64(maxScore) * 0.35}
 			score -= d.Penalty
 			deductions = append(deductions, d)
-		case worstDiskUsage > 80:
+		case totalUsage > 80:
 			d := Deduction{Rule: "space>80%", Penalty: float64(maxScore) * 0.15}
 			score -= d.Penalty
 			deductions = append(deductions, d)
@@ -53,42 +53,12 @@ func evaluateDisk(metrics []collector.Metric, maxScore int) ComponentScore {
 	}
 }
 
-// diskParent maps a partition device name to its parent physical disk.
-// sda1 -> sda, nvme0n1p1 -> nvme0n1, dm-0 -> dm-0 (standalone).
-func diskParent(device string) string {
-	dev := strings.TrimPrefix(device, "/dev/")
-	if strings.HasPrefix(dev, "nvme") && strings.Contains(dev, "p") {
-		if idx := strings.LastIndex(dev, "p"); idx > 0 {
-			return dev[:idx]
-		}
-	}
-	if len(dev) > 0 && dev[0] != 'd' {
-		if idx := lastIndexDigit(dev); idx > 0 && dev[idx-1] != '-' {
-			return dev[:idx]
-		}
-	}
-	return dev
-}
-
-func lastIndexDigit(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] < '0' || s[i] > '9' {
-			return i + 1
-		}
-	}
-	return -1
-}
-
-// computePhysicalDiskUsage aggregates space_detail metrics by physical disk
-// and returns the worst (max) disk-level usage percentage. Only local devices
-// (starting with /dev/) are considered; NFS and other network filesystems are
-// excluded.
-func computePhysicalDiskUsage(metrics []collector.Metric) float64 {
-	type diskAgg struct {
-		total float64
-		used  float64
-	}
-	disks := make(map[string]*diskAgg)
+// computeTotalDiskUsage sums space_detail metrics across all local mount points
+// and returns the overall disk usage percentage = sum(used) / sum(total) × 100.
+// Only local devices (starting with /dev/) are considered; NFS and other
+// network filesystems are excluded.
+func computeTotalDiskUsage(metrics []collector.Metric) float64 {
+	var totalSum, usedSum float64
 	for _, m := range metrics {
 		if m.Name != "space_detail" {
 			continue
@@ -97,25 +67,15 @@ func computePhysicalDiskUsage(metrics []collector.Metric) float64 {
 		if !strings.HasPrefix(dev, "/dev/") {
 			continue
 		}
-		parent := diskParent(dev)
-		if disks[parent] == nil {
-			disks[parent] = &diskAgg{}
-		}
 		switch m.Labels["field"] {
 		case "total":
-			disks[parent].total += m.Value
+			totalSum += m.Value
 		case "used":
-			disks[parent].used += m.Value
+			usedSum += m.Value
 		}
 	}
-	var worst float64
-	for _, agg := range disks {
-		if agg.total > 0 {
-			usage := agg.used / agg.total * 100
-			if usage > worst {
-				worst = usage
-			}
-		}
+	if totalSum > 0 {
+		return usedSum / totalSum * 100
 	}
-	return worst
+	return 0
 }

@@ -34,7 +34,7 @@ func TestEvaluateDiskSpaceHigh(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// physical disk usage 85% > 80%: -15% of 30 = -4.5 → 25
+	// total usage 85% > 80%: -15% of 30 = -4.5 → 25
 	if score.Score != 25 {
 		t.Errorf("expected score 25 (space>80%%), got %d", score.Score)
 	}
@@ -48,47 +48,63 @@ func TestEvaluateDiskSpaceCritical(t *testing.T) {
 
 	score := evaluateDisk(metrics, 30)
 
-	// physical disk usage 95% > 90%: -35% of 30 = -10.5 → 19
+	// total usage 95% > 90%: -35% of 30 = -10.5 → 19
 	if score.Score != 19 {
 		t.Errorf("expected score 19 (space>90%%), got %d", score.Score)
 	}
 }
 
-func TestEvaluateDiskSpaceWorstPhysicalDisk(t *testing.T) {
+func TestEvaluateDiskSpaceTotalUsageMultipleMounts(t *testing.T) {
 	metrics := []collector.Metric{
-		// sda (sda1 + sda2): total=200, used=100 → 50%
-		makeSpaceDetail("/dev/sda1", "total", 100),
-		makeSpaceDetail("/dev/sda1", "used", 50),
-		makeSpaceDetail("/dev/sda2", "total", 100),
-		makeSpaceDetail("/dev/sda2", "used", 50),
-		// sdb (sdb1 only): total=100, used=92 → 92%
+		// sda1: 200 GB total, 100 GB used → 50%
+		makeSpaceDetail("/dev/sda1", "total", 200),
+		makeSpaceDetail("/dev/sda1", "used", 100),
+		// sdb1: 100 GB total, 92 GB used → 92%
 		makeSpaceDetail("/dev/sdb1", "total", 100),
 		makeSpaceDetail("/dev/sdb1", "used", 92),
 	}
 
 	score := evaluateDisk(metrics, 30)
 
-	// worst physical disk sdb 92% > 90% → -10.5 → 19
-	if score.Score != 19 {
-		t.Errorf("expected score 19 (worst disk>90%%), got %d", score.Score)
+	// total usage = (100+92) / (200+100) = 192/300 = 64% → no deduction
+	if score.Score != 30 {
+		t.Errorf("expected score 30 (total 64%% < 80%%), got %d", score.Score)
 	}
 }
 
-func TestEvaluateDiskSpaceAggregatePartitions(t *testing.T) {
+func TestEvaluateDiskSpaceMultipleMountsFull(t *testing.T) {
 	metrics := []collector.Metric{
-		// sda has 2 partitions: sda1=95% full, sda2=10% full
-		// aggregated: total=200, used=105 → 52.5% (below 80%, no deduction)
-		makeSpaceDetail("/dev/sda1", "total", 100),
-		makeSpaceDetail("/dev/sda1", "used", 95),
-		makeSpaceDetail("/dev/sda2", "total", 100),
-		makeSpaceDetail("/dev/sda2", "used", 10),
+		// sda1: 200 GB total, 190 GB used → 95%
+		makeSpaceDetail("/dev/sda1", "total", 200),
+		makeSpaceDetail("/dev/sda1", "used", 190),
+		// sdb1: 100 GB total, 90 GB used → 90%
+		makeSpaceDetail("/dev/sdb1", "total", 100),
+		makeSpaceDetail("/dev/sdb1", "used", 90),
 	}
 
 	score := evaluateDisk(metrics, 30)
 
-	// aggregated disk usage 52.5% < 80% → no deduction → 30
+	// total usage = (190+90) / (200+100) = 280/300 = 93.3% > 90% → -10.5 → 19
+	if score.Score != 19 {
+		t.Errorf("expected score 19 (total 93%% > 90%%), got %d", score.Score)
+	}
+}
+
+func TestEvaluateDiskSpaceNFSExcluded(t *testing.T) {
+	metrics := []collector.Metric{
+		// local: 100 GB total, 50 GB used → 50%
+		makeSpaceDetail("/dev/sda1", "total", 100),
+		makeSpaceDetail("/dev/sda1", "used", 50),
+		// NFS: 1000 GB total, 950 GB used → 95% (should be excluded)
+		makeSpaceDetail("155.25.78.151:/AIdata", "total", 1000),
+		makeSpaceDetail("155.25.78.151:/AIdata", "used", 950),
+	}
+
+	score := evaluateDisk(metrics, 30)
+
+	// total local usage = 50/100 = 50% → no deduction
 	if score.Score != 30 {
-		t.Errorf("expected score 30 (aggregated <80%%), got %d", score.Score)
+		t.Errorf("expected score 30 (NFS excluded, local 50%%), got %d", score.Score)
 	}
 }
 
