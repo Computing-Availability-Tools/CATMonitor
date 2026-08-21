@@ -789,6 +789,8 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${B
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${RUNTIME_ASCEND_ENV_SCRIPT}'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_source_ascend_env'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_build_preflight'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED"'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$CATMONITOR_ASCEND_ENV_SCRIPT"'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'metadata.version("ascend-npu-burn")'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'

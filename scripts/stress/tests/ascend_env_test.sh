@@ -46,6 +46,7 @@ write_env "$CANN_ROOT/cann-9.0.1/set_env.sh" cann-9.0.1
     [ "$CATMONITOR_ENV_FIXTURE" = cann-9.0.1 ]
     [ "$CATMONITOR_UNSET_PATH_FIXTURE" = "" ]
     [ "$CATMONITOR_CANN_VERSION" = 9.0.1 ]
+    [ "$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED" = "$CANN_ROOT/cann-9.0.1/set_env.sh" ]
 ) >"$TEST_ROOT/cann.log"
 assert_contains "$TEST_ROOT/cann.log" "$CANN_ROOT/cann-9.0.1/set_env.sh"
 

@@ -81,7 +81,7 @@ RUN set -euo pipefail; \
     printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'; \
     printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'; \
     install -d -m 0755 /opt/catmonitor/build-compat; \
-    printf 'CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT"; \
+    printf 'CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED"; \
     python3 /usr/local/libexec/catmonitor/validate_runtime_abi.py capture \
         --cann-version "$CATMONITOR_CANN_VERSION" \
         --output /opt/catmonitor/build-compat/builder-abi.json
@@ -226,7 +226,7 @@ RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/npu-burn; \
     source /usr/local/libexec/catmonitor/ascend_env.sh; \
     catmonitor_source_ascend_env; \
-    printf 'CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT"; \
+    printf 'CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED"; \
     python3 /usr/local/libexec/catmonitor/validate_runtime_abi.py validate \
         --expected /usr/local/share/catmonitor/builder-abi.json \
         --cann-version "$CATMONITOR_CANN_VERSION"; \
