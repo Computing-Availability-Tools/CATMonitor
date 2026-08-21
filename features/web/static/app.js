@@ -594,12 +594,13 @@ function renderSpaceDetailGroup(items) {
     const total = d.total ? fmtMB(d.total) : '--';
     const used = d.used ? fmtMB(d.used) : '--';
     const avail = d.available ? fmtMB(d.available) : '--';
-    const pct = (d.total && d.used) ? Math.round(d.used / d.total * 100) : 0;
+    const availPct = d.total > 0 ? (d.available / d.total * 100) : 100;
+    const availColor = availPct < 10 ? ' style="color:var(--crit)"' : '';
     const row = el('div', 'metric-row space-detail-row');
     row.innerHTML =
       '<span class="metric-val">' + total + '</span>' +
       '<span class="space-detail-used">' + used + ' used</span>' +
-      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="space-detail-avail"' + availColor + '>' + avail + ' avail</span>' +
       '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount_point || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
     container.appendChild(row);
   }
@@ -878,10 +879,12 @@ function renderNetworkStorageGroup(networkMetrics) {
     var total = d.total > 0 ? fmtMB(d.total) : '--';
     var used = d.total > 0 ? fmtMB(d.used) : '--';
     var avail = d.avail > 0 ? fmtMB(d.avail) : '--';
+    var availPct = d.total > 0 ? (d.avail / d.total * 100) : 100;
+    var availColor = availPct < 10 ? ' style="color:var(--crit)"' : '';
     var row = el('div', 'metric-row space-detail-row');
     row.innerHTML = '<span class="metric-val">' + total + '</span>' +
       '<span class="space-detail-used">' + used + ' used</span>' +
-      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="space-detail-avail"' + availColor + '>' + avail + ' avail</span>' +
       '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
     detailBody.appendChild(row);
   }
