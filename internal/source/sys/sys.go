@@ -49,6 +49,7 @@ type NetIfaceInfo struct {
 	MTU    int    // /sys/class/net/<iface>/mtu
 	Speed  int    // /sys/class/net/<iface>/speed (Mbps); -1 if unreadable
 	Driver string // basename of .../device/driver symlink (empty for virt ifaces)
+	PciAddr string // PCI address from .../device symlink (e.g. "0000:c1:00.0"; empty for virt ifaces)
 }
 
 // BlockDev holds the static identity of one real block device read from
@@ -376,8 +377,14 @@ func (s *defaultSource) NetInterfaceInfo(iface string) (*NetIfaceInfo, error) {
 		}
 	}
 	// driver is a symlink: /sys/class/net/<iface>/device/driver -> .../drivers/<name>
-	if link, err := os.Readlink(filepath.Join(base, "device", "driver")); err == nil {
+	devLink := filepath.Join(base, "device")
+	if link, err := os.Readlink(filepath.Join(devLink, "driver")); err == nil {
 		info.Driver = filepath.Base(link)
+	}
+	// PCI address: /sys/class/net/<iface>/device is a symlink to the PCI device dir.
+	// The last path component is the PCI address (e.g. "0000:c1:00.0").
+	if link, err := os.Readlink(devLink); err == nil {
+		info.PciAddr = filepath.Base(link)
 	}
 	return info, nil
 }

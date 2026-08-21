@@ -68,6 +68,7 @@ const LABEL_NAMES = {
   model_name: '型号', cache_size: '缓存', core: '核心', node: '节点', die: 'Die',
   pretty_name: 'OS', version_id: '版本号', kernel: '内核',
   npu_id: 'NPU ID', chip_id: '芯片 ID',
+  pci_addr: 'PCI 地址', pci_device: '设备型号',
 };
 
 const SERVER_TYPE_TEXT = {
@@ -152,6 +153,220 @@ const SERIES_LABELS = {
   disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',
   network_throughput: '网络吞吐最大 (bytes/s)', network_packet_count: '网络包速率最大 (个/s)',
   network_error_count: '网络错误最大 (次)',
+};
+
+const METRIC_DESCRIPTIONS = {
+  // CPU
+  usage: 'CPU 使用率，(总时间增量 - 空闲时间增量) / 总时间增量 × 100',
+  load_average: '系统平均负载，/proc/loadavg，过去 N 分钟运行队列平均进程数',
+  temperature: 'CPU 温度，来自 ipmitool SDR，取所有核心最高值',
+  frequency: '每核当前频率，/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq',
+  context_switches: '上下文切换次数，/proc/stat ctxt 行的每秒增量',
+  process_count: '运行进程数，/proc/loadavg 第四字段 running/total',
+  model_info: 'CPU 型号信息，/proc/cpuinfo，启动时采集一次',
+  user_time: '用户态运行时间，/proc/stat 第 1 字段，累计 jiffies',
+  nice_time: '低优先级用户进程时间，/proc/stat 第 2 字段',
+  system_time: '内核态运行时间，/proc/stat 第 3 字段',
+  idle_time: '空闲时间，/proc/stat 第 4 字段',
+  iowait_time: '等待 IO 时间，/proc/stat 第 5 字段',
+  irq_time: '硬中断处理时间，/proc/stat 第 6 字段',
+  softirq_time: '软中断处理时间，/proc/stat 第 7 字段',
+  steal_time: '虚拟化被窃取时间，/proc/stat 第 8 字段',
+  user_util: '用户态平均利用率，(user+nice) 增量 / 总增量 × 100',
+  system_util: '内核态平均利用率，system 增量 / 总增量 × 100',
+  idle_util: '空闲占比，idle 增量 / 总增量 × 100',
+  iowait_util: 'IO 等待占比，iowait 增量 / 总增量 × 100',
+  numa_node_num: 'NUMA 节点数量，lscpu，启动时采集一次',
+  online_core_num: '在线核心数，/sys/devices/system/cpu/online',
+  offline_core_num: '离线核心数，/sys/devices/system/cpu/offline',
+  isolated_core_num: '隔离核心数，/sys/devices/system/cpu/isolated',
+  mem_temperature: 'CPU 内存区域温度，ipmitool SDR',
+  core_num: '物理核总数，lscpu，启动时采集一次',
+  numa_core_num: '每个 NUMA 节点的核数，lscpu',
+  cpu_num: 'CPU 个数（路数），lscpu Socket(s)',
+  avg_freq: '所有在线核心当前频率的算术平均，kHz/1000 转 MHz',
+  min_freq: 'CPU 最小频率，/sys cpuinfo_min_freq，启动时采集一次',
+  max_freq: 'CPU 最大频率，/sys cpuinfo_max_freq，启动时采集一次',
+  cpu_ce_errors: 'CPU 可纠正 ECC 错误数，mcelog/dmesg，按 socket 统计增量',
+  cpu_uce_errors: 'CPU 不可纠正 ECC 错误数，mcelog/dmesg，按 socket 统计增量',
+  power: 'CPU 功率，ipmitool SDR，取所有路最高值',
+  l1d_cache_size: 'L1d 缓存大小，/sys cache/index*/size',
+  l1i_cache_size: 'L1i 缓存大小，/sys cache/index*/size',
+  l2_cache_size: 'L2 缓存大小，/sys cache/index*/size',
+  l3_cache_size: 'L3 缓存大小，/sys cache/index*/size',
+  numa_order_num: 'NUMA 节点 buddy order 数量，/proc/buddyinfo',
+  numa_info: 'NUMA 节点最大可用连续 order，/proc/buddyinfo',
+  // Memory
+  swap_usage: 'Swap 使用率，(SwapTotal - SwapFree) / SwapTotal × 100',
+  swap_detail: 'Swap 原始值，SwapTotal / SwapFree / Used，单位 MB',
+  swap_in: '换入页数，/proc/vmstat pswpin 每秒增量',
+  swap_out: '换出页数，/proc/vmstat pswpout 每秒增量',
+  saturation: '内存饱和度，/proc/pressure/memory PSI avg10/avg60/avg300',
+  fragmentation: '内存碎片化，order 0 空闲页占比，/proc/buddyinfo',
+  ecc_ce_errors: '内存可纠正 ECC 错误数，EDAC /sys/.../ce_count',
+  ecc_uce_errors: '内存不可纠正 ECC 错误数，EDAC /sys/.../ue_count',
+  oom_count: 'OOM 触发次数，dmesg 搜索 Out of memory / Killed process',
+  page_faults: '缺页错误次数，/proc/vmstat pgfault/pgmajfault 每秒增量',
+  isolated_pages: '隔离页总数，/proc/vmstat nr_isolated_anon + nr_isolated_file',
+  isolated_anon_pages: '隔离匿名页数，/proc/vmstat nr_isolated_anon',
+  isolated_file_pages: '隔离文件页数，/proc/vmstat nr_isolated_file',
+  free_pages: '空闲页数，/proc/vmstat nr_free_pages',
+  module_num: '内存条数量，dmidecode --type 17',
+  module_size: '内存条容量，dmidecode --type 17 Size',
+  module_info: '内存条静态信息，dmidecode --type 17 型号/速率/厂商/类型',
+  usage_detail: '内存明细，MemTotal/Free/Used/Buffers/Cached/SReclaimable 等，单位 MB',
+  // Disk
+  space_usage: '分区空间使用率，(Total - Free) / Total × 100，statfs',
+  space_detail: '分区空间明细，Total/Used/Available，单位 MB，statfs',
+  iops: '每秒读写 IOPS，/proc/diskstats 读写完成数增量',
+  throughput: '读写吞吐量，/proc/diskstats 扇区数 × 512B 增量',
+  read_latency: '读耗时，/proc/diskstats read time 每秒增量',
+  write_latency: '写耗时，/proc/diskstats write time 每秒增量',
+  io_wait: 'IO 等待占比，/proc/stat iowait / total × 100',
+  smart_status: 'SMART 健康状态，smartctl -H，PASSED/FAILED',
+  smart_temperature: '硬盘温度，smartctl -A Temperature 属性',
+  io_errors: 'IO 错误计数，/proc/diskstats 错误字段 + dmesg',
+  read_sectors_total: '读扇区总数，/proc/diskstats 累计值',
+  written_sectors_total: '写扇区总数，/proc/diskstats 累计值',
+  read_time_total: '读耗时总计，/proc/diskstats 累计 ms',
+  write_time_total: '写耗时总计，/proc/diskstats 累计 ms',
+  // GPU
+  memory_detail: '显存明细，Used/Total，nvidia-smi',
+  power_draw: '功耗，nvidia-smi power.draw',
+  fan_speed: '风扇转速占比，nvidia-smi fan.speed',
+  ecc_errors: 'ECC 错误数，nvidia-smi ecc.errors.uncorrected.volatile.total',
+  clock_frequency: '时钟频率，nvidia-smi clocks.gr',
+  // NPU
+  health_status: 'NPU 健康状态码，DCMI dcmi_get_device_health，OK=1/Warning=2/Alarm=3/Critical=4',
+  npu_num: 'NPU 设备数量，DCMI dcmi_get_card_list',
+  chip_type: 'NPU 芯片类型，DCMI dcmi_get_device_chip_info',
+  driver_version: 'NPU 驱动版本，DCMI dcmi_get_driver_version',
+  driver_health: 'NPU 驱动健康状态，DCMI dcmi_get_driver_health，0=正常',
+  error_code: 'NPU 错误码，DCMI dcmi_get_device_errorcode_v2，返回完整 hex 列表',
+  process_info: 'NPU 进程 PID 列表，DCMI dcmi_get_device_resource_info',
+  process_total: 'NPU 进程总数，DCMI dcmi_get_device_resource_info',
+  comm_topo: 'NPU 通信拓扑，npu-smi info -t topo',
+  voltage: 'NPU 主电压，DCMI dcmi_get_device_voltage',
+  aicore_voltage: 'AICore 电压，DCMI dcmi_get_device_info(AICORE_VOLTAGE)',
+  hybrid_voltage: 'Hybrid 电压，DCMI dcmi_get_device_info(HYBIRD_VOLTAGE)',
+  cpu_voltage: 'CPU（泰山）电压，DCMI dcmi_get_device_info(TAISHAN_VOLTAGE)',
+  ddr_voltage: 'DDR 电压，DCMI dcmi_get_device_info(DDR_VOLTAGE)',
+  acg_count: 'ACG 调频累计计数，DCMI dcmi_get_device_info(ACG)',
+  hbm_temp: 'HBM 温度，DCMI dcmi_get_device_hbm_info.temp',
+  cluster_temp: 'Cluster 温度，DCMI dcmi_get_device_sensor_info(CLUSTER)',
+  peri_temp: '外设区温度，DCMI dcmi_get_device_sensor_info(PERI)',
+  aicore0_temp: 'AICORE0 温度，DCMI dcmi_get_device_sensor_info(AICORE0)',
+  aicore1_temp: 'AICORE1 温度，DCMI dcmi_get_device_sensor_info(AICORE1)',
+  ntc1_temp: '热敏电阻 1 温度，DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[0]',
+  ntc2_temp: '热敏电阻 2 温度，DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[1]',
+  ntc3_temp: '热敏电阻 3 温度，DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[2]',
+  ntc4_temp: '热敏电阻 4 温度，DCMI dcmi_get_device_sensor_info(NTC).ntc_tmp[3]',
+  soc_max_temp: 'SOC 最高温度，DCMI dcmi_get_device_sensor_info(SOC)',
+  fp_max_temp: '光模块最高温度，DCMI dcmi_get_device_sensor_info(FP)',
+  ndie_temp: 'NDie 温度，DCMI dcmi_get_device_sensor_info(N_DIE)',
+  hbm_max_temp: 'HBM 最高温度，DCMI dcmi_get_device_sensor_info(HBM)',
+  aicpu_freq: 'AICPU 频率，DCMI dcmi_get_aicpu_info',
+  aicore_rated_freq: 'AICore 额定频率，DCMI dcmi_get_device_frequency(AICORE_MAX)',
+  aicore_freq: 'AICore 当前频率，DCMI dcmi_get_device_frequency(AICORE_CURRENT)',
+  ctrlcpu_freq: 'CTRLCPU 频率，DCMI dcmi_get_device_frequency(CTRLCPU)',
+  vector_core_freq: 'Vector Core 频率，DCMI dcmi_get_device_frequency(VECTORCORE)',
+  hbm_freq: 'HBM 频率，DCMI dcmi_get_device_frequency(HBM)',
+  ddr_freq: 'DDR 频率，DCMI dcmi_get_device_frequency(DDR)',
+  npu_util: 'NPU 整体利用率，DCMI dcmi_get_device_utilization_rate(NPU)',
+  aicpu_util: 'AICPU 利用率，DCMI dcmi_get_device_utilization_rate(AICPU)',
+  ctrlcpu_util: 'CTRLCPU 利用率，DCMI dcmi_get_device_utilization_rate(CTRLCPU)',
+  vector_core_util: 'Vector Core 利用率，DCMI dcmi_get_device_utilization_rate(VECTORCORE)',
+  hbm_bandwidth_util: 'HBM 带宽利用率，DCMI dcmi_get_device_utilization_rate(HBM_BANDWIDTH)',
+  ddr_util: 'DDR 利用率，DCMI dcmi_get_device_utilization_rate(DDR)',
+  ddr_bandwidth_util: 'DDR 带宽利用率，DCMI dcmi_get_device_utilization_rate(DDR_BANDWIDTH)',
+  vdec_util: '视频解码单元 VDEC 利用率，DCMI dcmi_get_device_dvpp_ratio_info',
+  vpc_util: '视频处理单元 VPC 利用率，DCMI dcmi_get_device_dvpp_ratio_info',
+  venc_util: '视频编码单元 VENC 利用率，DCMI dcmi_get_device_dvpp_ratio_info',
+  jpege_util: 'JPEG 编码单元利用率，DCMI dcmi_get_device_dvpp_ratio_info',
+  jpegd_util: 'JPEG 解码单元利用率，DCMI dcmi_get_device_dvpp_ratio_info',
+  hbm_total_memory: 'HBM 总容量，DCMI dcmi_get_device_hbm_info.memory_size',
+  hbm_used_memory: 'HBM 已用容量，DCMI dcmi_get_device_hbm_info.memory_usage',
+  hbm_single_ecc: 'HBM 单比特 ECC 错误，DCMI dcmi_get_device_ecc_info(HBM)',
+  hbm_double_ecc: 'HBM 双比特 ECC 错误，DCMI dcmi_get_device_ecc_info(HBM)',
+  hbm_single_ecc_isolated: 'HBM 单比特错误隔离页数，DCMI dcmi_get_device_ecc_info(HBM)',
+  hbm_double_ecc_isolated: 'HBM 双比特错误隔离页数，DCMI dcmi_get_device_ecc_info(HBM)',
+  ddr_single_ecc: 'DDR 单比特 ECC 错误，DCMI dcmi_get_device_ecc_info(DDR)',
+  ddr_double_ecc: 'DDR 双比特 ECC 错误，DCMI dcmi_get_device_ecc_info(DDR)',
+  ddr_single_ecc_isolated: 'DDR 单比特错误隔离页数，DCMI dcmi_get_device_ecc_info(DDR)',
+  ddr_double_ecc_isolated: 'DDR 双比特错误隔离页数，DCMI dcmi_get_device_ecc_info(DDR)',
+  llc_write_hit_rate: 'LLC 写命中率，DCMI dcmi_get_device_llc_perf_para.wr_hit_rate',
+  llc_read_hit_rate: 'LLC 读命中率，DCMI dcmi_get_device_llc_perf_para.rd_hit_rate',
+  llc_throughput: 'LLC 吞吐量，DCMI dcmi_get_device_llc_perf_para.throughput',
+  net_tx_bandwidth: 'NPU 网口发送带宽，hccn_tool -bandwidth',
+  net_rx_bandwidth: 'NPU 网口接收带宽，hccn_tool -bandwidth',
+  roce_link_status: 'RoCE 连接状态，DCMI dcmi_get_device_network_health，up=1/down=0',
+  roce_speed_status: 'RoCE 连接速度，hccn_tool -speed',
+  roce_link_health: 'RoCE 链路状态，hccn_tool -link',
+  pcie_tx_bandwidth: 'PCIe 发送带宽，hccn_tool -bandwidth',
+  pcie_rx_bandwidth: 'PCIe 接收带宽，hccn_tool -bandwidth',
+  hccs_tx_bandwidth: 'HCCS 发送带宽，npu-smi info -t hccs-bw',
+  hccs_rx_bandwidth: 'HCCS 接收带宽，npu-smi info -t hccs-bw',
+  card_drop: 'NPU 卡掉线状态，DCMI dcmi_get_device_health 返回 -8012 时判定为掉卡',
+  mac_tx_mac_pause_num: 'MAC 发送 pause 帧数，hccn_tool 统计',
+  mac_rx_mac_pause_num: 'MAC 接收 pause 帧数，hccn_tool 统计',
+  mac_tx_pfc_pkt_num: 'MAC 发送 PFC 帧总数，hccn_tool 统计',
+  mac_tx_pfc_pri0_pkt_num: 'MAC 0 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri1_pkt_num: 'MAC 1 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri2_pkt_num: 'MAC 2 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri3_pkt_num: 'MAC 3 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri4_pkt_num: 'MAC 4 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri5_pkt_num: 'MAC 5 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri6_pkt_num: 'MAC 6 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_tx_pfc_pri7_pkt_num: 'MAC 7 号队列发送 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pkt_num: 'MAC 接收 PFC 帧总数，hccn_tool 统计',
+  mac_rx_pfc_pri0_pkt_num: 'MAC 0 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri1_pkt_num: 'MAC 1 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri2_pkt_num: 'MAC 2 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri3_pkt_num: 'MAC 3 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri4_pkt_num: 'MAC 4 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri5_pkt_num: 'MAC 5 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri6_pkt_num: 'MAC 6 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_rx_pfc_pri7_pkt_num: 'MAC 7 号队列接收 PFC 帧数，hccn_tool 统计',
+  mac_tx_total_pkt_num: 'MAC 发送总报文数，hccn_tool 统计',
+  mac_tx_total_oct_num: 'MAC 发送总字节数，hccn_tool 统计',
+  mac_tx_bad_pkt_num: 'MAC 发送坏包数，hccn_tool 统计',
+  mac_tx_bad_oct_num: 'MAC 发送坏包字节数，hccn_tool 统计',
+  mac_rx_total_pkt_num: 'MAC 接收总报文数，hccn_tool 统计',
+  mac_rx_total_oct_num: 'MAC 接收总字节数，hccn_tool 统计',
+  mac_rx_bad_pkt_num: 'MAC 接收坏包数，hccn_tool 统计',
+  mac_rx_bad_oct_num: 'MAC 接收坏包字节数，hccn_tool 统计',
+  mac_rx_fcs_err_pkt_num: 'MAC 接收 FCS 校验错误报文数，hccn_tool 统计',
+  roce_rx_rc_pkt_num: 'ROCE 接收 RC 类型报文数，hccn_tool 统计',
+  roce_rx_all_pkt_num: 'ROCE 接收总报文数，hccn_tool 统计',
+  roce_rx_err_pkt_num: 'ROCE 接收坏包数，hccn_tool 统计',
+  roce_tx_rc_pkt_num: 'ROCE 发送 RC 类型报文数，hccn_tool 统计',
+  roce_tx_all_pkt_num: 'ROCE 发送总报文数，hccn_tool 统计',
+  roce_tx_err_pkt_num: 'ROCE 发送坏包数，hccn_tool 统计',
+  roce_cqe_num: 'ROCE 任务完成总元素个数，hccn_tool 统计',
+  roce_rx_cnp_pkt_num: 'ROCE 接收 CNP 类型报文数，hccn_tool 统计',
+  roce_tx_cnp_pkt_num: 'ROCE 发送 CNP 类型报文数，hccn_tool 统计',
+  roce_unexpected_ack_num: 'ROCE 接收非预期 ACK 报文数，hccn_tool 统计',
+  roce_out_of_order_num: 'ROCE 接收乱序或重复 PSN 报文数，hccn_tool 统计',
+  roce_verification_err_num: 'ROCE 接收校验错误报文数，hccn_tool 统计',
+  roce_qp_status_err_num: 'ROCE 接收 QP 状态异常报文数，hccn_tool 统计',
+  roce_new_pkt_rty_num: 'ROCE 接收重传报文数，hccn_tool 统计',
+  roce_ecn_db_num: 'ROCE ECN 标记丢弃计数，hccn_tool 统计',
+  nic_tx_all_pkg_num: 'NIC 发送总报文数，hccn_tool 统计',
+  nic_tx_all_oct_num: 'NIC 发送总字节数，hccn_tool 统计',
+  nic_rx_all_pkg_num: 'NIC 接收总报文数，hccn_tool 统计',
+  nic_rx_all_oct_num: 'NIC 接收总字节数，hccn_tool 统计',
+  // Network
+  throughput: '网络吞吐量，/proc/net/dev bytes 增量 / 间隔时间',
+  packet_count: '包收发速率，/proc/net/dev packets 增量 / 间隔时间',
+  error_count: '错误包计数，/proc/net/dev errs/drop 增量',
+  interface_status: '网卡接口状态，/sys/class/net/*/operstate，up=1/down=0',
+  connection_count: 'TCP 连接数，/proc/net/tcp 按状态码统计',
+  rx_bytes_total: '接收字节累计值，/proc/net/dev',
+  tx_bytes_total: '发送字节累计值，/proc/net/dev',
+  // Chassis
+  inlet_temp: '进风口温度，ipmitool SDR 含 Inlet + Temp 的传感器',
+  outlet_temp: '出风口温度，ipmitool SDR 含 Outlet + Temp 的传感器',
+  fan_power: '风扇功率，ipmitool SDR 含 FAN + Power 的传感器',
 };
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
@@ -377,6 +592,70 @@ function renderSpaceDetailGroup(items) {
       '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount_point || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
     container.appendChild(row);
   }
+  return container;
+}
+
+function parentPciAddr(addr) {
+  if (!addr) return '';
+  var parts = addr.split(':');
+  if (parts.length < 3) return addr;
+  var devFunc = parts[2];
+  var devOnly = devFunc.split('.')[0];
+  return parts[0] + ':' + parts[1] + ':' + devOnly;
+}
+
+function renderNetworkCardGroup(specs) {
+  var netSpecs = specs.filter(function(m) { return m.name === 'net_info'; });
+  if (netSpecs.length === 0) return null;
+
+  var groups = {};
+  var order = [];
+  for (var i = 0; i < netSpecs.length; i++) {
+    var m = netSpecs[i];
+    var lb = m.labels || {};
+    var parent = parentPciAddr(lb.pci_addr || '');
+    var key = parent || ('no_pci_' + (lb.interface || ''));
+    if (!groups[key]) { groups[key] = { ports: [], device: '', pciBase: parent }; order.push(key); }
+    groups[key].ports.push(lb);
+    if (lb.pci_device) groups[key].device = lb.pci_device;
+  }
+  order.sort(function(a, b) { return (groups[a].pciBase || '') < (groups[b].pciBase || '') ? -1 : 1; });
+
+  var container = el('div');
+
+  var title = el('div', 'metric-group-head');
+  title.style.cursor = 'default';
+  title.innerHTML = '<span class="metric-group-name">物理网卡</span><span class="metric-group-count">' + order.length + ' 条</span>';
+  container.appendChild(title);
+
+  var body = el('div', 'metric-group-body');
+  for (var i = 0; i < order.length; i++) {
+    var g = groups[order[i]];
+    var deviceName = g.device || g.ports[0].driver || g.ports[0].interface || '未知设备';
+    var cardHead = el('div', 'metric-row');
+    cardHead.style.fontWeight = '600';
+    cardHead.style.marginTop = '4px';
+    cardHead.innerHTML = '<span class="metric-val">' + deviceName + '</span>' +
+      '<span class="metric-labels">' + (g.pciBase ? 'PCI: ' + g.pciBase : '') + '</span>';
+    body.appendChild(cardHead);
+
+    for (var j = 0; j < g.ports.length; j++) {
+      var p = g.ports[j];
+      var speedStr = p.speed && p.speed !== '-1' ? p.speed + 'Mb/s' : '--';
+      var row = el('div', 'metric-row');
+      row.style.paddingLeft = '16px';
+      row.innerHTML = '<span class="metric-labels">' +
+        '接口: ' + (p.interface || '--') +
+        (p.pci_addr ? '  PCI: ' + p.pci_addr : '') +
+        '  MAC: ' + (p.mac || '--') +
+        '  MTU: ' + (p.mtu || '--') +
+        '  速率: ' + speedStr +
+        '  驱动: ' + (p.driver || '--') +
+        '</span>';
+      body.appendChild(row);
+    }
+  }
+  container.appendChild(body);
   return container;
 }
 
@@ -875,6 +1154,9 @@ function openSpecsModal(snap) {
     if (groups[comp] && groups[comp].length) {
       if (comp === 'memory') {
         body.appendChild(specsGroupMemory(groups[comp]));
+      } else if (comp === 'network') {
+        var netGroup = renderNetworkCardGroup(groups[comp]);
+        if (netGroup) body.appendChild(netGroup);
       } else {
         body.appendChild(specsGroup(comp, groups[comp]));
       }
@@ -1167,6 +1449,9 @@ function renderDetail(compKey, snap) {
     const sbody = el('div', 'panel-body');
     if (compKey === 'memory') {
       sbody.appendChild(specsGroupMemory(compSpecs));
+    } else if (compKey === 'network') {
+      var netCardGroup = renderNetworkCardGroup(compSpecs);
+      if (netCardGroup) sbody.appendChild(netCardGroup);
     } else {
       sbody.appendChild(specsGroup(compKey, compSpecs));
     }
@@ -1228,6 +1513,8 @@ function renderDetail(compKey, snap) {
       const gh = el('div', 'metric-group-head');
       const groupKey = compKey + ':' + name;
       const collapsed = localStorage.getItem('mg:' + groupKey) === '1';
+      const desc = METRIC_DESCRIPTIONS[name] || '';
+      gh.title = desc;
       gh.innerHTML = '<span class="metric-group-name">' + dispName + '</span>' +
         (unit ? '<span class="metric-group-unit">(' + unit + ')</span>' : '') +
         '<span class="metric-group-count">' + items.length + ' 条</span>' +

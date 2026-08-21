@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     smartmontools \
     util-linux \
     dmidecode \
+    pciutils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/.build/catmonitor /usr/local/bin/catmonitor

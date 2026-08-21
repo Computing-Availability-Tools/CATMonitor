@@ -10,6 +10,7 @@ import (
 
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/dmidecode"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/lspci"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/smartctl"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/source/sys"
 )
@@ -258,6 +259,7 @@ func (c *hwCollector) diskInfo(now time.Time) []collector.Metric {
 }
 
 // netInfo emits one net_info metric per non-loopback interface from /sys/class/net.
+// Each metric carries PCI address and lspci device description when available.
 func (c *hwCollector) netInfo(now time.Time) []collector.Metric {
 	ifaces, err := sys.Default().NetInterfaces()
 	if err != nil {
@@ -273,15 +275,22 @@ func (c *hwCollector) netInfo(now time.Time) []collector.Metric {
 		if err != nil || info == nil {
 			continue
 		}
+		labels := map[string]string{
+			"interface": iface,
+			"mac":       info.MAC,
+			"mtu":       strconv.Itoa(info.MTU),
+			"speed":     strconv.Itoa(info.Speed),
+			"driver":    info.Driver,
+		}
+		if info.PciAddr != "" {
+			labels["pci_addr"] = info.PciAddr
+			if desc := lspci.Default().Description(info.PciAddr); desc != "" {
+				labels["pci_device"] = desc
+			}
+		}
 		metrics = append(metrics, collector.Metric{
 			Component: "network", Name: "net_info", Value: float64(idx), Unit: "",
-			Labels: map[string]string{
-				"interface": iface,
-				"mac":       info.MAC,
-				"mtu":       strconv.Itoa(info.MTU),
-				"speed":     strconv.Itoa(info.Speed),
-				"driver":    info.Driver,
-			},
+			Labels:    labels,
 			Timestamp: now,
 		})
 		idx++
