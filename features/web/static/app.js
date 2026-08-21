@@ -68,6 +68,7 @@ const LABEL_NAMES = {
   model_name: '型号', cache_size: '缓存', core: '核心', node: '节点', die: 'Die',
   pretty_name: 'OS', version_id: '版本号', kernel: '内核',
   npu_id: 'NPU ID', chip_id: '芯片 ID',
+  pci_addr: 'PCI 地址', pci_device: '设备型号',
 };
 
 const SERVER_TYPE_TEXT = {
@@ -377,6 +378,70 @@ function renderSpaceDetailGroup(items) {
       '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount_point || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
     container.appendChild(row);
   }
+  return container;
+}
+
+function parentPciAddr(addr) {
+  if (!addr) return '';
+  var parts = addr.split(':');
+  if (parts.length < 3) return addr;
+  var devFunc = parts[2];
+  var devOnly = devFunc.split('.')[0];
+  return parts[0] + ':' + parts[1] + ':' + devOnly;
+}
+
+function renderNetworkCardGroup(specs) {
+  var netSpecs = specs.filter(function(m) { return m.name === 'net_info'; });
+  if (netSpecs.length === 0) return null;
+
+  var groups = {};
+  var order = [];
+  for (var i = 0; i < netSpecs.length; i++) {
+    var m = netSpecs[i];
+    var lb = m.labels || {};
+    var parent = parentPciAddr(lb.pci_addr || '');
+    var key = parent || ('no_pci_' + (lb.interface || ''));
+    if (!groups[key]) { groups[key] = { ports: [], device: '', pciBase: parent }; order.push(key); }
+    groups[key].ports.push(lb);
+    if (lb.pci_device) groups[key].device = lb.pci_device;
+  }
+  order.sort(function(a, b) { return (groups[a].pciBase || '') < (groups[b].pciBase || '') ? -1 : 1; });
+
+  var container = el('div');
+
+  var title = el('div', 'metric-group-head');
+  title.style.cursor = 'default';
+  title.innerHTML = '<span class="metric-group-name">物理网卡</span><span class="metric-group-count">' + order.length + ' 条</span>';
+  container.appendChild(title);
+
+  var body = el('div', 'metric-group-body');
+  for (var i = 0; i < order.length; i++) {
+    var g = groups[order[i]];
+    var deviceName = g.device || g.ports[0].driver || g.ports[0].interface || '未知设备';
+    var cardHead = el('div', 'metric-row');
+    cardHead.style.fontWeight = '600';
+    cardHead.style.marginTop = '4px';
+    cardHead.innerHTML = '<span class="metric-val">' + deviceName + '</span>' +
+      '<span class="metric-labels">' + (g.pciBase ? 'PCI: ' + g.pciBase : '') + '</span>';
+    body.appendChild(cardHead);
+
+    for (var j = 0; j < g.ports.length; j++) {
+      var p = g.ports[j];
+      var speedStr = p.speed && p.speed !== '-1' ? p.speed + 'Mb/s' : '--';
+      var row = el('div', 'metric-row');
+      row.style.paddingLeft = '16px';
+      row.innerHTML = '<span class="metric-labels">' +
+        '接口: ' + (p.interface || '--') +
+        (p.pci_addr ? '  PCI: ' + p.pci_addr : '') +
+        '  MAC: ' + (p.mac || '--') +
+        '  MTU: ' + (p.mtu || '--') +
+        '  速率: ' + speedStr +
+        '  驱动: ' + (p.driver || '--') +
+        '</span>';
+      body.appendChild(row);
+    }
+  }
+  container.appendChild(body);
   return container;
 }
 
@@ -873,6 +938,9 @@ function openSpecsModal(snap) {
     if (groups[comp] && groups[comp].length) {
       if (comp === 'memory') {
         body.appendChild(specsGroupMemory(groups[comp]));
+      } else if (comp === 'network') {
+        var netGroup = renderNetworkCardGroup(groups[comp]);
+        if (netGroup) body.appendChild(netGroup);
       } else {
         body.appendChild(specsGroup(comp, groups[comp]));
       }
@@ -1165,6 +1233,9 @@ function renderDetail(compKey, snap) {
     const sbody = el('div', 'panel-body');
     if (compKey === 'memory') {
       sbody.appendChild(specsGroupMemory(compSpecs));
+    } else if (compKey === 'network') {
+      var netCardGroup = renderNetworkCardGroup(compSpecs);
+      if (netCardGroup) sbody.appendChild(netCardGroup);
     } else {
       sbody.appendChild(specsGroup(compKey, compSpecs));
     }
