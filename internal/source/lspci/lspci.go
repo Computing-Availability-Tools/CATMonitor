@@ -41,7 +41,16 @@ func (s *defaultSource) Description(pciAddr string) string {
 		return ""
 	}
 	s.once.Do(s.load)
-	return s.cache[pciAddr]
+	if desc, ok := s.cache[pciAddr]; ok {
+		return desc
+	}
+	// lspci output may omit the domain prefix "0000:", try without it.
+	if strings.HasPrefix(pciAddr, "0000:") {
+		if desc, ok := s.cache[pciAddr[5:]]; ok {
+			return desc
+		}
+	}
+	return ""
 }
 
 // load runs `lspci` once and parses all lines into a map of pciAddr -> description.

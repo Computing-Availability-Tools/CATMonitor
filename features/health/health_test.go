@@ -82,7 +82,7 @@ func TestEvaluateFullCPUOnlyWithIssues(t *testing.T) {
 		makeMetric("cpu", "usage", 95.0, map[string]string{"core": "total"}),
 		makeMetric("memory", "usage", 95.0, nil),
 		makeMetric("memory", "ecc_ce_errors", 2, map[string]string{"mc": "mc0"}),
-		makeMetric("disk", "space_usage", 85.0, map[string]string{"mount_point": "/"}),
+		makeMetric("disk", "space_usage", 85.0, map[string]string{"device": "/dev/sda1", "mount_point": "/"}),
 	}
 
 	result := evaluator.Evaluate(metrics)

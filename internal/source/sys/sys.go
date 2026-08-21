@@ -63,7 +63,7 @@ type NetIfaceInfo struct {
 // identity and no monitoring value.
 var virtualInterfacePrefixes = []string{
 	"lo", "cali", "cni", "veth", "br-", "virbr", "flannel",
-	"ovs-system", "dummy", "endvnic",
+	"ovs-system", "dummy", "endvnic", "docker0",
 }
 
 // IsVirtualInterface reports whether the interface name matches a known
