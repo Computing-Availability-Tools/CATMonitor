@@ -11,7 +11,7 @@ RUN go build -o /web ./features/web
 
 FROM alpine:latest
 
-RUN apk add --no-cache ipmitool smartmontools util-linux dmidecode
+RUN apk add --no-cache ipmitool smartmontools util-linux dmidecode pciutils
 
 COPY --from=builder /catmonitor /usr/local/bin/catmonitor
 COPY --from=builder /dfee /usr/local/bin/dfee
