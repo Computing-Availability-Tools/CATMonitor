@@ -12,19 +12,30 @@ func evaluateDisk(metrics []collector.Metric, maxScore int) ComponentScore {
 	score := float64(maxScore)
 	var deductions []Deduction
 
-	// Space: 35% budget. Total local disk usage (sum used / sum total).
-	// >90%: 35%, >80%: 15%.
-	totalUsage := computeTotalDiskUsage(metrics)
-	if totalUsage > 0 {
-		switch {
-		case totalUsage > 90:
-			d := Deduction{Rule: "space>90%", Penalty: float64(maxScore) * 0.35}
-			score -= d.Penalty
-			deductions = append(deductions, d)
-		case totalUsage > 80:
-			d := Deduction{Rule: "space>80%", Penalty: float64(maxScore) * 0.15}
-			score -= d.Penalty
-			deductions = append(deductions, d)
+	// Space: 35% budget. Per mount point, weighted by 1/N.
+	// Each mount point over 90% deducts (1/N)×35%; over 80% deducts (1/N)×15%.
+	mounts := computePerMountPointUsage(metrics)
+	n := len(mounts)
+	if n > 0 {
+		weight := 1.0 / float64(n)
+		var over90, over80 float64
+		for _, mp := range mounts {
+			switch {
+			case mp.usage > 90:
+				over90 += weight
+			case mp.usage > 80:
+				over80 += weight
+			}
+		}
+		if over90 > 0 {
+			penalty := over90 * float64(maxScore) * 0.35
+			score -= penalty
+			deductions = append(deductions, Deduction{Rule: "space>90%", Penalty: penalty})
+		}
+		if over80 > 0 {
+			penalty := over80 * float64(maxScore) * 0.15
+			score -= penalty
+			deductions = append(deductions, Deduction{Rule: "space>80%", Penalty: penalty})
 		}
 	}
 
@@ -53,29 +64,31 @@ func evaluateDisk(metrics []collector.Metric, maxScore int) ComponentScore {
 	}
 }
 
-// computeTotalDiskUsage sums space_detail metrics across all local mount points
-// and returns the overall disk usage percentage = sum(used) / sum(total) × 100.
-// Only local devices (starting with /dev/) are considered; NFS and other
-// network filesystems are excluded.
-func computeTotalDiskUsage(metrics []collector.Metric) float64 {
-	var totalSum, usedSum float64
+// mountUsage holds the usage percentage for a single local mount point.
+type mountUsage struct {
+	device     string
+	mountPoint string
+	usage      float64
+}
+
+// computePerMountPointUsage extracts per-mount-point disk usage from
+// space_usage metrics. Only local devices (starting with /dev/) are
+// considered; NFS and other network filesystems are excluded.
+func computePerMountPointUsage(metrics []collector.Metric) []mountUsage {
+	var mounts []mountUsage
 	for _, m := range metrics {
-		if m.Name != "space_detail" {
+		if m.Name != "space_usage" {
 			continue
 		}
 		dev := m.Labels["device"]
 		if !strings.HasPrefix(dev, "/dev/") {
 			continue
 		}
-		switch m.Labels["field"] {
-		case "total":
-			totalSum += m.Value
-		case "used":
-			usedSum += m.Value
-		}
+		mounts = append(mounts, mountUsage{
+			device:     dev,
+			mountPoint: m.Labels["mount_point"],
+			usage:      m.Value,
+		})
 	}
-	if totalSum > 0 {
-		return usedSum / totalSum * 100
-	}
-	return 0
+	return mounts
 }
