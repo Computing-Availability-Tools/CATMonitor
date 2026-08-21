@@ -58,8 +58,9 @@ test-stress-e2e:
 	GO_BIN="$(GO)" bash tests/e2e/stress_e2e_test.sh
 	GO_BIN="$(GO)" bash tests/e2e/stress_cpu_runner_e2e_test.sh
 
-# Requires a running Docker daemon plus prebuilt catmonitor-generic:latest and
-# alpine:latest images. Kept separate because it is intentionally non-hermetic.
+# Requires a running Docker daemon and prebuilt catmonitor-generic:latest.
+# Set CATMONITOR_CONTAINER_TEST_NPU_EXEC=true with catmonitor-npu:latest and
+# alpine:latest to additionally exercise the transitional NPU docker_exec path.
 test-stress-container-e2e:
 	bash tests/e2e/stress_container_e2e_test.sh
 

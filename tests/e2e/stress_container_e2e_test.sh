@@ -3,8 +3,9 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DOCKER_BIN=${DOCKER_BIN:-docker}
-CATMONITOR_IMAGE=${CATMONITOR_CONTAINER_IMAGE:-catmonitor-npu:latest}
+CATMONITOR_IMAGE=${CATMONITOR_CONTAINER_IMAGE:-catmonitor-generic:latest}
 FIXTURE_IMAGE=${CATMONITOR_CONTAINER_FIXTURE_IMAGE:-alpine:latest}
+TEST_NPU_EXEC=${CATMONITOR_CONTAINER_TEST_NPU_EXEC:-false}
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-stress-container-test.XXXXXXXX")
 SUFFIX=$$
 DAEMON_CONTAINER="catmonitor-container-e2e-$SUFFIX"
@@ -13,6 +14,14 @@ NPU_CONTAINER="catmonitor-npuburn-container-e2e-$SUFFIX"
 SNAPSHOT_VOLUME="catmonitor-snapshot-e2e-$SUFFIX"
 DATA_VOLUME="catmonitor-data-e2e-$SUFFIX"
 WEB_PORT=${CATMONITOR_CONTAINER_WEB_PORT:-19529}
+
+case "$TEST_NPU_EXEC" in
+    true|false) ;;
+    *)
+        printf 'FAIL: CATMONITOR_CONTAINER_TEST_NPU_EXEC must be true or false\n' >&2
+        exit 1
+        ;;
+esac
 
 cleanup() {
     "$DOCKER_BIN" rm -f \
@@ -51,25 +60,35 @@ command -v curl >/dev/null 2>&1 || fail "curl is unavailable"
 "$DOCKER_BIN" info >/dev/null 2>&1 || fail "docker daemon is unavailable"
 "$DOCKER_BIN" image inspect "$CATMONITOR_IMAGE" >/dev/null 2>&1 ||
     fail "CATMonitor image is unavailable: $CATMONITOR_IMAGE"
-"$DOCKER_BIN" image inspect "$FIXTURE_IMAGE" >/dev/null 2>&1 ||
-    fail "fixture image is unavailable: $FIXTURE_IMAGE"
+if [ "$TEST_NPU_EXEC" = true ]; then
+    "$DOCKER_BIN" image inspect "$FIXTURE_IMAGE" >/dev/null 2>&1 ||
+        fail "fixture image is unavailable: $FIXTURE_IMAGE"
+fi
 
 mkdir -p "$TEST_ROOT/plugin" "$TEST_ROOT/state/npuburn-output" "$TEST_ROOT/mock-bin"
 cp "$REPO_ROOT/features/stress/benchmark_check.sh" "$TEST_ROOT/plugin/benchmark_check.sh"
 chmod 0755 "$TEST_ROOT/plugin/benchmark_check.sh"
 
-"$DOCKER_BIN" run --rm --entrypoint /bin/sh \
+"$DOCKER_BIN" run --rm --network none --entrypoint /bin/sh \
     -v "$TEST_ROOT/plugin:/opt/catmonitor/stress:ro" \
     "$CATMONITOR_IMAGE" -c '
     command -v bash >/dev/null &&
-    command -v docker >/dev/null &&
+    command -v lspci >/dev/null &&
+    command -v catmonitor-stress-cpu-client >/dev/null &&
     test -x /opt/catmonitor/stress/benchmark_check.sh
 ' || fail "CATMonitor image lacks the stress runtime contract"
 
-"$DOCKER_BIN" run --rm --entrypoint /bin/sh \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    "$CATMONITOR_IMAGE" -c 'docker version >/dev/null' ||
-    fail "CATMonitor image cannot use the explicitly mounted Docker socket"
+if [ "$TEST_NPU_EXEC" = true ]; then
+    "$DOCKER_BIN" run --rm --network none --entrypoint /bin/sh \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        "$CATMONITOR_IMAGE" -c 'docker version >/dev/null' ||
+        fail "CATMonitor image cannot use the explicitly mounted Docker socket"
+else
+    if "$DOCKER_BIN" run --rm --network none --entrypoint /bin/sh \
+        "$CATMONITOR_IMAGE" -c 'command -v docker >/dev/null'; then
+        fail "generic CATMonitor image must not include the Docker client"
+    fi
+fi
 
 "$DOCKER_BIN" volume create "$SNAPSHOT_VOLUME" >/dev/null
 "$DOCKER_BIN" volume create "$DATA_VOLUME" >/dev/null
@@ -127,6 +146,11 @@ grep -Fq '"name":"npu_burn"' "$TEST_ROOT/stress-config.json" ||
 grep -Fq '"feature_enabled":false' "$TEST_ROOT/stress-config.json" ||
     fail "container stress feature must default to disabled"
 
+if [ "$TEST_NPU_EXEC" != true ]; then
+    printf 'PASS: generic containerized daemon/Web snapshot and stress read boundary\n'
+    exit 0
+fi
+
 touch "$TEST_ROOT/davinci0"
 cat >"$TEST_ROOT/mock-bin/catmonitor-npu-burn" <<'EOF'
 #!/bin/sh
@@ -150,7 +174,7 @@ chmod 0755 \
     "$TEST_ROOT/mock-bin/catmonitor-npu-burn" \
     "$TEST_ROOT/mock-bin/lspci"
 
-"$DOCKER_BIN" run -d --name "$NPU_CONTAINER" \
+"$DOCKER_BIN" run -d --name "$NPU_CONTAINER" --network none \
     --entrypoint /bin/sh \
     -v "$TEST_ROOT/mock-bin/catmonitor-npu-burn:/usr/local/bin/catmonitor-npu-burn:ro" \
     -v "$TEST_ROOT/mock-bin/lspci:/usr/local/bin/lspci:ro" \
@@ -184,7 +208,7 @@ stress:
     npu_burn: { enabled: true, timeout: 1m }
 EOF
 
-"$DOCKER_BIN" run --rm --entrypoint /usr/local/bin/catmonitor \
+"$DOCKER_BIN" run --rm --network none --entrypoint /usr/local/bin/catmonitor \
     -v "$TEST_ROOT/catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro" \
     -v "$TEST_ROOT/plugin:/opt/catmonitor/stress:ro" \
     -v "$TEST_ROOT/state:/var/lib/catmonitor/stress" \
@@ -204,7 +228,7 @@ grep -Fq '"key": "available_devices"' "$TEST_ROOT/doctor.json" ||
 grep -Fq '"value": "0"' "$TEST_ROOT/doctor.json" ||
     fail "NPU Burn logical device 0 was not discovered"
 
-"$DOCKER_BIN" run --rm --entrypoint /usr/local/bin/catmonitor \
+"$DOCKER_BIN" run --rm --network none --entrypoint /usr/local/bin/catmonitor \
     -v "$TEST_ROOT/catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro" \
     -v "$TEST_ROOT/plugin:/opt/catmonitor/stress:ro" \
     -v "$TEST_ROOT/state:/var/lib/catmonitor/stress" \

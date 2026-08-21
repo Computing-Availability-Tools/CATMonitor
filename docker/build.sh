@@ -5,7 +5,16 @@ MODE=${1:-auto}
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 BUILD_DIR="$PROJECT_ROOT/docker/.build"
+DOCKER_BIN=${CATMONITOR_DOCKER_BIN:-docker}
+DOCKER_BUILD_NETWORK=${CATMONITOR_DOCKER_BUILD_NETWORK:-default}
 
+case "$DOCKER_BUILD_NETWORK" in
+    default|host|none) ;;
+    *)
+        echo "ERROR: CATMONITOR_DOCKER_BUILD_NETWORK must be default, host, or none." >&2
+        exit 1
+        ;;
+esac
 # Forward only variables explicitly configured by the administrator. Values are
 # inherited from the environment and are not printed or persisted in this file.
 PROXY_BUILD_ARGS=
@@ -72,7 +81,7 @@ case "$MODE" in
         # Argument lists contain constant option/variable names only. Their
         # values are inherited by Docker and never expanded into this command.
         # shellcheck disable=SC2086
-        docker run --rm $GO_RUN_ENV_ARGS \
+        "$DOCKER_BIN" run --rm --network "$DOCKER_BUILD_NETWORK" $GO_RUN_ENV_ARGS \
             -v "$DRIVER_PATH:/usr/local/Ascend/driver:ro" \
             -v "$PROJECT_ROOT:/app:ro" \
             -v "$BUILD_DIR:/out" \
@@ -89,7 +98,7 @@ case "$MODE" in
 
         echo "Step 2/2: Building runtime image (debian/glibc)..."
         # shellcheck disable=SC2086
-        docker build $PROXY_BUILD_ARGS \
+        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS \
             -f docker/Dockerfile.npu \
             -t catmonitor-npu \
             "$PROJECT_ROOT"
@@ -100,7 +109,7 @@ case "$MODE" in
     generic)
         echo "=== Building generic image (multi-stage, pure Go) ==="
         # shellcheck disable=SC2086
-        docker build $PROXY_BUILD_ARGS $GO_BUILD_ARGS \
+        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS \
             -f docker/Dockerfile.generic \
             -t catmonitor-generic \
             "$PROJECT_ROOT"

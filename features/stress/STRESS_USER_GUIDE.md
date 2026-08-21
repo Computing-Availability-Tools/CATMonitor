@@ -296,6 +296,56 @@ pgrep -af 'catmonitor daemon'
 
 ## 9. 统一容器安装入口
 
+### 9.0 服务器存储和镜像准备
+
+构建或加载镜像前，确认当前命令连接的是管理员指定的 Docker daemon，并确认它的
+`Docker Root Dir` 有足够空间：
+
+```bash
+docker info --format 'Docker Root Dir: {{.DockerRootDir}}'
+DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}')
+findmnt -T "$DOCKER_ROOT"
+df -h "$DOCKER_ROOT"
+```
+
+需要使用管理员已经准备的其他 daemon 时先设置 `DOCKER_HOST`，例如：
+
+```bash
+export DOCKER_HOST=unix:///run/catmonitor-docker.sock
+```
+
+联网构建通用控制镜像：
+
+```bash
+cd /opt/catmonitor/CATMonitor
+bash docker/build.sh generic
+
+docker image inspect catmonitor-generic:latest \
+  --format 'id={{.Id}} size={{.Size}} created={{.Created}}'
+```
+
+若在审批构建机生成、目标服务器离线，应先在构建机导出到数据盘：
+
+```bash
+install -d -m 0750 /data/catmonitor/releases
+docker save catmonitor-generic:latest | gzip -1 \
+  > /data/catmonitor/releases/catmonitor-generic.tar.gz
+sha256sum /data/catmonitor/releases/catmonitor-generic.tar.gz \
+  > /data/catmonitor/releases/catmonitor-generic.tar.gz.sha256
+```
+
+将两个文件传到目标服务器，核对后加载：
+
+```bash
+cd /data/catmonitor/releases
+sha256sum -c catmonitor-generic.tar.gz.sha256
+gzip -dc catmonitor-generic.tar.gz | docker load
+docker image inspect catmonitor-generic:latest >/dev/null
+```
+
+CPU Runner 和 NPU Burn 镜像也必须对当前命令所连接的 daemon 可见。CATMonitor
+不会修改或迁移 Docker 的全局存储配置。
+
 底层镜像和 Compose 仍按职责拆分，但用户不需要手工组合 overlay。先从源码树安装
 统一命令及经过审核的 Compose 定义：
 
@@ -350,6 +400,19 @@ sudo catmonitor-install --profile ascend-a3 --action plan
 sudo catmonitor-install --profile monitoring
 sudo catmonitor-install --profile cpu-stress
 ```
+
+通用监控 profile 的最小服务器验收：
+
+```bash
+sudo catmonitor-install --profile monitoring --action status
+ss -lntp | grep ':19322'
+curl -fsS http://127.0.0.1:19322/api/snapshot >/dev/null
+curl -fsS http://127.0.0.1:19322/ >/dev/null
+```
+
+默认 Web 地址为 `:19322`，外部监控端访问
+`http://<server-address>:19322/`。服务器防火墙只应向批准的管理网段开放该端口。
+默认外部监听可以读取监控、profile 和已有压测报告，但不能提交/取消压测。
 
 `up` 只执行 Compose 启动、等待 CPU Runner 健康，然后运行无负载
 `catmonitor stress doctor`；它不会构建/下载镜像、编译 benchmark、编辑 YAML、创建

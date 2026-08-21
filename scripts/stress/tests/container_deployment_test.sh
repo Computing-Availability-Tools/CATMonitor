@@ -27,6 +27,7 @@ require_fixed .gitattributes 'scripts/catmonitor-install text eol=lf'
 require_fixed .gitignore 'docker/.build/'
 
 require_fixed docker/Dockerfile.generic 'ARG GOPROXY'
+require_fixed docker/Dockerfile.generic 'FROM golang:1.23-alpine AS builder'
 require_fixed docker/Dockerfile.generic 'FROM alpine:latest'
 require_fixed docker/Dockerfile.generic 'apk add --no-cache'
 require_fixed docker/Dockerfile.generic '/opt/catmonitor/stress'
@@ -71,6 +72,10 @@ require_fixed docker/docker-compose.stress-npuburn.yml 'CATMONITOR_DOCKER_SOCKET
 require_fixed docker/docker-compose.stress-npuburn.yml '/var/run/docker.sock'
 require_fixed docker/build.sh 'Docker build proxy: configured'
 require_fixed docker/build.sh 'Go module environment: configured'
+require_fixed docker/build.sh 'CATMONITOR_DOCKER_BUILD_NETWORK'
+require_fixed docker/build.sh 'run --rm --network "$DOCKER_BUILD_NETWORK"'
+require_fixed tests/e2e/stress_container_e2e_test.sh 'catmonitor-generic:latest'
+require_fixed tests/e2e/stress_container_e2e_test.sh 'CATMONITOR_CONTAINER_TEST_NPU_EXEC'
 
 if grep -Fq 'goproxy.cn' "$REPO_ROOT/docker/build.sh"; then
     fail "container build must not hardcode a site-specific Go proxy"

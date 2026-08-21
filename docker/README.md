@@ -30,6 +30,21 @@ daemon 是 snapshot 唯一生产者；web/dfee 是只读消费者，不自行采
 
 ## 2. 构建
 
+### 安装前确认镜像存储位置
+
+镜像、layer 和容器可写层保存在所选 Docker daemon 的 `Docker Root Dir`，不是源码
+目录。构建或加载镜像前，管理员应确认该目录所在文件系统有足够空间：
+
+```bash
+docker info --format 'Docker Root Dir: {{.DockerRootDir}}'
+DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}')
+findmnt -T "$DOCKER_ROOT"
+df -h "$DOCKER_ROOT"
+```
+
+空间不足时应由管理员选择合适的现有 daemon 或调整主机 Docker 部署；CATMonitor
+不会修改 daemon 的全局存储配置。
+
 ### 构建镜像
 
 ```bash
@@ -44,7 +59,10 @@ bash docker/build.sh npu        # 强制 NPU 镜像
 bash docker/build.sh generic    # 强制通用镜像
 ```
 
-`docker/build.sh` 在 Linux 宿主机或 WSL 的 Docker 环境中执行。NPU 模式把临时
+`docker/build.sh` 在 Linux 宿主机或 WSL 的 Docker 环境中执行。可以通过
+`CATMONITOR_DOCKER_BIN` 选择 CLI，通过 `DOCKER_HOST` 选择 data-root 位于数据盘的
+daemon；隔离 daemon 没有 bridge 时可设置 `CATMONITOR_DOCKER_BUILD_NETWORK=host`。
+NPU 模式把临时
 二进制写入 `docker/.build`，仓库根目录不会出现或删除构建产物；打包完成后临时目录
 自动清理。Windows 中转仓库时，Git 必须保留 `*.sh` 的 LF 行尾。
 
@@ -81,7 +99,7 @@ docker load -i catmonitor-npuburn.tar
 
 若必须离线构建，还要预先加载相应 builder/runtime 镜像：NPU 控制面使用
 `golang:1.23` 和 `debian:bookworm-slim`，通用控制面使用
-`golang:1.23-bookworm` 和 `alpine:latest`，并准备 Go module cache 与对应发行版的
+`golang:1.23-alpine` 和 `alpine:latest`，并准备 Go module cache 与对应发行版的
 系统包来源。CATMonitor 容器镜像和 NPU Burn
 运行镜像是两个独立产物，后者的联网/代理/离线 `pciutils` 流程见 stress 指南。
 
