@@ -138,6 +138,13 @@ const SPEC_DEFS = {
   module_info:  { type: '内存条', primary: 'locator' },
 };
 
+const CPU_SPEC_ORDER = {
+  model_info: 0, cpu_num: 1, core_num: 2,
+  min_freq: 3, max_freq: 4,
+  l1d_cache_size: 5, l1i_cache_size: 6, l2_cache_size: 7, l3_cache_size: 8,
+  numa_node_num: 9, numa_core_num: 10,
+};
+
 const SERIES_LABELS = {
   cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '系统负载 1m',
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
@@ -1240,14 +1247,21 @@ function openSpecsModal(snap) {
 // specsGroup renders one component's static specs as a titled table
 // (类型 / 标识 / 明细). Synthetic entries (mem_total) get a friendly type.
 function specsGroup(comp, arr) {
+  const sorted = comp === 'cpu' ? arr.slice().sort(function(a, b) {
+    var ia = CPU_SPEC_ORDER[a.name], ib = CPU_SPEC_ORDER[b.name];
+    if (ia === undefined) ia = 99;
+    if (ib === undefined) ib = 99;
+    if (ia !== ib) return ia - ib;
+    return (a.name < b.name) ? -1 : 1;
+  }) : arr;
   const sec = el('div', 'specs-group');
   const title = comp === 'system' ? '系统' : compTitle(comp);
-  sec.appendChild(elText('div', 'specs-group-title', title + ' (' + arr.length + ')'));
+  sec.appendChild(elText('div', 'specs-group-title', title + ' (' + sorted.length + ')'));
   const tbl = document.createElement('table');
   tbl.className = 'table';
   tbl.innerHTML = '<thead><tr><th>类型</th><th>标识</th><th>明细</th></tr></thead>';
   const tb = document.createElement('tbody');
-  for (const m of arr) {
+  for (const m of sorted) {
     const def = SPEC_DEFS[m.name] || { type: (METRIC_NAMES[m.name] || m.name), primary: '' };
     const lb = m.labels || {};
     // Identity specs carry their main value in a label (def.primary); synthetic
