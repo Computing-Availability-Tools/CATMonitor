@@ -762,9 +762,16 @@ function aggregateByPhysicalDisk(spaceDetailMetrics, spaceUsageMetrics) {
   return order.map(function(pd) { return Object.assign({ disk: pd, parts: Object.keys(groups[pd].parts) }, groups[pd]); });
 }
 
+function isPhysicalDiskDevice(device) {
+  var dev = (device || '').replace('/dev/', '');
+  if (dev.indexOf('mapper/') === 0 || dev.indexOf('dm-') === 0) return false;
+  if (/^(sd|vd|xvd|nvme)[a-z0-9]+$/.test(dev)) return true;
+  return false;
+}
+
 function renderPhysicalDiskGroups(localMetrics) {
-  var spaceDetail = localMetrics.filter(function(m) { return m.name === 'space_detail'; });
-  var spaceUsage = localMetrics.filter(function(m) { return m.name === 'space_usage'; });
+  var spaceDetail = localMetrics.filter(function(m) { return m.name === 'space_detail' && isPhysicalDiskDevice((m.labels || {}).device); });
+  var spaceUsage = localMetrics.filter(function(m) { return m.name === 'space_usage' && isPhysicalDiskDevice((m.labels || {}).device); });
   var disks = aggregateByPhysicalDisk(spaceDetail, spaceUsage);
   if (disks.length === 0) return null;
 
