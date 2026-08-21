@@ -15,7 +15,33 @@ ENV CGO_ENABLED=0
 RUN go build -trimpath -o /out/catmonitor-stress-cpu-runner ./features/stress/cmd/cpu-runner
 
 FROM ${BUILD_IMAGE} AS benchmark-builder
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ARG DEBIAN_MIRROR=""
+RUN if [ -n "${DEBIAN_MIRROR}" ]; then \
+      case "${DEBIAN_MIRROR}" in \
+        http://?*|https://?*) ;; \
+        *) echo "invalid DEBIAN_MIRROR" >&2; exit 2 ;; \
+      esac; \
+      authority="${DEBIAN_MIRROR#*://}"; \
+      authority="${authority%/}"; \
+      case "${authority}" in \
+        ''|*/*|*@*|*\?*|*\#*|*[[:space:]]*) \
+          echo "invalid DEBIAN_MIRROR root" >&2; exit 2 ;; \
+      esac; \
+      root="${DEBIAN_MIRROR%/}"; \
+      for source_file in \
+        /etc/apt/sources.list \
+        /etc/apt/sources.list.d/*.list \
+        /etc/apt/sources.list.d/*.sources; do \
+        [ -f "${source_file}" ] || continue; \
+        sed -i \
+          -e "s#http://deb.debian.org/debian-security#${root}/debian-security#g" \
+          -e "s#https://deb.debian.org/debian-security#${root}/debian-security#g" \
+          -e "s#http://deb.debian.org/debian#${root}/debian#g" \
+          -e "s#https://deb.debian.org/debian#${root}/debian#g" \
+          "${source_file}"; \
+      done; \
+    fi \
+    && apt-get update && apt-get install -y --no-install-recommends \
     bash \
     build-essential \
     file \
@@ -55,7 +81,33 @@ RUN bash /build/scripts/stress/build_cpu_benchmarks.sh \
     --stream-smoke-numa-policy "$STREAM_SMOKE_NUMA_POLICY"
 
 FROM ${RUNTIME_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ARG DEBIAN_MIRROR=""
+RUN if [ -n "${DEBIAN_MIRROR}" ]; then \
+      case "${DEBIAN_MIRROR}" in \
+        http://?*|https://?*) ;; \
+        *) echo "invalid DEBIAN_MIRROR" >&2; exit 2 ;; \
+      esac; \
+      authority="${DEBIAN_MIRROR#*://}"; \
+      authority="${authority%/}"; \
+      case "${authority}" in \
+        ''|*/*|*@*|*\?*|*\#*|*[[:space:]]*) \
+          echo "invalid DEBIAN_MIRROR root" >&2; exit 2 ;; \
+      esac; \
+      root="${DEBIAN_MIRROR%/}"; \
+      for source_file in \
+        /etc/apt/sources.list \
+        /etc/apt/sources.list.d/*.list \
+        /etc/apt/sources.list.d/*.sources; do \
+        [ -f "${source_file}" ] || continue; \
+        sed -i \
+          -e "s#http://deb.debian.org/debian-security#${root}/debian-security#g" \
+          -e "s#https://deb.debian.org/debian-security#${root}/debian-security#g" \
+          -e "s#http://deb.debian.org/debian#${root}/debian#g" \
+          -e "s#https://deb.debian.org/debian#${root}/debian#g" \
+          "${source_file}"; \
+      done; \
+    fi \
+    && apt-get update && apt-get install -y --no-install-recommends \
     bash \
     libgomp1 \
     libopenblas0 \

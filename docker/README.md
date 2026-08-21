@@ -430,6 +430,11 @@ sudo bash scripts/stress/build_cpu_runner_image.sh \
   --build-root /var/tmp/catmonitor-cpu-runner-build
 ```
 
+默认使用基础镜像自带的 Debian 软件源。受限网络可显式增加
+`--debian-mirror https://mirror.example.com`。参数只接受不含 userinfo、路径、查询
+或片段的 HTTP(S) mirror root；实际 override 会记录在 CPU Runner image manifest，
+未指定时记录为 `null` 且构建行为保持不变。
+
 容器内的路径
 必须和 adapter 中的绝对路径一致；建议将共享状态固定为
 `/var/lib/catmonitor/stress`：
@@ -761,13 +766,19 @@ daemon 容器未使用 `--network host`，容器有自己的网络命名空间�
 
 ### Q: docker build 时 apt-get 很慢
 
-Dockerfile.npu 默认用 Debian 官方源。如遇网络慢，在 Dockerfile 的 RUN 行前加清华镜像源：
+Dockerfile 默认使用 Debian 官方源，不要直接修改并提交站点专用镜像地址。控制镜像构建
+可由管理员临时设置代理，构建脚本只转发已存在的代理变量，不保存其值：
 
-```dockerfile
-RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    ipmitool smartmontools util-linux dmidecode && rm -rf /var/lib/apt/lists/*
+```bash
+export HTTP_PROXY=http://proxy.example.com:3128
+export HTTPS_PROXY=http://proxy.example.com:3128
+./docker/build.sh npu
+unset HTTP_PROXY HTTPS_PROXY
 ```
+
+CPU Runner clean build 还可显式使用
+`--debian-mirror https://mirror.example.com`；默认行为不变，override 会记录在 image
+manifest 中，并拒绝包含用户名或密码的 URL。
 
 ## 14. dfee Prometheus Exporter + Grafana
 

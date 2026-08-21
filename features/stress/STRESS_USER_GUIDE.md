@@ -160,6 +160,11 @@ sudo bash scripts/stress/build_cpu_runner_image.sh \
   --build-root /var/tmp/catmonitor-cpu-runner-build
 ```
 
+默认使用基础镜像自带的 Debian 软件源。受限网络可由管理员显式增加
+`--debian-mirror https://mirror.example.com`；该值必须是无路径、无查询参数且不含
+用户名或密码的 HTTP(S) mirror root。未指定时不会传递 mirror build arg。实际
+override（或 `null`）会写入 CPU Runner image manifest，便于审计构建来源。
+
 构建只生成镜像和 `cpu-runner-image-manifest.json`，不会创建容器或运行长负载。
 Runner 只监听私有 Unix Socket，只接受 `stream`、`hpl`、`hpcg` 三个固定项目，
 不能传入任意命令、路径、参数或环境变量。控制面与 Web 不需要 Docker Socket。

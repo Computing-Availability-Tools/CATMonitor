@@ -19,6 +19,7 @@ HPCG_SRC=
 HPCG_DAT=
 BUILD_ROOT=/var/tmp/catmonitor-cpu-runner-build
 BUILD_NETWORK=default
+DEBIAN_MIRROR=
 JOBS=16
 STREAM_ARRAY_SIZE=80000000
 STREAM_NTIMES=10
@@ -41,6 +42,7 @@ Build controls:
   --docker-bin PATH         Docker-compatible CLI (default: docker from PATH)
   --build-root PATH         Isolated context and manifest parent
   --build-network NAME      Docker build network: default, host, or none
+  --debian-mirror URL       Optional Debian mirror root without credentials
   --jobs N                 Parallel jobs inside safe benchmark build phases
   --stream-array-size N     STREAM compile-time array size
   --stream-ntimes N         STREAM compile-time iteration count
@@ -68,6 +70,7 @@ while [ "$#" -gt 0 ]; do
         --hpcg-dat) require_value "$@"; HPCG_DAT=$2; shift 2 ;;
         --build-root) require_value "$@"; BUILD_ROOT=$2; shift 2 ;;
         --build-network) require_value "$@"; BUILD_NETWORK=$2; shift 2 ;;
+        --debian-mirror) require_value "$@"; DEBIAN_MIRROR=$2; shift 2 ;;
         --jobs) require_value "$@"; JOBS=$2; shift 2 ;;
         --stream-array-size) require_value "$@"; STREAM_ARRAY_SIZE=$2; shift 2 ;;
         --stream-ntimes) require_value "$@"; STREAM_NTIMES=$2; shift 2 ;;
@@ -82,6 +85,20 @@ done
 case "$TARGET_IMAGE" in -*|*@*|*[!A-Za-z0-9._/:-]*) die "--image has an invalid value" ;; esac
 case "$BUILD_NETWORK" in default|host|none) ;; *) die "--build-network must be default, host, or none" ;; esac
 case "$JOBS:$STREAM_ARRAY_SIZE:$STREAM_NTIMES" in *[!0-9:]*|0:*|*:0:*|*:0) die "numeric build values must be positive integers" ;; esac
+if [ -n "$DEBIAN_MIRROR" ]; then
+    case "$DEBIAN_MIRROR" in
+        http://?*|https://?*) ;;
+        *) die "--debian-mirror must use http:// or https://" ;;
+    esac
+    mirror_authority=${DEBIAN_MIRROR#*://}
+    mirror_authority=${mirror_authority%/}
+    case "$mirror_authority" in
+        ''|*/*|*@*|*\?*|*\#*|*[[:space:]]*)
+            die "--debian-mirror must be a mirror root without credentials, path, query, or fragment"
+            ;;
+    esac
+    DEBIAN_MIRROR=${DEBIAN_MIRROR%/}
+fi
 
 if [ -z "$DOCKER_BIN" ]; then DOCKER_BIN=$(command -v docker 2>/dev/null || true); fi
 [ -n "$DOCKER_BIN" ] && [ -x "$DOCKER_BIN" ] || die "Docker CLI is unavailable"
@@ -148,6 +165,9 @@ declare -a BUILD_ARGS=()
 for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy GOPROXY GOSUMDB GOPRIVATE GONOSUMDB; do
     if [ -n "${!name-}" ]; then BUILD_ARGS+=(--build-arg "$name"); fi
 done
+if [ -n "$DEBIAN_MIRROR" ]; then
+    BUILD_ARGS+=(--build-arg "DEBIAN_MIRROR=$DEBIAN_MIRROR")
+fi
 if [ "${#BUILD_ARGS[@]}" -gt 0 ]; then
     printf 'Docker build environment: administrator settings configured (values hidden)\n'
 fi
@@ -169,6 +189,11 @@ json_escape() { local value=${1-}; value=${value//\\/\\\\}; value=${value//\"/\\
 {
     printf '{"schema_version":1,"feature":"stress_cpu_runner","generated_at_utc":"%s"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf ',"image":"%s","image_id":"%s"' "$(json_escape "$TARGET_IMAGE")" "$(json_escape "$IMAGE_ID")"
+    if [ -n "$DEBIAN_MIRROR" ]; then
+        printf ',"debian_mirror":"%s"' "$(json_escape "$DEBIAN_MIRROR")"
+    else
+        printf ',"debian_mirror":null'
+    fi
     printf ',"inputs":{"stream_sha256":"%s","hpl_sha256":"%s","hpl_dat_sha256":"%s"' \
         "$(sha256sum "$STREAM_SRC" | awk '{print $1}')" \
         "$(sha256sum "$HPL_SRC" | awk '{print $1}')" \
