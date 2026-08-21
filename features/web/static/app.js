@@ -635,12 +635,12 @@ function renderNetworkCardGroup(specs) {
   var body = el('div', 'metric-group-body');
   for (var i = 0; i < order.length; i++) {
     var g = groups[order[i]];
-    var deviceName = g.device || g.ports[0].driver || g.ports[0].interface || '未知设备';
+    var deviceName = g.device || g.pciBase || g.ports[0].driver || g.ports[0].interface || '未知设备';
     var cardHead = el('div', 'metric-row');
     cardHead.style.fontWeight = '600';
     cardHead.style.marginTop = '4px';
     cardHead.innerHTML = '<span class="metric-val">' + deviceName + '</span>' +
-      '<span class="metric-labels">' + (g.pciBase ? 'PCI: ' + g.pciBase : '') + '</span>';
+      '<span class="metric-labels">' + (g.pciBase && g.device ? 'PCI: ' + g.pciBase : '') + '</span>';
     body.appendChild(cardHead);
 
     for (var j = 0; j < g.ports.length; j++) {
