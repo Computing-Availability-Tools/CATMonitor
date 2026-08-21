@@ -665,6 +665,53 @@ function renderNetworkCardGroup(specs) {
 
 var networkFSTypes = { 'nfs': true, 'nfs4': true, 'cifs': true, 'smb': true, 'fuse.sshfs': true, 'fuse.glusterfs': true };
 
+function diskTypeLabel(device, model) {
+  var dev = (device || '').replace('/dev/', '');
+  if (dev.indexOf('nvme') === 0) return 'NVMe SSD';
+  if ((model || '').toUpperCase().indexOf('RAID') >= 0) return 'RAID 逻辑盘';
+  if (dev.indexOf('sd') === 0) return 'SAS/SATA 硬盘';
+  return '硬盘';
+}
+
+function renderDiskGroup(specs) {
+  var diskSpecs = specs.filter(function(m) { return m.name === 'disk_info'; });
+  if (diskSpecs.length === 0) return null;
+
+  var container = el('div');
+
+  var title = el('div', 'metric-group-head');
+  title.style.cursor = 'default';
+  title.innerHTML = '<span class="metric-group-name">硬盘</span><span class="metric-group-count">' + diskSpecs.length + ' 块</span>';
+  container.appendChild(title);
+
+  var body = el('div', 'metric-group-body');
+  for (var i = 0; i < diskSpecs.length; i++) {
+    var m = diskSpecs[i];
+    var lb = m.labels || {};
+    var dev = lb.device || '--';
+    var model = lb.model || '--';
+    var typeLabel = diskTypeLabel(dev, model);
+    var sizeStr = m.value > 0 ? fmtGB(m.value) : '--';
+    var cardHead = el('div', 'metric-row');
+    cardHead.style.fontWeight = '600';
+    cardHead.style.marginTop = '4px';
+    cardHead.innerHTML = '<span class="metric-val">' + model + '</span>' +
+      '<span class="metric-labels">' + typeLabel + '  ' + sizeStr + '</span>';
+    body.appendChild(cardHead);
+
+    var detailRow = el('div', 'metric-row');
+    detailRow.style.paddingLeft = '16px';
+    var parts = ['设备: /dev/' + dev];
+    if (lb.firmware) parts.push('固件: ' + lb.firmware);
+    if (lb.interface) parts.push('接口: ' + lb.interface);
+    if (lb.serial) parts.push('序列号: ' + lb.serial);
+    detailRow.innerHTML = '<span class="metric-labels">' + parts.join('  ') + '</span>';
+    body.appendChild(detailRow);
+  }
+  container.appendChild(body);
+  return container;
+}
+
 function parentDisk(device) {
   var dev = (device || '').replace('/dev/', '');
   if (/^nvme\d+n\d+p\d+$/.test(dev)) return dev.replace(/p\d+$/, '');
@@ -1159,6 +1206,9 @@ function openSpecsModal(snap) {
       } else if (comp === 'network') {
         var netGroup = renderNetworkCardGroup(groups[comp]);
         if (netGroup) body.appendChild(netGroup);
+      } else if (comp === 'disk') {
+        var diskGroup = renderDiskGroup(groups[comp]);
+        if (diskGroup) body.appendChild(diskGroup);
       } else {
         body.appendChild(specsGroup(comp, groups[comp]));
       }
@@ -1454,6 +1504,9 @@ function renderDetail(compKey, snap) {
     } else if (compKey === 'network') {
       var netCardGroup = renderNetworkCardGroup(compSpecs);
       if (netCardGroup) sbody.appendChild(netCardGroup);
+    } else if (compKey === 'disk') {
+      var diskGroup = renderDiskGroup(compSpecs);
+      if (diskGroup) sbody.appendChild(diskGroup);
     } else {
       sbody.appendChild(specsGroup(compKey, compSpecs));
     }
