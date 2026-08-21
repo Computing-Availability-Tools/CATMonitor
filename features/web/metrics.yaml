@@ -55,9 +55,6 @@ components:
       - name: core_num
         priority: Low
         static: true
-      - name: die_core_num
-        priority: Low
-        static: true
       - name: numa_core_num
         priority: Low
         static: true

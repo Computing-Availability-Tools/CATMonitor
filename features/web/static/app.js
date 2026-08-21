@@ -22,7 +22,7 @@ const MANIFEST = {
 const METRIC_NAMES = {
   usage: '使用率', load_average: '负载', context_switches: '上下文切换',
   process_count: '进程数', model_info: '型号', temperature: '温度', frequency: '频率',
-  space_usage: '空间使用率', space_detail: '空间明细', throughput: '吞吐量',
+  space_usage: '分区空间使用率', space_detail: '分区空间明细', throughput: '吞吐量',
   io_wait: 'IO Wait', io_errors: 'IO 错误', iops: 'IOPS',
   smart_status: 'SMART 状态', smart_temperature: 'SMART 温度',
   memory_usage: '显存使用率', memory_detail: '明细',
@@ -39,7 +39,7 @@ const METRIC_NAMES = {
   softirq_time: '软中断时间', steal_time: '抢占时间',
   user_util: '用户使用率', system_util: '系统使用率', idle_util: '空闲率', iowait_util: 'IO 等待率',
   avg_freq: '平均频率', min_freq: '最小频率', max_freq: '最大频率',
-  numa_node_num: 'NUMA 节点数', core_num: '物理核数', die_core_num: 'Die 核数',
+  numa_node_num: 'NUMA 节点数', core_num: '物理核数',
   numa_core_num: 'NUMA 核数', cpu_num: 'CPU 数',
   online_core_num: '在线核数', offline_core_num: '离线核数', isolated_core_num: '隔离核数',
   l1d_cache_size: 'L1d 缓存', l1i_cache_size: 'L1i 缓存', l2_cache_size: 'L2 缓存', l3_cache_size: 'L3 缓存',
@@ -71,8 +71,8 @@ const LABEL_NAMES = {
 };
 
 const SERVER_TYPE_TEXT = {
-  cpu_only: '仅 CPU',
-  accelerated: '加速型（含 GPU/NPU）',
+  cpu_only: '通用服务器',
+  accelerated: 'AI 服务器（含 NPU/GPU）',
 };
 
 const RULE_TEXT = {
@@ -138,20 +138,20 @@ const SPEC_DEFS = {
 };
 
 const SERIES_LABELS = {
-  cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '负载 (1m)',
+  cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '系统负载 1m',
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
-  disk_space_usage: '磁盘使用率 (%)',
+  disk_space_usage: '磁盘空间使用率最高 (%)',
   gpu_utilization: 'GPU 使用率 (%)', gpu_memory_usage: 'GPU 显存使用率 (%)', gpu_temperature: 'GPU 温度 (°C)',
   npu_utilization: 'NPU 使用率 (%)', npu_memory_usage: 'NPU 显存使用率 (%)', npu_temperature: 'NPU 温度 (°C)',
   // v0.2.0 trends.
-  cpu_temperature: 'CPU 温度 (°C)', cpu_power: 'CPU 功耗 (W)',
+  cpu_temperature: 'CPU 最高温度 (°C)', cpu_power: 'CPU 最高功耗 (W)',
   cpu_avg_freq: 'CPU 平均频率 (MHz)', cpu_context_switches: '上下文切换 (次/s)',
-  cpu_ce_errors: 'CPU CE 错误 (次)',
-  memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化 (%)',
+  cpu_ce_errors: 'CPU CE 错误最大值 (次)',
+  memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化最大 (%)',
   memory_swap_in: 'Swap 入页 (次/s)', memory_power: '内存功耗 (W)',
-  disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS (次/s)', disk_throughput: '磁盘吞吐 (MB/s)',
-  network_throughput: '网络吞吐 (bytes/s)', network_packet_count: '网络包速率 (个/s)',
-  network_error_count: '网络错误 (次)',
+  disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',
+  network_throughput: '网络吞吐最大 (bytes/s)', network_packet_count: '网络包速率最大 (个/s)',
+  network_error_count: '网络错误最大 (次)',
 };
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
@@ -379,10 +379,170 @@ function renderSpaceDetailGroup(items) {
   }
   return container;
 }
+
+var networkFSTypes = { 'nfs': true, 'nfs4': true, 'cifs': true, 'smb': true, 'fuse.sshfs': true, 'fuse.glusterfs': true };
+
+function parentDisk(device) {
+  var dev = (device || '').replace('/dev/', '');
+  if (/^nvme\d+n\d+p\d+$/.test(dev)) return dev.replace(/p\d+$/, '');
+  if (/^(sd|vd|xvd)[a-z]+\d+$/.test(dev)) return dev.replace(/\d+$/, '');
+  return dev;
+}
+
+function classifySpaceMetrics(metrics) {
+  var local = [], network = [];
+  for (var i = 0; i < metrics.length; i++) {
+    var m = metrics[i];
+    var lb = m.labels || {};
+    if (networkFSTypes[lb.fstype] || !(lb.device || '').startsWith('/dev/')) {
+      network.push(m);
+    } else {
+      local.push(m);
+    }
+  }
+  return { local: local, network: network };
+}
+
+function aggregateByPhysicalDisk(spaceDetailMetrics, spaceUsageMetrics) {
+  var groups = {};
+  var order = [];
+  for (var i = 0; i < spaceDetailMetrics.length; i++) {
+    var m = spaceDetailMetrics[i];
+    var lb = m.labels || {};
+    var pd = parentDisk(lb.device || '');
+    if (!groups[pd]) { groups[pd] = { parts: [], total: 0, used: 0, avail: 0 }; order.push(pd); }
+    groups[pd].parts.push(lb.device || '');
+    if (lb.field === 'total') groups[pd].total += m.value;
+    if (lb.field === 'used') groups[pd].used += m.value;
+    if (lb.field === 'available') groups[pd].avail += m.value;
+  }
+  for (var i = 0; i < spaceUsageMetrics.length; i++) {
+    var m = spaceUsageMetrics[i];
+    var lb = m.labels || {};
+    var pd = parentDisk(lb.device || '');
+    if (groups[pd]) groups[pd].usage = m.value;
+  }
+  order.sort(function(a, b) {
+    var na = parseInt(a.replace(/\D/g, ''), 10);
+    var nb = parseInt(b.replace(/\D/g, ''), 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return a < b ? -1 : 1;
+  });
+  return order.map(function(pd) { return Object.assign({ disk: pd }, groups[pd]); });
+}
+
+function renderPhysicalDiskGroups(localMetrics) {
+  var spaceDetail = localMetrics.filter(function(m) { return m.name === 'space_detail'; });
+  var spaceUsage = localMetrics.filter(function(m) { return m.name === 'space_usage'; });
+  var disks = aggregateByPhysicalDisk(spaceDetail, spaceUsage);
+  if (disks.length === 0) return null;
+
+  var container = el('div');
+
+  var usageTitle = el('div', 'metric-group-head');
+  usageTitle.style.cursor = 'default';
+  usageTitle.innerHTML = '<span class="metric-group-name">物理盘空间使用率</span><span class="metric-group-count">' + disks.length + ' 条</span>';
+  container.appendChild(usageTitle);
+  var usageBody = el('div', 'metric-group-body');
+  for (var i = 0; i < disks.length; i++) {
+    var d = disks[i];
+    var pct = d.total > 0 ? Math.round(d.used / d.total * 100 * 100) / 100 : 0;
+    var row = el('div', 'metric-row space-detail-row');
+    row.innerHTML = '<span class="metric-val">' + pct + ' %</span>' +
+      '<span class="metric-labels">' + d.disk + (d.parts.length > 1 ? ' (' + d.parts.join(', ') + ')' : '') + '</span>';
+    usageBody.appendChild(row);
+  }
+  container.appendChild(usageBody);
+
+  var detailTitle = el('div', 'metric-group-head');
+  detailTitle.style.cursor = 'default';
+  detailTitle.innerHTML = '<span class="metric-group-name">物理盘空间明细</span><span class="metric-group-count">' + disks.length + ' 条</span>';
+  container.appendChild(detailTitle);
+  var detailBody = el('div', 'metric-group-body');
+  for (var i = 0; i < disks.length; i++) {
+    var d = disks[i];
+    var total = d.total > 0 ? fmtMB(d.total) : '--';
+    var used = d.total > 0 ? fmtMB(d.used) : '--';
+    var avail = d.avail > 0 ? fmtMB(d.avail) : '--';
+    var row = el('div', 'metric-row space-detail-row');
+    row.innerHTML = '<span class="metric-val">' + total + '</span>' +
+      '<span class="space-detail-used">' + used + ' used</span>' +
+      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="metric-labels">' + d.disk + (d.parts.length > 1 ? ' (' + d.parts.join(', ') + ')' : '') + '</span>';
+    detailBody.appendChild(row);
+  }
+  container.appendChild(detailBody);
+
+  return container;
+}
+
+function renderNetworkStorageGroup(networkMetrics) {
+  var spaceUsage = networkMetrics.filter(function(m) { return m.name === 'space_usage'; });
+  var spaceDetail = networkMetrics.filter(function(m) { return m.name === 'space_detail'; });
+  if (spaceUsage.length === 0 && spaceDetail.length === 0) return null;
+
+  var byMount = {};
+  var order = [];
+  for (var i = 0; i < spaceDetail.length; i++) {
+    var m = spaceDetail[i];
+    var lb = m.labels || {};
+    var key = (lb.device || '') + '|' + (lb.mount_point || '');
+    if (!byMount[key]) { byMount[key] = { device: lb.device, mount: lb.mount_point, fstype: lb.fstype, total: 0, used: 0, avail: 0 }; order.push(key); }
+    if (lb.field === 'total') byMount[key].total = m.value;
+    if (lb.field === 'used') byMount[key].used = m.value;
+    if (lb.field === 'available') byMount[key].avail = m.value;
+  }
+  for (var i = 0; i < spaceUsage.length; i++) {
+    var m = spaceUsage[i];
+    var lb = m.labels || {};
+    var key = (lb.device || '') + '|' + (lb.mount_point || '');
+    if (byMount[key]) byMount[key].usage = m.value;
+  }
+  if (order.length === 0) return null;
+  order.sort(function(a, b) { return (byMount[a].mount || '') < (byMount[b].mount || '') ? -1 : 1; });
+
+  var container = el('div');
+
+  var usageTitle = el('div', 'metric-group-head');
+  usageTitle.style.cursor = 'default';
+  usageTitle.innerHTML = '<span class="metric-group-name">网络存储空间使用率</span><span class="metric-group-count">' + order.length + ' 条</span>';
+  container.appendChild(usageTitle);
+  var usageBody = el('div', 'metric-group-body');
+  for (var i = 0; i < order.length; i++) {
+    var d = byMount[order[i]];
+    var row = el('div', 'metric-row space-detail-row');
+    row.innerHTML = '<span class="metric-val">' + (d.usage !== undefined ? d.usage + ' %' : '--') + '</span>' +
+      '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount || '--') + '</span>';
+    usageBody.appendChild(row);
+  }
+  container.appendChild(usageBody);
+
+  var detailTitle = el('div', 'metric-group-head');
+  detailTitle.style.cursor = 'default';
+  detailTitle.innerHTML = '<span class="metric-group-name">网络存储空间明细</span><span class="metric-group-count">' + order.length + ' 条</span>';
+  container.appendChild(detailTitle);
+  var detailBody = el('div', 'metric-group-body');
+  for (var i = 0; i < order.length; i++) {
+    var d = byMount[order[i]];
+    var total = d.total > 0 ? fmtMB(d.total) : '--';
+    var used = d.total > 0 ? fmtMB(d.used) : '--';
+    var avail = d.avail > 0 ? fmtMB(d.avail) : '--';
+    var row = el('div', 'metric-row space-detail-row');
+    row.innerHTML = '<span class="metric-val">' + total + '</span>' +
+      '<span class="space-detail-used">' + used + ' used</span>' +
+      '<span class="space-detail-avail">' + avail + ' avail</span>' +
+      '<span class="metric-labels">' + (d.device || '--') + ' → ' + (d.mount || '--') + (d.fstype ? ' (' + d.fstype + ')' : '') + '</span>';
+    detailBody.appendChild(row);
+  }
+  container.appendChild(detailBody);
+
+  return container;
+}
+
 // ---- state ----
 let collectors = [];
 let lastSnapshot = null;
-let refreshIntervalMs = 5000;
+let refreshIntervalMs = 3000;
 let pollTimer = null;
 let autoOn = true;
 let appVersion = '';
@@ -1045,9 +1205,17 @@ function renderDetail(compKey, snap) {
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
   } else {
+    if (compKey === 'disk') {
+      var classified = classifySpaceMetrics(metrics);
+      var physGroup = renderPhysicalDiskGroups(classified.local);
+      if (physGroup) mbody.appendChild(physGroup);
+      var netGroup = renderNetworkStorageGroup(classified.network);
+      if (netGroup) mbody.appendChild(netGroup);
+    }
     const groups = {};
     const order = [];
     for (const mt of metrics) {
+      if (compKey === 'disk' && (mt.name === 'space_usage' || mt.name === 'space_detail')) continue;
       if (!groups[mt.name]) { groups[mt.name] = []; order.push(mt.name); }
       groups[mt.name].push(mt);
     }
@@ -1145,7 +1313,6 @@ async function fetchConfigData() {
     const r = await fetch('/api/config', { cache: 'no-store' });
     if (!r.ok) return;
     const c = await r.json();
-    refreshIntervalMs = c.refresh_interval_ms || 5000;
     document.getElementById('intervalInput').value = Math.round(refreshIntervalMs / 1000);
     if (c.version) {
       appVersion = c.version;

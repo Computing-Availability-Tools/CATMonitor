@@ -99,7 +99,7 @@ func (c *CPUCollector) Collect() ([]collector.Metric, error) {
 		c.modelInfoCollected = true
 	}
 	if !c.topologyCollected {
-		if collector.AnyWanted("cpu", []string{"numa_node_num", "core_num", "die_core_num", "numa_core_num", "cpu_num"}) {
+		if collector.AnyWanted("cpu", []string{"numa_node_num", "core_num", "numa_core_num", "cpu_num"}) {
 			if m, err := c.collectTopology(now); err == nil {
 				metrics = append(metrics, m...)
 			}

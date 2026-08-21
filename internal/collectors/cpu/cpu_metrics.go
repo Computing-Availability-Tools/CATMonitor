@@ -1,7 +1,6 @@
 package cpu
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,27 +22,17 @@ func (c *CPUCollector) collectTopology(now time.Time) ([]collector.Metric, error
 	}
 	var metrics []collector.Metric
 	metrics = append(metrics, collector.Metric{
-		Component: "cpu", Name: "numa_node_num", Value: float64(len(topo.NumaNodes)), Unit: "个",
+		Component: "cpu", Name: "cpu_num", Value: float64(topo.Sockets), Unit: "个",
 		Timestamp: now,
 	})
 	metrics = append(metrics, collector.Metric{
 		Component: "cpu", Name: "core_num", Value: float64(topo.Cores), Unit: "个",
 		Timestamp: now,
 	})
-	diesPerSocket := topo.DiesPerSocket
-	if diesPerSocket <= 0 {
-		diesPerSocket = 1
-	}
-	dieCoreNum := 0
-	if topo.CoresPerSocket > 0 {
-		dieCoreNum = topo.CoresPerSocket / diesPerSocket
-	}
-	for i := 0; i < diesPerSocket; i++ {
-		metrics = append(metrics, collector.Metric{
-			Component: "cpu", Name: "die_core_num", Value: float64(dieCoreNum), Unit: "个",
-			Labels: map[string]string{"die": strconv.Itoa(i)}, Timestamp: now,
-		})
-	}
+	metrics = append(metrics, collector.Metric{
+		Component: "cpu", Name: "numa_node_num", Value: float64(len(topo.NumaNodes)), Unit: "个",
+		Timestamp: now,
+	})
 	numaCoreNum := 0
 	if len(topo.NumaNodes) > 0 {
 		numaCoreNum = topo.Cores / len(topo.NumaNodes)
@@ -54,10 +43,6 @@ func (c *CPUCollector) collectTopology(now time.Time) ([]collector.Metric, error
 			Labels: map[string]string{"node": node}, Timestamp: now,
 		})
 	}
-	metrics = append(metrics, collector.Metric{
-		Component: "cpu", Name: "cpu_num", Value: float64(topo.Sockets), Unit: "个",
-		Timestamp: now,
-	})
 	return metrics, nil
 }
 
