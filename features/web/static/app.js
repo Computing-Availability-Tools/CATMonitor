@@ -629,7 +629,7 @@ function renderNetworkCardGroup(specs) {
 
   var title = el('div', 'metric-group-head');
   title.style.cursor = 'default';
-  title.innerHTML = '<span class="metric-group-name">物理网卡</span><span class="metric-group-count">' + order.length + ' 条</span>';
+  title.innerHTML = '<span class="metric-group-name">网络</span><span class="metric-group-count">' + order.length + ' 条</span>';
   container.appendChild(title);
 
   var body = el('div', 'metric-group-body');
@@ -1266,6 +1266,12 @@ function specsGroup(comp, arr) {
 
 function specsGroupMemory(specs) {
   const sec = el('div', 'specs-group');
+  const totalDimms = specs.filter(m => m.name === 'module_size' || m.name === 'module_info').length;
+  const dimmCount = new Set(specs.filter(m => m.name === 'module_size' || m.name === 'module_info').map(m => (m.labels||{}).locator||'')).size;
+  const titleDiv = el('div', 'metric-group-head');
+  titleDiv.style.cursor = 'default';
+  titleDiv.innerHTML = '<span class="metric-group-name">内存</span><span class="metric-group-count">' + dimmCount + ' 条</span>';
+  sec.appendChild(titleDiv);
   const tbl = document.createElement('table');
   tbl.className = 'table';
   tbl.innerHTML = '<thead><tr><th>插槽</th><th>容量</th><th>类型</th><th>速率</th><th>厂商</th></tr></thead>';
