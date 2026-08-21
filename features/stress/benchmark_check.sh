@@ -905,6 +905,14 @@ summarize_npu_burn_csv() {
         $1 == "task" && $8 == "result" { next }
         NF < 8 { malformed=1; next }
         {
+            integer = "^[0-9]+$"
+            number = "^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$"
+            if ($1 == "" || $2 !~ integer || $3 !~ integer ||
+                $4 !~ integer || $5 !~ integer || $6 !~ number ||
+                $7 !~ integer || ($8 != "PASS" && $8 != "FAIL")) {
+                malformed=1
+                next
+            }
             cases++
             devices[$2]=1
             exetime += $6 + 0

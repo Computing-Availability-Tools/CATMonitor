@@ -173,6 +173,11 @@ CPU Runner 生产配置应保持：非特权、只读根文件系统、`network_
 `cap_drop: ALL`、`no-new-privileges`。入口为了目录初始化和 NUMA syscall 放行而声明的
 bootstrap capability 必须在 runner 启动前全部清空。
 
+Compose 默认把 Runner 的 `/dev/shm` 上限设为 16 GiB，以覆盖逐核 MPI 的
+HPL/HPCG。该值不会在容器启动时预占 16 GiB 内存；小内存节点可在启动前用
+`CATMONITOR_CPU_STRESS_SHM_SIZE` 调低，但必须先用实际 MPI rank 数验证。共享内存
+不足通常表现为 MPI 初始化失败或残留 worker，不应误判为 benchmark 结果失败。
+
 ## 6. Ascend NPU Burn
 
 仓库固定保存经过审计的 AscendNPUBurn 上游树，但不分发 CANN、torch_npu、驱动或

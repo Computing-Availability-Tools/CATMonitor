@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,5 +51,32 @@ func TestStressFeatureMountsWithoutRestoringWebCollection(t *testing.T) {
 	}
 	if !strings.Contains(string(app), "aStress.href = '/stress/'") {
 		t.Fatal("health dashboard is missing the independent stress navigation link")
+	}
+}
+
+func TestWebStressConfigPreservesSnapshotOnlyStartup(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	cfg, wasMissing, err := loadWebStressConfig(missing, true)
+	if err != nil || !wasMissing || cfg.Enabled {
+		t.Fatalf("optional missing config should disable only stress: cfg=%+v missing=%v err=%v", cfg, wasMissing, err)
+	}
+	if _, _, err := loadWebStressConfig(missing, false); err == nil {
+		t.Fatal("explicit missing config must fail")
+	}
+
+	path := filepath.Join(t.TempDir(), "catmonitor.yaml")
+	if err := os.WriteFile(path, []byte("stress:\n  enabled: true\n  web_enabled: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, wasMissing, err = loadWebStressConfig(path, true)
+	if err != nil || wasMissing || !cfg.Enabled || !cfg.WebEnabled {
+		t.Fatalf("existing config was not loaded: cfg=%+v missing=%v err=%v", cfg, wasMissing, err)
+	}
+
+	if err := os.WriteFile(path, []byte("stress: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadWebStressConfig(path, true); err == nil {
+		t.Fatal("invalid existing config must fail")
 	}
 }

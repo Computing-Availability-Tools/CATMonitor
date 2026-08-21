@@ -390,6 +390,42 @@ func TestBundledDispatcherRejectsAscendNPUBurnFailureCSV(t *testing.T) {
 	}
 }
 
+func TestBundledDispatcherRejectsMalformedAscendNPUBurnCSV(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("dispatcher execution is Linux-only")
+	}
+	rows := map[string]string{
+		"invalid run count": "matmul,0,0,many,1,12.5,0,PASS,shape=test\n",
+		"invalid elapsed":   "matmul,0,0,20,1,nan,0,PASS,shape=test\n",
+		"invalid errors":    "matmul,0,0,20,1,12.5,none,PASS,shape=test\n",
+		"invalid result":    "matmul,0,0,20,1,12.5,0,UNKNOWN,shape=test\n",
+	}
+	for name, row := range rows {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			outputDir := filepath.Join(dir, "output")
+			if err := os.Mkdir(outputDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			csv := "task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\n" + row
+			resultFile := filepath.Join(outputDir, "npu_burn_results.csv")
+			npuBurn := writeExecutable(t, dir, "npu-burn", "#!/bin/bash\nprintf '%s' "+shellLiteral(csv)+" > "+shellLiteral(resultFile)+"\n")
+			script := configuredDispatcher(t, dir, map[string]string{
+				"NPU_BURN_EXECUTABLE":               npuBurn,
+				"NPU_BURN_OUTPUT_DIR":               outputDir,
+				"NPU_BURN_RUN_CASE":                 "matmul",
+				"NPU_BURN_DEVICE":                   "0",
+				"NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "120",
+				"NPU_BURN_CHIP_GENERATION":          "A2",
+			})
+			output, err := exec.Command("bash", script, "npu_burn").CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "invalid schema or no result rows") {
+				t.Fatalf("malformed NPU Burn CSV must fail: err=%v output=%s", err, output)
+			}
+		})
+	}
+}
+
 func TestBundledDispatcherRejectsStaleAscendNPUBurnCSV(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("dispatcher execution is Linux-only")

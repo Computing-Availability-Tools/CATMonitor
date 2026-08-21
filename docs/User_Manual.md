@@ -333,9 +333,9 @@ daemon 启动后：
 catmonitor daemon
 
 # 再启动 web 只读消费者（-snapshot-dir 须与 daemon snapshot.dir 一致）
-catmonitor-web -addr 127.0.0.1:9527 -snapshot-dir /var/lib/catmonitor/snapshot
+catmonitor-web -addr :9527 -snapshot-dir /var/lib/catmonitor/snapshot
 # 非标准主配置路径追加：-config /path/to/catmonitor.yaml
-# 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting"）
+# 浏览器打开 http://<server-address>:9527（实际端口见启动日志 "web server starting"）
 ```
 
 > 端口 `:9527` 被占用时自动 +1 回退（`:9528`…）。能效监控改为独立二进制 `catmonitor-dfee`（见 §6），不再作为 web 子路由。

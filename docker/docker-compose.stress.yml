@@ -65,7 +65,10 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: ${CATMONITOR_CPU_STRESS_PIDS_LIMIT:-4096}
-    shm_size: ${CATMONITOR_CPU_STRESS_SHM_SIZE:-2gb}
+    # MPICH/OpenMPI may allocate a large shared-memory region when HPL/HPCG
+    # starts one rank per core. This is only a tmpfs ceiling (not preallocated
+    # memory) and remains overrideable for smaller nodes.
+    shm_size: ${CATMONITOR_CPU_STRESS_SHM_SIZE:-16gb}
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     healthcheck:

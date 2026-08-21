@@ -66,7 +66,7 @@ cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 catmonitor daemon
 
 # 启动只读消费者（消费 daemon 产出的 snapshot，不自行采集）
-catmonitor-web -addr 127.0.0.1:9527 -snapshot-dir /var/lib/catmonitor/snapshot
+catmonitor-web -addr :9527 -snapshot-dir /var/lib/catmonitor/snapshot
 catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 
 # 单次采集 / 健康检查 / 采集器列表

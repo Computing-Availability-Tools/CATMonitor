@@ -30,14 +30,23 @@ func main() {
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
 	configPath := flag.String("config", platform.ConfigPath(), "CATMonitor config path (default: platform path or CATMONITOR_CONFIG)")
 	flag.Parse()
+	configExplicit := os.Getenv("CATMONITOR_CONFIG") != ""
+	flag.Visit(func(current *flag.Flag) {
+		if current.Name == "config" {
+			configExplicit = true
+		}
+	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	catCfg, err := config.Load(*configPath)
+	stressCfg, configMissing, err := loadWebStressConfig(*configPath, !configExplicit)
 	if err != nil {
 		logger.Error("failed to load CATMonitor config", "path", *configPath, "error", err)
 		os.Exit(1)
 	}
-	stressManager := stress.NewManagerWithLogger(catCfg.Stress, logger)
+	if configMissing {
+		logger.Warn("default CATMonitor config is absent; stress feature remains disabled", "path", *configPath)
+	}
+	stressManager := stress.NewManagerWithLogger(stressCfg, logger)
 
 	srv := NewServer(*dir, logger, stressManager, *addr)
 	httpServer := &http.Server{Handler: srv.Routes()}
@@ -68,6 +77,17 @@ func main() {
 	if err := stressManager.Shutdown(stressCtx); err != nil {
 		logger.Error("stress manager shutdown failed", "error", err)
 	}
+}
+
+func loadWebStressConfig(path string, allowMissing bool) (stress.Config, bool, error) {
+	catCfg, err := config.Load(path)
+	if err == nil {
+		return catCfg.Stress, false, nil
+	}
+	if allowMissing && errors.Is(err, os.ErrNotExist) {
+		return stress.Config{}, true, nil
+	}
+	return stress.Config{}, false, err
 }
 
 // listenWithFallback tries to listen on initialAddr; if the port is already in
