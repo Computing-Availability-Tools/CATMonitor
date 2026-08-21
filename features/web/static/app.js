@@ -1656,10 +1656,10 @@ function renderDetail(compKey, snap) {
       grp.appendChild(gh);
       grp.appendChild(gb);
       mbody.appendChild(grp);
-    }
-    if (diskNetMetrics && diskNetMetrics.length > 0) {
-      var netGroup = renderNetworkStorageGroup(diskNetMetrics);
-      if (netGroup) mbody.appendChild(netGroup);
+      if (compKey === 'disk' && name === 'space_detail' && diskNetMetrics && diskNetMetrics.length > 0) {
+        var netGroup = renderNetworkStorageGroup(diskNetMetrics);
+        if (netGroup) mbody.appendChild(netGroup);
+      }
     }
   }
   mpanel.appendChild(mbody);
