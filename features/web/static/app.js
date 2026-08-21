@@ -629,7 +629,7 @@ function renderNetworkCardGroup(specs) {
 
   var title = el('div', 'metric-group-head');
   title.style.cursor = 'default';
-  title.innerHTML = '<span class="metric-group-name">网络</span><span class="metric-group-count">(' + order.length + ')</span>';
+  title.innerHTML = '<span class="metric-group-name">网络 (' + order.length + ')</span>';
   container.appendChild(title);
 
   var body = el('div', 'metric-group-body');
@@ -681,7 +681,7 @@ function renderDiskGroup(specs) {
 
   var title = el('div', 'metric-group-head');
   title.style.cursor = 'default';
-  title.innerHTML = '<span class="metric-group-name">硬盘</span><span class="metric-group-count">(' + diskSpecs.length + ')</span>';
+  title.innerHTML = '<span class="metric-group-name">硬盘 (' + diskSpecs.length + ')</span>';
   container.appendChild(title);
 
   var body = el('div', 'metric-group-body');
@@ -1270,7 +1270,7 @@ function specsGroupMemory(specs) {
   const dimmCount = new Set(specs.filter(m => m.name === 'module_size' || m.name === 'module_info').map(m => (m.labels||{}).locator||'')).size;
   const titleDiv = el('div', 'metric-group-head');
   titleDiv.style.cursor = 'default';
-  titleDiv.innerHTML = '<span class="metric-group-name">内存</span><span class="metric-group-count">(' + dimmCount + ')</span>';
+  titleDiv.innerHTML = '<span class="metric-group-name">内存 (' + dimmCount + ')</span>';
   sec.appendChild(titleDiv);
   const tbl = document.createElement('table');
   tbl.className = 'table';
