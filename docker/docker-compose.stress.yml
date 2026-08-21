@@ -8,12 +8,6 @@ services:
       - "65532"
     volumes:
       - type: bind
-        source: ${CATMONITOR_CONFIG:?set CATMONITOR_CONFIG to the absolute CATMonitor YAML path}
-        target: /etc/catmonitor/catmonitor.yaml
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
         source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}
         target: /opt/catmonitor/stress
         read_only: true
@@ -32,12 +26,6 @@ services:
     group_add:
       - "65532"
     volumes:
-      - type: bind
-        source: ${CATMONITOR_CONFIG:?set CATMONITOR_CONFIG to the absolute CATMonitor YAML path}
-        target: /etc/catmonitor/catmonitor.yaml
-        read_only: true
-        bind:
-          create_host_path: false
       - type: bind
         source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}
         target: /opt/catmonitor/stress

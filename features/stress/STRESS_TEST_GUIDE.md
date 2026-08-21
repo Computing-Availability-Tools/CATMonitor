@@ -988,16 +988,37 @@ Linux 默认主配置为 `/etc/catmonitor/catmonitor.yaml`，因此常规部署�
 - 固定 NPU Burn 容器由管理员提前构建和创建，CATMonitor 作业只执行
   `docker exec`，不会 `pull`、`run`、重建或删除它。
 
-仓库提供四个可叠加的 Compose 文件：
+仓库提供五个可叠加的 Compose 文件：
 
 ```text
 docker/docker-compose.yml          通用 daemon/Web/dfee 基础层
+docker/docker-compose.config.yml   daemon/Web 公共只读主配置
 docker/docker-compose.npu.yml      Ascend 采集驱动和运行库挂载
-docker/docker-compose.stress.yml   stress 配置、状态和 CPU runner（无 Docker socket）
+docker/docker-compose.stress.yml   stress 插件、状态和 CPU runner（无 Docker socket）
 docker/docker-compose.stress-npuburn.yml  NPU Burn 专用 Docker socket
 ```
 
-A3 启动形态为：
+管理员验收应优先安装并使用统一入口，先检查无副作用计划，再启动。安装器不会构建
+镜像/资产、编辑 YAML、创建固定 NPU 容器或执行压测：
+
+```bash
+sudo make install-installer
+
+sudo catmonitor-install --profile ascend-a3 --action plan
+sudo catmonitor-install \
+  --profile ascend-a3 \
+  --acknowledge-root-docker-socket
+
+sudo catmonitor-install --profile ascend-a3 --action status
+sudo catmonitor-install --profile ascend-a3 --action doctor
+```
+
+`up` 完成后必须显示 runner healthy 并通过 `stress doctor`。A2 改用
+`--profile ascend-a2`；manifest 代际不一致必须在 Compose 启动前失败。当前显式
+Socket 确认是过渡期 NPU `docker_exec` 边界，CPU-only profile 不需要也不接受该
+权限扩展。
+
+需要排查底层模型时，A3 等价手工启动形态为：
 
 ```bash
 export CATMONITOR_CONFIG=/etc/catmonitor/catmonitor.yaml
@@ -1008,6 +1029,7 @@ export CATMONITOR_CPU_STRESS_IMAGE=catmonitor/stress-cpu:node-v1
 CATMONITOR_IMAGE=catmonitor-npu \
 docker compose \
   -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
   -f docker/docker-compose.npu.yml \
   -f docker/docker-compose.stress.yml \
   -f docker/docker-compose.stress-npuburn.yml \

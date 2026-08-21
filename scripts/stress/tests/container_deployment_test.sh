@@ -19,9 +19,11 @@ bash -n "$REPO_ROOT/docker/build.sh"
 bash -n "$REPO_ROOT/scripts/stress/build_cpu_runner_image.sh"
 bash -n "$REPO_ROOT/docker/stress/cpu/entrypoint.sh"
 bash -n "$REPO_ROOT/scripts/stress/install_stress_runtime.sh"
+bash -n "$REPO_ROOT/scripts/catmonitor-install"
 bash -n "$REPO_ROOT/tests/e2e/stress_container_e2e_test.sh"
 
 require_fixed .gitattributes '*.sh text eol=lf'
+require_fixed .gitattributes 'scripts/catmonitor-install text eol=lf'
 require_fixed .gitignore 'docker/.build/'
 
 require_fixed docker/Dockerfile.generic 'ARG GOPROXY'
@@ -45,7 +47,10 @@ require_fixed docker/catmonitor.yaml 'report_path: /var/lib/catmonitor/stress/st
 require_fixed docker/docker-compose.yml 'network_mode: host'
 require_fixed docker/docker-compose.yml 'entrypoint: /usr/local/bin/web'
 require_fixed docker/docker-compose.yml 'entrypoint: /usr/local/bin/dfee'
-require_fixed docker/docker-compose.yml '-addr=127.0.0.1:19322'
+require_fixed docker/docker-compose.yml 'CATMONITOR_WEB_ADDR:-127.0.0.1:19322'
+require_fixed docker/docker-compose.config.yml 'CATMONITOR_CONFIG'
+require_fixed docker/docker-compose.config.yml 'create_host_path: false'
+require_fixed docker/docker-compose.config.yml 'read_only: true'
 require_fixed docker/docker-compose.npu.yml '/usr/local/Ascend/driver:/usr/local/Ascend/driver:ro'
 require_fixed docker/docker-compose.stress.yml 'CATMONITOR_STRESS_ROOT'
 require_fixed docker/docker-compose.stress.yml 'CATMONITOR_STRESS_STATE_DIR'
@@ -79,6 +84,11 @@ fi
 if grep -Fq '/var/run/docker.sock' "$REPO_ROOT/docker/docker-compose.stress.yml"; then
     fail "CPU stress overlay must not grant Docker socket access"
 fi
+if grep -Fq 'CATMONITOR_CONFIG' "$REPO_ROOT/docker/docker-compose.stress.yml"; then
+    fail "stress overlay must not duplicate the common read-only config mount"
+fi
+require_fixed scripts/catmonitor-install '--acknowledge-root-docker-socket'
+require_fixed scripts/catmonitor-install 'workload execution: none'
 if grep -Eq '(privileged:|pid:[[:space:]]*host|network_mode:[[:space:]]*host)' \
     "$REPO_ROOT/docker/docker-compose.stress.yml"; then
     fail "CPU stress runner overlay must not grant host-level namespaces or privileges"

@@ -287,27 +287,99 @@ pgrep -af 'catmonitor daemon'
 
 仅启动 `catmonitor-web` 不会采集指标。
 
-## 9. 容器部署现状
+## 9. 统一容器安装入口
 
-当前仓库底层仍按职责组合 Compose 文件：
+底层镜像和 Compose 仍按职责拆分，但用户不需要手工组合 overlay。先从源码树安装
+统一命令及经过审核的 Compose 定义：
 
-- `docker-compose.yml`：基础监控；
-- `docker-compose.npu.yml`：Ascend 采集；
-- `docker-compose.stress.yml`：CPU Runner 和 stress 共享目录/Socket；
-- `docker-compose.stress-npuburn.yml`：NPU Burn `docker_exec` 的临时 Socket 边界。
-
-这些是管理员级实现文件，不应成为最终用户必须理解的接口。计划中的统一入口为：
-
-```text
-catmonitor-install --profile monitoring
-catmonitor-install --profile cpu-stress
-catmonitor-install --profile ascend-a2
-catmonitor-install --profile ascend-a3
+```bash
+sudo make install-installer
+catmonitor-install --help
 ```
 
-上述 `catmonitor-install` 当前尚未实现，不能当作现有命令执行。在统一入口完成前，
-请按 [docker/README.md](../../docker/README.md#8-容器化可靠性压测) 使用经过测试的
-Compose 组合，不要自行删减安全参数或给 Web 额外挂载 Docker Socket。
+该目标默认安装：
+
+```text
+/usr/local/sbin/catmonitor-install
+/usr/local/lib/catmonitor/docker/*.yml
+```
+
+也可不安装，直接在源码树执行 `bash scripts/catmonitor-install ...`。安装器默认读取
+`/etc/catmonitor/catmonitor.yaml`、`/opt/catmonitor/stress` 和
+`/var/lib/catmonitor/stress`；只有非标准部署才需要显式传路径。
+
+### 9.1 profile 与前置条件
+
+| profile | 启动内容 | 额外前置条件 |
+|---|---|---|
+| `monitoring` | daemon、Web、DFeE | 完整主配置和本地 `catmonitor-generic` 镜像 |
+| `cpu-stress` | monitoring + 受限 CPU Runner | 已安装 unix adapter、部署 manifest 和 manifest 指定的 runner 镜像 |
+| `ascend-a2` | Ascend monitoring + CPU Runner + NPU Burn | A2 manifest、Ascend host 资产、已运行固定 NPU 容器 |
+| `ascend-a3` | Ascend monitoring + CPU Runner + NPU Burn | A3 manifest、Ascend host 资产、已运行固定 NPU 容器 |
+
+`monitoring` 的主 YAML 应保持 `stress.enabled: false`。`cpu-stress` 的主 YAML 必须把
+`npu_burn.enabled` 保持为 `false`；该 profile 不挂载
+Docker Socket，因此不会为了满足错误的 YAML 自动扩大权限。Ascend profile 才允许
+在完成固定容器预检和显式权限确认后启用 NPU Burn。
+
+先用只读计划检查最终选择。它会验证配置、镜像、manifest、adapter、Compose 模型，
+Ascend profile 还会核对芯片代际、固定容器、镜像、驱动路径和 Docker Socket：
+
+```bash
+sudo catmonitor-install --profile monitoring --action plan
+sudo catmonitor-install --profile cpu-stress --action plan
+sudo catmonitor-install --profile ascend-a3 --action plan
+```
+
+`cpu-stress` 默认从已安装的
+`manifests/stress-deployment-manifest.json` 读取经过审核的 CPU Runner 镜像名；显式
+`--cpu-runner-image` 只能与 manifest 一致，避免静默切换到另一套 MPI/benchmark。
+
+### 9.2 启动与管理
+
+普通监控和 CPU Runner 可以直接启动：
+
+```bash
+sudo catmonitor-install --profile monitoring
+sudo catmonitor-install --profile cpu-stress
+```
+
+`up` 只执行 Compose 启动、等待 CPU Runner 健康，然后运行无负载
+`catmonitor stress doctor`；它不会构建/下载镜像、编译 benchmark、编辑 YAML、创建
+NPU Burn 容器或运行任何压测。doctor 失败时应先修复部署，不要用
+`--skip-doctor` 掩盖正式验收问题。
+
+当前 Ascend profile 仍使用过渡期 `docker_exec` overlay。因为 Docker Socket 等价于
+宿主机 root 权限，实际启动必须明确确认：
+
+```bash
+sudo catmonitor-install \
+  --profile ascend-a3 \
+  --acknowledge-root-docker-socket
+```
+
+A2 使用 `--profile ascend-a2`。如果 manifest 中的 `npu_chip_generation` 不匹配，
+安装器会在启动前拒绝。该确认不会使 CPU-only 或 monitoring profile 获得 Socket。
+
+常用生命周期命令：
+
+```bash
+sudo catmonitor-install --profile cpu-stress --action status
+sudo catmonitor-install --profile cpu-stress --action doctor
+sudo catmonitor-install --profile cpu-stress --action down
+```
+
+`down` 不删除 snapshot、history、CSV 或 Compose volume，并且即使配置/镜像/adapter
+已经损坏或移走也应可执行。非标准目录和隔离 Docker 可使用 `--config`、
+`--stress-root`、`--state-dir`、`--docker-socket`、`--docker-bin`；Web 端口冲突时可用
+`--web-addr 127.0.0.1:19530` 覆盖，但安装器拒绝非回环监听。先执行
+`--action plan` 查看解析结果。Ascend profile 会同时用 `--docker-socket` 选择宿主机
+预检/Compose 所连接的 daemon，并把同一个 Socket 挂到控制容器的固定目标路径，
+避免检查一个 daemon、运行时却调用另一个 daemon。
+
+安装器内部固定组合以下五层，仍可供开发者审计，但不再是普通使用接口：基础监控、
+只读主配置、Ascend 采集、CPU Runner、NPU Burn 临时 Socket。长期会用专用受限
+NPU Runner 替代最后一层；在此之前不要给 Web 额外挂载其他 Docker Socket。
 
 ## 10. 验收与故障定位
 

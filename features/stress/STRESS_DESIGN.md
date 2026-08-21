@@ -80,6 +80,27 @@ ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。stock HPL 2.3 顶层 Makefile �
 `docker-compose.stress-npuburn.yml`，把管理员选择的 socket 挂入控制容器。
 固定 NPU Burn 镜像/容器仍是独立数据面，不进入 CATMonitor 主镜像生命周期。
 
+`scripts/catmonitor-install` 是这些部署层之上的薄编排器，而不是新的资产构建器。
+它把 profile 映射为固定的 Compose 层和服务集合：
+
+```text
+monitoring  = base + read-only config
+cpu-stress  = monitoring + CPU runner/socket/state
+ascend-a2/3 = cpu-stress + Ascend collection + NPU docker_exec compatibility
+```
+
+公共 `docker-compose.config.yml` 让 daemon 与 Web 始终读取同一份管理员主配置；
+stress overlay 不再复制该职责。安装器先从部署 manifest 取得 CPU runner image、
+CPU backend、NPU 固定容器/image 和芯片代际，再验证本地镜像与容器事实，最后运行
+Compose。`plan` 只读输出解析后的事实；`up` 只创建共享状态目录、启动服务、等待
+runner health 并调用无负载 doctor；`status/down` 特意不依赖运行资产仍然存在，以
+保留故障恢复能力。安装器不调用任何 build/bootstrap/workload 工具。
+
+Ascend profile 当前仍叠加 `docker-compose.stress-npuburn.yml`，因此 `up` 必须通过
+独立参数确认 root 等价 Socket 风险。这个确认只是对现有兼容层的显式授权，不是
+长期权限模型；专用 NPU Runner 落地后应替换该层并删除确认参数。CPU-only 和普通
+监控 profile 的 Compose 文件集合在结构上无法包含 Docker Socket。
+
 NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是镜像：
 
 ```text

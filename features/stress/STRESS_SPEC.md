@@ -60,6 +60,30 @@ Docker socket 必须位于单独的显式 overlay。未启用 stress 的部署�
 权限。generic 与 NPU 控制镜像可以共享 Compose 结构，但 DCMI ABI 未插件化前不得
 宣称一个二进制可跨 CPU-only 与 Ascend 节点通用。
 
+仓库必须提供统一容器编排入口 `scripts/catmonitor-install`，至少支持
+`monitoring`、`cpu-stress`、`ascend-a2`、`ascend-a3` profile 以及
+`plan/up/status/doctor/down` 动作。该入口必须：
+
+- 默认读取 `/etc/catmonitor/catmonitor.yaml`、`/opt/catmonitor/stress` 和
+  `/var/lib/catmonitor/stress`，同时允许显式绝对路径覆盖；
+- Web 默认监听 `127.0.0.1:19322`，允许显式选择其他回环端口，但不得通过安装器
+  配置非回环监听；
+- 把同一份主配置以只读方式挂入 daemon 和 Web，不维护 stress 专用 Web 配置；
+- 仅消费本地已有镜像、已安装 adapter 和部署 manifest，不编译 benchmark、不拉取
+  或构建镜像、不编辑 YAML、不创建 NPU Burn 容器、不运行压测；
+- 从部署 manifest 解析并严格匹配 `cpu_backend=unix`、CPU runner 镜像，以及 Ascend
+  profile 对应的 A2/A3 代际；
+- 对控制镜像、runner 镜像、Compose 模型和固定 NPU 容器执行只读预检，`up` 后只
+  允许自动运行 `stress doctor`；
+- CPU-only/monitoring profile 永不叠加 Docker Socket；Ascend `up` 在专用 NPU
+  Runner 尚未实现前，必须要求管理员显式确认 root 等价 Socket 边界；
+- `down/status` 在配置、adapter、manifest 或镜像丢失时仍可用于恢复，且 `down`
+  不得默认删除持久卷。
+
+安装打包目标必须同时安装命令和它依赖的经过审核的 Compose 文件，不能依赖安装后
+仍保留源码 checkout。profile 的内部 Compose 文件顺序属于实现细节，不要求用户
+手工维护。
+
 ### 1.2 NPU Burn 镜像构建契约
 
 仓库必须提供独立的 Linux 管理员入口

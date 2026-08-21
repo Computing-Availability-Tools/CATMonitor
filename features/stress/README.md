@@ -210,9 +210,18 @@ shell/MPI 进程组。HPL/HPCG 可写工作目录和结果放在共享
 
 生成器会额外输出 `cpu-runner-benchmark_check.sh`。安装时用
 `--cpu-runner-adapter` 安装该文件，并设置
-`CATMONITOR_CPU_STRESS_IMAGE=catmonitor/stress-cpu:node-v1` 后叠加
-`docker/docker-compose.stress.yml`。需要 NPU Burn 时仍单独叠加 NPU socket overlay；
-CPU runner 本身从不挂载 Docker Socket。
+`CATMONITOR_CPU_STRESS_IMAGE=catmonitor/stress-cpu:node-v1`。正式启动优先使用统一入口：
+
+```bash
+sudo make install-installer
+sudo catmonitor-install --profile cpu-stress --action plan
+sudo catmonitor-install --profile cpu-stress
+```
+
+安装器从部署 manifest 读取并校验 runner 镜像，内部叠加公共只读配置层和
+`docker/docker-compose.stress.yml`。需要 NPU Burn 时选择 `ascend-a2` 或
+`ascend-a3`；当前过渡实现还要求显式确认 root 等价 Docker Socket。CPU runner
+本身从不挂载 Docker Socket。
 
 CPU 资产和固定 NPU 容器准备完成后，使用
 `scripts/stress/generate_stress_deployment.sh` 一次生成源码目录外的完整
@@ -224,10 +233,11 @@ CPU 资产和固定 NPU 容器准备完成后，使用
 
 宿主机插件布局由 `scripts/stress/install_stress_runtime.sh` 创建。它安装 adapter，
 可选复制已构建 CPU 资产和 manifest，并创建可写状态目录；不会构建 benchmark、
-编辑 CATMonitor 配置、启动服务或运行负载。容器部署使用四层 Compose：基础层、
-Ascend 采集层、Unix Socket CPU runner 层，以及仅供 NPU Burn
-`docker_exec` 使用的 socket 层。主镜像不再内置 adapter，未启用 stress 的节点
-不会挂载插件、状态目录或 Docker socket。
+编辑 CATMonitor 配置、启动服务或运行负载。容器部署使用五层 Compose：基础层、
+公共只读配置层、可选 Ascend 采集层、Unix Socket CPU runner 层，以及仅供 NPU
+Burn `docker_exec` 使用的 socket 层。`scripts/catmonitor-install` 只选择、预检和编排
+这些层；它不构建资产、编辑 YAML、创建固定 NPU 容器或运行压测。主镜像不再内置
+adapter，未启用 stress 的节点不会挂载插件、状态目录或 Docker socket。
 
 ## 自动化测试
 

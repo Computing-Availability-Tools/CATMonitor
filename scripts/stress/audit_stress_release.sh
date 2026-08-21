@@ -51,6 +51,8 @@ for path in \
     third_party/ascend_npu_burn/source/docs/LICENSE \
     docker/stress/cpu/Dockerfile \
     docker/stress/cpu/entrypoint.sh \
+    docker/docker-compose.config.yml \
+    scripts/catmonitor-install \
     scripts/stress/build_cpu_runner_image.sh \
     docker/stress/npu/runtime-packages.txt; do
     require_file "$path"
@@ -70,6 +72,14 @@ grep -Fq 'network_mode: none' "$REPO_ROOT/docker/docker-compose.stress.yml" ||
     die "CPU runner deployment no longer disables networking"
 if grep -Fq '/var/run/docker.sock' "$REPO_ROOT/docker/docker-compose.stress.yml"; then
     die "CPU runner deployment must not receive the Docker socket"
+fi
+grep -Fq -- '--acknowledge-root-docker-socket' "$REPO_ROOT/scripts/catmonitor-install" ||
+    die "unified installer no longer requires explicit NPU Docker socket acknowledgement"
+grep -Fq 'workload execution: none' "$REPO_ROOT/scripts/catmonitor-install" ||
+    die "unified installer no longer declares its no-workload boundary"
+if grep -Eq 'stress[[:space:]]+--bench|benchmark_check\.sh[[:space:]]+(stream|hpl|hpcg|npu_burn)' \
+    "$REPO_ROOT/scripts/catmonitor-install"; then
+    die "unified installer must not start a stress workload"
 fi
 
 (

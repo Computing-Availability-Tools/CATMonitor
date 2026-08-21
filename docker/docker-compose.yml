@@ -31,7 +31,7 @@ services:
     network_mode: host
     entrypoint: /usr/local/bin/web
     command: >
-      -addr=127.0.0.1:19322
+      -addr=${CATMONITOR_WEB_ADDR:-127.0.0.1:19322}
       -snapshot-dir=/var/lib/catmonitor/snapshot
       -config=/etc/catmonitor/catmonitor.yaml
     volumes:

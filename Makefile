@@ -2,7 +2,7 @@
 	test-stress-race test-stress-e2e test-stress-build \
 	test-stress-container-e2e \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
-	test-stress-audit audit-stress-release lint clean web dfee
+	test-stress-audit audit-stress-release install-installer lint clean web dfee
 
 GO ?= go
 BIN=bin/catmonitor
@@ -78,6 +78,7 @@ test-stress-deployment:
 	bash scripts/stress/tests/generate_stress_deployment_test.sh
 	bash scripts/stress/tests/install_stress_runtime_test.sh
 	bash scripts/stress/tests/container_deployment_test.sh
+	bash scripts/stress/tests/catmonitor_install_test.sh
 
 test-stress-audit:
 	bash scripts/stress/tests/audit_stress_release_test.sh
@@ -95,3 +96,13 @@ install: build
 	cp $(BIN) /usr/local/bin/catmonitor
 	mkdir -p /etc/catmonitor
 	cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+
+# Install the unified container deployment entrypoint and its reviewed Compose
+# definitions. DESTDIR and PREFIX are supported for packaging fixtures.
+PREFIX ?= /usr/local
+install-installer:
+	install -d "$(DESTDIR)$(PREFIX)/sbin" "$(DESTDIR)$(PREFIX)/lib/catmonitor/docker"
+	install -m 0755 scripts/catmonitor-install "$(DESTDIR)$(PREFIX)/sbin/catmonitor-install"
+	install -m 0644 docker/docker-compose.yml docker/docker-compose.config.yml \
+		docker/docker-compose.npu.yml docker/docker-compose.stress.yml \
+		docker/docker-compose.stress-npuburn.yml "$(DESTDIR)$(PREFIX)/lib/catmonitor/docker/"
