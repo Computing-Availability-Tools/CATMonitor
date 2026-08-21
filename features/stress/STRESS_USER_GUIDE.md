@@ -17,13 +17,17 @@ STREAM、HPL、HPCG 与 Ascend NPU Burn。构建工具的全部参数、升级�
 压测结果本身不计入健康总分。CPU 三项不设置性能阈值，运行成功或达到计划时限且
 此前没有错误即可通过；NPU Burn 必须产生完整 PASS、`err_count=0` 且没有全局 FAIL。
 
-当前实现保留三类镜像，不建议合并成一个巨型镜像：
+当前实现保留四个运行面，不建议合并成一个巨型镜像：
 
-| 镜像/运行面 | 职责 | 是否需要 Docker Socket |
+| 镜像/运行面 | 基础系统 | 职责 |
 |---|---|---|
-| CATMonitor/Web/DFeE | 采集、快照、控制、展示 | CPU-only 不需要 |
-| CPU Stress Runner | STREAM/HPL/HPCG 与匹配的 MPI/OpenBLAS | 不需要 |
-| Ascend NPU Burn | CANN、torch_npu、custom ops 和 NPU workload | 当前过渡方案由控制面调用固定容器 |
+| 通用 CATMonitor/Web/DFeE 控制面 | Alpine | 小巧的通用采集、快照、控制和展示 |
+| CPU Stress Runner | Debian | STREAM/HPL/HPCG 与匹配的 MPI/OpenBLAS |
+| Ascend CATMonitor/Web/DFeE 控制面 | Debian（glibc） | 兼容 DCMI 等厂商库 |
+| Ascend NPU Burn 数据面 | 管理员选择的 Ascend 基础镜像 | 保持匹配的 CANN、torch_npu 和基础系统 |
+
+CPU-only 部署不需要 Docker Socket。当前 Ascend 过渡方案由 NPU 控制面调用固定
+NPU Burn 容器，只有该兼容层需要管理员显式确认 Docker Socket 权限。
 
 宿主机原生 CPU 执行仍受支持，适合无 Docker 或需要保持原生 MPI/NUMA 环境的节点。
 
@@ -109,7 +113,8 @@ features: [web, dfee, health]
 ```
 
 `web_enabled` 只控制网页能否提交作业。CLI 只需要 `enabled: true`；不开放网页触发时
-应保持 `web_enabled: false`。Web 还必须监听回环地址并使用可写的共享报告路径。
+应保持 `web_enabled: false`。即使开启该项，Web 仍必须监听回环地址并使用可写的共享
+报告路径才允许提交；外部监听模式可以读取配置和报告，但不会开放写操作。
 
 YAML 只保存功能开关、共享报告路径、项目和最大运行窗口。可执行文件、MPI/线程、
 NUMA、HPL/HPCG 规模、NPU 容器和设备选择属于节点 profile，由部署后的
@@ -241,25 +246,27 @@ sudo bash scripts/stress/install_stress_runtime.sh \
 
 ## 8. 启动 Web
 
-先启动带 snapshot 的 daemon，再启动只读 Web：
+先启动带 snapshot 的 daemon，再启动只读 Web。默认沿用 develop 的 `:19322`，从
+外部节点地址提供监控页面：
 
 ```bash
 catmonitor daemon -c /etc/catmonitor/catmonitor.yaml
 
 catmonitor-web \
-  -addr 127.0.0.1:19322 \
+  -addr :19322 \
   -snapshot-dir /var/lib/catmonitor/snapshot \
   -config /etc/catmonitor/catmonitor.yaml
 ```
 
-Linux 本机检查：
+Linux 本机检查（远端浏览器把 `127.0.0.1` 替换为节点地址）：
 
 ```bash
 curl -fsS http://127.0.0.1:19322/api/snapshot >/dev/null
 curl -fsS http://127.0.0.1:19322/api/stress/config
 ```
 
-从另一台 Windows 访问时使用 SSH 隧道，不要把 Web 改为公网监听：
+默认外部监听只适合查看监控、profile 和已有结果。若需要从另一台 Windows 在网页
+触发/取消压测，必须改用 `-addr 127.0.0.1:19322`，再建立 SSH 隧道：
 
 ```powershell
 ssh -N `
@@ -372,7 +379,8 @@ sudo catmonitor-install --profile cpu-stress --action down
 `down` 不删除 snapshot、history、CSV 或 Compose volume，并且即使配置/镜像/adapter
 已经损坏或移走也应可执行。非标准目录和隔离 Docker 可使用 `--config`、
 `--stress-root`、`--state-dir`、`--docker-socket`、`--docker-bin`；Web 端口冲突时可用
-`--web-addr 127.0.0.1:19530` 覆盖，但安装器拒绝非回环监听。先执行
+`--web-addr :19530` 或指定网卡地址覆盖。默认 `:19322` 是外部监控模式；需要 Web
+提交压测时改用 `--web-addr 127.0.0.1:19322` 并通过 SSH 隧道访问。先执行
 `--action plan` 查看解析结果。Ascend profile 会同时用 `--docker-socket` 选择宿主机
 预检/Compose 所连接的 daemon，并把同一个 Socket 挂到控制容器的固定目标路径，
 避免检查一个 daemon、运行时却调用另一个 daemon。

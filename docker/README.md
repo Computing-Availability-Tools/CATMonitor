@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-CATMonitor 容器化方案支持两种镜像：
+CATMonitor 控制面支持两种镜像：
 
 | 镜像 | 适用环境 | 说明 |
 |------|---------|------|
@@ -18,6 +18,15 @@ CATMonitor 容器化方案支持两种镜像：
 | `dfee` | 19323, 9333 | 能效监控 SPA + Prometheus exporter + CSV 输出 |
 
 daemon 是 snapshot 唯一生产者；web/dfee 是只读消费者，不自行采集。三容器共享一个 snapshot 卷。
+
+可靠性压测启用后仍保持四个明确的运行面，不合成巨型镜像：
+
+| 运行面 | 基础系统 | 设计目的 |
+|---|---|---|
+| 通用 CATMonitor/Web/DFeE 控制面 | Alpine | 保持镜像小巧和 develop 的通用部署行为 |
+| CPU Stress Runner | Debian | 携带匹配的 MPI、OpenBLAS、numactl、HPL/HPCG 运行环境 |
+| Ascend CATMonitor/Web/DFeE 控制面 | Debian（glibc） | 兼容 DCMI 等厂商动态库 |
+| NPU Burn 数据面 | 管理员选择的 Ascend 基础镜像 | 继承匹配的 CANN/torch_npu 环境，不替换基础发行版 |
 
 ## 2. 构建
 
@@ -70,9 +79,10 @@ docker load -i catmonitor-npu.tar
 docker load -i catmonitor-npuburn.tar
 ```
 
-若必须离线构建，还要预先 `docker load` `golang:1.23`、
-`debian:bookworm-slim`（通用镜像另需 `golang:1.23-bookworm`），并准备
-Go module cache 与 Debian 系统包来源。CATMonitor 容器镜像和 NPU Burn
+若必须离线构建，还要预先加载相应 builder/runtime 镜像：NPU 控制面使用
+`golang:1.23` 和 `debian:bookworm-slim`，通用控制面使用
+`golang:1.23-bookworm` 和 `alpine:latest`，并准备 Go module cache 与对应发行版的
+系统包来源。CATMonitor 容器镜像和 NPU Burn
 运行镜像是两个独立产物，后者的联网/代理/离线 `pciutils` 流程见 stress 指南。
 
 ### NPU 镜像构建说明
@@ -97,7 +107,7 @@ LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/l
 | 文件 | 用途 |
 |------|------|
 | `Dockerfile.npu` | NPU 运行时镜像（debian + 预编译二进制） |
-| `Dockerfile.generic` | 通用镜像（多阶段，golang 编译 + Debian/glibc 运行时） |
+| `Dockerfile.generic` | 通用控制镜像（多阶段，golang 编译 + Alpine 运行时） |
 | `catmonitor.yaml` | 容器版配置（打包在镜像中） |
 
 ## 3. 启动
@@ -117,8 +127,9 @@ sudo catmonitor-install --profile monitoring
 
 `catmonitor-install` 支持 `monitoring`、`cpu-stress`、`ascend-a2`、`ascend-a3`。
 默认动作 `up` 只编排已有镜像与资产，不构建镜像、编译 benchmark、编辑 YAML 或
-运行压测。Web 默认监听 `127.0.0.1:19322`；端口冲突时可显式传
-`--web-addr 127.0.0.1:19530`，非回环地址会被拒绝。完整 profile、前置条件和安全边界见
+运行压测。Web 保持 develop 的默认监听 `:19322`，用于从外部监控节点；端口或绑定
+地址冲突时可显式传 `--web-addr HOST:PORT`。非回环监听只提供监控和报告读取，现有
+stress Web 写接口仍要求服务与请求都来自回环地址。完整 profile、前置条件和安全边界见
 [`STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md#9-统一容器安装入口)。
 
 ### 方式二：手工 Docker Compose（排查底层模型）
@@ -207,7 +218,7 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
   catmonitor-npu \
-  -addr=127.0.0.1:19322 \
+  -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
   -config=/etc/catmonitor/catmonitor.yaml
 ```
@@ -343,7 +354,7 @@ docker run -d --name catmonitor --privileged --network host --pid host \
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
   catmonitor-generic \
-  -addr=127.0.0.1:19322 \
+  -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
   -config=/etc/catmonitor/catmonitor.yaml
 
@@ -514,14 +525,18 @@ docker compose \
   up -d cpu-stress-runner catmonitor web dfee
 ```
 
-Web 只监听宿主机回环地址 `127.0.0.1:19322`。远端访问使用 SSH 隧道，不要为允许
-Web 提交压测而改成公网监听：
+默认 `:19322` 监听所有接口，以保持 develop 的外部监控能力；通过节点地址访问时可
+查看 dashboard、profile 和已有报告，但不能从 Web 提交或取消压测。若确实需要网页
+触发压测，应显式切换为回环监听并使用 SSH 隧道：
 
 ```bash
+sudo catmonitor-install --profile cpu-stress \
+  --web-addr 127.0.0.1:19322
 ssh -N -L 19322:127.0.0.1:19322 root@node
 ```
 
-随后在本机访问 `http://127.0.0.1:19322/stress/`。
+默认外部监控访问 `http://<node-address>:19322/`；回环模式下通过隧道访问
+`http://127.0.0.1:19322/stress/`。
 
 ### 8.4 验证
 

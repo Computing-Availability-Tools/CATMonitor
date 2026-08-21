@@ -1041,8 +1041,10 @@ docker compose \
 `docker/catmonitor.yaml`，否则 Web 没有 snapshot 数据。daemon 与 Web 最终挂载的是
 同一个合并后文件。
 
-Web 固定监听 `127.0.0.1:19322`，远程访问使用 SSH 隧道。完整构建、生成部署文件、
-CPU runner 构建/挂载、安全说明和无硬件容器 E2E 见
+Web 默认保持 develop 的 `:19322` 全接口监听，用于外部监控与报告读取；该模式下
+stress 写接口必须保持禁用。需要通过 Web 提交作业时，显式改为
+`127.0.0.1:19322` 并使用 SSH 隧道。完整构建、生成部署文件、CPU runner
+构建/挂载、安全说明和无硬件容器 E2E 见
 [`docker/README.md`](../../docker/README.md#8-容器化可靠性压测)。
 
 ## 8. CLI 实机验收
@@ -1241,7 +1243,8 @@ cp -a "$BACKUP_ROOT/catmonitor.yaml" /etc/catmonitor/catmonitor.yaml
 - [ ] 容器 NPU Burn 的正常结束、外层超时、取消和 Web 异常退出均无容器内残留进程
 - [ ] JSON 报告、历史、profile 和配置哈希完整
 - [ ] 正常结束、取消和超时后无残留进程
-- [ ] Web 只监听回环地址并通过 SSH 隧道访问
+- [ ] 默认 `:19322` 可外部读取监控/报告，但不能提交压测
+- [ ] 回环监听配合 SSH 隧道时，满足其余开关后可提交/取消压测
 - [ ] profile 展开状态不被自动刷新清除
 - [ ] CLI 与 Web 双向共享报告并拒绝并发作业
 - [ ] 单次缩短超时会改变执行配置哈希但不修改 YAML

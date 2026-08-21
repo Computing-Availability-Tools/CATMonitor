@@ -15,16 +15,15 @@ RUN go build -o /dfee ./features/dfee
 RUN go build -o /web ./features/web
 RUN go build -o /cpu-runner-client ./features/stress/cmd/cpu-runner-client
 
-FROM debian:bookworm-slim
+FROM alpine:latest
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     bash \
     dmidecode \
     ipmitool \
     pciutils \
     smartmontools \
-    util-linux \
-    && rm -rf /var/lib/apt/lists/*
+    util-linux
 
 COPY --from=builder /catmonitor /usr/local/bin/catmonitor
 COPY --from=builder /dfee /usr/local/bin/dfee

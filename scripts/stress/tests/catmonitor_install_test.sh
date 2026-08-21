@@ -100,18 +100,30 @@ assert_fails env CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" \
 assert_contains "$TEST_ROOT/unexpected.err" '--profile is required'
 
 CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" bash "$INSTALLER" \
-    --profile monitoring --action plan --web-addr 127.0.0.1:19530 \
+    --profile monitoring --action plan \
     "${common_args[@]}" >"$TEST_ROOT/monitoring.out"
 assert_contains "$TEST_ROOT/monitoring.out" 'profile: monitoring'
 assert_contains "$TEST_ROOT/monitoring.out" 'control image: catmonitor-generic'
 assert_contains "$TEST_ROOT/monitoring.out" 'docker-compose.config.yml'
 assert_contains "$TEST_ROOT/monitoring.out" 'Docker socket: not mounted'
-assert_contains "$TEST_ROOT/monitoring.out" 'Web listener: 127.0.0.1:19530 (loopback)'
+assert_contains "$TEST_ROOT/monitoring.out" 'Web listener: :19322 (all interfaces)'
 assert_contains "$DOCKER_LOG" 'command=compose'
 assert_contains "$DOCKER_LOG" 'CATMONITOR_WEB_ADDR'
 if grep -Fq 'docker-compose.stress.yml' "$TEST_ROOT/monitoring.out"; then
     fail 'monitoring profile unexpectedly includes stress overlay'
 fi
+
+CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" bash "$INSTALLER" \
+    --profile monitoring --action plan --web-addr 127.0.0.1:19530 \
+    "${common_args[@]}" >"$TEST_ROOT/monitoring-loopback.out"
+assert_contains "$TEST_ROOT/monitoring-loopback.out" \
+    'Web listener: 127.0.0.1:19530 (loopback)'
+
+CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" bash "$INSTALLER" \
+    --profile monitoring --action plan --web-addr 0.0.0.0:19531 \
+    "${common_args[@]}" >"$TEST_ROOT/monitoring-all-ipv4.out"
+assert_contains "$TEST_ROOT/monitoring-all-ipv4.out" \
+    'Web listener: 0.0.0.0:19531 (all interfaces)'
 
 CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" bash "$INSTALLER" \
     --profile cpu-stress --action plan "${common_args[@]}" >"$TEST_ROOT/cpu-plan.out"
@@ -123,6 +135,8 @@ CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" bash "$INSTALLER" \
     --profile cpu-stress --action up "${common_args[@]}" >"$TEST_ROOT/cpu-up.out"
 assert_contains "$TEST_ROOT/cpu-up.out" 'Stress deployment doctor: PASS'
 assert_contains "$TEST_ROOT/cpu-up.out" 'CATMonitor profile is up: cpu-stress'
+assert_contains "$TEST_ROOT/cpu-up.out" 'Web: http://<node-address>:19322/'
+assert_contains "$TEST_ROOT/cpu-up.out" 'Stress: http://<node-address>:19322/stress/'
 assert_contains "$DOCKER_LOG" 'up -d cpu-stress-runner catmonitor web dfee'
 assert_contains "$DOCKER_LOG" 'exec -T catmonitor catmonitor stress doctor -c /etc/catmonitor/catmonitor.yaml -o table'
 
@@ -153,9 +167,9 @@ assert_fails env "${ascend_env[@]}" bash "$INSTALLER" \
     --profile ascend-a2 --action plan "${common_args[@]}"
 assert_contains "$TEST_ROOT/unexpected.err" 'requires manifest npu_chip_generation=A2'
 assert_fails env CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" \
-    bash "$INSTALLER" --profile monitoring --action plan --web-addr 0.0.0.0:19322 \
+    bash "$INSTALLER" --profile monitoring --action plan --web-addr not-an-address \
     "${common_args[@]}"
-assert_contains "$TEST_ROOT/unexpected.err" 'must use the IPv4 loopback address'
+assert_contains "$TEST_ROOT/unexpected.err" 'must be a valid host:port listen address'
 
 # Recovery actions must remain available even when config/assets are missing.
 CATMONITOR_TEST_DOCKER_LOG="$DOCKER_LOG" bash "$INSTALLER" \

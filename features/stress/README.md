@@ -183,6 +183,10 @@ sudo bash scripts/stress/build_cpu_benchmarks.sh \
 容器。构建器在同一 Debian 多阶段镜像中编译 STREAM/HPL/HPCG，并携带匹配的 MPI、
 OpenBLAS、numactl 与 runner 服务：
 
+容器系统按依赖边界固定：通用 CATMonitor/Web/DFeE 控制面使用 Alpine，CPU runner
+使用 Debian，Ascend 控制面使用 Debian/glibc；NPU Burn 始终继承管理员选择的
+Ascend 基础镜像，不替换其 CANN/torch_npu 对应的系统环境。
+
 ```bash
 sudo bash scripts/stress/build_cpu_runner_image.sh \
   --image catmonitor/stress-cpu:node-v1 \

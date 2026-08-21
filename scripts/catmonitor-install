@@ -20,7 +20,7 @@ DOCKER_SOCKET=${CATMONITOR_DOCKER_SOCKET:-/var/run/docker.sock}
 DOCKER_BIN=${CATMONITOR_DOCKER_BIN:-docker}
 COMPOSE_DIR=${CATMONITOR_COMPOSE_DIR:-}
 PROJECT_NAME=${CATMONITOR_COMPOSE_PROJECT:-catmonitor}
-WEB_ADDR=${CATMONITOR_WEB_ADDR:-127.0.0.1:19322}
+WEB_ADDR=${CATMONITOR_WEB_ADDR:-:19322}
 RUNNER_WAIT_SECONDS=60
 ACK_ROOT_DOCKER_SOCKET=false
 SKIP_DOCTOR=false
@@ -62,7 +62,7 @@ Options:
   --compose-dir PATH         Directory containing reviewed Compose definitions
   --docker-bin PATH          Docker CLI (default: docker)
   --project-name NAME        Compose project name (default: catmonitor)
-  --web-addr ADDRESS         Loopback Web listener (default: 127.0.0.1:19322)
+  --web-addr ADDRESS         Web listener (default: :19322, all interfaces)
   --runner-wait SECONDS      CPU runner health wait, 1..600 (default: 60)
   --skip-doctor              Do not run post-start doctor
   -h, --help                 Show this help
@@ -114,12 +114,31 @@ case "$RUNNER_WAIT_SECONDS" in
 esac
 [ "$RUNNER_WAIT_SECONDS" -ge 1 ] && [ "$RUNNER_WAIT_SECONDS" -le 600 ] || \
     die "--runner-wait must be an integer between 1 and 600"
-case "$WEB_ADDR" in
-    127.0.0.1:*) web_port=${WEB_ADDR#127.0.0.1:} ;;
-    *) die "--web-addr must use the IPv4 loopback address 127.0.0.1" ;;
-esac
+web_host=
+if [[ "$WEB_ADDR" =~ ^:([0-9]+)$ ]]; then
+    web_host=
+    web_port=${BASH_REMATCH[1]}
+elif [[ "$WEB_ADDR" =~ ^\[([0-9A-Fa-f:]+)\]:([0-9]+)$ ]]; then
+    web_host=${BASH_REMATCH[1]}
+    web_port=${BASH_REMATCH[2]}
+elif [[ "$WEB_ADDR" =~ ^([A-Za-z0-9._-]+):([0-9]+)$ ]]; then
+    web_host=${BASH_REMATCH[1]}
+    web_port=${BASH_REMATCH[2]}
+else
+    die "--web-addr must be a valid host:port listen address"
+fi
 case "$web_port" in ''|*[!0-9]*|0) die "--web-addr has an invalid port" ;; esac
 [ "$web_port" -le 65535 ] || die "--web-addr has an invalid port"
+case "$web_host" in
+    ''|0.0.0.0|::) web_scope='all interfaces' ;;
+    127.0.0.1|localhost|::1) web_scope=loopback ;;
+    *) web_scope='selected interface' ;;
+esac
+if [ "$web_scope" = 'all interfaces' ]; then
+    web_url="http://<node-address>:$web_port"
+else
+    web_url="http://$WEB_ADDR"
+fi
 
 absolute_path() {
     local option=$1 value=$2
@@ -379,7 +398,7 @@ print_plan() {
     printf '  project: %s\n' "$PROJECT_NAME"
     printf '  control image: %s\n' "$CONTROL_IMAGE"
     printf '  config: %s -> /etc/catmonitor/catmonitor.yaml (read-only)\n' "$CONFIG_PATH"
-    printf '  Web listener: %s (loopback)\n' "$WEB_ADDR"
+    printf '  Web listener: %s (%s)\n' "$WEB_ADDR" "$web_scope"
     if [ "$is_stress" = true ]; then
         printf '  CPU runner image: %s\n' "$CPU_RUNNER_IMAGE"
         printf '  stress plugin: %s (read-only)\n' "$STRESS_ROOT"
@@ -452,7 +471,7 @@ case "$ACTION" in
             if [ "$SKIP_DOCTOR" != true ]; then run_doctor; fi
         fi
         printf 'CATMonitor profile is up: %s\n' "$PROFILE"
-        printf 'Web: http://%s/\n' "$WEB_ADDR"
-        if [ "$is_stress" = true ]; then printf 'Stress: http://%s/stress/\n' "$WEB_ADDR"; fi
+        printf 'Web: %s/\n' "$web_url"
+        if [ "$is_stress" = true ]; then printf 'Stress: %s/stress/\n' "$web_url"; fi
         ;;
 esac

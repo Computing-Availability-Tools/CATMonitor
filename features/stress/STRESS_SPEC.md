@@ -60,14 +60,20 @@ Docker socket 必须位于单独的显式 overlay。未启用 stress 的部署�
 权限。generic 与 NPU 控制镜像可以共享 Compose 结构，但 DCMI ABI 未插件化前不得
 宣称一个二进制可跨 CPU-only 与 Ascend 节点通用。
 
+容器运行时的职责和基础系统必须保持分离：通用控制面使用 Alpine，以保持小巧和
+develop 既有行为；CPU Stress Runner 使用 Debian，以提供匹配的 MPI、OpenBLAS、
+numactl、HPL/HPCG 环境；NPU 控制面使用 Debian/glibc，以兼容 DCMI 厂商库；NPU
+Burn 必须继续 `FROM` 管理员选择的 Ascend 基础镜像，不得为了统一镜像而替换其
+CANN/torch_npu 对应的基础发行版。
+
 仓库必须提供统一容器编排入口 `scripts/catmonitor-install`，至少支持
 `monitoring`、`cpu-stress`、`ascend-a2`、`ascend-a3` profile 以及
 `plan/up/status/doctor/down` 动作。该入口必须：
 
 - 默认读取 `/etc/catmonitor/catmonitor.yaml`、`/opt/catmonitor/stress` 和
   `/var/lib/catmonitor/stress`，同时允许显式绝对路径覆盖；
-- Web 默认监听 `127.0.0.1:19322`，允许显式选择其他回环端口，但不得通过安装器
-  配置非回环监听；
+- Web 保持 develop 的默认 `:19322` 全接口监听，并允许显式覆盖监听地址；外部监听
+  用于监控与读取报告，不得因此放宽 stress Web 写接口的回环监听/来源要求；
 - 把同一份主配置以只读方式挂入 daemon 和 Web，不维护 stress 专用 Web 配置；
 - 仅消费本地已有镜像、已安装 adapter 和部署 manifest，不编译 benchmark、不拉取
   或构建镜像、不编辑 YAML、不创建 NPU Burn 容器、不运行压测；

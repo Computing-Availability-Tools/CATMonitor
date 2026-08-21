@@ -80,6 +80,11 @@ ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。stock HPL 2.3 顶层 Makefile �
 `docker-compose.stress-npuburn.yml`，把管理员选择的 socket 挂入控制容器。
 固定 NPU Burn 镜像/容器仍是独立数据面，不进入 CATMonitor 主镜像生命周期。
 
+四个运行面的系统基线由各自依赖决定：generic 控制面沿用 Alpine；CPU runner 使用
+Debian 来闭合 MPI/OpenBLAS/HPL/HPCG ABI；NPU 控制面使用 Debian/glibc 来装载 DCMI；
+NPU Burn 的 builder 和 runtime 都继承管理员选择的 Ascend `BASE_IMAGE`，只在其中
+补齐 NPU Burn 自身依赖，不把基础系统替换成 CATMonitor 选择的发行版。
+
 `scripts/catmonitor-install` 是这些部署层之上的薄编排器，而不是新的资产构建器。
 它把 profile 映射为固定的 Compose 层和服务集合：
 
@@ -95,6 +100,11 @@ CPU backend、NPU 固定容器/image 和芯片代际，再验证本地镜像与�
 Compose。`plan` 只读输出解析后的事实；`up` 只创建共享状态目录、启动服务、等待
 runner health 并调用无负载 doctor；`status/down` 特意不依赖运行资产仍然存在，以
 保留故障恢复能力。安装器不调用任何 build/bootstrap/workload 工具。
+
+基础 Web 地址保持 develop 的 `:19322`，因此默认可从节点外部读取监控和 stress
+报告。这个可达性不改变写操作授权：stress handler 继续要求 Web 本身绑定回环且
+请求来自回环连接。管理员只有在需要网页触发/取消压测时才把 `--web-addr` 改为
+`127.0.0.1:19322` 并通过 SSH 隧道访问；CLI 触发不依赖该设置。
 
 Ascend profile 当前仍叠加 `docker-compose.stress-npuburn.yml`，因此 `up` 必须通过
 独立参数确认 root 等价 Socket 风险。这个确认只是对现有兼容层的显式授权，不是
