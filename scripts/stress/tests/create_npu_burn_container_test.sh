@@ -140,6 +140,12 @@ for required in \
     assert_contains "$STATE_ROOT/run.args" "$required"
 done
 assert_contains "$STATE_ROOT/run.args" "$OUTPUT_DIR:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output:rw"
+for forbidden_mount in \
+    '/usr/local/Ascend/ascend-toolkit' \
+    '/usr/local/Ascend/cann-' \
+    '/usr/local/Ascend/nnae'; do
+    assert_not_contains "$STATE_ROOT/run.args" "$forbidden_mount"
+done
 assert_not_line "$STATE_ROOT/run.args" '--env'
 assert_not_line "$STATE_ROOT/run.args" '-e'
 

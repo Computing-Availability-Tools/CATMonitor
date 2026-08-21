@@ -82,8 +82,9 @@ ARCH、TOPdir、CC、LINKER、LAinc 和 LAlib。stock HPL 2.3 顶层 Makefile �
 
 四个运行面的系统基线由各自依赖决定：generic 控制面沿用 Alpine；CPU runner 使用
 Debian 来闭合 MPI/OpenBLAS/HPL/HPCG ABI；NPU 控制面使用 Debian/glibc 来装载 DCMI；
-NPU Burn 的 builder 和 runtime 都继承管理员选择的 Ascend `BASE_IMAGE`，只在其中
-补齐 NPU Burn 自身依赖，不把基础系统替换成 CATMonitor 选择的发行版。
+  NPU Burn builder 继承完整 Ascend 开发镜像；最终阶段继承独立的精简 Ascend
+PyTorch runtime image。runtime 内保留 CANN runtime、Python、torch 和 torch_npu，但
+不保留 vLLM、TBE、编译器、开发工具或 wheel archive。
 
 `scripts/catmonitor-install` 是这些部署层之上的薄编排器，而不是新的资产构建器。
 它把 profile 映射为固定的 Compose 层和服务集合：
@@ -117,7 +118,7 @@ NPU Burn 使用相同的“构建与运行分离”边界，但构建产物是�
 管理员镜像构建期                         A3 节点部署期                 用户运行期
 build_npu_burn_image.sh                 create_npu_burn_container.sh  catmonitor stress
   ├─ 仓库固定上游源码                     ├─ 固定管理员容器                ├─ 选择 npu_burn
-  ├─ CANN/torch_npu 基础镜像              ├─ benchmark_check.sh            ├─ 互斥、超时与取消
+  ├─ builder + slim runtime 基础镜像       ├─ benchmark_check.sh            ├─ 互斥、超时与取消
   ├─ 可选显式兼容补丁                      ├─ 全量 identity device map       └─ CSV/SDC 校验
   ├─ CANN 环境发现与构建预检              └─ docker exec
   ├─ runtime pciutils/lspci
@@ -135,9 +136,11 @@ source CANN 环境：显式 override 优先，其次为两个 canonical toolkit 
 它验证 `libascend_hal.so` 解析及 torch、torch_npu、TBE import，然后构建、
 安装并检查 NPU Burn metadata、import、custom ops 和入口 mode。Dockerfile 将
 预检、native wheel 构建、
-runtime `pciutils/lspci` 供应、本地 wheel 安装和最终验证拆成独立
-layer；最终 layer 用 nonce 重跑只读
-预检并输出 manifest marker，而高成本 C++ 编译与安装 layer 可复用缓存。
+runtime `pciutils/lspci` 供应、Python overlay 安装和最终 ABI 验证拆成独立
+layer；最终 layer 用 nonce 重跑只读验证并输出 manifest marker，而高成本 C++ 编译
+与安装 layer 可复用缓存。Python overlay 由中间层从 wheel 离线生成，最终 stage 只复制
+安装后的包和 dist-info，因此 wheel 文件本身不进入最终镜像层，runtime base 也无需
+为了安装 NPU Burn 而携带 pip。
 Docker build network 默认 `default`。供应顺序为基础镜像已有 `lspci`、构建上下文的
 离线 RPM/DEB 依赖闭包、基础镜像在线包管理器；离线包输入在未显式覆盖 network 时
 自动选择 `none`。在线包名由 `runtime-packages.txt` 解析，版本不写死。构建脚本只把
@@ -150,7 +153,10 @@ PyPI 且不会被基础镜像
 中的同版本包跳过。它不依赖登录 shell/profile，不设置
 `TORCH_DEVICE_BACKEND_AUTOLOAD=0`，也不要求 `npu-smi` 或 NPU 设备。基础镜像
 不自带 HAL 时，可显式把宿主机 driver `lib64` 暂存到 builder stage；最终 stage
-重新从原基础镜像开始，只复制已验证 wheel、入口和许可证，不携带宿主机驱动。
+从 slim runtime base 开始，只复制 overlay、入口、校验器和许可证，不携带宿主机驱动。
+CANN runtime 属于 runtime base，不从宿主机挂载；固定容器只读挂载 driver/DCMI/npu-smi。
+这一边界只约束 NPU Burn 执行镜像；CATMonitor NPU 指标控制面仍沿用 develop 的
+DCMI/toolkit 挂载方式，不在本特性中重写。
 构建器只调用 image inspect/build。`create_npu_burn_container.sh` 位于独立的管理员
 部署面，动态 identity-map 全部 `/dev/davinciN`、控制设备、只读 driver/tool 路径和
 结果目录；设备节点 ID 与 PCI topology 生成的 NPU Burn logical ID 分开记录。

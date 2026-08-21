@@ -42,7 +42,10 @@ require_fixed docker/stress/cpu/Dockerfile 'build_cpu_benchmarks.sh'
 require_fixed docker/stress/cpu/Dockerfile 'libmpich-dev'
 require_fixed docker/stress/cpu/Dockerfile 'ARG RUNTIME_IMAGE=debian:bookworm-slim'
 require_fixed docker/stress/cpu/entrypoint.sh 'setpriv'
-require_fixed docker/stress/npu/Dockerfile 'FROM ${BASE_IMAGE} AS npuburn_runtime'
+require_fixed docker/stress/npu/Dockerfile 'FROM ${BUILDER_BASE_IMAGE} AS npuburn_builder'
+require_fixed docker/stress/npu/Dockerfile 'FROM ${RUNTIME_BASE_IMAGE} AS npuburn_runtime'
+require_fixed docker/stress/npu/runtime_preflight.sh 'CATMONITOR_RUNTIME_PREFLIGHT=PASS'
+require_fixed scripts/stress/create_npu_burn_container.sh 'CANN runtime and torch_npu stay inside the image'
 
 require_fixed docker/catmonitor.yaml 'stress:'
 require_fixed docker/catmonitor.yaml 'enabled: false'
@@ -108,6 +111,10 @@ if grep -Fq 'benchmark_check.sh' "$REPO_ROOT/docker/Dockerfile.generic" ||
 fi
 if grep -Fq 'docker-cli' "$REPO_ROOT/docker/Dockerfile.generic"; then
     fail "generic image must not carry the NPU Burn Docker client dependency"
+fi
+if grep -Eq '/usr/local/Ascend/(ascend-toolkit|cann-|nnae)' \
+    "$REPO_ROOT/scripts/stress/create_npu_burn_container.sh"; then
+    fail "NPU Burn fixed container must not mount host CANN/toolkit paths"
 fi
 
 printf 'PASS: container deployment definitions and stress opt-in boundary\n'

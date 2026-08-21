@@ -95,11 +95,13 @@ CANN/torch_npu 对应的基础发行版。
 仓库必须提供独立的 Linux 管理员入口
 `scripts/stress/build_npu_burn_image.sh`，从仓库内固定的 MindCluster
 AscendNPUBurn 上游源码和管理员已审批、已拉取或加载到本地的 CANN/torch_npu
-基础镜像构建目标镜像。基础镜像已包含 `lspci` 时，标准构建只要求
-`--base-image` 和 `--image`；
+基础镜像构建目标镜像。正式发布构建必须显式提供
+`--builder-base-image`、`--runtime-base-image` 和 `--image`；旧 `--base-image` 仅为
+共享基础镜像的兼容入口，不得用于 slim release；
 `--source` 与 `--source-metadata` 只作为上游升级、开发和兼容性验证的显式覆盖
 入口。构建器还必须支持 `--docker-bin`、`--compat-profile`、可重复的 `--patch`、
-`--build-root`、`--manifest`、`--force`、可选的 `--ascend-env-script`、显式
+`--build-root`、`--manifest`、`--force`、可选的 builder/runtime 独立 CANN 环境脚本
+override、兼容 `--ascend-env-script`、显式
 `--build-network`、可重复的 `--pciutils-package`，以及只进入 builder stage 的可选
 `--build-driver-lib-dir`。
 
@@ -118,7 +120,11 @@ Git tree、归档哈希及许可证。源码必须与所记录上游修订版一
 CANN 8.3.RC2、torch 2.8 和 torch_npu 2.8 组合；使用时必须显式选择
 `--compat-profile a2-cann83`。该补丁不得隐式应用到 A3/A5。
 
-基础镜像必须包含构建所需的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE。
+builder 基础镜像必须包含构建所需的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE。
+runtime 基础镜像必须包含匹配的 CANN runtime、Python、PyTorch 和 torch_npu，但不得
+依赖 builder 中的 vLLM、TBE、编译器或开发工具。两者必须为 Linux、架构一致、
+Python SOABI、torch、torch_npu 和实际 CANN 版本一致；split 模式必须解析为不同镜像
+ID，且 runtime base 必须小于 builder base。
 构建必须使用 Bash 显式 source 已发现的 CANN 环境，不得依赖登录 shell、
 profile 或默认关闭 torch backend autoload。发现顺序为：显式 override、
 `ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash`、唯一的
@@ -131,13 +137,14 @@ profile 或默认关闭 torch backend autoload。发现顺序为：显式 overri
 与构建网络记录进 manifest。镜像构建只允许完成系统依赖安装、HAL/import 预检、
 源码构建、wheel 安装、安装包元数据、NPU Burn import、custom ops import 和入口文件
 可执行性检查；不得调用依赖 NUMA/NPU 拓扑的
-运行时 CLI，不得映射 NPU 设备、创建或运行容器，也不得
+    运行时 CLI，不得映射 NPU 设备、创建或运行容器，也不得
 执行 NPU 负载。自带 HAL 的基础镜像不要求宿主机 driver、`npu-smi` 或设备存在。
 若基础镜像只在挂载宿主机 driver 后才能 import torch_npu，管理员可显式提供
 `--build-driver-lib-dir`；构建器必须使用多阶段构建，只将其放入 builder stage，
 不得复制到最终运行镜像，也不得借此映射 NPU 设备。
-管理员仍负责基础镜像与宿主机驱动/CANN ABI 的匹配，以及后续固定
-容器的 device、volume、env 和生命周期。
+最终镜像必须内置 CANN runtime，不得依赖宿主机挂载 CANN toolkit。管理员仍负责
+runtime CANN 与宿主机 driver ABI 的匹配，以及后续固定容器的 device、只读 driver/
+DCMI volume、env 和生命周期。
 
 构建器必须：
 
@@ -156,15 +163,17 @@ profile 或默认关闭 torch backend autoload。发现顺序为：显式 overri
   `HTTPS_PROXY`、`NO_PROXY` 及小写形式按 Docker 预定义 build arg 的变量名转发。
   不得输出或校验代理值，不得把值放入命令行参数、Git、CATMonitor YAML、manifest、
   Dockerfile `ARG/ENV` 或最终镜像；日志最多报告某类代理“已配置”；
-- NPU Burn wheel 必须继续用
-  `--no-index --no-deps --force-reinstall`
-  安装，禁止访问 PyPI 或因基础镜像已安装同版本而跳过；
+- builder 中 NPU Burn wheel 必须继续用 `--no-index --no-deps --force-reinstall`
+  验证；disposable builder 派生层必须用 builder 的 pip 生成 `--target` Python overlay，
+  最终镜像只复制该 overlay，禁止访问 PyPI，且不得要求 runtime base 携带 pip 或保留
+  wheel archive；
 - 分离预检、wheel 构建、wheel 安装与 package 验证 layer，使
   native wheel 在仅最终验证变更时可复用缓存；
 - 在镜像标签中记录来源类型、上游 repository/revision、原始/补丁后源码 SHA-256
   和兼容 profile，并在构建后回读校验；
 - 原子生成 schema 化 manifest，记录源码、补丁、Dockerfile/entrypoint/
-  entrypoint validator/Ascend helper、Docker 版本、基础/目标镜像身份、OS/架构、所选环境脚本、
+  entrypoint validator/runtime ABI validator/runtime preflight/Ascend helper、Docker 版本、
+  builder/runtime/目标镜像身份、大小、OS/架构、所选环境脚本、
   CANN 版本、build network、runtime package list 哈希、pciutils 来源、离线包数量/
   格式/集合哈希、lspci 路径与版本（但不记录代理）、wheel 文件名/SHA-256/
   安装版本与路径、离线强制重装事实、

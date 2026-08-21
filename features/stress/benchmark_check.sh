@@ -302,8 +302,19 @@ probe_npu_container() {
         NPU_CONTAINER_MESSAGE="container executable is unavailable"
         return
     fi
+    if "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME" \
+        /usr/bin/test -x /usr/local/bin/catmonitor-npu-burn-preflight \
+        >/dev/null 2>&1; then
+        if ! "$NPU_BURN_CONTAINER_RUNTIME" exec "$NPU_BURN_CONTAINER_NAME" \
+            /usr/local/bin/catmonitor-npu-burn-preflight >/dev/null 2>&1; then
+            NPU_CONTAINER_MESSAGE="container runtime preflight failed"
+            return
+        fi
+        NPU_CONTAINER_MESSAGE="running container, executable and runtime preflight are available"
+    else
+        NPU_CONTAINER_MESSAGE="running legacy container and executable are available; runtime import preflight is unavailable"
+    fi
     NPU_CONTAINER_STATUS=pass
-    NPU_CONTAINER_MESSAGE="running container and executable are available"
 }
 
 emit_npu_container_asset() {

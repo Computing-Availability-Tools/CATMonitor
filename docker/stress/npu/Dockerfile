@@ -1,10 +1,11 @@
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE} AS npuburn_builder
+ARG BUILDER_BASE_IMAGE
+ARG RUNTIME_BASE_IMAGE
+FROM ${BUILDER_BASE_IMAGE} AS npuburn_builder
 
-ARG ASCEND_ENV_SCRIPT
+ARG BUILDER_ASCEND_ENV_SCRIPT
 
 ENV HOME=/opt/catmonitor/npuburn-home \
-    ASCEND_ENV_SCRIPT=${ASCEND_ENV_SCRIPT}
+    ASCEND_ENV_SCRIPT=${BUILDER_ASCEND_ENV_SCRIPT}
 
 SHELL ["/bin/bash", "-c"]
 
@@ -12,11 +13,12 @@ WORKDIR /opt/catmonitor/npuburn-source
 COPY source/ /opt/catmonitor/npuburn-source/
 COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
 COPY validate_entrypoint.sh /usr/local/libexec/catmonitor/validate_entrypoint.sh
+COPY validate_runtime_abi.py /usr/local/libexec/catmonitor/validate_runtime_abi.py
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 
 # Optional host driver libraries are staged only in this disposable builder
-# stage. The final runtime image starts from BASE_IMAGE again and cannot retain
-# them. An empty directory preserves the normal self-contained A3 path.
+# stage. The final runtime image starts from RUNTIME_BASE_IMAGE and cannot
+# retain them. An empty directory preserves the normal self-contained path.
 COPY build-driver-lib64/ /usr/local/Ascend/driver/lib64/
 
 # Prepare immutable CATMonitor helpers.
@@ -77,10 +79,35 @@ RUN set -euo pipefail; \
     printf 'CATMONITOR_PACKAGE_VERSION=%s\n' "$package_version"; \
     printf 'CATMONITOR_PACKAGE_FILE=%s\n' "$package_file"; \
     printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'; \
-    printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'
+    printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'; \
+    install -d -m 0755 /opt/catmonitor/build-compat; \
+    printf 'CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT"; \
+    python3 /usr/local/libexec/catmonitor/validate_runtime_abi.py capture \
+        --cann-version "$CATMONITOR_CANN_VERSION" \
+        --output /opt/catmonitor/build-compat/builder-abi.json
 
 
-FROM ${BASE_IMAGE} AS npuburn_runtime
+# Prepare the installed overlay with the builder's pip. This stage is
+# disposable, so a minimal runtime base does not need pip or build tooling.
+FROM npuburn_builder AS npuburn_runtime_package
+
+SHELL ["/bin/bash", "-c"]
+
+# Install into an isolated overlay. The final image copies only installed
+# package files and metadata, not the wheel archive or builder toolchain.
+RUN set -euo pipefail; \
+    set -- /opt/catmonitor/npuburn-source/build/dist/ascend_npu_burn-*.whl; \
+    [ "$#" -eq 1 ] && [ -f "$1" ]; \
+    python3 -m pip install \
+        --no-index \
+        --no-cache-dir \
+        --no-deps \
+        --target /opt/catmonitor/npuburn-python \
+        "$1"; \
+    rm -rf /opt/catmonitor/npuburn-source/build/dist
+
+
+FROM ${RUNTIME_BASE_IMAGE} AS npuburn_runtime
 
 ARG SOURCE_SHA256
 ARG PATCHED_SOURCE_SHA256
@@ -88,7 +115,7 @@ ARG COMPAT_PROFILE=none
 ARG SOURCE_ORIGIN
 ARG UPSTREAM_REPOSITORY
 ARG UPSTREAM_REVISION
-ARG ASCEND_ENV_SCRIPT
+ARG RUNTIME_ASCEND_ENV_SCRIPT
 ARG BUILD_VALIDATION_NONCE
 ARG PCIUTILS_ONLINE_INSTALL=false
 
@@ -102,13 +129,17 @@ LABEL org.opencontainers.image.title="CATMonitor Ascend NPU Burn runtime" \
       io.catmonitor.npu-burn.upstream-revision="${UPSTREAM_REVISION}"
 
 ENV HOME=/opt/catmonitor/npuburn-home \
-    ASCEND_ENV_SCRIPT=${ASCEND_ENV_SCRIPT}
+    ASCEND_ENV_SCRIPT=${RUNTIME_ASCEND_ENV_SCRIPT} \
+    PYTHONPATH=/opt/catmonitor/npuburn-python:${PYTHONPATH}
 
 SHELL ["/bin/bash", "-c"]
 
 COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
+COPY validate_runtime_abi.py /usr/local/libexec/catmonitor/validate_runtime_abi.py
+COPY runtime_preflight.sh /usr/local/bin/catmonitor-npu-burn-preflight
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
-COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/build/dist/ /opt/catmonitor/npuburn-wheel/
+COPY --from=npuburn_builder /opt/catmonitor/build-compat/builder-abi.json /usr/local/share/catmonitor/builder-abi.json
+COPY --from=npuburn_runtime_package /opt/catmonitor/npuburn-python/ /opt/catmonitor/npuburn-python/
 COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/LICENSE.md /usr/share/licenses/ascend-npu-burn/LICENSE.md
 COPY pciutils-packages/ /opt/catmonitor/pciutils-packages/
 COPY runtime-packages.txt /opt/catmonitor/runtime-packages.txt
@@ -182,19 +213,25 @@ RUN set -euo pipefail; \
     printf '%s\n' "$pciutils_source" > /usr/local/share/catmonitor/pciutils-source; \
     rm -rf /opt/catmonitor/pciutils-packages /opt/catmonitor/runtime-packages.txt
 
-# F. Install the exact builder-validated wheel into the clean runtime stage.
-# Host driver libraries from the optional builder input are not copied here.
+# F. Validate the slim runtime base against the builder ABI. CANN remains in
+# the runtime image; only host driver libraries/devices are mounted later.
+# Host driver libraries from the optional builder input are never copied here.
 RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn; \
+    chmod 0755 /usr/local/bin/catmonitor-npu-burn-preflight; \
     chmod 0644 /usr/local/libexec/catmonitor/ascend_env.sh; \
-    set -- /opt/catmonitor/npuburn-wheel/ascend_npu_burn-*.whl; \
-    [ "$#" -eq 1 ] && [ -f "$1" ]; \
-    python3 -m pip install \
-        --no-index \
-        --no-cache-dir \
-        --no-deps \
-        --force-reinstall \
-        "$1"; \
+    chmod 0644 /usr/local/libexec/catmonitor/validate_runtime_abi.py; \
+    printf '#!/usr/bin/env bash\nexec python3 -m ascend_npu_burn.npu_burn "$@"\n' \
+        > /usr/local/bin/npu-burn; \
+    chmod 0755 /usr/local/bin/npu-burn; \
+    source /usr/local/libexec/catmonitor/ascend_env.sh; \
+    catmonitor_source_ascend_env; \
+    printf 'CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT"; \
+    python3 /usr/local/libexec/catmonitor/validate_runtime_abi.py validate \
+        --expected /usr/local/share/catmonitor/builder-abi.json \
+        --cann-version "$CATMONITOR_CANN_VERSION"; \
+    runtime_package_version=$(python3 -c 'import importlib.metadata as metadata; print(metadata.version("ascend-npu-burn"))'); \
+    printf 'CATMONITOR_RUNTIME_NPUBURN_PACKAGE_VERSION=%s\n' "$runtime_package_version"; \
     install -d -m 0750 "$HOME/.ascend_npu_burn/output"
 
 # G. Revalidate the final image without importing the runtime command module or

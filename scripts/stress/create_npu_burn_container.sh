@@ -30,8 +30,9 @@ Options:
 
 The script maps every host /dev/davinciN node into the container with the same
 host device-node ID, plus the required manager/devmm/HDC devices and validated
-Ascend driver/tool paths. NPU Burn logical IDs are derived separately from PCI
-topology. The container inherits environment variables from the image.
+Ascend driver/DCMI paths. CANN runtime and torch_npu stay inside the image and
+are never mounted from the host. NPU Burn logical IDs are derived separately
+from PCI topology. The container inherits environment variables from the image.
 
 An existing matching stopped container is started. An existing mismatched
 container is never removed or replaced automatically.

@@ -68,14 +68,19 @@ MindCluster AscendNPUBurn 源码和管理员批准的本地 CANN/torch_npu 基�
 A3 首次候选使用 `--compat-profile none`；只有实际兼容故障确认后，才用命名
 profile 和显式审计补丁构建，不会默认带入 A2 修改。
 
-基础镜像必须包含可用于构建的 CANN toolkit/devlib、PyTorch、torch_npu 和 TBE。
+builder 基础镜像必须包含可用于构建的 CANN toolkit/devlib、PyTorch、torch_npu 和
+TBE；runtime 基础镜像应只包含匹配的 CANN runtime、Python、PyTorch 和 torch_npu，
+不得携带 vLLM 或编译工具链。
 构建器会显式发现并 source CANN 环境，依次支持
 `ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash` 和唯一的
-`cann-*/set_env.sh`；多版本歧义时必须用 `--ascend-env-script` 指定镜像内绝对路径。
+`cann-*/set_env.sh`；多版本歧义时分别用 `--builder-ascend-env-script` 或
+`--runtime-ascend-env-script` 指定对应镜像内绝对路径。旧 `--ascend-env-script` 仅适用于
+两套镜像使用同一路径的兼容场景。
 
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
-  --base-image registry.example/ascend/cann-pytorch:approved \
+  --builder-base-image registry.example/ascend/cann-pytorch-devel:approved \
+  --runtime-base-image registry.example/ascend/cann-pytorch-runtime:approved \
   --image catmonitor/npuburn:a3-candidate \
   --compat-profile none
 ```
@@ -86,7 +91,8 @@ driver `lib64` 作为仅构建阶段输入：
 
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
-  --base-image quay.io/ascend/vllm-ascend:v0.12.0rc1 \
+  --builder-base-image quay.io/ascend/vllm-ascend:v0.12.0rc1 \
+  --runtime-base-image registry.example/ascend/cann83-pytorch28-runtime:approved \
   --image catmonitor/npuburn:a2-cann83 \
   --compat-profile a2-cann83 \
   --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
@@ -94,8 +100,11 @@ sudo bash scripts/stress/build_npu_burn_image.sh \
 ```
 
 构建采用多阶段镜像：宿主机驱动只进入 disposable builder，用于 HAL、torch_npu、
-custom ops 和 wheel 验证；最终运行镜像从原始基础镜像重新开始，不包含这份驱动输入。
-manifest 会记录 driver 输入哈希以及 `included_in_final_image=false`。
+custom ops 和 wheel 验证；disposable builder 派生层用 builder 自带 pip 生成 overlay，
+因此 runtime base 不需要 pip。最终运行镜像从精简 runtime base 开始，只复制已安装的
+NPU Burn Python overlay，不携带 wheel archive、编译工具链或宿主机 driver。CANN runtime
+保留在镜像内，部署时只读挂载宿主机 driver/DCMI。manifest 会记录两套基础镜像身份、
+大小、ABI 比对和 `included_in_final_image=false`。
 
 构建会在 wheel 之前检查 `libascend_hal.so`、torch、torch_npu 和 TBE，再执行
 wheel 构建、纯本地强制重装、安装包元数据、`ascend_npu_burn`/custom ops import

@@ -52,6 +52,15 @@ assert_contains "$TEST_ROOT/cann.log" "$CANN_ROOT/cann-9.0.1/set_env.sh"
 # The canonical toolkit path wins even when multiple versioned layouts exist.
 CANONICAL_ROOT="$TEST_ROOT/canonical-layout"
 write_env "$CANONICAL_ROOT/ascend-toolkit/set_env.sh" canonical
+printf 'export ASCEND_TOOLKIT_HOME=%q\n' "$CANONICAL_ROOT/ascend-toolkit/latest" \
+    >>"$CANONICAL_ROOT/ascend-toolkit/set_env.sh"
+install -d -m 0755 "$CANONICAL_ROOT/ascend-toolkit/latest/aarch64-linux"
+cat >"$CANONICAL_ROOT/ascend-toolkit/latest/aarch64-linux/ascend_toolkit_install.info" <<'EOF'
+package_name=Ascend-cann-toolkit
+version=8.3.RC2
+arch=aarch64
+os=linux
+EOF
 write_env "$CANONICAL_ROOT/cann-8.3/set_env.sh" cann-8.3
 write_env "$CANONICAL_ROOT/cann-9.0.1/set_env.sh" cann-9.0.1
 (
@@ -59,6 +68,7 @@ write_env "$CANONICAL_ROOT/cann-9.0.1/set_env.sh" cann-9.0.1
     source "$HELPER"
     catmonitor_source_ascend_env
     [ "$CATMONITOR_ENV_FIXTURE" = canonical ]
+    [ "$CATMONITOR_CANN_VERSION" = 8.3.RC2 ]
 ) >"$TEST_ROOT/canonical.log"
 assert_contains "$TEST_ROOT/canonical.log" "$CANONICAL_ROOT/ascend-toolkit/set_env.sh"
 

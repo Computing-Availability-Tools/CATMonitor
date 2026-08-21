@@ -67,6 +67,28 @@ EOF
 catmonitor_cann_version_from_env() {
     local selected=$1
     local version=unknown
+    local install_info
+    local detected
+
+    # Canonical toolkit layouts often expose ASCEND_TOOLKIT_HOME as a `latest`
+    # symlink. Prefer the installed package metadata so manifests and ABI checks
+    # record 8.3.RC2/9.0.1 instead of the non-version identity `latest`.
+    if [ -n "${ASCEND_TOOLKIT_HOME:-}" ]; then
+        shopt -s nullglob
+        for install_info in "$ASCEND_TOOLKIT_HOME"/*-linux/ascend_toolkit_install.info; do
+            [ -f "$install_info" ] || continue
+            detected=$(awk -F= '$1 == "version" { print $2; exit }' "$install_info")
+            if [ -n "$detected" ]; then
+                version=$detected
+                break
+            fi
+        done
+        shopt -u nullglob
+        if [ "$version" != unknown ]; then
+            printf '%s\n' "$version"
+            return 0
+        fi
+    fi
 
     case "$selected" in
         */cann-*/set_env.sh)

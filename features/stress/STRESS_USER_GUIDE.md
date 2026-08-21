@@ -176,7 +176,10 @@ bootstrap capability 必须在 runner 启动前全部清空。
 ## 6. Ascend NPU Burn
 
 仓库固定保存经过审计的 AscendNPUBurn 上游树，但不分发 CANN、torch_npu、驱动或
-基础镜像。管理员必须选择与节点匹配的基础镜像。
+基础镜像。管理员必须分别选择完整 builder base 和精简 runtime base。runtime base
+必须内置 CANN runtime、Python、torch、torch_npu；宿主机只挂载 driver/DCMI。
+这里描述的是 NPU Burn 固定容器，不改变 CATMonitor NPU 指标控制镜像原有的
+DCMI/toolkit 部署方式。
 
 ### 6.1 已验证组合
 
@@ -191,11 +194,19 @@ bootstrap capability 必须在 runner 启动前全部清空。
 
 ```bash
 sudo bash scripts/stress/build_npu_burn_image.sh \
-  --base-image registry.example/ascend/cann-pytorch:approved \
+  --builder-base-image registry.example/ascend/cann-pytorch-devel:approved \
+  --runtime-base-image registry.example/ascend/cann-pytorch-runtime:approved \
   --image catmonitor/npuburn:a3-candidate \
   --compat-profile none \
   --build-root /var/tmp/catmonitor-npu-burn-build
 ```
+
+`--base-image` 仅用于兼容旧的共享基础镜像构建，不应用于正式 slim release。构建器会
+拒绝 split 两个参数解析到同一 image ID、架构不一致或 runtime base 不小于 builder。
+Python SOABI、torch、torch_npu 和实际 CANN 版本必须一致。runtime base 不要求携带 pip，
+最终镜像不保留 wheel archive。
+若两套基础镜像中的 CANN 环境脚本路径不同，可分别使用
+`--builder-ascend-env-script` 和 `--runtime-ascend-env-script`；通常优先使用自动发现。
 
 最终镜像必须包含 `pciutils/lspci`，否则上游可能退回固定八设备假设。联网节点由
 构建器按 `runtime-packages.txt` 安装；受限节点可临时设置标准代理；完全离线节点

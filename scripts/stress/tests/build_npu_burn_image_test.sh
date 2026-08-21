@@ -91,7 +91,7 @@ case "${1-}" in
         [ "${2-}" = inspect ] || exit 90
         target=${5-${3-}}
         is_base=false
-        case "$target" in registry.example/*|base:test) is_base=true ;; esac
+        case "$target" in registry.example/*|base:test|missing-base:test) is_base=true ;; esac
         if [ "$is_base" != true ]; then
             if [ ! -f "$FAKE_DOCKER_ROOT/image" ] ||
                [ "$(cat "$FAKE_DOCKER_ROOT/image")" != "$target" ]; then
@@ -104,10 +104,28 @@ case "${1-}" in
         fi
         case "$4" in
             '{{.Id}}')
-                if [ "$is_base" = true ]; then printf 'sha256:fixture-base-image-id\n'; else printf 'sha256:fixture-image-id\n'; fi
+                if [ "$is_base" = true ]; then
+                    case "$target" in
+                        *:builder) printf 'sha256:fixture-builder-base-image-id\n' ;;
+                        *:runtime|*:runtime-amd64|*:runtime-large) printf 'sha256:fixture-runtime-base-image-id\n' ;;
+                        missing-base:test) exit 1 ;;
+                        *) printf 'sha256:fixture-base-image-id\n' ;;
+                    esac
+                else
+                    printf 'sha256:fixture-image-id\n'
+                fi
                 ;;
             '{{.Os}}') printf 'linux\n' ;;
-            '{{.Architecture}}') printf 'arm64\n' ;;
+            '{{.Architecture}}') case "$target" in *:runtime-amd64) printf 'amd64\n' ;; *) printf 'arm64\n' ;; esac ;;
+            '{{.Size}}')
+                case "$target" in
+                    *:builder) printf '18000000000\n' ;;
+                    *:runtime) printf '4000000000\n' ;;
+                    *:runtime-amd64) printf '4000000000\n' ;;
+                    *:runtime-large) printf '19000000000\n' ;;
+                    *) if [ "$is_base" = true ]; then printf '18000000000\n'; else printf '4500000000\n'; fi ;;
+                esac
+                ;;
             '{{.Created}}') printf '2026-08-10T00:00:00Z\n' ;;
             '{{join .RepoDigests ","}}')
                 if [ "$is_base" = true ]; then printf '%s@sha256:base-fixture\n' "$target"; else printf 'catmonitor/npuburn@sha256:fixture\n'; fi
@@ -144,7 +162,10 @@ case "${1-}" in
                         SOURCE_ORIGIN=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/origin" ;;
                         UPSTREAM_REPOSITORY=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/repository" ;;
                         UPSTREAM_REVISION=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/revision" ;;
-                        ASCEND_ENV_SCRIPT=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/ascend-env-override" ;;
+                        BUILDER_ASCEND_ENV_SCRIPT=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/builder-ascend-env-override" ;;
+                        RUNTIME_ASCEND_ENV_SCRIPT=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/runtime-ascend-env-override" ;;
+                        BUILDER_BASE_IMAGE=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/builder-base-image" ;;
+                        RUNTIME_BASE_IMAGE=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/runtime-base-image" ;;
                         PCIUTILS_ONLINE_INSTALL=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/pciutils-online-install" ;;
                     esac
                     shift 2
@@ -156,6 +177,8 @@ case "${1-}" in
         [ -f "$context/entrypoint.sh" ]
         [ -f "$context/ascend_env.sh" ]
         [ -f "$context/validate_entrypoint.sh" ]
+        [ -f "$context/validate_runtime_abi.py" ]
+        [ -f "$context/runtime_preflight.sh" ]
         [ -f "$context/source/LICENSE.md" ]
         [ -d "$context/pciutils-packages" ]
         grep -Fxq 'pciutils' "$context/runtime-packages.txt"
@@ -164,10 +187,13 @@ case "${1-}" in
         fi
         cp "$context/source/ascend_npu_burn/npu_burn.py" "$FAKE_DOCKER_ROOT/context-npu-burn.py"
         cp "$context/source/README.md" "$FAKE_DOCKER_ROOT/context-readme.md" 2>/dev/null || true
-        selected_env=$(cat "$FAKE_DOCKER_ROOT/ascend-env-override")
-        if [ -z "$selected_env" ]; then selected_env=/usr/local/Ascend/cann-9.0.1/set_env.sh; fi
-        printf 'Using Ascend environment:\n%s\n' "$selected_env"
-        printf 'CATMONITOR_ASCEND_ENV_SCRIPT=%s\n' "$selected_env"
+        selected_builder_env=$(cat "$FAKE_DOCKER_ROOT/builder-ascend-env-override")
+        selected_runtime_env=$(cat "$FAKE_DOCKER_ROOT/runtime-ascend-env-override")
+        if [ -z "$selected_builder_env" ]; then selected_builder_env=/usr/local/Ascend/ascend-toolkit/set_env.sh; fi
+        if [ -z "$selected_runtime_env" ]; then selected_runtime_env=/usr/local/Ascend/cann-9.0.1/set_env.sh; fi
+        printf 'CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT=%s\n' "$selected_builder_env"
+        printf 'CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT=%s\n' "$selected_runtime_env"
+        printf 'CATMONITOR_ASCEND_ENV_SCRIPT=%s\n' "$selected_runtime_env"
         printf 'CATMONITOR_CANN_VERSION=9.0.1\n'
         if find -L "$context/build-driver-lib64" -maxdepth 3 -name 'libascend_hal.so*' -print -quit | grep -q .; then
             printf 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=true\n'
@@ -189,6 +215,14 @@ case "${1-}" in
         printf 'CATMONITOR_PACKAGE_FILE=/usr/local/lib/python3.12/site-packages/ascend_npu_burn/__init__.py\n'
         printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'
         printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'
+        printf 'CATMONITOR_BUILDER_PYTHON_SOABI=cpython-312-aarch64-linux-gnu\n'
+        printf 'CATMONITOR_BUILDER_TORCH_VERSION=2.10.0\n'
+        printf 'CATMONITOR_BUILDER_TORCH_NPU_VERSION=2.10.0.post2\n'
+        printf 'CATMONITOR_RUNTIME_PYTHON_SOABI=cpython-312-aarch64-linux-gnu\n'
+        printf 'CATMONITOR_RUNTIME_TORCH_VERSION=2.10.0\n'
+        printf 'CATMONITOR_RUNTIME_TORCH_NPU_VERSION=2.10.0.post2\n'
+        printf 'CATMONITOR_RUNTIME_NPUBURN_PACKAGE_VERSION=26.1.0+torch.2.10.0\n'
+        printf 'CATMONITOR_RUNTIME_ABI=PASS\n'
         printf 'CATMONITOR_RUNTIME_PCIUTILS=PASS\n'
         set -- "$context"/pciutils-packages/*.rpm
         if [ -f "$1" ]; then
@@ -233,7 +267,7 @@ assert_fails "$TEST_ROOT/relative-ascend-env.log" \
     --image catmonitor/npuburn:a3-test \
     --docker-bin "$TEST_ROOT/tools/docker" \
     --ascend-env-script relative/set_env.sh
-assert_contains "$TEST_ROOT/relative-ascend-env.log" '--ascend-env-script must be an absolute path'
+assert_contains "$TEST_ROOT/relative-ascend-env.log" '--builder-ascend-env-script must be an absolute path'
 
 assert_fails "$TEST_ROOT/relative-build-driver.log" \
     bash "$BUILD_SCRIPT" \
@@ -282,7 +316,7 @@ assert_fails "$TEST_ROOT/missing-base-image.log" \
     --docker-bin "$TEST_ROOT/tools/docker" \
     --build-root "$TEST_ROOT/missing-base-build"
 assert_contains "$TEST_ROOT/missing-base-image.log" \
-    'base image is unavailable locally; pull or load the approved image first'
+    'builder base image is unavailable locally; pull or load the approved image first'
 
 BUILD_ROOT="$TEST_ROOT/build-root"
 MANIFEST="$BUILD_ROOT/manifests/npu-burn-image-manifest.json"
@@ -298,7 +332,7 @@ bash "$BUILD_SCRIPT" \
     fail 'bundled source tree was modified'
 [ -f "$MANIFEST" ] || fail 'manifest was not created'
 python3 -m json.tool "$MANIFEST" >/dev/null
-assert_contains "$MANIFEST" '"schema_version":"6"'
+assert_contains "$MANIFEST" '"schema_version":7'
 printf '{"schema_version":1,"fixture":"cpu"}\n' >"$TEST_ROOT/cpu-manifest.json"
 bash "$AUDIT_SCRIPT" \
     --cpu-manifest "$TEST_ROOT/cpu-manifest.json" \
@@ -309,8 +343,13 @@ assert_contains "$MANIFEST" '"origin":"bundled"'
 assert_contains "$MANIFEST" '"upstream_revision":"381028b688a70e881d97477d7fa1ae8f2a26288e"'
 assert_contains "$MANIFEST" '"profile":"none"'
 assert_contains "$MANIFEST" '"base_id":"sha256:fixture-base-image-id"'
+assert_contains "$MANIFEST" '"base_images":{"mode":"shared"'
+assert_contains "$MANIFEST" '"archive_in_final_image":false'
+assert_contains "$MANIFEST" '"builder_runtime_match":true'
+assert_contains "$MANIFEST" '"runtime_device_preflight_required":true'
 assert_contains "$MANIFEST" '"architecture":"arm64"'
 assert_contains "$MANIFEST" '"ascend_env_script":"/usr/local/Ascend/cann-9.0.1/set_env.sh"'
+assert_contains "$MANIFEST" '"builder_ascend_env_script":"/usr/local/Ascend/ascend-toolkit/set_env.sh"'
 assert_contains "$MANIFEST" '"cann_version":"9.0.1"'
 assert_contains "$MANIFEST" '"build_network":"default"'
 assert_contains "$MANIFEST" '"pciutils":true'
@@ -332,10 +371,108 @@ assert_contains "$MANIFEST" '"network_access":false'
 assert_contains "$MANIFEST" '"custom_ops_import":true'
 assert_contains "$MANIFEST" '"runtime_pci_topology_dependency":true'
 assert_contains "$MANIFEST" '"entrypoint_validator_sha256":"'
+assert_contains "$MANIFEST" '"runtime_abi_validator_sha256":"'
+assert_contains "$MANIFEST" '"runtime_preflight_sha256":"'
 assert_contains "$MANIFEST" '"driver_mount_present_at_build":false'
 assert_contains "$MANIFEST" '"npu_workload_run":false'
 assert_contains "$FAKE_DOCKER_ROOT/network" 'default'
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'argparse'
+
+SPLIT_BUILD_ROOT="$TEST_ROOT/split-build"
+SPLIT_MANIFEST="$SPLIT_BUILD_ROOT/manifests/npu-burn-image-manifest.json"
+bash "$BUILD_SCRIPT" \
+    --builder-base-image registry.example/ascend:builder \
+    --runtime-base-image registry.example/ascend:runtime \
+    --builder-ascend-env-script /opt/ascend/builder/set_env.sh \
+    --runtime-ascend-env-script /opt/ascend/runtime/set_env.sh \
+    --image catmonitor/npuburn:a3-slim-test \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$SPLIT_BUILD_ROOT"
+assert_contains "$FAKE_DOCKER_ROOT/builder-base-image" 'registry.example/ascend:builder'
+assert_contains "$FAKE_DOCKER_ROOT/runtime-base-image" 'registry.example/ascend:runtime'
+assert_contains "$SPLIT_MANIFEST" '"base_images":{"mode":"split"'
+assert_contains "$SPLIT_MANIFEST" '"name":"registry.example/ascend:builder"'
+assert_contains "$SPLIT_MANIFEST" '"name":"registry.example/ascend:runtime"'
+assert_contains "$SPLIT_MANIFEST" '"builder_ascend_env_script":"/opt/ascend/builder/set_env.sh"'
+assert_contains "$SPLIT_MANIFEST" '"ascend_env_script":"/opt/ascend/runtime/set_env.sh"'
+assert_contains "$SPLIT_MANIFEST" '"size_bytes":18000000000'
+assert_contains "$SPLIT_MANIFEST" '"size_bytes":4000000000'
+assert_contains "$SPLIT_MANIFEST" '"runtime_base_delta_bytes":500000000'
+
+assert_fails "$TEST_ROOT/split-missing-runtime.log" \
+    bash "$BUILD_SCRIPT" \
+    --builder-base-image registry.example/ascend:builder \
+    --image catmonitor/npuburn:invalid \
+    --docker-bin "$TEST_ROOT/tools/docker"
+assert_contains "$TEST_ROOT/split-missing-runtime.log" '--runtime-base-image is required'
+
+assert_fails "$TEST_ROOT/split-with-legacy.log" \
+    bash "$BUILD_SCRIPT" \
+    --base-image registry.example/ascend:legacy \
+    --builder-base-image registry.example/ascend:builder \
+    --runtime-base-image registry.example/ascend:runtime \
+    --image catmonitor/npuburn:invalid \
+    --docker-bin "$TEST_ROOT/tools/docker"
+assert_contains "$TEST_ROOT/split-with-legacy.log" \
+    '--base-image cannot be combined with split base-image options'
+
+assert_fails "$TEST_ROOT/shared-env-with-per-image.log" \
+    bash "$BUILD_SCRIPT" \
+    --builder-base-image registry.example/ascend:builder \
+    --runtime-base-image registry.example/ascend:runtime \
+    --image catmonitor/npuburn:invalid \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --ascend-env-script /opt/ascend/shared/set_env.sh \
+    --runtime-ascend-env-script /opt/ascend/runtime/set_env.sh
+assert_contains "$TEST_ROOT/shared-env-with-per-image.log" \
+    '--ascend-env-script cannot be combined with per-image environment overrides'
+
+assert_fails "$TEST_ROOT/split-same-image.log" \
+    bash "$BUILD_SCRIPT" \
+    --builder-base-image registry.example/ascend:same-a \
+    --runtime-base-image registry.example/ascend:same-b \
+    --image catmonitor/npuburn:invalid \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$TEST_ROOT/same-image-build"
+assert_contains "$TEST_ROOT/split-same-image.log" \
+    'split builder/runtime base images resolve to the same image ID'
+
+assert_fails "$TEST_ROOT/split-arch-mismatch.log" \
+    bash "$BUILD_SCRIPT" \
+    --builder-base-image registry.example/ascend:builder \
+    --runtime-base-image registry.example/ascend:runtime-amd64 \
+    --image catmonitor/npuburn:invalid \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$TEST_ROOT/arch-mismatch-build"
+assert_contains "$TEST_ROOT/split-arch-mismatch.log" \
+    'builder/runtime base image architectures do not match'
+
+assert_fails "$TEST_ROOT/split-runtime-not-smaller.log" \
+    bash "$BUILD_SCRIPT" \
+    --builder-base-image registry.example/ascend:builder \
+    --runtime-base-image registry.example/ascend:runtime-large \
+    --image catmonitor/npuburn:invalid \
+    --docker-bin "$TEST_ROOT/tools/docker" \
+    --build-root "$TEST_ROOT/runtime-large-build"
+assert_contains "$TEST_ROOT/split-runtime-not-smaller.log" \
+    'runtime base image must be smaller than the builder base image'
+
+ABI_FIXTURE="$TEST_ROOT/abi-fixture"
+install -d -m 0755 \
+    "$ABI_FIXTURE/site/torch-1.0.dist-info" \
+    "$ABI_FIXTURE/site/torch_npu-1.0.post1.dist-info"
+printf 'Name: torch\nVersion: 1.0\n' >"$ABI_FIXTURE/site/torch-1.0.dist-info/METADATA"
+printf 'Name: torch-npu\nVersion: 1.0.post1\n' >"$ABI_FIXTURE/site/torch_npu-1.0.post1.dist-info/METADATA"
+PYTHONPATH="$ABI_FIXTURE/site" python3 "$REPO_ROOT/docker/stress/npu/validate_runtime_abi.py" \
+    capture --cann-version 9.0.1 --output "$ABI_FIXTURE/expected.json"
+PYTHONPATH="$ABI_FIXTURE/site" python3 "$REPO_ROOT/docker/stress/npu/validate_runtime_abi.py" \
+    validate --cann-version 9.0.1 --expected "$ABI_FIXTURE/expected.json" \
+    >"$ABI_FIXTURE/validate.log"
+assert_contains "$ABI_FIXTURE/validate.log" 'CATMONITOR_RUNTIME_ABI=PASS'
+assert_fails "$ABI_FIXTURE/mismatch.log" env PYTHONPATH="$ABI_FIXTURE/site" \
+    python3 "$REPO_ROOT/docker/stress/npu/validate_runtime_abi.py" validate \
+    --cann-version 8.3 --expected "$ABI_FIXTURE/expected.json"
+assert_contains "$ABI_FIXTURE/mismatch.log" 'builder/runtime ABI mismatch'
 
 OFFLINE_PACKAGE_ROOT="$TEST_ROOT/offline packages"
 install -d -m 0755 "$OFFLINE_PACKAGE_ROOT"
@@ -462,6 +599,7 @@ assert_contains "$OVERRIDE_MANIFEST" '"origin":"override"'
 assert_contains "$OVERRIDE_MANIFEST" '"upstream_repository":"https://example.invalid/override.git"'
 assert_contains "$OVERRIDE_MANIFEST" '"upstream_revision":"1111111111111111111111111111111111111111"'
 assert_contains "$OVERRIDE_MANIFEST" '"ascend_env_script":"/opt/ascend/custom/set_env.sh"'
+assert_contains "$OVERRIDE_MANIFEST" '"builder_ascend_env_script":"/opt/ascend/custom/set_env.sh"'
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'ORIGINAL_PROFILE'
 
 cat >"$TEST_ROOT/custom-test.patch" <<'EOF'
@@ -647,7 +785,8 @@ if grep -Eq '^(run|create|start|stop|rm|exec)([[:space:]]|$)' "$FAKE_DOCKER_ROOT
     fail 'image builder invoked a container lifecycle or execution operation'
 fi
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'SHELL ["/bin/bash", "-c"]'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${ASCEND_ENV_SCRIPT}'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${BUILDER_ASCEND_ENV_SCRIPT}'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_ENV_SCRIPT=${RUNTIME_ASCEND_ENV_SCRIPT}'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_source_ascend_env'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor_ascend_build_preflight'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'metadata.version("ascend-npu-burn")'
@@ -672,7 +811,14 @@ assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ARG HTTPS_PROXY'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ENV HTTP_PROXY'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'cd /tmp'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY build-driver-lib64/'
-assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${BASE_IMAGE} AS npuburn_runtime'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${BUILDER_BASE_IMAGE} AS npuburn_builder'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${RUNTIME_BASE_IMAGE} AS npuburn_runtime'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '--target /opt/catmonitor/npuburn-python'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY --from=npuburn_runtime_package /opt/catmonitor/npuburn-python/'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM npuburn_builder AS npuburn_runtime_package'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${RUNTIME_BASE_IMAGE} AS npuburn_runtime_package'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY runtime_preflight.sh /usr/local/bin/catmonitor-npu-burn-preflight'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'FROM ${BASE_IMAGE}'
 NORMALIZED_DOCKERFILE=$(tr '\n' ' ' <"$REPO_ROOT/docker/stress/npu/Dockerfile")
 printf '%s\n' "$NORMALIZED_DOCKERFILE" | grep -Eq \
     'python3 -m pip install .*--no-index .*--no-cache-dir .*--no-deps .*--force-reinstall .*"\$1"' || \
@@ -690,12 +836,14 @@ fi
 PREFLIGHT_LINE=$(grep -n 'catmonitor_ascend_build_preflight' "$REPO_ROOT/docker/stress/npu/Dockerfile" | head -n 1 | cut -d: -f1)
 WHEEL_BUILD_LINE=$(grep -n 'bash build/build.sh' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
 WHEEL_INSTALL_LINE=$(grep -n -- '--force-reinstall' "$REPO_ROOT/docker/stress/npu/Dockerfile" | head -n 1 | cut -d: -f1)
-RUNTIME_INSTALL_LINE=$(grep -n -- '--force-reinstall' "$REPO_ROOT/docker/stress/npu/Dockerfile" | tail -n 1 | cut -d: -f1)
+RUNTIME_INSTALL_LINE=$(grep -n -- '--target /opt/catmonitor/npuburn-python' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
+RUNTIME_ABI_LINE=$(grep -n -- 'validate_runtime_abi.py validate' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
 PACKAGE_VALIDATE_LINE=$(grep -n 'CATMONITOR_PACKAGE_VERSION' "$REPO_ROOT/docker/stress/npu/Dockerfile" | cut -d: -f1)
 [ "$PREFLIGHT_LINE" -lt "$WHEEL_BUILD_LINE" ] || fail 'Ascend preflight must run before wheel build'
 [ "$WHEEL_BUILD_LINE" -lt "$WHEEL_INSTALL_LINE" ] || fail 'wheel build and install must use separate ordered layers'
 [ "$WHEEL_INSTALL_LINE" -lt "$PACKAGE_VALIDATE_LINE" ] || fail 'package validation must follow wheel installation'
 [ "$PACKAGE_VALIDATE_LINE" -lt "$RUNTIME_INSTALL_LINE" ] || fail 'clean runtime installation must follow builder validation'
+[ "$RUNTIME_INSTALL_LINE" -lt "$RUNTIME_ABI_LINE" ] || fail 'runtime ABI validation must follow overlay installation'
 [ "$(grep -c '^RUN set -euo pipefail' "$REPO_ROOT/docker/stress/npu/Dockerfile")" -ge 5 ] || \
     fail 'Dockerfile must keep preparation, preflight, wheel build, install, and validation layers separate'
 if grep -Eq '(^|[[:space:]])(npu-smi|npu-burn)([[:space:]]|$)' \
@@ -705,6 +853,10 @@ fi
 if grep -Eq '^COPY --from=npuburn_builder .*driver' "$REPO_ROOT/docker/stress/npu/Dockerfile"; then
     fail 'final image must not copy staged host driver libraries from the builder'
 fi
+assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'ctypes.CDLL("libascend_hal.so")'
+assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'ascend_npu_burn.custom_ops.custom_ops_lib'
+assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'CATMONITOR_RUNTIME_PREFLIGHT=PASS'
+assert_not_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'npu-burn '
 
 ENTRYPOINT_VALIDATOR="$REPO_ROOT/docker/stress/npu/validate_entrypoint.sh"
 assert_contains "$ENTRYPOINT_VALIDATOR" "stat -c '%a'"
