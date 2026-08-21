@@ -241,11 +241,11 @@ func TestCollectTopology(t *testing.T) {
 	if m := findMetric(metrics, "cpu_num", "", ""); m == nil || m.Value != 2 {
 		t.Errorf("cpu_num: expected 2, got %v", m)
 	}
-	if m := findMetric(metrics, "numa_node_num", "", ""); m == nil || m.Value != 2 {
-		t.Errorf("numa_node_num: expected 2, got %v", m)
-	}
 	if m := findMetric(metrics, "core_num", "", ""); m == nil || m.Value != 28 {
 		t.Errorf("core_num: expected 28, got %v", m)
+	}
+	if m := findMetric(metrics, "numa_node_num", "", ""); m == nil || m.Value != 2 {
+		t.Errorf("numa_node_num: expected 2, got %v", m)
 	}
 }
 

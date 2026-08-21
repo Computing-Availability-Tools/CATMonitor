@@ -26,6 +26,10 @@ func (c *CPUCollector) collectTopology(now time.Time) ([]collector.Metric, error
 		Timestamp: now,
 	})
 	metrics = append(metrics, collector.Metric{
+		Component: "cpu", Name: "core_num", Value: float64(topo.Cores), Unit: "个",
+		Timestamp: now,
+	})
+	metrics = append(metrics, collector.Metric{
 		Component: "cpu", Name: "numa_node_num", Value: float64(len(topo.NumaNodes)), Unit: "个",
 		Timestamp: now,
 	})
@@ -39,10 +43,6 @@ func (c *CPUCollector) collectTopology(now time.Time) ([]collector.Metric, error
 			Labels: map[string]string{"node": node}, Timestamp: now,
 		})
 	}
-	metrics = append(metrics, collector.Metric{
-		Component: "cpu", Name: "core_num", Value: float64(topo.Cores), Unit: "个",
-		Timestamp: now,
-	})
 	return metrics, nil
 }
 
