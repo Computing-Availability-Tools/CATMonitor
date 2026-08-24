@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-CATMonitor 容器化方案支持两种镜像：
+CATMonitor 控制面支持两种镜像：
 
 | 镜像 | 适用环境 | 说明 |
 |------|---------|------|
@@ -19,21 +19,89 @@ CATMonitor 容器化方案支持两种镜像：
 
 daemon 是 snapshot 唯一生产者；web/dfee 是只读消费者，不自行采集。三容器共享一个 snapshot 卷。
 
+可靠性压测启用后仍保持四个明确的运行面，不合成巨型镜像：
+
+| 运行面 | 基础系统 | 设计目的 |
+|---|---|---|
+| 通用 CATMonitor/Web/DFeE 控制面 | Alpine | 保持镜像小巧和 develop 的通用部署行为 |
+| CPU Stress Runner | Debian | 携带匹配的 MPI、OpenBLAS、numactl、HPL/HPCG 运行环境 |
+| Ascend CATMonitor/Web/DFeE 控制面 | Debian（glibc） | 兼容 DCMI 等厂商动态库 |
+| NPU Burn 数据面 | 管理员选择的 Ascend 基础镜像 | 继承匹配的 CANN/torch_npu 环境，不替换基础发行版 |
+
 ## 2. 构建
+
+### 安装前确认镜像存储位置
+
+镜像、layer 和容器可写层保存在所选 Docker daemon 的 `Docker Root Dir`，不是源码
+目录。构建或加载镜像前，管理员应确认该目录所在文件系统有足够空间：
+
+```bash
+docker info --format 'Docker Root Dir: {{.DockerRootDir}}'
+DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}')
+findmnt -T "$DOCKER_ROOT"
+df -h "$DOCKER_ROOT"
+```
+
+空间不足时应由管理员选择合适的现有 daemon 或调整主机 Docker 部署；CATMonitor
+不会修改 daemon 的全局存储配置。
 
 ### 构建镜像
 
 ```bash
 cd CATMonitor
-docker/docker/build.sh          # 自动检测 NPU driver
+bash docker/build.sh            # 自动检测 NPU driver
 ```
 
 或手动指定：
 
 ```bash
-docker/docker/build.sh npu      # 强制 NPU 镜像
-docker/docker/build.sh generic  # 强制通用镜像
+bash docker/build.sh npu        # 强制 NPU 镜像
+bash docker/build.sh generic    # 强制通用镜像
 ```
+
+`docker/build.sh` 在 Linux 宿主机或 WSL 的 Docker 环境中执行。可以通过
+`CATMONITOR_DOCKER_BIN` 选择 CLI，通过 `DOCKER_HOST` 选择 data-root 位于数据盘的
+daemon；隔离 daemon 没有 bridge 时可设置 `CATMONITOR_DOCKER_BUILD_NETWORK=host`。
+NPU 模式把临时
+二进制写入 `docker/.build`，仓库根目录不会出现或删除构建产物；打包完成后临时目录
+自动清理。Windows 中转仓库时，Git 必须保留 `*.sh` 的 LF 行尾。
+
+首次构建需要取得 Go builder、运行时基础镜像、Go modules 和系统工具包。正常节点
+由 Docker 自动拉取；受限节点可在当前管理终端临时设置标准代理和 Go module proxy：
+
+```bash
+export HTTP_PROXY=http://proxy.example.com:3128
+export HTTPS_PROXY=http://proxy.example.com:3128
+export NO_PROXY=127.0.0.1,localhost,registry.internal.example.com
+export GOPROXY=https://proxy.golang.example,direct
+
+bash docker/build.sh npu
+
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY GOPROXY
+```
+
+构建脚本只把已设置的变量名转发给临时 build/builder，不打印值、不写进仓库配置，
+也不会在最终运行镜像中设置代理。仓库不再硬编码站点专用 Go proxy。如果代理仅监听
+宿主机 `127.0.0.1`，应先让 Docker 能访问该代理或配置 Docker daemon 代理。
+
+完全离线的目标节点优先加载已经在同架构、兼容驱动环境完成验收的镜像，而不是在
+作业启动时下载：
+
+```bash
+# 联网或审批构建节点
+docker save -o catmonitor-npu.tar catmonitor-npu
+docker save -o catmonitor-npuburn.tar catmonitor/npuburn:a3-candidate
+
+# 离线 A3 节点
+docker load -i catmonitor-npu.tar
+docker load -i catmonitor-npuburn.tar
+```
+
+若必须离线构建，还要预先加载相应 builder/runtime 镜像：NPU 控制面使用
+`golang:1.23` 和 `debian:bookworm-slim`，通用控制面使用
+`golang:1.23-alpine` 和 `alpine:latest`，并准备 Go module cache 与对应发行版的
+系统包来源。CATMonitor 容器镜像和 NPU Burn
+运行镜像是两个独立产物，后者的联网/代理/离线 `pciutils` 流程见 stress 指南。
 
 ### NPU 镜像构建说明
 
@@ -57,30 +125,67 @@ LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/l
 | 文件 | 用途 |
 |------|------|
 | `Dockerfile.npu` | NPU 运行时镜像（debian + 预编译二进制） |
-| `Dockerfile.generic` | 通用镜像（多阶段，golang 编译 + alpine 运行时） |
+| `Dockerfile.generic` | 通用控制镜像（多阶段，golang 编译 + Alpine 运行时） |
 | `catmonitor.yaml` | 容器版配置（打包在镜像中） |
 
 ## 3. 启动
 
-### 方式一：Docker Compose 一键启动（推荐）
+### 方式一：统一安装入口（推荐）
+
+先准备完整主配置和本地镜像，再安装统一命令及审核过的 Compose 定义：
 
 ```bash
+sudo install -d -m 0750 /etc/catmonitor
+sudo install -m 0640 docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+sudo make install-installer
+
+sudo catmonitor-install --profile monitoring --action plan
+sudo catmonitor-install --profile monitoring
+```
+
+`catmonitor-install` 支持 `monitoring`、`cpu-stress`、`ascend-a2`、`ascend-a3`。
+默认动作 `up` 只编排已有镜像与资产，不构建镜像、编译 benchmark、编辑 YAML 或
+运行压测。Web 保持 develop 的默认监听 `:19322`，用于从外部监控节点；端口或绑定
+地址冲突时可显式传 `--web-addr HOST:PORT`。非回环监听只提供监控和报告读取，现有
+stress Web 写接口仍要求服务与请求都来自回环地址。完整 profile、前置条件和安全边界见
+[`STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md#9-统一容器安装入口)。
+
+### 方式二：手工 Docker Compose（排查底层模型）
+
+基础 Compose 不包含 Ascend 挂载，也不暴露 Docker socket，默认使用通用镜像：
+
+```bash
+CATMONITOR_IMAGE=catmonitor-generic \
 docker compose -f docker/docker-compose.yml up -d
 ```
 
 启动全部三个容器：daemon + web + dfee。
 
+Ascend 节点先构建 NPU 镜像，再叠加 NPU overlay：
+
+```bash
+bash docker/build.sh npu
+
+CATMONITOR_IMAGE=catmonitor-npu \
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  up -d
+```
+
 #### 只启动部分服务
 
 ```bash
 # daemon + dfee（跳过 web）
+CATMONITOR_IMAGE=catmonitor-generic \
 docker compose -f docker/docker-compose.yml up -d catmonitor dfee
 
 # 只启动 daemon
+CATMONITOR_IMAGE=catmonitor-generic \
 docker compose -f docker/docker-compose.yml up -d catmonitor
 ```
 
-### 方式二：手动 docker run（无 compose 或 Docker 18.09）
+### 方式三：手动 docker run（无 compose 或 Docker 18.09）
 
 #### 步骤 1：创建卷
 
@@ -106,7 +211,7 @@ docker run -d --name catmonitor --privileged --network host --pid host \
   catmonitor-npu
 ```
 
-> 配置文件（`catmonitor.yaml`、`metrics.yaml`、`features/*/metrics.yaml`）已打包在镜像中，默认无需挂载。如需自定义，参见[第 8 节：配置修改](#8-配置修改)。
+> 配置文件（`catmonitor.yaml`、`metrics.yaml`、`features/*/metrics.yaml`）已打包在镜像中，默认无需挂载。如需自定义，参见[第 9 节：配置修改](#9-配置修改)。
 
 > NPU 环境专用参数：
 > - `--pid host` + `-v /:/host:ro`：共享宿主机 PID 命名空间读取 `/proc/1/mounts`，挂载根文件系统给 statfs 访问，使磁盘空间指标反映宿主机真实文件系统而非容器 bind mount
@@ -130,7 +235,10 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot
 ```bash
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-npu -snapshot-dir /var/lib/catmonitor/snapshot
+  catmonitor-npu \
+  -addr=:19322 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -config=/etc/catmonitor/catmonitor.yaml
 ```
 
 > `--network host` 后不需要 `-p` 端口映射，容器直接用宿主机网络栈。
@@ -156,7 +264,7 @@ docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/
   -csv-interval=10s
 ```
 
-### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
+### 方式四：只运行 dfee（daemon 在宿主机或其他容器）
 
 ```bash
 # 基础模式
@@ -251,7 +359,7 @@ docker run -d --name catmonitor \
 
 ```bash
 # 构建
-docker/docker/build.sh generic
+bash docker/build.sh generic
 
 # 启动（不需要 driver/nnae 挂载、device、LD_LIBRARY_PATH）
 docker run -d --name catmonitor --privileged --network host --pid host \
@@ -263,7 +371,10 @@ docker run -d --name catmonitor --privileged --network host --pid host \
 
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-generic -snapshot-dir /var/lib/catmonitor/snapshot
+  catmonitor-generic \
+  -addr=:19322 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -config=/etc/catmonitor/catmonitor.yaml
 
 docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
@@ -274,12 +385,206 @@ docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/
   -csv-dir=/var/lib/catmonitor/csv
 ```
 
-如果使用 docker-compose，修改 `docker-compose.yml`：
-1. `dockerfile` 改为 `Dockerfile.generic`
-2. `image` 改为 `catmonitor-generic`
-3. 删除 `devices`、NPU driver/nnae/toolkit `volumes`、`LD_LIBRARY_PATH`
+Compose 无需修改文件，设置 `CATMONITOR_IMAGE=catmonitor-generic` 后直接使用基础
+`docker-compose.yml`。
 
-## 8. 配置修改
+## 8. 容器化可靠性压测
+
+可靠性压测是显式启用能力。基础 Compose 不挂载 stress 插件或 Docker socket，
+也不允许 Web 触发作业。CPU 压测节点叠加 `docker-compose.stress.yml`；只有启用
+NPU Burn `docker_exec` 时才继续叠加 `docker-compose.stress-npuburn.yml`。
+
+### 8.1 三个容器层次
+
+容器化部署包含两个互相独立的生命周期：
+
+1. CATMonitor daemon/Web 控制容器：读取同一份 YAML、只读插件目录和可写报告目录；
+2. 可选 CPU runner 容器：自带 STREAM/HPL/HPCG 及匹配的 MPI/OpenBLAS，只通过
+   Unix Socket 接受三个固定项目名；
+3. 固定 NPU Burn 容器：由管理员提前构建并创建，持有 CANN、torch_npu、NPU
+   device 和结果目录。
+
+宿主机原生 CPU adapter 仍受支持并且是默认后端；CPU runner 是容器化控制面推荐的
+可选交付方式。它不挂 Docker Socket、不监听 TCP，也不接受任意命令或参数。HPL/
+HPCG 的可写工作目录位于共享状态卷，benchmark 和动态库只读保存在 runner 镜像。
+
+CATMonitor 不在作业时 `pull`、`run`、重建或删除 NPU Burn 容器，只通过
+`docker exec <固定容器> ...` 启动一次负载。为此仅在
+`docker-compose.stress-npuburn.yml` 中把宿主机 Docker socket 挂入 daemon 和
+Web。Docker socket 等价于宿主机 root 权限，只能在受控节点启用，不能作为基础
+或 CPU stress 部署的默认项。
+
+### 8.2 准备部署文件
+
+先按 [`features/stress/STRESS_TEST_GUIDE.md`](../features/stress/STRESS_TEST_GUIDE.md)
+构建 CPU runner 和 NPU Burn 镜像、创建固定 NPU 容器，再生成节点部署文件：
+
+```bash
+sudo bash scripts/stress/build_cpu_runner_image.sh \
+  --image catmonitor/stress-cpu:node-v1 \
+  --stream-src /path/to/stream.c \
+  --hpl-src /path/to/hpl-2.3.tar.gz \
+  --hpl-dat /path/to/HPL.dat \
+  --hpcg-src /path/to/hpcg-3.1.tar.gz \
+  --hpcg-dat /path/to/hpcg.dat \
+  --build-root /var/tmp/catmonitor-cpu-runner-build
+```
+
+默认使用基础镜像自带的 Debian 软件源。受限网络可显式增加
+`--debian-mirror https://mirror.example.com`。参数只接受不含 userinfo、路径、查询
+或片段的 HTTP(S) mirror root；实际 override 会记录在 CPU Runner image manifest，
+未指定时记录为 `null` 且构建行为保持不变。
+
+容器内的路径
+必须和 adapter 中的绝对路径一致；建议将共享状态固定为
+`/var/lib/catmonitor/stress`：
+
+```bash
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/stress-deployment \
+  --plugin-root /opt/catmonitor/stress \
+  --cpu-backend unix \
+  --cpu-runner-image catmonitor/stress-cpu:node-v1 \
+  --cpu-runner-manifest /var/tmp/catmonitor-cpu-runner-build/manifests/cpu-runner-image-manifest.json \
+  --hpl-processes 8 --hpl-threads 12 \
+  --hpcg-processes 96 --hpcg-threads 1 \
+  --npu-manifest /absolute/path/npu-burn-image-manifest.json \
+  --npu-runtime /usr/bin/docker \
+  --npu-container catmonitor-npuburn-a3 \
+  --npu-image catmonitor/npuburn:a3-candidate \
+  --npu-device 14 \
+  --npu-chip-generation A3 \
+  --npu-cann '<deployed-version>' \
+  --npu-torch-npu '<deployed-version>' \
+  --npu-soc '<deployed-model>' \
+  --npu-run-case quant_matmul \
+  --report-path /var/lib/catmonitor/stress/stress-latest.json \
+  --enable-web
+```
+
+生成后，把节点 adapter 和清单安装到稳定插件目录。此命令只安装文件和创建状态
+目录，不会编辑 YAML、启动容器或运行压测：
+
+```bash
+sudo bash scripts/stress/install_stress_runtime.sh \
+  --adapter /etc/catmonitor/stress-deployment/benchmark_check.sh \
+  --cpu-runner-adapter /etc/catmonitor/stress-deployment/cpu-runner-benchmark_check.sh \
+  --deployment-manifest /etc/catmonitor/stress-deployment/stress-deployment-manifest.json \
+  --force
+```
+
+上面的 MPI 数量、设备 ID、版本和镜像名只是参数位置示例，必须按目标节点重新确认，
+不能照抄为通用默认值。生成器输出：
+
+- `catmonitor-stress.yaml`：可供 CLI/Web 验证的顶层 `stress:` 配置片段；
+- `benchmark_check.sh`：节点 adapter；
+- `cpu-runner-benchmark_check.sh`：runner 容器内部固定 CPU profile；
+- `stress-deployment-manifest.json`：部署输入与哈希。
+
+daemon 不能直接把该片段当作完整容器配置，否则 `snapshot.enabled` 会回落为 false。
+部署时复制 `docker/catmonitor.yaml` 为节点主配置，并用生成文件中的整个顶层
+`stress:` 块替换其默认禁用块。最终文件应同时包含 `collectors`、`storage`、
+`snapshot.enabled: true` 和生成的 `stress` 配置：
+
+```bash
+sudo install -d -m 0750 /etc/catmonitor
+sudo install -m 0640 docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+
+# 将 /etc/catmonitor/stress-deployment/catmonitor-stress.yaml 中的
+# 顶层 stress: 块合并到 /etc/catmonitor/catmonitor.yaml，替换默认 stress: 块。
+```
+
+合并后必须检查只有一个顶层 `stress:`，且 `script_path`、`report_path` 仍是容器内
+路径。不要把 adapter 中的 MPI、资产或 NPU 宿主机参数搬进 YAML。
+
+### 8.3 启动 CATMonitor 与 Web
+
+安装统一入口后，纯 CPU 节点直接选择 `cpu-stress`。安装器从部署 manifest 读取并
+严格匹配 runner image，等待 runner 健康后自动运行无负载 doctor：
+
+```bash
+sudo make install-installer
+sudo catmonitor-install --profile cpu-stress --action plan
+sudo catmonitor-install --profile cpu-stress
+```
+
+纯 CPU 节点的完整主配置必须设置 `npu_burn.enabled: false`。安装器不会因为 YAML
+误启用 NPU Burn 而给 CPU profile 增加 Docker Socket；这种不一致会由 doctor 明确
+失败并要求管理员修正配置。
+
+统一插件目录
+`/opt/catmonitor/stress` 已由 stress overlay 按相同绝对路径只读挂入 daemon 和
+Web。CPU 二进制和 MPI/OpenBLAS 只存在于 CPU runner image，并在同一发行版构建；
+控制容器通过 `/run/catmonitor-stress/cpu-runner.sock` 调用固定协议客户端。启动前
+仍以安装器的 plan 与 `catmonitor stress doctor` 为准。
+
+Ascend 节点选择与部署 manifest 一致的代际。当前 NPU Burn `docker_exec` 仍需要
+明确确认 Docker Socket 的 root 等价权限：
+
+```bash
+sudo catmonitor-install --profile ascend-a3 --action plan
+sudo catmonitor-install \
+  --profile ascend-a3 \
+  --acknowledge-root-docker-socket
+```
+
+A2 改用 `--profile ascend-a2`。自定义或隔离 Docker daemon 可设置
+`--docker-socket /absolute/path/docker.sock` 和 `--docker-bin /absolute/path/docker`。
+CPU-only stress 的内部 Compose 集合不包含 NPU socket overlay。
+
+只有排查 Compose 合并问题时才应手工组合底层文件；公共只读配置层不能省略：
+
+```bash
+export CATMONITOR_CONFIG=/etc/catmonitor/catmonitor.yaml
+export CATMONITOR_STRESS_ROOT=/opt/catmonitor/stress
+export CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress
+export CATMONITOR_CPU_STRESS_IMAGE=catmonitor/stress-cpu:node-v1
+
+CATMONITOR_IMAGE=catmonitor-generic \
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.stress.yml \
+  up -d cpu-stress-runner catmonitor web dfee
+```
+
+默认 `:19322` 监听所有接口，以保持 develop 的外部监控能力；通过节点地址访问时可
+查看 dashboard、profile 和已有报告，但不能从 Web 提交或取消压测。若确实需要网页
+触发压测，应显式切换为回环监听并使用 SSH 隧道：
+
+```bash
+sudo catmonitor-install --profile cpu-stress \
+  --web-addr 127.0.0.1:19322
+ssh -N -L 19322:127.0.0.1:19322 root@node
+```
+
+默认外部监控访问 `http://<node-address>:19322/`；回环模式下通过隧道访问
+`http://127.0.0.1:19322/stress/`。
+
+### 8.4 验证
+
+```bash
+sudo catmonitor-install --profile cpu-stress --action status
+sudo catmonitor-install --profile cpu-stress --action doctor
+
+curl -fsS http://127.0.0.1:19322/api/stress/config
+```
+
+Ascend 节点把上面的 profile 换为实际 `ascend-a2` 或 `ascend-a3`；`status/doctor/down`
+不需要重复 Socket 风险确认。`down` 不删除持久卷，并在运行资产丢失时仍可用于恢复。
+
+本机无 Ascend 硬件时只能执行容器边界 E2E：
+
+```bash
+CATMONITOR_CONTAINER_IMAGE=catmonitor-npu:latest \
+make test-stress-container-e2e
+```
+
+该测试用模拟固定容器验证 Docker socket、`docker exec`、NPU logical device 预检、
+PASS CSV 解析和报告持久化，不声称验证 CANN ABI 或真实 NPU 计算。A3 上还必须运行
+真实 fixed-container smoke、CLI、Web 和设备观测。
+
+## 9. 配置修改
 
 ### 挂载自定义配置
 
@@ -381,7 +686,7 @@ collection:
   min_priority: low      # low(全采) | medium(跳过Low) | high(只采High)
 ```
 
-## 9. 数据卷说明
+## 10. 数据卷说明
 
 | Volume | 写入方 | 读取方 | 内容 |
 |--------|--------|--------|------|
@@ -390,7 +695,7 @@ collection:
 | `cm-straggler` | daemon | — | straggler KPI 文件（可选） |
 | `cm-csv` | dfee | — | dfee CSV 输出（可选，`-csv=enabled` 时） |
 
-## 10. 停止与清理
+## 11. 停止与清理
 
 ```bash
 # 停止全部容器
@@ -403,14 +708,14 @@ docker volume rm cm-snapshot cm-data cm-csv
 docker rmi catmonitor-npu catmonitor-generic
 ```
 
-## 11. 启动顺序
+## 12. 启动顺序
 
 1. **先启动 daemon**（snapshot 生产者），等待 6-9 秒完成首次采集
 2. **后启动 web/dfee**（snapshot 消费者），snapshot 就绪后即有数据
 
 web/dfee 可在任意时刻拉起，只要 snapshot 已存在就有数据。若 snapshot 尚未就绪，web/dfee 返回 503，自动重试即可。
 
-## 12. 常见问题
+## 13. 常见问题
 
 ### Q: 构建失败，提示找不到 dcmi.h 或 GLIBC 符号
 
@@ -461,15 +766,21 @@ daemon 容器未使用 `--network host`，容器有自己的网络命名空间�
 
 ### Q: docker build 时 apt-get 很慢
 
-Dockerfile.npu 默认用 Debian 官方源。如遇网络慢，在 Dockerfile 的 RUN 行前加清华镜像源：
+Dockerfile 默认使用 Debian 官方源，不要直接修改并提交站点专用镜像地址。控制镜像构建
+可由管理员临时设置代理，构建脚本只转发已存在的代理变量，不保存其值：
 
-```dockerfile
-RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    ipmitool smartmontools util-linux dmidecode && rm -rf /var/lib/apt/lists/*
+```bash
+export HTTP_PROXY=http://proxy.example.com:3128
+export HTTPS_PROXY=http://proxy.example.com:3128
+./docker/build.sh npu
+unset HTTP_PROXY HTTPS_PROXY
 ```
 
-## 13. dfee Prometheus Exporter + Grafana
+CPU Runner clean build 还可显式使用
+`--debian-mirror https://mirror.example.com`；默认行为不变，override 会记录在 image
+manifest 中，并拒绝包含用户名或密码的 URL。
+
+## 14. dfee Prometheus Exporter + Grafana
 
 dfee 支持独立的 Prometheus exporter（`:9333`），输出 CPU/内存/磁盘/网络/NPU/机箱指标的 `node_*`/`dsmi_*`/`ipmi_*` 格式，可直接接入 Prometheus + Grafana。
 

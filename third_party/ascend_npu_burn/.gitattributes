@@ -1,0 +1,4 @@
+source/** -text linguist-vendored whitespace=-blank-at-eol,-blank-at-eof
+SOURCE_SHA256SUMS text eol=lf
+UPSTREAM text eol=lf
+UPSTREAM.md text eol=lf

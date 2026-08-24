@@ -1,0 +1,10 @@
+schema_version=1
+repository=https://gitcode.com/Ascend/MindCluster-AscendNPUBurn.git
+revision=381028b688a70e881d97477d7fa1ae8f2a26288e
+tree=2a4b9562831a900f7b2925745c9f87549eb677e2
+tag_context=v26.1.0
+sync_date=2026-08-10
+archive_sha256=46bb4255001582411758f2ac3b63328c2307d13fa802dc084c8db6d89f4c49ac
+source_manifest_sha256=53620b941563a860b53868685e3c09ea14709f7a0f9a86c7ca5c880cb7f913b5
+license=MulanPSL-2.0
+direct_modifications=false

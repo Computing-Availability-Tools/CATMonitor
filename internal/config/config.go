@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 	"gopkg.in/yaml.v3"
 )
@@ -15,8 +16,9 @@ type Config struct {
 	Collectors      map[string]CollectorCfg `yaml:"collectors"`
 	Storage         StorageConfig           `yaml:"storage"`
 	Health          HealthConfig            `yaml:"health"`
+	Stress          stress.Config           `yaml:"stress"`
 	Collection      CollectionConfig        `yaml:"collection"`
-	Features        []string                `yaml:"features"`        // enabled features; daemon loads features/<name>/metrics.yaml overrides + derives C_comp from their intervals
+	Features        []string                `yaml:"features"` // enabled features; daemon loads features/<name>/metrics.yaml overrides + derives C_comp from their intervals
 	FaultSub        FaultSubConfig          `yaml:"faultsub"`
 	StragglerOutput StragglerOutputConfig   `yaml:"straggler_output"`
 	Snapshot        SnapshotConfig          `yaml:"snapshot"`
@@ -45,8 +47,8 @@ type StorageConfig struct {
 // dead config.) WeightScheme selects the scoring weights ("auto" detects
 // gpu/npu).
 type HealthConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	WeightScheme string        `yaml:"weight_scheme"` // auto | cpu_only | accelerated_8card | accelerated_4card
+	Enabled      bool   `yaml:"enabled"`
+	WeightScheme string `yaml:"weight_scheme"` // auto | cpu_only | accelerated_8card | accelerated_4card
 }
 
 // CollectionConfig controls which metrics are collected (pre-filter by priority).
@@ -58,13 +60,13 @@ type CollectionConfig struct {
 // When Enabled is false (the default) the daemon skips the feature entirely
 // and behaves exactly as before.
 type FaultSubConfig struct {
-	Enabled        bool            `yaml:"enabled"`          // opt-in switch
-	RestAddr       string          `yaml:"rest_addr"`        // subscription REST API listen address
-	WebhookTimeout time.Duration   `yaml:"webhook_timeout"`  // per-request webhook timeout
-	WebhookRetry   int             `yaml:"webhook_retry"`    // failed-webhook retry count
-	EventBuffer    int             `yaml:"event_buffer"`     // recent-event ring buffer size
+	Enabled        bool             `yaml:"enabled"`         // opt-in switch
+	RestAddr       string           `yaml:"rest_addr"`       // subscription REST API listen address
+	WebhookTimeout time.Duration    `yaml:"webhook_timeout"` // per-request webhook timeout
+	WebhookRetry   int              `yaml:"webhook_retry"`   // failed-webhook retry count
+	EventBuffer    int              `yaml:"event_buffer"`    // recent-event ring buffer size
 	Defaults       FaultSubDefaults `yaml:"defaults"`
-	Rules          map[string]bool `yaml:"rules"`
+	Rules          map[string]bool  `yaml:"rules"`
 }
 
 // FaultSubDefaults holds subscription defaults applied when a subscriber
@@ -82,7 +84,7 @@ type StragglerOutputConfig struct {
 	DataDir       string        `yaml:"data_dir"`       // KPI file directory
 	Retention     time.Duration `yaml:"retention"`      // file retention (default 15d)
 	FlushInterval time.Duration `yaml:"flush_interval"` // in-memory buffer flush cadence
-	Metrics       []string      `yaml:"metrics"`         // which straggler fields to emit (empty=all)
+	Metrics       []string      `yaml:"metrics"`        // which straggler fields to emit (empty=all)
 }
 
 // SnapshotConfig controls daemon-side snapshot production (per-component
@@ -105,12 +107,12 @@ func Default() *Config {
 		},
 		Collectors: map[string]CollectorCfg{
 			"chassis": {Enabled: true, Interval: 3 * time.Second},
-			"cpu":      {Enabled: true, Interval: 3 * time.Second},
-			"memory":   {Enabled: true, Interval: 3 * time.Second},
-			"disk":     {Enabled: true, Interval: 5 * time.Second},
-			"gpu":      {Enabled: true, Interval: 3 * time.Second},
-			"npu":      {Enabled: true, Interval: 3 * time.Second},
-			"network":  {Enabled: true, Interval: 3 * time.Second},
+			"cpu":     {Enabled: true, Interval: 3 * time.Second},
+			"memory":  {Enabled: true, Interval: 3 * time.Second},
+			"disk":    {Enabled: true, Interval: 5 * time.Second},
+			"gpu":     {Enabled: true, Interval: 3 * time.Second},
+			"npu":     {Enabled: true, Interval: 3 * time.Second},
+			"network": {Enabled: true, Interval: 3 * time.Second},
 		},
 		Storage: StorageConfig{
 			DataDir:    platform.DataDir(),

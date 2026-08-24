@@ -35,6 +35,22 @@ snapshot:
   enabled: true
   dir: /var/lib/catmonitor/snapshot
 
+# Reliability stress is explicit and disabled by default. Container deployments
+# that enable it must mount the same config, plugin and state directory into
+# both the daemon and Web containers. NPU Burn docker_exec additionally needs
+# the opt-in Docker socket mount from docker-compose.stress-npuburn.yml.
+stress:
+  enabled: false
+  web_enabled: false
+  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
+  default_benchmarks: [stream]
+  benchmarks:
+    stream: { enabled: false, timeout: 1m }
+    hpl: { enabled: false, timeout: 2h }
+    hpcg: { enabled: false, result_dir: "", timeout: 3m }
+    npu_burn: { enabled: false, timeout: 30m }
+
 faultsub:
   enabled: false
   rest_addr: ":19321"

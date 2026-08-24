@@ -1,33 +1,17 @@
-version: "3.8"
-
 services:
   # 1. daemon: collects metrics, writes snapshots, runs Prometheus exporter.
   #    Also hosts faultsub REST API and straggler KPI output (if enabled).
   catmonitor:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.npu
+    image: ${CATMONITOR_IMAGE:-catmonitor-generic}
     privileged: true
-    network: host              # share host network namespace (see real NICs in /sys/class/net)
+    network_mode: host         # share host network namespace (see real NICs in /sys/class/net)
     pid: host                  # share host PID namespace (read host /proc/1/mounts for disk space)
-    # --privileged already grants access to all devices (including /dev/davinci*).
-    # To use tighter security instead, replace privileged with:
-    #   devices:
-    #     - /dev/davinci0
-    #     - /dev/davinci_manager
     volumes:
       # Host mounts for accurate disk space metrics in container mode:
       # / gives statfs access to host filesystems; host /proc/1/mounts is read
       # via pid:host (no bind-mount needed). Without these, disk metrics reflect
       # container bind mounts instead of host filesystems.
       - /:/host:ro
-      # NPU driver + nnae + toolkit — remove these lines on non-NPU environments
-      - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
-      - /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro
-      - /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro
-      # NPU command-line tools (installed by driver to host system paths)
-      - /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro
-      - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro
       - /etc/os-release:/etc/os-release:ro
       # Override config files (baked into image at /etc/catmonitor/ and /features/)
       # Uncomment and adjust paths to customize:
@@ -39,26 +23,19 @@ services:
       - snapshot:/var/lib/catmonitor/snapshot
       - data:/var/lib/catmonitor/data
       - straggler:/var/lib/catmonitor/straggler
-    # NPU runtime: libdcmi.so and its dependencies span driver/common/toolkit/nnae
-    environment:
-      LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
-    ports:
-      - "19320:19320"  # daemon Prometheus exporter (ignored with network: host)
-      - "19321:19321"  # faultsub REST API (enable in config to use)
     restart: unless-stopped
 
   # 2. web: standalone read-only dashboard. Reads snapshots from daemon.
   web:
-    image: catmonitor-npu
-    network: host
+    image: ${CATMONITOR_IMAGE:-catmonitor-generic}
+    network_mode: host
+    entrypoint: /usr/local/bin/web
     command: >
-      /usr/local/bin/web
-      -addr=:19322
+      -addr=${CATMONITOR_WEB_ADDR:-:19322}
       -snapshot-dir=/var/lib/catmonitor/snapshot
+      -config=/etc/catmonitor/catmonitor.yaml
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
-    ports:
-      - "19322:19322"  # (ignored with network: host)
     depends_on:
       - catmonitor
     restart: unless-stopped
@@ -66,10 +43,10 @@ services:
   # 3. dfee: energy-efficiency SPA + API. Reads snapshots from daemon.
   #    Optional: enable Prometheus exporter (:9333) and/or CSV output.
   dfee:
-    image: catmonitor-npu
-    network: host
+    image: ${CATMONITOR_IMAGE:-catmonitor-generic}
+    network_mode: host
+    entrypoint: /usr/local/bin/dfee
     command: >
-      /usr/local/bin/dfee
       -addr=:19323
       -snapshot-dir=/var/lib/catmonitor/snapshot
       -exporter=enabled
@@ -80,9 +57,6 @@ services:
     volumes:
       - snapshot:/var/lib/catmonitor/snapshot:ro
       - csv:/var/lib/catmonitor/csv
-    ports:
-      - "19323:19323"  # dfee SPA (ignored with network: host)
-      - "9333:9333"    # dfee Prometheus exporter (ignored with network: host)
     depends_on:
       - catmonitor
     restart: unless-stopped

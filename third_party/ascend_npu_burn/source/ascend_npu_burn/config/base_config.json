@@ -1,0 +1,209 @@
+{
+  "group": {
+    "default": [1, 2, 3],
+    "group_basic": [1,2,3,4,101],
+    "group_gpt": [2, 3]
+  },
+  "cases": [
+    {
+      "matmul": {
+        "seq": 1,
+        "run_count": 100,
+        "dtype": ["float32", "float16", "bfloat16", "hfloat32", "float"],
+        "shape": [
+          [[4096, 4096], [4096, 4096]],
+          [[8192, 512], [512, 8192]],
+          [[8192, 512], [512, 6144]],
+          [[8192, 512], [512, 7168]],
+          [[8192, 2048], [2048, 8192]],
+          [[512, 4096], [4096, 512]],
+          [[256, 8192], [8192, 8192]]
+        ],
+        "pattern": ["uniform_random", "gauss_random", "gauss_random_3", "gauss_random_8", "gauss_random_10p_zero", "faulty_js"]
+      },
+      "quant_matmul": {
+        "seq": 2,
+        "run_count": 100,
+        "dtype": ["int8", "float8", "hifloat8", "mxfloat4"],
+        "MKN": [[4096, 1024, 8192], [4096, 8192, 1024]],
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "weight_quant_batchmatmul": {
+        "seq": 3,
+        "run_count": 100,
+        "dtype": ["float16"],
+        "B": 8192,
+        "N": 512,
+        "k": 8192,
+        "pattern": ["gauss_random"]
+      },
+      "matmul_atomic": {
+        "seq": 4,
+        "run_count": 100,
+        "dtype": ["float16"],
+        "shape": [[[4096, 160], [160, 4096]]],
+        "pattern": ["uniform_random", "gauss_random", "gauss_random_3", "gauss_random_8", "gauss_random_10p_zero", "faulty_js"]
+      },
+      "matmul_add_fp32": {
+        "seq": 5,
+        "run_count": 100,
+        "dtype": ["float16"],
+        "B": 8,
+        "N": 160,
+        "K": 4096,
+        "pattern": ["gauss_random"]
+      },
+      "conv2d": {
+        "seq": 400,
+        "run_count": 100,
+        "dtype": ["float16","bfloat16","float32"],
+        "input_data": [32,64,224,224],
+        "weight_data": [128,64,3,3],
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "fusion_attention": {
+        "seq": 401,
+        "run_count": 100,
+        "dtype": ["float16", "bfloat16"],
+        "BSHN": [
+          [8,128,128,1],
+          [2,6144,640,5],
+          [1,128,768,4096],
+          [1,128,128,8192],
+          [1,16,128,1024],
+          [16,1,128,256],
+          [16,128,128,1024],
+          [16,256,128,256]
+        ],
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "fusion_attention_grad": {
+        "seq": 402,
+        "run_count": 100,
+        "dtype": ["float16", "bfloat16"],
+        "BNSH": [
+          [1,16,1024,128],
+          [16,1,256,128],
+          [16,256,1,128],
+          [2,5,6144,640],
+          [8,1,128,128]
+        ],
+        "pattern": ["gauss_random"]
+      },
+      "conv3d": {
+        "seq": 403,
+        "run_count": 100,
+        "dtype": ["float16","bfloat16","float32"],
+        "input_data": [4, 64, 16, 224, 224],
+        "weight_data": [128, 64, 3, 3, 3],
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "permute": {
+        "seq": 600,
+        "run_count": 100,
+        "dtype": ["float16","float","double","int64","int32","int16","int8","uint8","bool"],
+        "N": 256,
+        "C": 128,
+        "H": 64,
+        "W": 8,
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "matmul_sdma": {
+	    "seq": 601,
+	    "run_count": 1000,
+	    "dtype": ["float32", "float16", "bfloat16"],
+	    "shape": [[[4096, 4096], [4096, 4096]]],
+	    "pattern": ["uniform_random", "gauss_random", "gauss_random_3", "gauss_random_8", "gauss_random_10p_zero", "faulty_js"]
+	  },
+	  "matmul_sdma_jump": {
+	    "seq": 602,
+	    "run_count": 1000,
+	    "dtype": ["float32"],
+	    "shape": [[[4096, 4096], [4096, 4096]]],
+	    "pattern": ["uniform_random", "gauss_random"]
+	  },
+      "cube_vector_sdma": {
+        "seq": 603,
+        "run_count": 1000,
+        "dtype": ["bfloat16"],
+        "shape": [[[4096, 4096], [4096, 4096]]],
+        "pattern": ["uniform_random", "gauss_random"],
+        "vector_op": ["rms_norm", "relu", "pow"]
+      },
+      "matmul_axpy": {
+        "seq": 604,
+        "run_count": 100,
+        "dtype": ["float32", "float16", "bfloat16"],
+        "shape": [[[4096, 4096], [4096, 4096]]],
+        "pattern": ["uniform_random", "gauss_random", "gauss_random_3", "gauss_random_8", "gauss_random_10p_zero", "faulty_js"]
+      },
+      "matmul_pow": {
+        "seq": 800,
+        "run_count": 1000,
+        "dtype": ["bfloat16"],
+        "shape": [[[4096, 4096], [4096, 4096]]],
+        "pattern": ["gauss_random", "uniform_random"]
+      },
+      "linear_softmax": {
+        "seq": 801,
+        "run_count": 100,
+        "dtype": ["float16"],
+        "seq_len": 40960,
+        "in.out": [9216, 13312],
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "simplified_transformer": {
+        "seq": 802,
+        "run_count": 1000,
+        "dtype": ["float32"],
+        "seq_len": [512],
+        "batch_size": [16],
+        "head_num": [128],
+        "head_dim": [128],
+        "pattern": ["uniform_random", "gauss_random"]
+      },
+      "gmm_backward_rmsnorm": {
+        "seq": 803,
+        "run_count": 100,
+        "dtype": ["float16"],
+        "ESKN": [8, 32768, 768, 2048],
+        "ND": [512, 4096],
+        "pattern": ["gauss_random"]
+      },
+      "gpt3": {
+        "seq": 1000,
+        "run_count": 2048,
+        "num_warmup": 64,
+        "batch_size": 32,
+        "seq_len": 512,
+        "random_seed": 1,
+        "sample_pool": 32,
+        "num_classes": 100,
+        "vocab_size": 50257,
+        "hidden_size": 1280,
+        "num_hidden_layers": 36,
+        "num_attention_heads": 20,
+        "intermediate_size": 5120,
+        "learning_rate": 0.00001,
+        "dtype": "bfloat16"
+      },
+      "llama2": {
+        "seq": 1001,
+        "run_count": 2048,
+        "num_warmup": 64,
+        "batch_size": 32,
+        "seq_len": 512,
+        "random_seed": 1,
+        "sample_pool": 32,
+        "num_classes": 100,
+        "vocab_size": 32000,
+        "hidden_size": 1280,
+        "num_hidden_layers": 36,
+        "num_attention_heads": 20,
+        "intermediate_size": 5120,
+        "learning_rate": 0.00001,
+        "dtype": "bfloat16"
+      }
+    }
+  ]
+}

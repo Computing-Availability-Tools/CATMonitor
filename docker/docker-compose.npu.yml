@@ -1,0 +1,12 @@
+# Ascend NPU host overlay. Build catmonitor-npu with docker/build.sh npu first,
+# then combine this file with the generic base compose definition.
+services:
+  catmonitor:
+    volumes:
+      - /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
+      - /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro
+      - /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro
+      - /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro
+      - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro
+    environment:
+      LD_LIBRARY_PATH: /usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64

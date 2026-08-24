@@ -12,21 +12,43 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 )
 
 // catmonitor-web is a standalone read-only binary that serves the CATMonitor
 // web dashboard + API. It reads daemon-produced snapshot files (snapshot.json +
 // snapshot_<comp>.json) from -snapshot-dir, which must match the daemon's
 // snapshot.dir (daemon must run with snapshot.enabled:true and features
-// including web). No collection.
+// including web). It does not collect metrics. The independently mounted
+// stress feature may execute only when explicitly enabled in the shared
+// CATMonitor config and the Web listener is loopback-only.
 func main() {
 	addr := flag.String("addr", ":19322", "listen address (port taken => auto +1)")
 	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
+	configPath := flag.String("config", platform.ConfigPath(), "CATMonitor config path (default: platform path or CATMONITOR_CONFIG)")
 	flag.Parse()
+	configExplicit := os.Getenv("CATMONITOR_CONFIG") != ""
+	flag.Visit(func(current *flag.Flag) {
+		if current.Name == "config" {
+			configExplicit = true
+		}
+	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	stressCfg, configMissing, err := loadWebStressConfig(*configPath, !configExplicit)
+	if err != nil {
+		logger.Error("failed to load CATMonitor config", "path", *configPath, "error", err)
+		os.Exit(1)
+	}
+	if configMissing {
+		logger.Warn("default CATMonitor config is absent; stress feature remains disabled", "path", *configPath)
+	}
+	stressManager := stress.NewManagerWithLogger(stressCfg, logger)
 
-	srv := NewServer(*dir, logger)
+	srv := NewServer(*dir, logger, stressManager, *addr)
 	httpServer := &http.Server{Handler: srv.Routes()}
 
 	ln, bound, err := listenWithFallback(*addr, logger)
@@ -38,7 +60,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	go func() {
-		logger.Info("web server starting (read-only consumer)", "addr", bound, "snapshot_dir", *dir)
+		logger.Info("web server starting (snapshot read-only consumer)", "addr", bound, "snapshot_dir", *dir, "config_path", *configPath)
 		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 			logger.Error("http server error", "error", err)
 			cancel()
@@ -50,6 +72,22 @@ func main() {
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = httpServer.Shutdown(shutCtx)
+	stressCtx, stressCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stressCancel()
+	if err := stressManager.Shutdown(stressCtx); err != nil {
+		logger.Error("stress manager shutdown failed", "error", err)
+	}
+}
+
+func loadWebStressConfig(path string, allowMissing bool) (stress.Config, bool, error) {
+	catCfg, err := config.Load(path)
+	if err == nil {
+		return catCfg.Stress, false, nil
+	}
+	if allowMissing && errors.Is(err, os.ErrNotExist) {
+		return stress.Config{}, true, nil
+	}
+	return stress.Config{}, false, err
 }
 
 // listenWithFallback tries to listen on initialAddr; if the port is already in

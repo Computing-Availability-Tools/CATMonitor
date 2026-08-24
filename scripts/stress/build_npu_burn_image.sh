@@ -1,0 +1,831 @@
+#!/usr/bin/env bash
+# Build a traceable Ascend NPU Burn image without creating containers or
+# executing an NPU workload. Runtime devices, mounts and lifecycle remain an
+# administrator-owned deployment concern.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd -P)
+DOCKERFILE_TEMPLATE="$REPO_ROOT/docker/stress/npu/Dockerfile"
+ENTRYPOINT_TEMPLATE="$REPO_ROOT/docker/stress/npu/entrypoint.sh"
+ASCEND_ENV_TEMPLATE="$REPO_ROOT/docker/stress/npu/ascend_env.sh"
+ENTRYPOINT_VALIDATOR_TEMPLATE="$REPO_ROOT/docker/stress/npu/validate_entrypoint.sh"
+RUNTIME_ABI_VALIDATOR_TEMPLATE="$REPO_ROOT/docker/stress/npu/validate_runtime_abi.py"
+RUNTIME_PREFLIGHT_TEMPLATE="$REPO_ROOT/docker/stress/npu/runtime_preflight.sh"
+BUNDLED_SOURCE="$REPO_ROOT/third_party/ascend_npu_burn/source"
+BUNDLED_METADATA="$REPO_ROOT/third_party/ascend_npu_burn/UPSTREAM"
+RUNTIME_PACKAGES_TEMPLATE="$REPO_ROOT/docker/stress/npu/runtime-packages.txt"
+
+SOURCE_ROOT="$BUNDLED_SOURCE"
+SOURCE_ORIGIN=bundled
+SOURCE_METADATA_PATH="$BUNDLED_METADATA"
+SOURCE_METADATA_EXPLICIT=false
+LEGACY_BASE_IMAGE=
+BUILDER_BASE_IMAGE=
+RUNTIME_BASE_IMAGE=
+BASE_MODE=split
+TARGET_IMAGE=
+DOCKER_BIN=
+LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE=${ASCEND_ENV_SCRIPT:-}
+BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE=
+RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE=
+BUILD_DRIVER_LIB_DIR=
+COMPAT_PROFILE=none
+BUILD_NETWORK=default
+BUILD_NETWORK_EXPLICIT=false
+BUILD_ROOT=/var/tmp/catmonitor-npu-burn-build
+MANIFEST_PATH=
+FORCE=false
+declare -a PATCH_FILES=()
+declare -a PCIUTILS_PACKAGES=()
+
+usage() {
+    cat <<'EOF'
+Usage: build_npu_burn_image.sh [OPTIONS]
+
+Required:
+  --builder-base-image IMAGE
+                            Full CANN/TBE/compiler/torch_npu build image
+  --runtime-base-image IMAGE
+                            Slim CANN runtime/Python/torch/torch_npu image
+  --image IMAGE             Output image name and tag
+
+Source controls:
+  --source PATH             Override the bundled NPU Burn source for upstream
+                            update, development or compatibility testing only
+  --source-metadata PATH    UPSTREAM metadata for --source (default: UPSTREAM
+                            next to the override source directory)
+
+Build controls:
+  --base-image IMAGE        Compatibility mode: use one image for builder and
+                            runtime. Not suitable for slim release images.
+  --docker-bin PATH         Docker-compatible CLI (default: docker from PATH)
+  --ascend-env-script PATH  Compatibility override used for both base images
+  --builder-ascend-env-script PATH
+                            Explicit CANN env script inside the builder image
+  --runtime-ascend-env-script PATH
+                            Explicit CANN env script inside the runtime image
+                            (default: deterministic per-image auto-discovery)
+  --build-driver-lib-dir PATH
+                            Optional host Ascend driver lib64 directory used
+                            only by the disposable builder stage; it is never
+                            copied into the final runtime image
+  --compat-profile NAME     Compatibility identity (default: none)
+  --build-network NAME      Docker build network: default, host, or none
+                            (default: default; offline package input selects
+                            none unless this option is explicit)
+  --pciutils-package PATH   Compatible offline pciutils RPM/DEB; repeat for
+                            dependency packages. Preferred on isolated nodes.
+  --patch PATH              Apply an audited -p1 patch; repeatable
+  --build-root PATH         Isolated build parent
+                            (default: /var/tmp/catmonitor-npu-burn-build)
+  --manifest PATH           Output manifest (default: BUILD_ROOT/manifests/
+                            npu-burn-image-manifest.json)
+  --force                   Replace an existing image tag or manifest
+  -h, --help                Show this help
+
+Profile rules:
+  * Normal release builds use the source bundled under third_party/.
+  * "none" accepts no patches and is the initial A3 profile.
+  * Any other safe profile name requires at least one explicit --patch.
+  * Patches are applied only to the isolated source snapshot, never in place.
+
+The Docker build verifies installed package metadata, imports, and the entrypoint
+file. Runtime CLI, NUMA, and NPU validation happen only after image creation. The
+builder never calls docker run/create/start/stop/rm.
+EOF
+}
+
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+require_value() {
+    [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 requires a value"
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --source) require_value "$@"; SOURCE_ROOT=$2; SOURCE_ORIGIN=override; shift 2 ;;
+        --source-metadata) require_value "$@"; SOURCE_METADATA_PATH=$2; SOURCE_METADATA_EXPLICIT=true; shift 2 ;;
+        --base-image) require_value "$@"; LEGACY_BASE_IMAGE=$2; shift 2 ;;
+        --builder-base-image) require_value "$@"; BUILDER_BASE_IMAGE=$2; shift 2 ;;
+        --runtime-base-image) require_value "$@"; RUNTIME_BASE_IMAGE=$2; shift 2 ;;
+        --image) require_value "$@"; TARGET_IMAGE=$2; shift 2 ;;
+        --docker-bin) require_value "$@"; DOCKER_BIN=$2; shift 2 ;;
+        --ascend-env-script) require_value "$@"; LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
+        --builder-ascend-env-script) require_value "$@"; BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
+        --runtime-ascend-env-script) require_value "$@"; RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
+        --build-driver-lib-dir) require_value "$@"; BUILD_DRIVER_LIB_DIR=$2; shift 2 ;;
+        --compat-profile) require_value "$@"; COMPAT_PROFILE=$2; shift 2 ;;
+        --build-network) require_value "$@"; BUILD_NETWORK=$2; BUILD_NETWORK_EXPLICIT=true; shift 2 ;;
+        --pciutils-package) require_value "$@"; PCIUTILS_PACKAGES+=("$2"); shift 2 ;;
+        --patch) require_value "$@"; PATCH_FILES+=("$2"); shift 2 ;;
+        --build-root) require_value "$@"; BUILD_ROOT=$2; shift 2 ;;
+        --manifest) require_value "$@"; MANIFEST_PATH=$2; shift 2 ;;
+        --force) FORCE=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "unknown argument: $1" ;;
+    esac
+done
+
+if [ "${#PCIUTILS_PACKAGES[@]}" -gt 0 ] && [ "$BUILD_NETWORK_EXPLICIT" != true ]; then
+    BUILD_NETWORK=none
+fi
+
+if [ -n "$LEGACY_BASE_IMAGE" ]; then
+    [ -z "$BUILDER_BASE_IMAGE$RUNTIME_BASE_IMAGE" ] || \
+        die "--base-image cannot be combined with split base-image options"
+    BUILDER_BASE_IMAGE=$LEGACY_BASE_IMAGE
+    RUNTIME_BASE_IMAGE=$LEGACY_BASE_IMAGE
+    BASE_MODE=shared
+else
+    [ -n "$BUILDER_BASE_IMAGE" ] || die "--builder-base-image is required"
+    [ -n "$RUNTIME_BASE_IMAGE" ] || die "--runtime-base-image is required"
+fi
+[ -n "$TARGET_IMAGE" ] || die "--image is required"
+if [ -n "$LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
+    [ -z "$BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE$RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE" ] || \
+        die "--ascend-env-script cannot be combined with per-image environment overrides"
+    BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE=$LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE
+    RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE=$LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE
+fi
+case "$BUILD_NETWORK" in
+    default|host|none) ;;
+    *) die "--build-network must be default, host, or none" ;;
+esac
+if [ "$SOURCE_ORIGIN" = bundled ] && [ "$SOURCE_METADATA_EXPLICIT" = true ]; then
+    die "--source-metadata is only valid with --source"
+fi
+for base_image_record in \
+    "--builder-base-image:$BUILDER_BASE_IMAGE" \
+    "--runtime-base-image:$RUNTIME_BASE_IMAGE"; do
+    base_image_option=${base_image_record%%:*}
+    base_image_value=${base_image_record#*:}
+    case "$base_image_value" in
+        -*|*[!A-Za-z0-9._/@:-]*) die "$base_image_option contains unsupported characters" ;;
+    esac
+done
+case "$TARGET_IMAGE" in
+    -*|*@*|*[!A-Za-z0-9._/:-]*) die "--image must be a name/tag, not a digest or option" ;;
+esac
+for env_script_record in \
+    "--builder-ascend-env-script:$BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE" \
+    "--runtime-ascend-env-script:$RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE"; do
+    env_script_option=${env_script_record%%:*}
+    env_script_value=${env_script_record#*:}
+    [ -n "$env_script_value" ] || continue
+    case "$env_script_value" in
+        /*) ;;
+        *) die "$env_script_option must be an absolute path inside its base image" ;;
+    esac
+    case "$env_script_value" in
+        *$'\n'*|*$'\r'*|*$'\t'*) die "$env_script_option contains unsupported whitespace" ;;
+    esac
+done
+if [ -n "$BUILD_DRIVER_LIB_DIR" ]; then
+    case "$BUILD_DRIVER_LIB_DIR" in
+        /*) ;;
+        *) die "--build-driver-lib-dir must be an absolute path on the build host" ;;
+    esac
+    BUILD_DRIVER_LIB_DIR=$(readlink -f -- "$BUILD_DRIVER_LIB_DIR") || \
+        die "build driver lib directory is unavailable"
+    [ -d "$BUILD_DRIVER_LIB_DIR" ] || die "build driver lib directory is unavailable"
+    case "$BUILD_DRIVER_LIB_DIR" in
+        /|/usr|/usr/local|/usr/local/Ascend|/usr/local/Ascend/driver)
+            die "--build-driver-lib-dir must name the dedicated driver lib64 directory"
+            ;;
+    esac
+    find -L "$BUILD_DRIVER_LIB_DIR" -maxdepth 3 -name 'libascend_hal.so*' -print -quit | grep -q . || \
+        die "build driver lib directory does not contain libascend_hal.so"
+fi
+case "$COMPAT_PROFILE" in
+    none)
+        [ "${#PATCH_FILES[@]}" -eq 0 ] || die "compat profile none does not accept --patch"
+        ;;
+    ''|-*|*[!a-z0-9._-]*)
+        die "--compat-profile must be none or a lowercase safe name"
+        ;;
+    *)
+        [ "${#PATCH_FILES[@]}" -gt 0 ] || \
+            die "compat profile $COMPAT_PROFILE requires at least one --patch"
+        ;;
+esac
+
+for tool in readlink install mktemp tar sha256sum find grep date awk wc tee; do
+    command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
+done
+[ "${#PATCH_FILES[@]}" -eq 0 ] || command -v patch >/dev/null 2>&1 || \
+    die "required tool is unavailable: patch"
+
+SOURCE_ROOT=$(readlink -m -- "$SOURCE_ROOT")
+[ -d "$SOURCE_ROOT" ] || die "source directory is unavailable"
+if [ "$SOURCE_ORIGIN" = override ] && [ "$SOURCE_METADATA_EXPLICIT" != true ]; then
+    SOURCE_METADATA_PATH="$(dirname -- "$SOURCE_ROOT")/UPSTREAM"
+fi
+SOURCE_METADATA_PATH=$(readlink -m -- "$SOURCE_METADATA_PATH")
+[ -f "$SOURCE_METADATA_PATH" ] || \
+    die "upstream metadata is unavailable; use --source-metadata with an override source"
+[ ! -L "$SOURCE_METADATA_PATH" ] || die "upstream metadata must not be a symbolic link"
+for required in build/build.sh build/setup.py ascend_npu_burn/npu_burn.py LICENSE.md; do
+    [ -f "$SOURCE_ROOT/$required" ] || die "source is missing required file: $required"
+done
+if find "$SOURCE_ROOT" -type l -print -quit | grep -q .; then
+    die "source directory must not contain symbolic links"
+fi
+if grep -q $'\r' "$SOURCE_ROOT/build/build.sh"; then
+    die "source build/build.sh must use LF line endings"
+fi
+
+metadata_value() {
+    local key=$1
+    awk -v key="$key" '
+        index($0, key "=") == 1 {
+            count++
+            value=substr($0, length(key) + 2)
+        }
+        END {
+            if (count != 1 || value == "") exit 1
+            print value
+        }
+    ' "$SOURCE_METADATA_PATH"
+}
+
+UPSTREAM_SCHEMA_VERSION=$(metadata_value schema_version) || die "upstream metadata has invalid schema_version"
+UPSTREAM_REPOSITORY=$(metadata_value repository) || die "upstream metadata has invalid repository"
+UPSTREAM_REVISION=$(metadata_value revision) || die "upstream metadata has invalid revision"
+UPSTREAM_TREE=$(metadata_value tree) || die "upstream metadata has invalid tree"
+UPSTREAM_TAG_CONTEXT=$(metadata_value tag_context) || die "upstream metadata has invalid tag_context"
+UPSTREAM_SYNC_DATE=$(metadata_value sync_date) || die "upstream metadata has invalid sync_date"
+UPSTREAM_ARCHIVE_SHA256=$(metadata_value archive_sha256) || die "upstream metadata has invalid archive_sha256"
+UPSTREAM_SOURCE_MANIFEST_SHA256=$(metadata_value source_manifest_sha256) || \
+    die "upstream metadata has invalid source_manifest_sha256"
+UPSTREAM_LICENSE=$(metadata_value license) || die "upstream metadata has invalid license"
+UPSTREAM_DIRECT_MODIFICATIONS=$(metadata_value direct_modifications) || \
+    die "upstream metadata has invalid direct_modifications"
+
+[ "$UPSTREAM_SCHEMA_VERSION" = 1 ] || die "unsupported upstream metadata schema_version: $UPSTREAM_SCHEMA_VERSION"
+case "$UPSTREAM_REVISION:$UPSTREAM_TREE" in
+    *[!0-9a-f:]*)
+        die "upstream revision and tree must be lowercase 40-character Git object IDs"
+        ;;
+esac
+[ "${#UPSTREAM_REVISION}" -eq 40 ] && [ "${#UPSTREAM_TREE}" -eq 40 ] || \
+    die "upstream revision and tree must be lowercase 40-character Git object IDs"
+case "$UPSTREAM_ARCHIVE_SHA256:$UPSTREAM_SOURCE_MANIFEST_SHA256" in
+    *[!0-9a-f:]*)
+        die "upstream SHA-256 metadata is invalid"
+        ;;
+esac
+[ "${#UPSTREAM_ARCHIVE_SHA256}" -eq 64 ] && \
+    [ "${#UPSTREAM_SOURCE_MANIFEST_SHA256}" -eq 64 ] || \
+    die "upstream SHA-256 metadata is invalid"
+case "$UPSTREAM_DIRECT_MODIFICATIONS" in true|false) ;; *) die "upstream direct_modifications must be true or false" ;; esac
+
+if [ "$SOURCE_ORIGIN" = bundled ]; then
+    SOURCE_MANIFEST_PATH="$(dirname -- "$SOURCE_METADATA_PATH")/SOURCE_SHA256SUMS"
+    [ -f "$SOURCE_MANIFEST_PATH" ] || die "bundled source checksum manifest is unavailable"
+    [ "$(sha256sum -- "$SOURCE_MANIFEST_PATH" | awk '{print $1}')" = "$UPSTREAM_SOURCE_MANIFEST_SHA256" ] || \
+        die "bundled source checksum manifest does not match upstream metadata"
+    (
+        cd "$SOURCE_ROOT"
+        sha256sum --check --strict "$SOURCE_MANIFEST_PATH" >/dev/null
+    ) || die "bundled source does not match SOURCE_SHA256SUMS"
+    EXPECTED_SOURCE_FILE_COUNT=$(grep -Ec '^[0-9a-f]{64}  \./' "$SOURCE_MANIFEST_PATH")
+    ACTUAL_SOURCE_FILE_COUNT=$(find "$SOURCE_ROOT" -type f | wc -l | awk '{print $1}')
+    [ "$EXPECTED_SOURCE_FILE_COUNT" -gt 0 ] && \
+        [ "$ACTUAL_SOURCE_FILE_COUNT" -eq "$EXPECTED_SOURCE_FILE_COUNT" ] || \
+        die "bundled source file set does not match SOURCE_SHA256SUMS"
+    [ "$UPSTREAM_DIRECT_MODIFICATIONS" = false ] || \
+        die "bundled upstream metadata must declare direct_modifications=false"
+fi
+
+for index in "${!PATCH_FILES[@]}"; do
+    PATCH_FILES[$index]=$(readlink -m -- "${PATCH_FILES[$index]}")
+    [ -f "${PATCH_FILES[$index]}" ] || die "patch file is unavailable: ${PATCH_FILES[$index]}"
+done
+
+PCIUTILS_PACKAGE_FORMAT=
+for index in "${!PCIUTILS_PACKAGES[@]}"; do
+    package_input=${PCIUTILS_PACKAGES[$index]}
+    [ ! -L "$package_input" ] || die "pciutils package must not be a symbolic link: $package_input"
+    PCIUTILS_PACKAGES[$index]=$(readlink -m -- "$package_input")
+    package_path=${PCIUTILS_PACKAGES[$index]}
+    [ -f "$package_path" ] || die "pciutils package is unavailable: $package_path"
+    case "$package_path" in
+        *.rpm) package_format=rpm ;;
+        *.deb) package_format=deb ;;
+        *) die "--pciutils-package accepts only .rpm or .deb files" ;;
+    esac
+    if [ -z "$PCIUTILS_PACKAGE_FORMAT" ]; then
+        PCIUTILS_PACKAGE_FORMAT=$package_format
+    elif [ "$PCIUTILS_PACKAGE_FORMAT" != "$package_format" ]; then
+        die "pciutils package inputs must not mix RPM and DEB formats"
+    fi
+done
+
+if [ -z "$DOCKER_BIN" ]; then
+    DOCKER_BIN=$(command -v docker 2>/dev/null || true)
+fi
+[ -n "$DOCKER_BIN" ] || die "docker is unavailable; use --docker-bin"
+DOCKER_BIN=$(readlink -f -- "$DOCKER_BIN")
+[ -x "$DOCKER_BIN" ] || die "docker CLI is not executable: $DOCKER_BIN"
+
+case "$BUILD_ROOT" in /*) ;; *) die "--build-root must be absolute" ;; esac
+case "$BUILD_ROOT" in /|/var|/var/tmp|/tmp) die "--build-root must be a dedicated child directory" ;; esac
+case "$BUILD_ROOT" in *$'\n'*|*$'\r'*|*$'\t'*|*' '*) die "--build-root cannot contain whitespace" ;; esac
+BUILD_ROOT=$(readlink -m -- "$BUILD_ROOT")
+case "$BUILD_ROOT/" in "$SOURCE_ROOT"/*) die "--build-root cannot be inside the source directory" ;; esac
+[ ! -L "$BUILD_ROOT" ] || die "--build-root cannot be a symbolic link"
+install -d -m 0755 "$BUILD_ROOT"
+
+if [ -z "$MANIFEST_PATH" ]; then
+    MANIFEST_PATH="$BUILD_ROOT/manifests/npu-burn-image-manifest.json"
+fi
+case "$MANIFEST_PATH" in /*) ;; *) die "--manifest must be absolute" ;; esac
+MANIFEST_PATH=$(readlink -m -- "$MANIFEST_PATH")
+case "$MANIFEST_PATH" in "$SOURCE_ROOT"|"$SOURCE_ROOT"/*) die "--manifest cannot modify the source directory" ;; esac
+[ ! -L "$MANIFEST_PATH" ] || die "manifest path cannot be a symbolic link"
+
+[ -f "$DOCKERFILE_TEMPLATE" ] || die "Dockerfile template is unavailable"
+[ -f "$ENTRYPOINT_TEMPLATE" ] || die "entrypoint template is unavailable"
+[ -f "$ASCEND_ENV_TEMPLATE" ] || die "Ascend environment helper template is unavailable"
+[ -f "$ENTRYPOINT_VALIDATOR_TEMPLATE" ] || die "entrypoint validator template is unavailable"
+[ -f "$RUNTIME_ABI_VALIDATOR_TEMPLATE" ] || die "runtime ABI validator template is unavailable"
+[ -f "$RUNTIME_PREFLIGHT_TEMPLATE" ] || die "runtime preflight template is unavailable"
+[ -f "$RUNTIME_PACKAGES_TEMPLATE" ] || die "runtime package list is unavailable"
+for shell_template in \
+    "$ENTRYPOINT_TEMPLATE" \
+    "$ASCEND_ENV_TEMPLATE" \
+    "$ENTRYPOINT_VALIDATOR_TEMPLATE" \
+    "$RUNTIME_PREFLIGHT_TEMPLATE"; do
+    if grep -q $'\r' "$shell_template"; then
+        die "shell template must use LF line endings: $shell_template"
+    fi
+done
+if grep -q $'\r' "$RUNTIME_PACKAGES_TEMPLATE"; then
+    die "runtime package list must use LF line endings"
+fi
+mapfile -t RUNTIME_PACKAGES < <(
+    awk 'NF && $1 !~ /^#/ { print $1 }' "$RUNTIME_PACKAGES_TEMPLATE"
+)
+[ "${#RUNTIME_PACKAGES[@]}" -gt 0 ] || die "runtime package list is empty"
+declare -A runtime_package_seen=()
+for runtime_package in "${RUNTIME_PACKAGES[@]}"; do
+    case "$runtime_package" in
+        *[!A-Za-z0-9+._-]*|'') die "runtime package list contains an invalid package name" ;;
+    esac
+    [ -z "${runtime_package_seen[$runtime_package]-}" ] || \
+        die "runtime package list contains a duplicate package: $runtime_package"
+    runtime_package_seen[$runtime_package]=true
+done
+[ -n "${runtime_package_seen[pciutils]-}" ] || \
+    die "runtime package list must include pciutils"
+
+DOCKER_VERSION=$("$DOCKER_BIN" version --format '{{.Server.Version}}' 2>&1) || \
+    die "docker daemon is unavailable: $DOCKER_VERSION"
+inspect_base() {
+    local role=$1 image=$2 variable_prefix=$3 value
+    value=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$image" 2>/dev/null) || \
+        die "$role base image is unavailable locally; pull or load the approved image first: $image"
+    printf -v "${variable_prefix}_ID" '%s' "$value"
+    value=$("$DOCKER_BIN" image inspect --format '{{join .RepoDigests ","}}' "$image")
+    printf -v "${variable_prefix}_DIGESTS" '%s' "$value"
+    value=$("$DOCKER_BIN" image inspect --format '{{.Os}}' "$image")
+    printf -v "${variable_prefix}_OS" '%s' "$value"
+    value=$("$DOCKER_BIN" image inspect --format '{{.Architecture}}' "$image")
+    printf -v "${variable_prefix}_ARCH" '%s' "$value"
+    value=$("$DOCKER_BIN" image inspect --format '{{.Size}}' "$image")
+    case "$value" in ''|*[!0-9]*) die "docker reported an invalid $role base image size" ;; esac
+    printf -v "${variable_prefix}_SIZE" '%s' "$value"
+}
+inspect_base builder "$BUILDER_BASE_IMAGE" BUILDER_BASE_IMAGE
+inspect_base runtime "$RUNTIME_BASE_IMAGE" RUNTIME_BASE_IMAGE
+[ "$BUILDER_BASE_IMAGE_OS" = linux ] && [ "$RUNTIME_BASE_IMAGE_OS" = linux ] || \
+    die "builder and runtime base images must use linux"
+[ "$BUILDER_BASE_IMAGE_ARCH" = "$RUNTIME_BASE_IMAGE_ARCH" ] || \
+    die "builder/runtime base image architectures do not match"
+if [ "$BASE_MODE" = split ]; then
+    [ "$BUILDER_BASE_IMAGE_ID" != "$RUNTIME_BASE_IMAGE_ID" ] || \
+        die "split builder/runtime base images resolve to the same image ID"
+    [ "$RUNTIME_BASE_IMAGE_SIZE" -lt "$BUILDER_BASE_IMAGE_SIZE" ] || \
+        die "runtime base image must be smaller than the builder base image"
+fi
+if "$DOCKER_BIN" image inspect "$TARGET_IMAGE" >/dev/null 2>&1; then
+    [ "$FORCE" = true ] || die "image already exists; use --force to replace its tag: $TARGET_IMAGE"
+fi
+if [ -e "$MANIFEST_PATH" ] && [ "$FORCE" != true ]; then
+    die "manifest already exists; use --force to replace it: $MANIFEST_PATH"
+fi
+
+RUN_ROOT=$(mktemp -d "$BUILD_ROOT/catmonitor-npu-burn-build.XXXXXXXX")
+MANIFEST_TEMP=
+cleanup() {
+    if [ -n "$MANIFEST_TEMP" ]; then rm -f -- "$MANIFEST_TEMP"; fi
+    case "$RUN_ROOT" in "$BUILD_ROOT"/catmonitor-npu-burn-build.*) rm -rf -- "$RUN_ROOT" ;; esac
+}
+trap cleanup EXIT HUP INT TERM
+CONTEXT="$RUN_ROOT/context"
+STAGED_SOURCE="$CONTEXT/source"
+STAGED_BUILD_DRIVER="$CONTEXT/build-driver-lib64"
+STAGED_PCIUTILS_PACKAGES="$CONTEXT/pciutils-packages"
+install -d -m 0755 "$STAGED_SOURCE" "$STAGED_BUILD_DRIVER" "$STAGED_PCIUTILS_PACKAGES"
+
+# Copy a clean source snapshot. Generated wheels, VCS metadata and Python/C++
+# cache products are not accepted as source inputs.
+(
+    cd "$SOURCE_ROOT"
+    tar \
+        --exclude='./.git' \
+        --exclude='./build/dist' \
+        --exclude='./.pytest_cache' \
+        --exclude='__pycache__' \
+        --exclude='*.pyc' \
+        --exclude='*.so' \
+        -cf - .
+) | tar --no-same-owner --no-same-permissions -xf - -C "$STAGED_SOURCE"
+
+hash_tree() {
+    local root=$1
+    (
+        cd "$root"
+        tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 \
+            --numeric-owner -cf - .
+    ) | sha256sum | awk '{print $1}'
+}
+
+BUILD_DRIVER_INJECTED=false
+BUILD_DRIVER_SHA256=
+if [ -n "$BUILD_DRIVER_LIB_DIR" ]; then
+    (
+        cd "$BUILD_DRIVER_LIB_DIR"
+        tar -cf - .
+    ) | tar --no-same-owner --no-same-permissions -xf - -C "$STAGED_BUILD_DRIVER"
+    BUILD_DRIVER_INJECTED=true
+    BUILD_DRIVER_SHA256=$(hash_tree "$STAGED_BUILD_DRIVER")
+fi
+
+PCIUTILS_PACKAGE_BUNDLE_SHA256=
+for package_path in "${PCIUTILS_PACKAGES[@]}"; do
+    package_name=${package_path##*/}
+    [ ! -e "$STAGED_PCIUTILS_PACKAGES/$package_name" ] || \
+        die "duplicate pciutils package filename: $package_name"
+    install -m 0644 -- "$package_path" "$STAGED_PCIUTILS_PACKAGES/$package_name"
+done
+if [ "${#PCIUTILS_PACKAGES[@]}" -gt 0 ]; then
+    PCIUTILS_PACKAGE_BUNDLE_SHA256=$(hash_tree "$STAGED_PCIUTILS_PACKAGES")
+fi
+
+sha256_file() {
+    sha256sum -- "$1" | awk '{print $1}'
+}
+
+SOURCE_SHA256=$(hash_tree "$STAGED_SOURCE")
+for patch_file in "${PATCH_FILES[@]}"; do
+    patch --dry-run --batch --forward -p1 -d "$STAGED_SOURCE" <"$patch_file" >/dev/null || \
+        die "patch does not apply cleanly: $patch_file"
+    patch --batch --forward -p1 -d "$STAGED_SOURCE" <"$patch_file"
+done
+if grep -q $'\r' "$STAGED_SOURCE/build/build.sh"; then
+    die "patched source build/build.sh must use LF line endings"
+fi
+PATCHED_SOURCE_SHA256=$(hash_tree "$STAGED_SOURCE")
+
+install -m 0644 "$DOCKERFILE_TEMPLATE" "$CONTEXT/Dockerfile"
+install -m 0755 "$ENTRYPOINT_TEMPLATE" "$CONTEXT/entrypoint.sh"
+install -m 0644 "$ASCEND_ENV_TEMPLATE" "$CONTEXT/ascend_env.sh"
+install -m 0755 "$ENTRYPOINT_VALIDATOR_TEMPLATE" "$CONTEXT/validate_entrypoint.sh"
+install -m 0644 "$RUNTIME_ABI_VALIDATOR_TEMPLATE" "$CONTEXT/validate_runtime_abi.py"
+install -m 0755 "$RUNTIME_PREFLIGHT_TEMPLATE" "$CONTEXT/runtime_preflight.sh"
+install -m 0644 "$RUNTIME_PACKAGES_TEMPLATE" "$CONTEXT/runtime-packages.txt"
+DOCKERFILE_SHA256=$(sha256_file "$DOCKERFILE_TEMPLATE")
+ENTRYPOINT_SHA256=$(sha256_file "$ENTRYPOINT_TEMPLATE")
+ASCEND_ENV_SHA256=$(sha256_file "$ASCEND_ENV_TEMPLATE")
+ENTRYPOINT_VALIDATOR_SHA256=$(sha256_file "$ENTRYPOINT_VALIDATOR_TEMPLATE")
+RUNTIME_ABI_VALIDATOR_SHA256=$(sha256_file "$RUNTIME_ABI_VALIDATOR_TEMPLATE")
+RUNTIME_PREFLIGHT_SHA256=$(sha256_file "$RUNTIME_PREFLIGHT_TEMPLATE")
+RUNTIME_PACKAGES_SHA256=$(sha256_file "$RUNTIME_PACKAGES_TEMPLATE")
+BUILD_VALIDATION_NONCE="$(date -u +%s)-$$"
+DOCKER_BUILD_LOG="$RUN_ROOT/docker-build.log"
+
+printf '==> building Ascend NPU Burn image %s\n' "$TARGET_IMAGE"
+printf '    source: %s\n' "$SOURCE_ROOT"
+printf '    source origin: %s\n' "$SOURCE_ORIGIN"
+printf '    upstream revision: %s\n' "$UPSTREAM_REVISION"
+printf '    base mode: %s\n' "$BASE_MODE"
+printf '    builder base image: %s (%s bytes)\n' "$BUILDER_BASE_IMAGE" "$BUILDER_BASE_IMAGE_SIZE"
+printf '    runtime base image: %s (%s bytes)\n' "$RUNTIME_BASE_IMAGE" "$RUNTIME_BASE_IMAGE_SIZE"
+if [ "$BUILD_DRIVER_INJECTED" = true ]; then
+    printf '    build-only driver lib64: %s\n' "$BUILD_DRIVER_LIB_DIR"
+else
+    printf '    build-only driver lib64: not staged\n'
+fi
+if [ -n "$BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
+    printf '    builder Ascend env override: %s\n' "$BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE"
+else
+    printf '    builder Ascend env: deterministic auto-discovery\n'
+fi
+if [ -n "$RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE" ]; then
+    printf '    runtime Ascend env override: %s\n' "$RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE"
+else
+    printf '    runtime Ascend env: deterministic auto-discovery\n'
+fi
+printf '    compatibility profile: %s\n' "$COMPAT_PROFILE"
+if [ "${#PCIUTILS_PACKAGES[@]}" -gt 0 ]; then
+    printf '    offline pciutils packages: %s (%s)\n' "${#PCIUTILS_PACKAGES[@]}" "$PCIUTILS_PACKAGE_FORMAT"
+else
+    printf '    offline pciutils packages: not staged\n'
+fi
+printf '    build network: %s (default is normal; offline package input selects none unless explicitly overridden)\n' "$BUILD_NETWORK"
+PCIUTILS_ONLINE_INSTALL=false
+if [ "$BUILD_NETWORK" != none ]; then PCIUTILS_ONLINE_INSTALL=true; fi
+declare -a PROXY_ARGS=()
+if [ "$BUILD_NETWORK" != none ]; then
+    for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+        proxy_value=${!proxy_name-}
+        [ -n "$proxy_value" ] || continue
+        case "$proxy_value" in
+            *$'\n'*|*$'\r'*) die "$proxy_name contains an unsupported line break" ;;
+        esac
+        # Passing only the predefined build-arg name keeps the proxy value out
+        # of this process argv and our logs; Docker reads it from the environment.
+        PROXY_ARGS+=(--build-arg "$proxy_name")
+    done
+fi
+if [ "$BUILD_NETWORK" != none ]; then
+    if [ -n "${HTTP_PROXY-}${http_proxy-}" ]; then printf '    HTTP proxy: configured\n'; fi
+    if [ -n "${HTTPS_PROXY-}${https_proxy-}" ]; then printf '    HTTPS proxy: configured\n'; fi
+    if [ -n "${NO_PROXY-}${no_proxy-}" ]; then printf '    NO_PROXY: configured\n'; fi
+fi
+
+redact_build_output() {
+    local line proxy_name proxy_value
+    while IFS= read -r line || [ -n "$line" ]; do
+        for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+            proxy_value=${!proxy_name-}
+            [ -n "$proxy_value" ] || continue
+            line=${line//"$proxy_value"/[proxy-redacted]}
+        done
+        printf '%s\n' "$line"
+    done
+}
+set +e
+"$DOCKER_BIN" build \
+    --file "$CONTEXT/Dockerfile" \
+    --tag "$TARGET_IMAGE" \
+    --network "$BUILD_NETWORK" \
+    --build-arg "BUILDER_BASE_IMAGE=$BUILDER_BASE_IMAGE" \
+    --build-arg "RUNTIME_BASE_IMAGE=$RUNTIME_BASE_IMAGE" \
+    --build-arg "SOURCE_SHA256=$SOURCE_SHA256" \
+    --build-arg "PATCHED_SOURCE_SHA256=$PATCHED_SOURCE_SHA256" \
+    --build-arg "COMPAT_PROFILE=$COMPAT_PROFILE" \
+    --build-arg "SOURCE_ORIGIN=$SOURCE_ORIGIN" \
+    --build-arg "UPSTREAM_REPOSITORY=$UPSTREAM_REPOSITORY" \
+    --build-arg "UPSTREAM_REVISION=$UPSTREAM_REVISION" \
+    --build-arg "BUILDER_ASCEND_ENV_SCRIPT=$BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE" \
+    --build-arg "RUNTIME_ASCEND_ENV_SCRIPT=$RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE" \
+    --build-arg "PCIUTILS_ONLINE_INSTALL=$PCIUTILS_ONLINE_INSTALL" \
+    --build-arg "BUILD_VALIDATION_NONCE=$BUILD_VALIDATION_NONCE" \
+    "${PROXY_ARGS[@]}" \
+    "$CONTEXT" 2>&1 | redact_build_output | tee "$DOCKER_BUILD_LOG"
+DOCKER_BUILD_STATUS=${PIPESTATUS[0]}
+set -e
+[ "$DOCKER_BUILD_STATUS" -eq 0 ] || \
+    die "Docker image build failed during Ascend initialization, wheel build/install, or package validation"
+
+build_marker() {
+    local key=$1
+    awk -v marker="$key=" '
+        index($0, marker) {
+            value=substr($0, index($0, marker) + length(marker))
+        }
+        END {
+            sub(/[[:space:]]+$/, "", value)
+            if (value == "") exit 1
+            print value
+        }
+    ' "$DOCKER_BUILD_LOG"
+}
+
+BUILDER_ASCEND_ENV_SCRIPT_SELECTED=$(build_marker CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT) || \
+    die "Docker build did not report the builder Ascend environment script"
+RUNTIME_ASCEND_ENV_SCRIPT_SELECTED=$(build_marker CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT) || \
+    die "Docker build did not report the runtime Ascend environment script"
+CANN_VERSION=$(build_marker CATMONITOR_CANN_VERSION) || \
+    die "Docker build did not report the CANN version"
+DRIVER_MOUNT_PRESENT_AT_BUILD=$(build_marker CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD) || \
+    die "Docker build did not report build-time driver presence"
+for marker in LIBASCEND_HAL TORCH TORCH_NPU TBE; do
+    [ "$(build_marker "CATMONITOR_PREFLIGHT_$marker")" = PASS ] || \
+        die "Docker build did not pass the $marker preflight"
+done
+WHEEL_FILENAME=$(build_marker CATMONITOR_WHEEL_FILENAME) || \
+    die "Docker build did not report the wheel filename"
+WHEEL_SHA256=$(build_marker CATMONITOR_WHEEL_SHA256) || \
+    die "Docker build did not report the wheel SHA-256"
+PACKAGE_VERSION=$(build_marker CATMONITOR_PACKAGE_VERSION) || \
+    die "Docker build did not report the installed package version"
+PACKAGE_FILE=$(build_marker CATMONITOR_PACKAGE_FILE) || \
+    die "Docker build did not report the installed package path"
+[ "$(build_marker CATMONITOR_CUSTOM_OPS_IMPORT)" = PASS ] || \
+    die "Docker build did not pass the custom ops import validation"
+[ "$(build_marker CATMONITOR_ENTRYPOINT_EXECUTABLE)" = PASS ] || \
+    die "Docker build did not report an executable NPU Burn entrypoint"
+[ "$(build_marker CATMONITOR_RUNTIME_ABI)" = PASS ] || \
+    die "Docker build did not validate the slim runtime ABI"
+BUILDER_PYTHON_ABI=$(build_marker CATMONITOR_BUILDER_PYTHON_SOABI) || \
+    die "Docker build did not report the builder Python ABI"
+RUNTIME_PYTHON_ABI=$(build_marker CATMONITOR_RUNTIME_PYTHON_SOABI) || \
+    die "Docker build did not report the runtime Python ABI"
+BUILDER_TORCH_VERSION=$(build_marker CATMONITOR_BUILDER_TORCH_VERSION) || \
+    die "Docker build did not report the builder torch version"
+RUNTIME_TORCH_VERSION=$(build_marker CATMONITOR_RUNTIME_TORCH_VERSION) || \
+    die "Docker build did not report the runtime torch version"
+BUILDER_TORCH_NPU_VERSION=$(build_marker CATMONITOR_BUILDER_TORCH_NPU_VERSION) || \
+    die "Docker build did not report the builder torch_npu version"
+RUNTIME_TORCH_NPU_VERSION=$(build_marker CATMONITOR_RUNTIME_TORCH_NPU_VERSION) || \
+    die "Docker build did not report the runtime torch_npu version"
+RUNTIME_NPUBURN_PACKAGE_VERSION=$(build_marker CATMONITOR_RUNTIME_NPUBURN_PACKAGE_VERSION) || \
+    die "Docker build did not validate NPU Burn metadata in the runtime overlay"
+[ "$(build_marker CATMONITOR_RUNTIME_PCIUTILS)" = PASS ] || \
+    die "Docker build did not validate the pciutils runtime dependency"
+PCIUTILS_SOURCE=$(build_marker CATMONITOR_PCIUTILS_SOURCE) || \
+    die "Docker build did not report the pciutils source"
+LSPCI_PATH=$(build_marker CATMONITOR_LSPCI_PATH) || \
+    die "Docker build did not report the lspci path"
+LSPCI_VERSION=$(build_marker CATMONITOR_LSPCI_VERSION) || \
+    die "Docker build did not report the lspci version"
+case "$WHEEL_FILENAME" in
+    ""|*/*|*\\*) die "Docker build reported an invalid wheel filename" ;;
+esac
+case "$WHEEL_SHA256" in
+    *[!0-9A-Fa-f]*|"") die "Docker build reported an invalid wheel SHA-256" ;;
+esac
+[ "${#WHEEL_SHA256}" -eq 64 ] || die "Docker build reported an invalid wheel SHA-256 length"
+case "$PACKAGE_FILE" in
+    /*) ;;
+    *) die "Docker build reported a non-absolute installed package path" ;;
+esac
+case "$LSPCI_PATH" in
+    /*) ;;
+    *) die "Docker build reported a non-absolute lspci path" ;;
+esac
+case "$PCIUTILS_SOURCE" in
+    base-image|offline-rpm|offline-deb|online-dnf|online-yum|online-apt|online-zypper) ;;
+    *) die "Docker build reported an invalid pciutils source" ;;
+esac
+case "$PCIUTILS_SOURCE:$BUILD_NETWORK" in
+    online-*:none) die "Docker build unexpectedly installed pciutils online with network disabled" ;;
+esac
+case "$DRIVER_MOUNT_PRESENT_AT_BUILD" in
+    true|false) ;;
+    *) die "Docker build reported invalid driver presence" ;;
+esac
+if [ "$BUILD_DRIVER_INJECTED" = true ] && [ "$DRIVER_MOUNT_PRESENT_AT_BUILD" != true ]; then
+    die "Docker build did not detect the staged build-only driver libraries"
+fi
+
+IMAGE_ID=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$TARGET_IMAGE")
+IMAGE_OS=$("$DOCKER_BIN" image inspect --format '{{.Os}}' "$TARGET_IMAGE")
+IMAGE_ARCH=$("$DOCKER_BIN" image inspect --format '{{.Architecture}}' "$TARGET_IMAGE")
+IMAGE_CREATED=$("$DOCKER_BIN" image inspect --format '{{.Created}}' "$TARGET_IMAGE")
+IMAGE_SIZE=$("$DOCKER_BIN" image inspect --format '{{.Size}}' "$TARGET_IMAGE")
+case "$IMAGE_SIZE" in ''|*[!0-9]*) die "docker reported an invalid final image size" ;; esac
+IMAGE_RUNTIME_DELTA=$((IMAGE_SIZE - RUNTIME_BASE_IMAGE_SIZE))
+IMAGE_DIGESTS=$("$DOCKER_BIN" image inspect --format '{{join .RepoDigests ","}}' "$TARGET_IMAGE")
+LABEL_SOURCE=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.source-sha256"}}' "$TARGET_IMAGE")
+LABEL_PATCHED=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.patched-source-sha256"}}' "$TARGET_IMAGE")
+LABEL_PROFILE=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.compat-profile"}}' "$TARGET_IMAGE")
+LABEL_ORIGIN=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.source-origin"}}' "$TARGET_IMAGE")
+LABEL_REPOSITORY=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.upstream-repository"}}' "$TARGET_IMAGE")
+LABEL_REVISION=$("$DOCKER_BIN" image inspect --format '{{index .Config.Labels "io.catmonitor.npu-burn.upstream-revision"}}' "$TARGET_IMAGE")
+[ "$LABEL_SOURCE" = "$SOURCE_SHA256" ] || die "built image source label does not match the staged source"
+[ "$LABEL_PATCHED" = "$PATCHED_SOURCE_SHA256" ] || die "built image patched-source label does not match"
+[ "$LABEL_PROFILE" = "$COMPAT_PROFILE" ] || die "built image compatibility label does not match"
+[ "$LABEL_ORIGIN" = "$SOURCE_ORIGIN" ] || die "built image source-origin label does not match"
+[ "$LABEL_REPOSITORY" = "$UPSTREAM_REPOSITORY" ] || die "built image upstream repository label does not match"
+[ "$LABEL_REVISION" = "$UPSTREAM_REVISION" ] || die "built image upstream revision label does not match"
+
+json_escape() {
+    local value=${1-}
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
+}
+
+json_string() {
+    printf '"%s"' "$(json_escape "${1-}")"
+}
+
+install -d -m 0755 "$(dirname -- "$MANIFEST_PATH")"
+MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
+{
+    printf '{"schema_version":7,"generated_at":'; json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf ',"builder":"build_npu_burn_image.sh","source":{"origin":'; json_string "$SOURCE_ORIGIN"
+    printf ',"path":'; json_string "$SOURCE_ROOT"
+    printf ',"metadata_path":'; json_string "$SOURCE_METADATA_PATH"
+    printf ',"metadata_schema_version":'; json_string "$UPSTREAM_SCHEMA_VERSION"
+    printf ',"upstream_repository":'; json_string "$UPSTREAM_REPOSITORY"
+    printf ',"upstream_revision":'; json_string "$UPSTREAM_REVISION"
+    printf ',"upstream_tree":'; json_string "$UPSTREAM_TREE"
+    printf ',"upstream_tag_context":'; json_string "$UPSTREAM_TAG_CONTEXT"
+    printf ',"upstream_sync_date":'; json_string "$UPSTREAM_SYNC_DATE"
+    printf ',"upstream_archive_sha256":'; json_string "$UPSTREAM_ARCHIVE_SHA256"
+    printf ',"source_manifest_sha256":'; json_string "$UPSTREAM_SOURCE_MANIFEST_SHA256"
+    printf ',"license":'; json_string "$UPSTREAM_LICENSE"
+    printf ',"direct_modifications":%s' "$UPSTREAM_DIRECT_MODIFICATIONS"
+    printf ',"sha256":'; json_string "$SOURCE_SHA256"
+    printf ',"patched_sha256":'; json_string "$PATCHED_SOURCE_SHA256"; printf '}'
+    printf ',"compatibility":{"profile":'; json_string "$COMPAT_PROFILE"
+    printf ',"patches":['
+    for index in "${!PATCH_FILES[@]}"; do
+        [ "$index" -eq 0 ] || printf ','
+        printf '{"path":'; json_string "${PATCH_FILES[$index]}"
+        printf ',"sha256":'; json_string "$(sha256_file "${PATCH_FILES[$index]}")"; printf '}'
+    done
+    printf ']}'
+    printf ',"templates":{"dockerfile_sha256":'; json_string "$DOCKERFILE_SHA256"
+    printf ',"entrypoint_sha256":'; json_string "$ENTRYPOINT_SHA256"
+    printf ',"ascend_env_sha256":'; json_string "$ASCEND_ENV_SHA256"
+    printf ',"entrypoint_validator_sha256":'; json_string "$ENTRYPOINT_VALIDATOR_SHA256"
+    printf ',"runtime_abi_validator_sha256":'; json_string "$RUNTIME_ABI_VALIDATOR_SHA256"
+    printf ',"runtime_preflight_sha256":'; json_string "$RUNTIME_PREFLIGHT_SHA256"
+    printf ',"runtime_packages_sha256":'; json_string "$RUNTIME_PACKAGES_SHA256"; printf '}'
+    printf ',"docker":{"path":'; json_string "$DOCKER_BIN"
+    printf ',"server_version":'; json_string "$DOCKER_VERSION"
+    printf ',"build_network":'; json_string "$BUILD_NETWORK"; printf '}'
+    printf ',"base_images":{"mode":'; json_string "$BASE_MODE"
+    printf ',"builder":{"name":'; json_string "$BUILDER_BASE_IMAGE"
+    printf ',"id":'; json_string "$BUILDER_BASE_IMAGE_ID"
+    printf ',"repo_digests":'; json_string "$BUILDER_BASE_IMAGE_DIGESTS"
+    printf ',"os":'; json_string "$BUILDER_BASE_IMAGE_OS"
+    printf ',"architecture":'; json_string "$BUILDER_BASE_IMAGE_ARCH"
+    printf ',"size_bytes":%s}' "$BUILDER_BASE_IMAGE_SIZE"
+    printf ',"runtime":{"name":'; json_string "$RUNTIME_BASE_IMAGE"
+    printf ',"id":'; json_string "$RUNTIME_BASE_IMAGE_ID"
+    printf ',"repo_digests":'; json_string "$RUNTIME_BASE_IMAGE_DIGESTS"
+    printf ',"os":'; json_string "$RUNTIME_BASE_IMAGE_OS"
+    printf ',"architecture":'; json_string "$RUNTIME_BASE_IMAGE_ARCH"
+    printf ',"size_bytes":%s}}' "$RUNTIME_BASE_IMAGE_SIZE"
+    printf ',"image":{"name":'; json_string "$TARGET_IMAGE"
+    printf ',"base":'; json_string "$RUNTIME_BASE_IMAGE"
+    printf ',"base_id":'; json_string "$RUNTIME_BASE_IMAGE_ID"
+    printf ',"base_repo_digests":'; json_string "$RUNTIME_BASE_IMAGE_DIGESTS"
+    printf ',"id":'; json_string "$IMAGE_ID"
+    printf ',"repo_digests":'; json_string "$IMAGE_DIGESTS"
+    printf ',"os":'; json_string "$IMAGE_OS"
+    printf ',"architecture":'; json_string "$IMAGE_ARCH"
+    printf ',"created":'; json_string "$IMAGE_CREATED"
+    printf ',"size_bytes":%s,"runtime_base_delta_bytes":%s}' "$IMAGE_SIZE" "$IMAGE_RUNTIME_DELTA"
+    printf ',"runtime":{"ascend_env_script":'; json_string "$RUNTIME_ASCEND_ENV_SCRIPT_SELECTED"
+    printf ',"builder_ascend_env_script":'; json_string "$BUILDER_ASCEND_ENV_SCRIPT_SELECTED"
+    printf ',"cann_version":'; json_string "$CANN_VERSION"
+    printf ',"pciutils":true,"pciutils_source":'; json_string "$PCIUTILS_SOURCE"
+    printf ',"pciutils_package_format":'; json_string "$PCIUTILS_PACKAGE_FORMAT"
+    printf ',"pciutils_package_count":%s' "${#PCIUTILS_PACKAGES[@]}"
+    printf ',"pciutils_package_bundle_sha256":'; json_string "$PCIUTILS_PACKAGE_BUNDLE_SHA256"
+    printf ',"required_packages":['
+    for index in "${!RUNTIME_PACKAGES[@]}"; do
+        [ "$index" -eq 0 ] || printf ','
+        json_string "${RUNTIME_PACKAGES[$index]}"
+    done
+    printf ']'
+    printf ',"lspci_path":'; json_string "$LSPCI_PATH"
+    printf ',"lspci_version":'; json_string "$LSPCI_VERSION"; printf '}'
+    printf ',"build_driver":{"injected":%s' "$BUILD_DRIVER_INJECTED"
+    printf ',"source_path":'; json_string "$BUILD_DRIVER_LIB_DIR"
+    printf ',"sha256":'; json_string "$BUILD_DRIVER_SHA256"
+    printf ',"included_in_final_image":false}'
+    printf ',"wheel":{"filename":'; json_string "$WHEEL_FILENAME"
+    printf ',"sha256":'; json_string "${WHEEL_SHA256,,}"
+    printf ',"installed_version":'; json_string "$PACKAGE_VERSION"
+    printf ',"installed_package_file":'; json_string "$PACKAGE_FILE"
+    printf ',"force_installed":true,"network_access":false,"archive_in_final_image":false}'
+    printf ',"abi":{"python_soabi":'; json_string "$RUNTIME_PYTHON_ABI"
+    printf ',"torch_version":'; json_string "$RUNTIME_TORCH_VERSION"
+    printf ',"torch_npu_version":'; json_string "$RUNTIME_TORCH_NPU_VERSION"
+    printf ',"npu_burn_version":'; json_string "$RUNTIME_NPUBURN_PACKAGE_VERSION"
+    printf ',"builder_runtime_match":true}'
+    printf ',"validation":{"libascend_hal_resolved":true'
+    printf ',"torch_import":true,"torch_npu_import":true,"tbe_import":true'
+    printf ',"wheel_build":true,"wheel_install":true,"ascend_npu_burn_import":true'
+    printf ',"custom_ops_import":true'
+    printf ',"runtime_pci_topology_dependency":true'
+    printf ',"version_command":true,"driver_mount_present_at_build":%s' "$DRIVER_MOUNT_PRESENT_AT_BUILD"
+    printf ',"runtime_abi_metadata":true,"host_driver_in_final_image":false'
+    printf ',"runtime_device_preflight_required":true,"npu_workload_run":false}'
+    printf '}\n'
+} >"$MANIFEST_TEMP"
+chmod 0640 "$MANIFEST_TEMP"
+mv -f -- "$MANIFEST_TEMP" "$MANIFEST_PATH"
+MANIFEST_TEMP=
+
+printf '==> image build complete\n'
+printf 'Image: %s\n' "$TARGET_IMAGE"
+printf 'Image ID: %s\n' "$IMAGE_ID"
+printf 'Manifest: %s\n' "$MANIFEST_PATH"

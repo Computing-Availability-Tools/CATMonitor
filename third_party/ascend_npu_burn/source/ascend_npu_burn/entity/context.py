@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# This file is part of the MindCluster-AscendNPUBurn project.
+# Copyright (c) 2026-2026 Huawei Technologies Co., Ltd. All Rights Reserved.
+# MindCluster-AscendNPUBurn is licensed under Mulan PSL v2.
+# You can use this software according to the terms and conditions of the Mulan PSL v2.
+# You may obtain a copy of Mulan PSL v2 at:
+#          http://license.coscl.org.cn/MulanPSL2
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+# EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+# MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+# See the Mulan PSL v2 for more details.
+# ===========================================================================
+
+class TaskCtx:
+    def __init__(self, task_id):
+        self.task_id = task_id
+        self.task_args = {}
+        self.task_result = {}
+
+
+class DataInfo:
+    def __init__(self, rank, dtype, pattern, data=None):
+        self.rank = rank
+        self.dtype = dtype
+        self.pattern = pattern
+        self.data = data

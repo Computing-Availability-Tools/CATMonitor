@@ -1,0 +1,3 @@
+Dockerfile text eol=lf
+*.sh text eol=lf
+runtime-packages.txt text eol=lf
