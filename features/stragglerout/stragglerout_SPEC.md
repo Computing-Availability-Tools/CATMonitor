@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-为 straggler 慢节点检测器提供专用 KPI 时序文件，替代其自带 `kpi_collect.sh`。作为 daemon 的 `collector.Storage` 插件，复用采集管道，把每次采集到的 NPU KPI 指标按"每时刻×每卡"聚合追加写为日级 JSONL，供 straggler CLI 读取。
+为 straggler 慢节点检测器提供专用 KPI 时序文件，替代其自带 `kpi_collect.sh`。作为 daemon 的 `collector.Storage` 插件，复用采集管道，把每次采集到的 NPU KPI 指标按"每时刻×每芯片"聚合追加写为日级 JSONL，供 straggler CLI 读取。
 
 ## 2. 架构
 
@@ -20,10 +20,13 @@ Scheduler → StragglerStorage.Write(npu metrics)
 ## 3. 文件格式（JSONL，每行一个 KPISample）
 
 ```json
-{"ts":1784547926,"vals":{"0":{"temp":47,"power":1628,"aicore_freq":1800,"aicore_util":45,"hbm_util":50,"tx_bandwidth":1250,"rx_pfc_pkt":0,"roce_tx_err_pkt":0,"roce_out_of_order":0,"roce_new_pkt_rty":0}},"cpu_avg":{"cpu1":"4.26"}}
+{"ts":1784547926,"vals":{"0":{"temp":47,"power":1628,"aicore_freq":1800,"aicore_util":45,"hbm_util":50,"tx_bandwidth":1250,"rx_pfc_pkt":0,"roce_tx_err_pkt":0,"roce_out_of_order":0,"roce_new_pkt_rty":0},"1":{"temp":52,"power":2051,"aicore_freq":1800,"aicore_util":70,"hbm_util":4.4}},"cpu_avg":{"cpu1":"4.26"}}
 ```
 
-字段与 straggler `resource.CSVRow` 1:1 对应，straggler 的 JSON reader 直接重建 `TimeSeriesData`。
+- `vals` 的键是**全局设备号**（npu-smi 设备编号）。A3 双芯片平台上一卡两芯各占一个键（8 卡 × 2 芯 = 0..15），不再按卡折叠；A2 单芯片平台每卡一个键，等于卡号。
+- 设备号由本模块从采集标签自算，按固定卡槽公式 `device_id = npu_id × chips_per_card + chip_id`（`chips_per_card` 为全平台单卡最大芯片数，取历史所见最大 `chip_id` + 1，跨批次只增不减）：中间某卡掉卡时编号保持稳定、与 npu-smi 一致（保留空洞），不随存活卡数压缩。无需修改采集器。
+- 不带 `chip_id` 的卡级指标（hccn_tool 的 net_tx_bandwidth 等）回退按 `npu_id` 键控，与旧行为一致；显式携带 `device_id` 标签时优先采用。
+- 字段与 straggler `resource.CSVRow` 1:1 对应，straggler 的 JSON reader 直接重建 `TimeSeriesData`（按芯片维度）。
 
 ## 4. 指标映射
 

@@ -1,0 +1,51 @@
+# stragglerout feature metric catalog: the NPU KPI metrics the straggler
+# slow-node detector consumes (replacing its own kpi_collect.sh). Declared here
+# so that, with features=[stragglerout] as the sole feature whitelist, all
+# straggler KPI metrics survive metrics.Filter's feature-scoped collection and
+# feed the KPI time-series file produced by sample.go's KPIMapper (see
+# stragglerout_SPEC.md).
+#
+# Priority is the default catalog's value (Medium); the point of this file is
+# *scoping* (listing every metric straggler needs), not overriding priority.
+# Because this is the only feature in scope, every source metric of a straggler
+# KPI field MUST be declared here or it is dropped by SetFeatureScope.
+components:
+  - component: npu
+    interval: 1s
+    metrics:
+      - name: temperature            # temp
+        priority: Medium
+      - name: power_draw             # power
+        priority: Medium
+      - name: aicore_freq            # aicore_freq
+        priority: Medium
+      - name: utilization            # aicore_util
+        priority: Medium
+      - name: memory_usage           # hbm_util
+        priority: Medium
+      - name: hbm_bandwidth_util     # hbm_bandwidth_util (slow-node detection)
+        priority: Medium
+      # RoCE / net bandwidth & drop counters (hccn_tool) — all candidate field
+      # names are declared so the KPI field is collected whichever real name the
+      # installed CANN/hccn emits (sample.go's metricAliases resolves them).
+      - name: net_tx_bandwidth       # tx_bandwidth
+        priority: Medium
+      - name: mac_rx_pfc_pkt_num     # rx_pfc_pkt
+        priority: Medium
+      - name: roce_tx_err_pkt_num    # roce_tx_err_pkt
+        priority: Medium
+      - name: roce_out_of_order_num  # roce_out_of_order
+        priority: Medium
+      - name: roce_new_pkt_rty       # roce_new_pkt_rty (alias candidates below)
+        priority: Medium
+      - name: roce_new_pkt_rty_num   # roce_new_pkt_rty (alias candidate)
+        priority: Medium
+      - name: roce_retrans_pkt_num   # roce_new_pkt_rty (alias candidate)
+        priority: Medium
+      - name: roce_rx_retrans_pkt_num  # roce_new_pkt_rty (alias candidate)
+        priority: Medium
+  - component: cpu
+    interval: 1s
+    metrics:
+      - name: usage                 # cpu_avg (per-cpu utilization)
+        priority: Medium
