@@ -74,6 +74,18 @@ require_fixed docker/docker-compose.stress.yml 'SYS_NICE'
 require_fixed docker/stress/cpu/entrypoint.sh '--bounding-set=-all'
 require_fixed docker/docker-compose.stress-npuburn.yml 'CATMONITOR_DOCKER_SOCKET'
 require_fixed docker/docker-compose.stress-npuburn.yml '/var/run/docker.sock'
+require_fixed docker/docker-compose.stress-web.yml 'stress-web:'
+require_fixed docker/docker-compose.stress-web.yml 'image: ${CATMONITOR_IMAGE:-catmonitor-generic}'
+require_fixed docker/docker-compose.stress-web.yml '-addr=127.0.0.1:29592'
+require_fixed docker/docker-compose.stress-web.yml 'snapshot:/var/lib/catmonitor/snapshot:ro'
+require_fixed docker/docker-compose.stress-web.yml 'CATMONITOR_CONFIG'
+require_fixed docker/docker-compose.stress-web.yml 'CATMONITOR_STRESS_ROOT'
+require_fixed docker/docker-compose.stress-web.yml 'CATMONITOR_STRESS_STATE_DIR'
+require_fixed docker/docker-compose.stress-web.yml 'catmonitor_stress_socket'
+require_fixed docker/docker-compose.stress-web.yml 'CATMONITOR_DOCKER_SOCKET'
+require_fixed docker/docker-compose.stress-web.yml 'CATMONITOR_NPU_OUTPUT_DIR'
+require_fixed docker/docker-compose.stress-web.yml 'create_host_path: false'
+require_fixed docker/docker-compose.stress-web.yml 'restart: unless-stopped'
 require_fixed docker/build.sh 'Docker build proxy: configured'
 require_fixed docker/build.sh 'Go module environment: configured'
 require_fixed docker/build.sh 'CATMONITOR_DOCKER_BUILD_NETWORK'
@@ -102,6 +114,16 @@ if grep -Fq 'CATMONITOR_CONFIG' "$REPO_ROOT/docker/docker-compose.stress.yml"; t
 fi
 require_fixed scripts/catmonitor-install '--acknowledge-root-docker-socket'
 require_fixed scripts/catmonitor-install 'workload execution: none'
+if grep -Eq '^[[:space:]]{2}web:' "$REPO_ROOT/docker/docker-compose.stress-npuburn.yml"; then
+    fail "externally reachable Web must not receive the root-equivalent Docker socket"
+fi
+if grep -Eq '(privileged:|pid:[[:space:]]*host)' \
+    "$REPO_ROOT/docker/docker-compose.stress-web.yml"; then
+    fail "operational Stress Web must not receive privileged or host PID access"
+fi
+if grep -Eq -- '-addr=(0\.0\.0\.0|:)' "$REPO_ROOT/docker/docker-compose.stress-web.yml"; then
+    fail "operational Stress Web must remain loopback-only"
+fi
 if grep -Eq '(privileged:|pid:[[:space:]]*host|network_mode:[[:space:]]*host)' \
     "$REPO_ROOT/docker/docker-compose.stress.yml"; then
     fail "CPU stress runner overlay must not grant host-level namespaces or privileges"
