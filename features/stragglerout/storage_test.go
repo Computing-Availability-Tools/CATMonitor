@@ -107,6 +107,76 @@ func TestExtractIgnoresIrrelevantBatch(t *testing.T) {
 	}
 }
 
+func TestExtractDualChipPerDevice(t *testing.T) {
+	// A3 dual-chip: one card (npu_id=0) with two chips (chip_id 0/1). The
+	// mapper must derive per-chip global device ids from the labels alone
+	// (device_id = npu_id*2 + chip_id) so both chips survive as separate vals
+	// entries (no last-write-wins collapse).
+	m := NewKPIMapper()
+	sample := m.Extract([]collector.Metric{
+		mkMetric("npu", "temperature", 47, map[string]string{"npu_id": "0", "chip_id": "0"}),
+		mkMetric("npu", "power_draw", 1628, map[string]string{"npu_id": "0", "chip_id": "0"}),
+		mkMetric("npu", "temperature", 52, map[string]string{"npu_id": "0", "chip_id": "1"}),
+		mkMetric("npu", "power_draw", 2051, map[string]string{"npu_id": "0", "chip_id": "1"}),
+		mkMetric("npu", "temperature", 50, map[string]string{"npu_id": "1", "chip_id": "0"}),
+	})
+	if sample == nil {
+		t.Fatal("expected non-nil sample")
+	}
+	if len(sample.Vals) != 3 {
+		t.Fatalf("expected 3 per-chip entries (2 chips of card 0 + 1 chip of card 1), got %d: %+v", len(sample.Vals), sample.Vals)
+	}
+	if v := sample.Vals["0"]; v == nil || v["temp"] != 47 || v["power"] != 1628 {
+		t.Errorf("chip device 0 (card 0 chip 0) wrong: %+v", v)
+	}
+	if v := sample.Vals["1"]; v == nil || v["temp"] != 52 || v["power"] != 2051 {
+		t.Errorf("chip device 1 (card 0 chip 1) wrong: %+v", v)
+	}
+	if v := sample.Vals["2"]; v == nil || v["temp"] != 50 {
+		t.Errorf("chip device 2 (card 1 chip 0) wrong: %+v", v)
+	}
+}
+
+func TestExtractDualChipKeyStableWhenCardDrops(t *testing.T) {
+	// The chip stride must not shrink when a later batch misses chips (card
+	// drop): device_id for card 2 chip 0 stays 4 (2*2+0), not 2.
+	m := NewKPIMapper()
+	// First batch: full dual-chip cards 0 and 2 → stride learned as 2.
+	m.Extract([]collector.Metric{
+		mkMetric("npu", "temperature", 47, map[string]string{"npu_id": "0", "chip_id": "0"}),
+		mkMetric("npu", "temperature", 52, map[string]string{"npu_id": "0", "chip_id": "1"}),
+		mkMetric("npu", "temperature", 50, map[string]string{"npu_id": "2", "chip_id": "0"}),
+		mkMetric("npu", "temperature", 53, map[string]string{"npu_id": "2", "chip_id": "1"}),
+	})
+	// Second batch: card 0 dropped; only card 2 chip 0 remains. Key must
+	// still be 4 (stable slot), not 2.
+	sample := m.Extract([]collector.Metric{
+		mkMetric("npu", "temperature", 50, map[string]string{"npu_id": "2", "chip_id": "0"}),
+	})
+	if sample == nil || sample.Vals["4"] == nil || sample.Vals["4"]["temp"] != 50 {
+		t.Errorf("card 2 chip 0 must stay keyed as 4 after card 0 drops, got %+v", sample.Vals)
+	}
+}
+
+func TestExtractFallsBackToNpuID(t *testing.T) {
+	// Card-level metrics without chip_id (e.g. hccn_tool's net_tx_bandwidth)
+	// must keep npu_id as the key — base behavior preserved.
+	m := NewKPIMapper()
+	sample := m.Extract([]collector.Metric{
+		mkMetric("npu", "temperature", 47, map[string]string{"npu_id": "3"}),
+		mkMetric("npu", "power_draw", 1600, map[string]string{"npu_id": "3"}),
+	})
+	if sample == nil {
+		t.Fatal("expected non-nil sample")
+	}
+	if len(sample.Vals) != 1 {
+		t.Fatalf("expected 1 entry keyed by npu_id, got %d: %+v", len(sample.Vals), sample.Vals)
+	}
+	if v := sample.Vals["3"]; v == nil || v["temp"] != 47 || v["power"] != 1600 {
+		t.Errorf("npu_id fallback entry wrong: %+v", v)
+	}
+}
+
 func TestKPIWriterAppendAndPrune(t *testing.T) {
 	dir := t.TempDir()
 	w := NewKPIWriter(dir, 1*time.Hour, nil)
