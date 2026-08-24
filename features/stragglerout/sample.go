@@ -27,9 +27,9 @@ import (
 // resource.CSVRow: Vals is cardID→metric→value (the 10 NPU KPI metrics) and
 // CPUAvg is cpuName→utilization% (carried when a cpu batch is tapped).
 type KPISample struct {
-	Timestamp int64                          `json:"ts"`                 // unix seconds
-	Vals      map[string]map[string]float64  `json:"vals,omitempty"`     // cardID -> metric -> value
-	CPUAvg    map[string]string              `json:"cpu_avg,omitempty"`  // cpuName -> util%
+	Timestamp int64                         `json:"ts"`                // unix seconds
+	Vals      map[string]map[string]float64 `json:"vals,omitempty"`    // cardID -> metric -> value
+	CPUAvg    map[string]string             `json:"cpu_avg,omitempty"` // cpuName -> util%
 }
 
 // metricAliases maps each straggler KPI field name to the candidate
@@ -47,7 +47,10 @@ var metricAliases = map[string][]string{
 	"rx_pfc_pkt":        {"mac_rx_pfc_pkt_num"},
 	"roce_tx_err_pkt":   {"roce_tx_err_pkt_num"},
 	"roce_out_of_order": {"roce_out_of_order_num"},
-	"roce_new_pkt_rty":  {"roce_new_pkt_rty", "roce_retrans_pkt_num", "roce_rx_retrans_pkt_num"},
+	"roce_new_pkt_rty":  {"roce_new_pkt_rty_num", "roce_new_pkt_rty", "roce_retrans_pkt_num", "roce_rx_retrans_pkt_num"},
+	// HBM bandwidth utilization: not part of straggler's core 10 fields but
+	// useful for slow-node detection; maps to the npu component metric.
+	"hbm_bandwidth_util": {"hbm_bandwidth_util"},
 }
 
 // reverseAlias maps a CATMonitor metric.Name → the straggler field it feeds.
@@ -70,7 +73,7 @@ func init() {
 // documentation and for the REST/canonical view.
 func StragglerFields() []string {
 	return []string{
-		"temp", "power", "aicore_freq", "aicore_util", "hbm_util",
+		"temp", "power", "aicore_freq", "aicore_util", "hbm_util", "hbm_bandwidth_util",
 		"tx_bandwidth", "rx_pfc_pkt", "roce_tx_err_pkt",
 		"roce_out_of_order", "roce_new_pkt_rty",
 	}
