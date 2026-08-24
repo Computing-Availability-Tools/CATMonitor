@@ -548,18 +548,41 @@ docker compose \
   up -d cpu-stress-runner catmonitor web dfee
 ```
 
-默认 `:19322` 监听所有接口，以保持 develop 的外部监控能力；通过节点地址访问时可
-查看 dashboard、profile 和已有报告，但不能从 Web 提交或取消压测。若确实需要网页
-触发压测，应显式切换为回环监听并使用 SSH 隧道：
+默认 `:19322` 监听所有接口，以保持 develop 的外部监控能力。它用于普通监控和读取
+已有压测报告，不挂载 root 等价的 Docker socket，也不能提交或取消压测。
+
+需要网页 Run/Cancel 时，额外叠加 `docker-compose.stress-web.yml`。该服务复用同一
+control image，但固定监听 `127.0.0.1:29592`，并挂入经过配置的主 YAML、stress
+plugin/state、snapshot、CPU Runner socket、Docker socket 和 NPU 结果目录：
 
 ```bash
-sudo catmonitor-install --profile cpu-stress \
-  --web-addr 127.0.0.1:19322
-ssh -N -L 19322:127.0.0.1:19322 root@node
+export CATMONITOR_CONFIG=/etc/catmonitor/catmonitor.yaml
+export CATMONITOR_STRESS_ROOT=/opt/catmonitor/stress
+export CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress
+export CATMONITOR_DOCKER_SOCKET=/var/run/docker.sock
+export CATMONITOR_NPU_OUTPUT_DIR=/var/lib/catmonitor/npu-output
+
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f docker/docker-compose.stress-npuburn.yml \
+  -f docker/docker-compose.stress-web.yml \
+  up -d stress-web
+
+ssh -N -L 29592:127.0.0.1:29592 root@node
 ```
 
-默认外部监控访问 `http://<node-address>:19322/`；回环模式下通过隧道访问
-`http://127.0.0.1:19322/stress/`。
+访问入口保持分离：
+
+- 普通只读 Web：`http://<node-address>:19322/`
+- 运维 Stress Web：通过 SSH 隧道访问 `http://127.0.0.1:29592/stress/`
+
+运维 Web 复用基础 Compose 的 `snapshot` 命名卷，不创建第二份快照存储。
+
+`CATMONITOR_NPU_OUTPUT_DIR` 必须与 NPU adapter profile 中记录的
+`result_directory` 一致。29592 不得直接暴露到管理网或公网。
 
 ### 8.4 验证
 
@@ -568,6 +591,8 @@ sudo catmonitor-install --profile cpu-stress --action status
 sudo catmonitor-install --profile cpu-stress --action doctor
 
 curl -fsS http://127.0.0.1:19322/api/stress/config
+curl -fsS http://127.0.0.1:29592/stress/ >/dev/null
+curl -fsS http://127.0.0.1:29592/api/stress/config
 ```
 
 Ascend 节点把上面的 profile 换为实际 `ascend-a2` 或 `ascend-a3`；`status/doctor/down`
