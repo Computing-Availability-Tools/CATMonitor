@@ -157,7 +157,7 @@ const SERIES_LABELS = {
   memory_swap_in: 'Swap 入页 (次/s)', memory_fragmentation: '内存碎片化最大 (%)',
   disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',
   network_throughput: '网络吞吐最大 (bytes/s)', network_packet_count: '网络包速率最大 (个/s)',
-  network_error_count: '网络错误最大 (次)',
+  network_error_packets: '网络错包最大 (次)', network_dropped_packets: '网络丢包最大 (次)',
 };
 
 const METRIC_DESCRIPTIONS = {

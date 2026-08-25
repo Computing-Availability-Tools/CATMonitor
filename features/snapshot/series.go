@@ -16,6 +16,7 @@ type seriesSpec struct {
 	labelKey    string // optional label filter ("" = any)
 	labelVal    string
 	labelPrefix string // if set + labelKey set, m.Labels[labelKey] must start with this
+	labelSuffix string // if set + labelKey set, m.Labels[labelKey] must end with this
 	key         string // must be "<component>_<suffix>" so detail pages can group it
 	mode        int    // 0 = first matching, 1 = max across matching
 }
@@ -47,7 +48,8 @@ var TrackedSeries = []seriesSpec{
 	{component: "disk", name: "throughput", key: "disk_throughput", mode: 1},
 	{component: "network", name: "throughput", key: "network_throughput", mode: 1},
 	{component: "network", name: "packet_count", key: "network_packet_count", mode: 1},
-	{component: "network", name: "error_count", key: "network_error_count", mode: 1},
+	{component: "network", name: "error_count", labelKey: "type", labelSuffix: "_err", key: "network_error_packets", mode: 1},
+	{component: "network", name: "error_count", labelKey: "type", labelSuffix: "_drop", key: "network_dropped_packets", mode: 1},
 }
 
 // StaticMetricNames is the set of metric names the collectors emit once at
@@ -118,6 +120,9 @@ func (h *History) Update(metrics []collector.Metric) map[string][]float64 {
 					continue
 				}
 				if spec.labelPrefix != "" && !strings.HasPrefix(v, spec.labelPrefix) {
+					continue
+				}
+				if spec.labelSuffix != "" && !strings.HasSuffix(v, spec.labelSuffix) {
 					continue
 				}
 			}

@@ -47,7 +47,7 @@ func TestTrackedSeriesInvariants(t *testing.T) {
 		"cpu_temperature", "cpu_avg_freq",
 		"memory_fragmentation", "memory_swap_in",
 		"disk_io_wait", "disk_iops", "disk_throughput",
-		"network_throughput", "network_packet_count", "network_error_count",
+		"network_throughput", "network_packet_count", "network_error_packets", "network_dropped_packets",
 	} {
 		if !seen[want] {
 			t.Errorf("v0.2.0 series %q missing from TrackedSeries", want)
@@ -118,7 +118,9 @@ func TestUpdateHistoryV02Metrics(t *testing.T) {
 		metric("network", "packet_count", 100, map[string]string{"interface": "eth0", "direction": "rx"}),
 		metric("network", "packet_count", 80, map[string]string{"interface": "eth0", "direction": "tx"}),
 		metric("network", "error_count", 1, map[string]string{"interface": "eth0", "type": "rx_err"}),
-		metric("network", "error_count", 3, map[string]string{"interface": "eth0", "type": "tx_drop"}),
+		metric("network", "error_count", 2, map[string]string{"interface": "eth0", "type": "tx_err"}),
+		metric("network", "error_count", 3, map[string]string{"interface": "eth0", "type": "rx_drop"}),
+		metric("network", "error_count", 5, map[string]string{"interface": "eth0", "type": "tx_drop"}),
 	}
 
 	hist := h.Update(metrics)
@@ -143,7 +145,8 @@ func TestUpdateHistoryV02Metrics(t *testing.T) {
 		{"npu_power_draw", 8.0, true},
 		{"network_throughput", 5000, true},
 		{"network_packet_count", 100, true},
-		{"network_error_count", 3, true},
+		{"network_error_packets", 2, true},
+		{"network_dropped_packets", 5, true},
 	}
 	for _, c := range cases {
 		arr, ok := hist[c.key]
