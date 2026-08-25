@@ -152,9 +152,8 @@ const SERIES_LABELS = {
   gpu_utilization: 'GPU 使用率 (%)', gpu_memory_usage: 'GPU 显存使用率 (%)', gpu_temperature: 'GPU 温度 (°C)',
   npu_utilization: 'NPU 使用率 (%)', npu_memory_usage: 'NPU 显存使用率 (%)', npu_temperature: 'NPU 温度 (°C)',
   // v0.2.0 trends.
-  cpu_temperature: 'CPU 最高温度 (°C)', cpu_power: 'CPU 最高功耗 (W)',
-  cpu_avg_freq: 'CPU 平均频率 (MHz)', cpu_context_switches: '上下文切换 (次/s)',
-  cpu_ce_errors: 'CPU CE 错误最大值 (次)',
+  cpu_temperature: 'CPU 最高温度 (°C)',
+  cpu_avg_freq: 'CPU 平均频率 (MHz)',
   memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化最大 (%)',
   memory_swap_in: 'Swap 入页 (次/s)', memory_power: '内存功耗 (W)',
   disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',

@@ -44,7 +44,7 @@ func TestTrackedSeriesInvariants(t *testing.T) {
 		seen[s.key] = true
 	}
 	for _, want := range []string{
-		"cpu_temperature", "cpu_power", "cpu_avg_freq", "cpu_context_switches", "cpu_ce_errors",
+		"cpu_temperature", "cpu_avg_freq",
 		"memory_saturation", "memory_fragmentation", "memory_swap_in", "memory_power",
 		"disk_io_wait", "disk_iops", "disk_throughput",
 		"network_throughput", "network_packet_count", "network_error_count",
@@ -102,12 +102,7 @@ func TestUpdateHistoryV02Metrics(t *testing.T) {
 		metric("disk", "space_usage", 95.0, map[string]string{"device": "155.25.78.151:/AIdata", "mount_point": "/AIdata"}),
 		metric("cpu", "temperature", 55.0, map[string]string{"cpu": "0"}),
 		metric("cpu", "temperature", 60.0, map[string]string{"cpu": "1"}),
-		metric("cpu", "power", 80.0, map[string]string{"cpu": "0"}),
-		metric("cpu", "power", 95.0, map[string]string{"cpu": "1"}),
 		metric("cpu", "avg_freq", 2400, nil),
-		metric("cpu", "context_switches", 1200, nil),
-		metric("cpu", "cpu_ce_errors", 2, map[string]string{"cpu": "0"}),
-		metric("cpu", "cpu_ce_errors", 5, map[string]string{"cpu": "1"}),
 		metric("memory", "saturation", 1.5, map[string]string{"interval": "avg10"}),
 		metric("memory", "saturation", 2.0, map[string]string{"interval": "avg60"}),
 		metric("memory", "saturation", 3.0, map[string]string{"interval": "avg300"}),
@@ -142,10 +137,7 @@ func TestUpdateHistoryV02Metrics(t *testing.T) {
 		{"memory_swap_usage", 0.0, false},
 		{"disk_space_usage", 80.0, true},
 		{"cpu_temperature", 60.0, true},
-		{"cpu_power", 95.0, true},
 		{"cpu_avg_freq", 2400, true},
-		{"cpu_context_switches", 1200, true},
-		{"cpu_ce_errors", 5, true},
 		{"memory_saturation", 1.5, true},
 		{"memory_fragmentation", 45.0, true},
 		{"memory_swap_in", 10, true},

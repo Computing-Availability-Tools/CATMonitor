@@ -38,10 +38,7 @@ var TrackedSeries = []seriesSpec{
 	// once its source produces a value (e.g. ipmi/mce/dmidecode absent => no
 	// data, never an error). Mode 1 = max across devices/sockets/zones.
 	{component: "cpu", name: "temperature", key: "cpu_temperature", mode: 1},
-	{component: "cpu", name: "power", key: "cpu_power", mode: 1},
 	{component: "cpu", name: "avg_freq", key: "cpu_avg_freq", mode: 0},
-	{component: "cpu", name: "context_switches", key: "cpu_context_switches", mode: 0},
-	{component: "cpu", name: "cpu_ce_errors", key: "cpu_ce_errors", mode: 1},
 	{component: "memory", name: "saturation", labelKey: "interval", labelVal: "avg10", key: "memory_saturation", mode: 0},
 	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1},
 	{component: "memory", name: "swap_in", key: "memory_swap_in", mode: 0},
