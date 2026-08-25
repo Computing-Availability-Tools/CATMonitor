@@ -34,6 +34,7 @@ var TrackedSeries = []seriesSpec{
 	{component: "npu", name: "utilization", key: "npu_utilization", mode: 0},
 	{component: "npu", name: "memory_usage", key: "npu_memory_usage", mode: 0},
 	{component: "npu", name: "temperature", key: "npu_temperature", mode: 0},
+	{component: "npu", name: "power_draw", key: "npu_power_draw", mode: 1},
 	// v0.2.0 source-layer metrics. Hardware-dependent: a series only appears
 	// once its source produces a value (e.g. ipmi/mce/dmidecode absent => no
 	// data, never an error). Mode 1 = max across devices/sockets/zones.

@@ -177,7 +177,7 @@ func TestHTTPAPIReadOnlyConsumer(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("app.js status=%d want 200", code)
 	}
-	for _, needle := range []string{"cpu_temperature:", "memory_saturation:", "disk_iops:", "device_model"} {
+	for _, needle := range []string{"cpu_temperature:", "memory_swap_in:", "disk_iops:", "npu_power_draw:", "device_model"} {
 		if !strings.Contains(string(body), needle) {
 			t.Errorf("app.js missing %q", needle)
 		}
