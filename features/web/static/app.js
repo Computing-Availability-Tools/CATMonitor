@@ -150,7 +150,7 @@ const SERIES_LABELS = {
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
   disk_space_usage: '分区空间使用率最高 (%)',
   gpu_utilization: 'GPU 使用率最高 (%)', gpu_memory_usage: 'GPU 显存使用率最高 (%)', gpu_temperature: 'GPU 最高温度 (°C)',
-  npu_utilization: 'NPU 使用率最高 (%)', npu_memory_usage: 'NPU 显存使用率最高 (%)', npu_temperature: 'NPU 最高温度 (°C)', npu_power_draw: 'NPU 功耗 (W)',
+  npu_utilization: 'NPU 使用率最高 (%)', npu_memory_usage: 'NPU 显存使用率最高 (%)', npu_temperature: 'NPU 最高温度 (°C)',   npu_power_draw: 'NPU 功耗最高 (W)',
   // v0.2.0 trends.
   cpu_temperature: 'CPU 最高温度 (°C)',
   cpu_avg_freq: 'CPU 平均频率 (MHz)',

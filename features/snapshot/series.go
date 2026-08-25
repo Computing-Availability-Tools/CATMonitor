@@ -33,8 +33,8 @@ var TrackedSeries = []seriesSpec{
 	{component: "gpu", name: "memory_usage", key: "gpu_memory_usage", mode: 1},
 	{component: "gpu", name: "temperature", key: "gpu_temperature", mode: 1},
 	{component: "npu", name: "utilization", key: "npu_utilization", mode: 1},
-	{component: "npu", name: "memory_usage", key: "npu_memory_usage", mode: 1},
 	{component: "npu", name: "temperature", key: "npu_temperature", mode: 1},
+	{component: "npu", name: "memory_usage", key: "npu_memory_usage", mode: 1},
 	{component: "npu", name: "power_draw", key: "npu_power_draw", mode: 1},
 	// v0.2.0 source-layer metrics. Hardware-dependent: a series only appears
 	// once its source produces a value (e.g. ipmi/mce/dmidecode absent => no
