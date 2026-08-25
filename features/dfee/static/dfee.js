@@ -663,6 +663,10 @@ async function pollTick() {
   if (!data) return;
   refreshIntervalMs = data.refresh_interval_ms || refreshIntervalMs;
   document.getElementById('intervalDisplay').textContent = (refreshIntervalMs / 1000) + 's';
+  if (data.version) {
+    const el = document.querySelector('.brand .subtitle');
+    if (el) el.textContent = 'v' + data.version + ' · 能效监控';
+  }
   const ts = data.timestamp ? new Date(data.timestamp) : null;
   document.getElementById('updateTime').textContent = ts ? ts.toLocaleTimeString('zh-CN') : '--';
 

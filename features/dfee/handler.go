@@ -11,6 +11,7 @@ import (
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
 
 // Handler serves the dfee energy-efficiency API and static SPA. It reads the
@@ -144,6 +145,7 @@ func (h *Handler) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	resp := EfficiencyResponse{
 		SessionID:       g.SessionID,
+		Version:         version.Version,
 		Timestamp:       g.Timestamp,
 		RefreshInterval: g.RefreshInterval,
 		Charts:          charts,

@@ -182,6 +182,7 @@ type chartData struct {
 
 type EfficiencyResponse struct {
 	SessionID       string      `json:"session_id"`
+	Version         string      `json:"version"`
 	Timestamp       time.Time   `json:"timestamp"`
 	RefreshInterval int         `json:"refresh_interval_ms"`
 	Charts          []chartData `json:"charts"`
