@@ -1,6 +1,10 @@
-.PHONY: all build test test-verbose test-coverage lint clean web dfee
+.PHONY: all build test test-verbose test-coverage test-stress test-stress-ut \
+	test-stress-race test-stress-e2e test-stress-build \
+	test-stress-container-e2e \
+	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
+	test-stress-audit audit-stress-release install-installer lint clean web dfee
 
-GO=go
+GO ?= go
 BIN=bin/catmonitor
 
 # DCMI (Ascend NPU) collection: auto-detect the CANN DCMI header and add
@@ -18,12 +22,15 @@ all: build web dfee
 
 build:
 	@echo "build daemon (dcmi: $(if $(DCMITAG),on,off))"
+	@mkdir -p bin
 	$(GO) build $(DCMITAG) -o $(BIN) ./cmd/catmonitor
 
 web:
+	@mkdir -p bin
 	$(GO) build -o bin/catmonitor-web ./features/web
 
 dfee:
+	@mkdir -p bin
 	$(GO) build -o bin/catmonitor-dfee ./features/dfee
 
 test:
@@ -35,6 +42,52 @@ test-verbose:
 test-coverage:
 	$(GO) test -cover ./...
 
+# Stress has three intentionally separate automated test layers:
+# package-local Go unit/component tests, hermetic build/deployment fixtures,
+# and a Linux binary-level CLI/Web end-to-end test. Real benchmark performance
+# and NPU workload execution remain explicit hardware acceptance gates.
+test-stress: test-stress-ut test-stress-build test-stress-e2e
+
+test-stress-ut:
+	$(GO) test ./features/stress/... ./features/web ./internal/config
+
+test-stress-race:
+	$(GO) test -race ./features/stress/... ./features/web
+
+test-stress-e2e:
+	GO_BIN="$(GO)" bash tests/e2e/stress_e2e_test.sh
+	GO_BIN="$(GO)" bash tests/e2e/stress_cpu_runner_e2e_test.sh
+
+# Requires a running Docker daemon and prebuilt catmonitor-generic:latest.
+# Set CATMONITOR_CONTAINER_TEST_NPU_EXEC=true with catmonitor-npu:latest and
+# alpine:latest to additionally exercise the transitional NPU docker_exec path.
+test-stress-container-e2e:
+	bash tests/e2e/stress_container_e2e_test.sh
+
+test-stress-build: test-stress-build-cpu test-stress-build-npu test-stress-deployment test-stress-audit
+
+test-stress-build-cpu:
+	bash scripts/stress/tests/build_cpu_benchmarks_test.sh
+	bash scripts/stress/tests/build_cpu_runner_image_test.sh
+
+test-stress-build-npu:
+	bash scripts/stress/tests/ascend_env_test.sh
+	bash scripts/stress/tests/build_npu_burn_image_test.sh
+	bash scripts/stress/tests/runtime_preflight_test.sh
+	bash scripts/stress/tests/create_npu_burn_container_test.sh
+
+test-stress-deployment:
+	bash scripts/stress/tests/generate_stress_deployment_test.sh
+	bash scripts/stress/tests/install_stress_runtime_test.sh
+	bash scripts/stress/tests/container_deployment_test.sh
+	bash scripts/stress/tests/catmonitor_install_test.sh
+
+test-stress-audit:
+	bash scripts/stress/tests/audit_stress_release_test.sh
+
+audit-stress-release:
+	bash scripts/stress/audit_stress_release.sh
+
 lint:
 	$(GO) vet ./...
 
@@ -45,3 +98,13 @@ install: build
 	cp $(BIN) /usr/local/bin/catmonitor
 	mkdir -p /etc/catmonitor
 	cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+
+# Install the unified container deployment entrypoint and its reviewed Compose
+# definitions. DESTDIR and PREFIX are supported for packaging fixtures.
+PREFIX ?= /usr/local
+install-installer:
+	install -d "$(DESTDIR)$(PREFIX)/sbin" "$(DESTDIR)$(PREFIX)/lib/catmonitor/docker"
+	install -m 0755 scripts/catmonitor-install "$(DESTDIR)$(PREFIX)/sbin/catmonitor-install"
+	install -m 0644 docker/docker-compose.yml docker/docker-compose.config.yml \
+		docker/docker-compose.npu.yml docker/docker-compose.stress.yml \
+		docker/docker-compose.stress-npuburn.yml "$(DESTDIR)$(PREFIX)/lib/catmonitor/docker/"

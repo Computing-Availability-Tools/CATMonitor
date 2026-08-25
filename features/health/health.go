@@ -49,8 +49,15 @@ func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 	scheme := e.scheme
 	if _, hasGPU := byComponent["gpu"]; hasGPU {
 		scheme = Accelerated8CardScheme
-	} else if _, hasNPU := byComponent["npu"]; hasNPU {
-		scheme = Accelerated8CardScheme
+	} else if npuMetrics, hasNPU := byComponent["npu"]; hasNPU {
+		switch npuCardCount(npuMetrics) {
+		case 5, 6, 7, 8:
+			scheme = Accelerated8CardScheme
+		case 3, 4:
+			scheme = Accelerated4CardScheme
+		default: // 1-2 cards
+			scheme = Accelerated2CardScheme
+		}
 	}
 
 	components := make(map[string]ComponentScore)
@@ -86,6 +93,18 @@ func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 		totalScore += score.Score
 	}
 
+	if netMetrics, ok := byComponent["network"]; ok {
+		score := evaluateNetwork(netMetrics, scheme.Network)
+		components["network"] = score
+		totalScore += score.Score
+	}
+
+	if chassisMetrics, ok := byComponent["chassis"]; ok {
+		score := evaluateChassis(chassisMetrics, scheme.Chassis)
+		components["chassis"] = score
+		totalScore += score.Score
+	}
+
 	serverType := "cpu_only"
 	if scheme.GPU > 0 {
 		if _, hasGPU := byComponent["gpu"]; hasGPU {
@@ -111,6 +130,29 @@ func groupByComponent(metrics []collector.Metric) map[string][]collector.Metric 
 		result[m.Component] = append(result[m.Component], m)
 	}
 	return result
+}
+
+// npuCardCount counts unique NPU card IDs (npu_id label) across all NPU
+// metrics. chip0 + chip1 share the same card_id, so this gives the physical
+// card count rather than chip count.
+func npuCardCount(metrics []collector.Metric) int {
+	seen := map[string]bool{}
+	for _, m := range metrics {
+		if id, ok := m.Labels["npu_id"]; ok {
+			seen[id] = true
+		}
+	}
+	if len(seen) == 0 {
+		// Fallback: use npu_num metric (chip count / 2).
+		if m := findMetric(metrics, "npu", "npu_num", "", ""); m != nil {
+			n := int(m.Value) / 2
+			if n == 0 {
+				n = 1
+			}
+			return n
+		}
+	}
+	return len(seen)
 }
 
 // gradeForScore maps a numeric score to a health grade.

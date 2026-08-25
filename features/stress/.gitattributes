@@ -1,0 +1,2 @@
+*.sh text eol=lf
+# Stress host-adapter scripts must stay LF-only.

@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
 
 // historyPoints is the per-component history ring depth the daemon uses
@@ -19,13 +21,17 @@ import (
 // series length.
 const historyPoints = 60
 
+var webStartup = time.Now().Unix()
+
 type Server struct {
-	dir    string
-	logger *slog.Logger
+	dir        string
+	logger     *slog.Logger
+	stress     *stress.Manager
+	stressAddr string
 }
 
-func NewServer(dir string, logger *slog.Logger) *Server {
-	return &Server{dir: dir, logger: logger}
+func NewServer(dir string, logger *slog.Logger, stressManager *stress.Manager, stressAddr string) *Server {
+	return &Server{dir: dir, logger: logger, stress: stressManager, stressAddr: stressAddr}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -40,6 +46,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/collectors", s.handleCollectors)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	if s.stress != nil {
+		stress.Register(mux, s.stress, s.stressAddr, s.logger)
+	}
 	return mux
 }
 
@@ -137,6 +146,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
+		"version":             version.Version,
+		"started_at":          webStartup,
 		"refresh_interval_ms": g.RefreshInterval,
 		"history_points":      historyPoints,
 	})

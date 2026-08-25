@@ -49,12 +49,35 @@ type NetIfaceInfo struct {
 	MTU    int    // /sys/class/net/<iface>/mtu
 	Speed  int    // /sys/class/net/<iface>/speed (Mbps); -1 if unreadable
 	Driver string // basename of .../device/driver symlink (empty for virt ifaces)
+	PciAddr string // PCI address from .../device symlink (e.g. "0000:c1:00.0"; empty for virt ifaces)
 }
 
 // BlockDev holds the static identity of one real block device read from
 // /sys/block/<dev>/. Works without root and without smartmontools, so disk
 // count + capacity + model are available even on virtual machines where
 // smartctl/dmidecode are absent.
+
+// virtualInterfacePrefixes lists interface name prefixes that are filtered
+// out by IsVirtualInterface. These are virtual/software interfaces (Docker,
+// Kubernetes Calico/CNI, libvirt, flannel, OVS, dummy) with no hardware
+// identity and no monitoring value.
+var virtualInterfacePrefixes = []string{
+	"lo", "cali", "cni", "veth", "br-", "virbr", "flannel",
+	"ovs-system", "dummy", "endvnic", "docker0",
+}
+
+// IsVirtualInterface reports whether the interface name matches a known
+// virtual/software prefix. Used by both the network collector (Collect) and
+// the snapshot hwinfo (netInfo) to ensure consistent filtering.
+func IsVirtualInterface(name string) bool {
+	for _, p := range virtualInterfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 type BlockDev struct {
 	Name      string // "sda", "nvme0n1", ...
 	Model     string // /sys/block/<dev>/device/model (empty for some virt devs)
@@ -354,8 +377,14 @@ func (s *defaultSource) NetInterfaceInfo(iface string) (*NetIfaceInfo, error) {
 		}
 	}
 	// driver is a symlink: /sys/class/net/<iface>/device/driver -> .../drivers/<name>
-	if link, err := os.Readlink(filepath.Join(base, "device", "driver")); err == nil {
+	devLink := filepath.Join(base, "device")
+	if link, err := os.Readlink(filepath.Join(devLink, "driver")); err == nil {
 		info.Driver = filepath.Base(link)
+	}
+	// PCI address: /sys/class/net/<iface>/device is a symlink to the PCI device dir.
+	// The last path component is the PCI address (e.g. "0000:c1:00.0").
+	if link, err := os.Readlink(devLink); err == nil {
+		info.PciAddr = filepath.Base(link)
 	}
 	return info, nil
 }
@@ -397,7 +426,8 @@ func isRealBlockDevice(name string) bool {
 		strings.HasPrefix(name, "ram") ||
 		strings.HasPrefix(name, "sr") ||
 		strings.HasPrefix(name, "zram") ||
-		strings.HasPrefix(name, "md") {
+		strings.HasPrefix(name, "md") ||
+		strings.HasPrefix(name, "dm-") {
 		return false
 	}
 	return true

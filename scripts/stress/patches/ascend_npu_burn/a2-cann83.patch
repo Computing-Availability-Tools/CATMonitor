@@ -1,0 +1,126 @@
+--- a/ascend_npu_burn/common/const.py
++++ b/ascend_npu_burn/common/const.py
+@@ -50,10 +50,17 @@ DTYPE_MAPPING = {
+     DtypeStr.INT8.value: torch.int8,
+     DtypeStr.UINT8.value: torch.uint8,
+     DtypeStr.BOOL.value: torch.bool,
+-    DtypeStr.FLOAT4_E2M1FN_X2.value: torch_npu.float4_e2m1fn_x2,
+-    DtypeStr.FLOAT8_E4M3FN.value: torch.float8_e4m3fn,
+-    DtypeStr.HIFLOAT8.value: torch_npu.hifloat8,
+ }
+ 
++_OPTIONAL_DTYPES = (
++    (DtypeStr.FLOAT4_E2M1FN_X2.value, torch_npu, "float4_e2m1fn_x2"),
++    (DtypeStr.FLOAT8_E4M3FN.value, torch, "float8_e4m3fn"),
++    (DtypeStr.HIFLOAT8.value, torch_npu, "hifloat8"),
++)
++for _name, _module, _attribute in _OPTIONAL_DTYPES:
++    _dtype = getattr(_module, _attribute, None)
++    if _dtype is not None:
++        DTYPE_MAPPING[_name] = _dtype
++
+ # 正则表达
+ NUM_COMBIN_REGEX = re.compile(r"[^0-9,]")
+--- a/ascend_npu_burn/common/data_load.py
++++ b/ascend_npu_burn/common/data_load.py
+@@ -24,7 +24,7 @@ class DataLoad:
+     __instance = None
+ 
+     def __init__(self):
+-        self.data_size = 5  # 默认申请5G
++        self.data_size = 1  # CATMonitor A2 profile: bounded 1 GiB data pool
+         self.data_pool: Dict[str, DataInfo] = {}
+ 
+     def __new__(cls, *args, **kwargs):
+--- a/ascend_npu_burn/common/enum.py
++++ b/ascend_npu_burn/common/enum.py
+@@ -55,2 +55,3 @@ class ChipGeneration(Enum):
+     A5 = "A5"
+     A3 = "A3"
++    A2 = "A2"
+--- a/ascend_npu_burn/common/utils.py
++++ b/ascend_npu_burn/common/utils.py
+@@ -13,6 +13,7 @@
+ # See the Mulan PSL v2 for more details.
+ # ===========================================================================
+ import json
++import os
+ import subprocess
+ from collections import defaultdict
+ from dataclasses import dataclass, field
+@@ -43,6 +44,9 @@ def _find_command_path(cmd: str) -> Optional[str]:
+ 
+ 
+ def get_numa_configs():
++    container_device_count = int(os.getenv("CATMONITOR_NPU_DEVICE_COUNT", "0"))
++    if container_device_count > 0:
++        return [list(range(os.cpu_count() or 1))]
+     # 查找lscpu命令路径
+     lscpu_path = _find_command_path('lscpu') or '/usr/bin/lscpu'  # 使用默认路径作为备选
+ 
+@@ -183,11 +187,15 @@ def get_npu_numa_topology():
+ 
+     except Exception as e:
+         logger.warning(f"Could not detect NPU topology automatically: {e}")
+-        # 假设标准的 8 卡机器，前 4 张在 Node 0，后 4 张在 Node 1
+-        numa_to_npus = defaultdict(list)  # 重置
+-        for i in range(8):
+-            node = i // 4
+-            numa_to_npus[node].append(i)
++        # Containers may intentionally expose only a subset of host devices.
++        # Require the administrator-declared logical device count instead of
++        # silently inventing an eight-device topology.
++        numa_to_npus = defaultdict(list)
++        device_count = int(os.getenv("CATMONITOR_NPU_DEVICE_COUNT", "0"))
++        if device_count <= 0:
++            raise RuntimeError("CATMONITOR_NPU_DEVICE_COUNT is required when lspci is unavailable")
++        for i in range(device_count):
++            numa_to_npus[0].append(i)
+ 
+     return dict(numa_to_npus)
+ 
+--- a/ascend_npu_burn/config/base_config.json
++++ b/ascend_npu_burn/config/base_config.json
+@@ -8,18 +8,12 @@
+     {
+       "matmul": {
+         "seq": 1,
+-        "run_count": 100,
+-        "dtype": ["float32", "float16", "bfloat16", "hfloat32", "float"],
++        "run_count": 20,
++        "dtype": ["float16"],
+         "shape": [
+-          [[4096, 4096], [4096, 4096]],
+-          [[8192, 512], [512, 8192]],
+-          [[8192, 512], [512, 6144]],
+-          [[8192, 512], [512, 7168]],
+-          [[8192, 2048], [2048, 8192]],
+-          [[512, 4096], [4096, 512]],
+-          [[256, 8192], [8192, 8192]]
++          [[4096, 4096], [4096, 4096]]
+         ],
+-        "pattern": ["uniform_random", "gauss_random", "gauss_random_3", "gauss_random_8", "gauss_random_10p_zero", "faulty_js"]
++        "pattern": ["uniform_random"]
+       },
+       "quant_matmul": {
+         "seq": 2,
+--- a/ascend_npu_burn/npu_burn.py
++++ b/ascend_npu_burn/npu_burn.py
+@@ -108,7 +108,7 @@ def get_args():
+     )
+     # 芯片代际
+     parser.add_argument(
+-        "--chip_generation", type=str, choices=["A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
++        "--chip_generation", type=str, choices=["A2", "A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
+     )
+ 
+     args = parser.parse_args()
+@@ -124,7 +124,7 @@ def args_output_check(args, parser):
+     output_path = pathlib.Path(args.output)
+     if not output_path.is_absolute():
+         parser.error(f"--output path must be an absolute path: {output_path}")
+-    if output_path.exists():
++    if not output_path.exists():
+         parser.error(f"--output path does not exist: {args.output}")
+     if not output_path.is_dir():
+         parser.error(f"--output path is not a directory: {output_path}")

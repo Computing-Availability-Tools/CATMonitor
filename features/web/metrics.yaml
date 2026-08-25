@@ -11,7 +11,7 @@ components:
       - name: frequency
         priority: Medium
       - name: context_switches
-        priority: Low
+        priority: Medium
       - name: process_count
         priority: Low
       - name: model_info
@@ -53,9 +53,6 @@ components:
       - name: mem_temperature
         priority: Medium
       - name: core_num
-        priority: Low
-        static: true
-      - name: die_core_num
         priority: Low
         static: true
       - name: numa_core_num
@@ -128,13 +125,13 @@ components:
       - name: free_pages
         priority: Low
       - name: module_num
-        priority: Low
+        priority: Medium
         static: true
       - name: module_size
-        priority: Low
+        priority: Medium
         static: true
       - name: module_info
-        priority: Low
+        priority: Medium
         static: true
       - name: power
         priority: Medium

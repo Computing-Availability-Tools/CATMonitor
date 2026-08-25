@@ -11,7 +11,10 @@
 // Linux-only: syscall.Statfs_t is platform-specific.
 package statfs
 
-import "syscall"
+import (
+	"strings"
+	"syscall"
+)
 
 // Statfs holds filesystem usage in bytes for one mount point.
 type Statfs struct {
@@ -52,6 +55,10 @@ type defaultSource struct {
 
 var defaultSrc = &defaultSource{fetch: realFetch}
 
+// hostPrefix is prepended to statfs paths in container environments where
+// the host filesystem is mounted at /host. Empty in non-container mode.
+var hostPrefix string
+
 func Default() Source { return defaultSrc }
 
 // SetFetcher swaps the fetcher (for tests).
@@ -60,8 +67,15 @@ func SetFetcher(f fetcher) { defaultSrc.fetch = f }
 // ResetFetcher restores the real statfs fetcher (for test cleanup).
 func ResetFetcher() { defaultSrc.fetch = realFetch }
 
+// SetHostPrefix sets a prefix prepended to all statfs paths. Used in
+// container environments where the host root is mounted at /host.
+func SetHostPrefix(p string) { hostPrefix = p }
+
 func (s *defaultSource) Available() bool { return true }
 
 func (s *defaultSource) Statfs(path string) (*Statfs, error) {
+	if hostPrefix != "" && !strings.HasPrefix(path, hostPrefix) {
+		path = hostPrefix + path
+	}
 	return s.fetch(path)
 }

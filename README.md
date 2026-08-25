@@ -17,6 +17,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 - **多部件采集**：CPU / 内存 / 硬盘 / GPU / NPU / 网卡 / 机箱 共 7 个部件，**210 个指标**（含 NPU 掉卡检测 `card_drop`/`error_code`、Disk 累计 raw counters，详见 [指标清单](docs/CATMonitor_indi_list.md)）
 - **健康度评估**：基于采集指标自动计算 0-100 健康分，自动检测 GPU/NPU 切换权重方案
+- **可靠性压测**：Linux 上显式运行 STREAM / HPL / HPCG / Ascend NPU Burn；CLI 与本机 Web 共享作业、报告和互斥锁，结果不直接计入健康总分
 - **Snapshot 统一生产**：daemon 作为唯一 snapshot 生产者，产出 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs）；只读特性（web/dfee）消费快照而不再各自采集，避免重复跑硬件
 - **Web 仪表盘**：独立 `catmonitor-web` 二进制，**只读消费** daemon 产出的 snapshot，可视化单机健康度与各部件指标，默认端口 9527
 - **能效监控（dfee）**：独立 `catmonitor-dfee` 二进制，**只读消费** snapshot 渲染能效指标实时图表 SPA（卡片拖拽缩放、多选下拉筛选、模块折叠），默认端口 9528；**内置 Prometheus exporter**（`:9333/metrics`）将 snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*` 格式，无需额外进程
@@ -37,18 +38,22 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 选型 |
 |------|------|
-| 语言 | Go 1.21+ |
+| 语言 | Go 1.23.4+（以 `go.mod` 为准） |
 | 平台 | Linux / Windows |
 | 输出 | 本地文件 (JSONL) + Prometheus 文本 (`/metrics`) |
 | 配置 | YAML |
-| 外部依赖 | 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`，默认构建无 CGo |
+| 外部依赖 | Go 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 采集经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`；可选 NPU 压测源码按 Mulan PSL v2 固定在 `third_party/ascend_npu_burn`，管理员另行准备匹配的 CANN/torch_npu 环境或基础镜像 |
 | Web/导出 | Go 标准库 `net/http` + `//go:embed` 内嵌前端，无构建步骤 |
 
 ## 快速开始
 
 ```bash
 # 编译（daemon + web + dfee 三个二进制）
+go version             # 必须为 Go 1.23.4 或更高版本
 make all               # 或分别 make build / make web / make dfee
+
+# 节点存在多个 Go 版本时，显式指定已安装的新工具链
+make all GO=/opt/catmonitor/toolchains/go1.25.1/bin/go
 
 # 配置（Linux）：开启 snapshot 生产以供 web/dfee 只读消费
 cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
@@ -68,6 +73,28 @@ catmonitor-dfee -addr :9528 -snapshot-dir /var/lib/catmonitor/snapshot
 catmonitor collect -o table
 catmonitor health -o table
 catmonitor list
+```
+
+STREAM/HPL/HPCG 不随仓库分发二进制。Linux 管理员可用
+`scripts/stress/build_cpu_benchmarks.sh` 从任意源码位置构建并生成可追溯 manifest；
+参数、安装和验收步骤见 [stress 指南](features/stress/STRESS_TEST_GUIDE.md)。
+Ascend NPU Burn 源码随仓库固定，标准镜像构建无需 `--source`，但管理员必须先
+准备并加载与目标节点匹配、且含 CANN toolkit/devlib、torch_npu 和 TBE
+的基础镜像。构建器显式初始化 CANN 环境并在 wheel 前做 HAL/import 预检，最终镜像
+提供 upstream topology 所需的 `pciutils/lspci`，支持正常联网、临时代理和兼容
+RPM/DEB 依赖闭包离线注入；
+镜像构建不需要宿主机 driver mount 或 NPU 设备，真正 driver/device 验证留在
+固定容器和 `describe npu_burn` 阶段。镜像完成后可用
+`scripts/stress/create_npu_burn_container.sh` 动态映射节点全部 `/dev/davinciN` 并
+创建管理员维护的固定容器；CATMonitor 会交叉检查容器 `/dev/davinciN` 与 upstream
+`lspci` PCI topology，管理员必须显式选择验证后的 NPU Burn logical ID，不使用
+`npu-smi` Phy-ID，`all` 仅用于整节点独占压测。
+
+完成 stress 资产部署、节点脚本适配并在主配置中显式启用后，再执行：
+
+```bash
+catmonitor stress doctor -o table
+catmonitor stress -o table
 ```
 
 > 完整安装、配置、命令、Web 仪表盘、dfee 能效监控、Prometheus 接入与示例见 [使用手册](docs/User_Manual.md)。
@@ -99,6 +126,7 @@ catmonitor list
 | [docs/test_report.md](docs/test_report.md) | 测试报告（无 NPU/GPU 系统测试） |
 | [docker/README.md](docker/README.md) | 容器化部署（NPU/generic 镜像 + compose 编排） |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |
+| [features/stress/README.md](features/stress/README.md) | 可靠性压测入口、规格、设计与部署验收文档 |
 | [features/web/Web_SPEC.md](features/web/Web_SPEC.md) | Web 仪表盘规格 |
 | [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md) | 能效监控模块规格 |
 | [features/exporter/exporter_SPEC.md](features/exporter/exporter_SPEC.md) | Prometheus 导出模块规格 |
@@ -109,7 +137,7 @@ catmonitor list
 
 ```
 CATMonitor/
-├── cmd/catmonitor/          # 守护进程入口（daemon/collect/health/list/version）
+├── cmd/catmonitor/          # 守护进程入口（daemon/collect/health/stress/list/version）
 ├── internal/
 │   ├── collector/           # 采集核心：Collector 接口 + Registry + Scheduler
 │   ├── collectors/          # 7 个部件采集器（cpu/memory/disk/gpu/npu/network/chassis）
@@ -118,6 +146,7 @@ CATMonitor/
 │   ├── config/ platform/ storage/   # 配置 / 平台适配 / 数据存储(JSONL)
 ├── features/                # 特性层
 │   ├── health/              #   健康度评估
+│   ├── stress/              #   STREAM/HPL/HPCG/Ascend NPU Burn 可靠性压测
 │   ├── snapshot/            #   Snapshot 统一生产（PerCompWriter + GlobalWriter + 原子写/只读读）
 │   ├── web/                 #   Web 仪表盘（catmonitor-web，只读消费 snapshot）
 │   ├── dfee/                #   能效监控（catmonitor-dfee 独立二进制，package main，只读消费 snapshot + 内置 Prometheus exporter :9333）

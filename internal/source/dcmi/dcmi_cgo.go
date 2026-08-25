@@ -60,6 +60,26 @@ static int dcmi_card_drop_wrapper(int card, int dev, int *dropped) {
     return rc;
 }
 
+// Wrapper for dcmi_get_device_resource_info — returns process PIDs.
+// Signature: int dcmi_get_device_resource_info(int card_id, int device_id,
+//   struct dcmi_proc_mem_info *proc_info, int *proc_num)
+// struct dcmi_proc_mem_info { int proc_id; unsigned long proc_mem_usage; }
+// proc_num: caller sets buffer capacity (max 32), callee fills actual count.
+static int dcmi_resource_info_wrapper(int card, int dev,
+        int *out_pids, int max_pids, int *out_count) {
+    struct dcmi_proc_mem_info info[32];
+    *out_count = 32;
+    int rc = dcmi_get_device_resource_info(card, dev, info, out_count);
+    if (rc != 0) return rc;
+    int n = *out_count;
+    if (n > max_pids) n = max_pids;
+    for (int i = 0; i < n; i++) {
+        out_pids[i] = info[i].proc_id;
+    }
+    *out_count = n;
+    return 0;
+}
+
 // Wrapper for dcmi_get_device_info — the 6th arg is unsigned int *size (caller
 // sets buffer size, callee updates with actual bytes written).
 static int dcmi_get_device_info_wrapper(int card, int dev, int main_cmd,
@@ -110,6 +130,15 @@ func (p *cgoProvider) DeviceNumInCard(card int) (int, error) {
 		return 0, fmt.Errorf("dcmi_get_device_num_in_card: %d", int32(rc))
 	}
 	return int(num), nil
+}
+
+func (p *cgoProvider) DeviceIDInCard(card int) (int, int, int, error) {
+	var devIDMax, mcuID, cpuID C.int
+	rc := C.dcmi_get_device_id_in_card(C.int(card), &devIDMax, &mcuID, &cpuID)
+	if rc != 0 {
+		return 0, 0, 0, fmt.Errorf("dcmi_get_device_id_in_card: %d", int32(rc))
+	}
+	return int(devIDMax), int(mcuID), int(cpuID), nil
 }
 
 func (p *cgoProvider) Temperature(card, dev int) (int, error) {
@@ -217,9 +246,24 @@ func (p *cgoProvider) DvppRatio(card, dev int) (*DvppRatio, error) {
 }
 
 func (p *cgoProvider) ResourceInfoFull(card, dev int) ([]uint, error) {
-	// dcmi_get_device_resource_info returns process PIDs.
-	// Full implementation depends on CANN version struct layout.
-	return nil, nil
+	var pids [32]C.int
+	var count C.int
+	rc := C.dcmi_resource_info_wrapper(C.int(card), C.int(dev), &pids[0], 32, &count)
+	if rc != 0 {
+		return nil, fmt.Errorf("dcmi_get_device_resource_info: %d", int32(rc))
+	}
+	n := int(count)
+	if n > 32 {
+		n = 32
+	}
+	out := make([]uint, 0, n)
+	for i := 0; i < n; i++ {
+		pid := uint(pids[i])
+		if pid > 0 {
+			out = append(out, pid)
+		}
+	}
+	return out, nil
 }
 
 func (p *cgoProvider) HbmInfo(card, dev int) (*HbmInfo, error) {

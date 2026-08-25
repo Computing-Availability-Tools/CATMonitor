@@ -234,21 +234,18 @@ func TestCollectTopology(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectTopology failed: %v", err)
 	}
-	// numa_node_num(1) + core_num(1) + die_core_num(1) + numa_core_num(2) + cpu_num(1) = 6
-	if len(metrics) != 6 {
-		t.Fatalf("expected 6 metrics, got %d", len(metrics))
+	// numa_node_num(1) + numa_core_num(2) + core_num(1) + cpu_num(1) = 5
+	if len(metrics) != 5 {
+		t.Fatalf("expected 5 metrics, got %d", len(metrics))
 	}
-	if m := findMetric(metrics, "numa_node_num", "", ""); m == nil || m.Value != 2 {
-		t.Errorf("numa_node_num: expected 2, got %v", m)
+	if m := findMetric(metrics, "cpu_num", "", ""); m == nil || m.Value != 2 {
+		t.Errorf("cpu_num: expected 2, got %v", m)
 	}
 	if m := findMetric(metrics, "core_num", "", ""); m == nil || m.Value != 28 {
 		t.Errorf("core_num: expected 28, got %v", m)
 	}
-	if m := findMetric(metrics, "die_core_num", "die", "0"); m == nil || m.Value != 14 {
-		t.Errorf("die_core_num: expected 14, got %v", m)
-	}
-	if m := findMetric(metrics, "cpu_num", "", ""); m == nil || m.Value != 2 {
-		t.Errorf("cpu_num: expected 2, got %v", m)
+	if m := findMetric(metrics, "numa_node_num", "", ""); m == nil || m.Value != 2 {
+		t.Errorf("numa_node_num: expected 2, got %v", m)
 	}
 }
 
@@ -446,7 +443,7 @@ func TestCollectIntegration(t *testing.T) {
 	for _, n := range []string{
 		"usage", "user_time", "system_util", "load_average", "frequency", "avg_freq",
 		"context_switches", "process_count", "model_info", "temperature", "mem_temperature", "power",
-		"numa_node_num", "core_num", "die_core_num", "numa_core_num", "cpu_num",
+		"numa_node_num", "core_num", "numa_core_num", "cpu_num",
 		"online_core_num", "offline_core_num", "isolated_core_num",
 		"min_freq", "max_freq", "l1d_cache_size", "l2_cache_size", "l3_cache_size",
 		"numa_order_num", "numa_info", "cpu_ce_errors", "cpu_uce_errors",

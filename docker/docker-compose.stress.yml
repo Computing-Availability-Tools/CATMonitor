@@ -1,0 +1,97 @@
+# Explicit opt-in overlay for CPU reliability stress from containerized
+# CATMonitor. The control containers submit only fixed benchmark names over a
+# private Unix socket to a dedicated runner image. No Docker socket, privileged
+# mode, host PID namespace, host network or arbitrary-command API is granted.
+services:
+  catmonitor:
+    group_add:
+      - "65532"
+    volumes:
+      - type: bind
+        source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}
+        target: /opt/catmonitor/stress
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CATMONITOR_STRESS_STATE_DIR:-/var/lib/catmonitor/stress}
+        target: /var/lib/catmonitor/stress
+        bind:
+          create_host_path: false
+      - type: volume
+        source: catmonitor_stress_socket
+        target: /run/catmonitor-stress
+
+  web:
+    group_add:
+      - "65532"
+    volumes:
+      - type: bind
+        source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}
+        target: /opt/catmonitor/stress
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CATMONITOR_STRESS_STATE_DIR:-/var/lib/catmonitor/stress}
+        target: /var/lib/catmonitor/stress
+        bind:
+          create_host_path: false
+      - type: volume
+        source: catmonitor_stress_socket
+        target: /run/catmonitor-stress
+
+  cpu-stress-runner:
+    image: ${CATMONITOR_CPU_STRESS_IMAGE:?set CATMONITOR_CPU_STRESS_IMAGE to the reviewed runner image}
+    restart: unless-stopped
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    # Used only by the root entrypoint to initialize bind/volume ownership and
+    # switch to uid/gid 65532. setpriv drops the complete capability bounding
+    # set before the runner or any benchmark starts.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETPCAP
+      - SETUID
+      # Docker's default seccomp profile exposes NUMA policy syscalls only when
+      # SYS_NICE is requested. setpriv drops the capability itself before the
+      # runner starts; the workload receives no effective/bounding capability.
+      - SYS_NICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${CATMONITOR_CPU_STRESS_PIDS_LIMIT:-4096}
+    # MPICH/OpenMPI may allocate a large shared-memory region when HPL/HPCG
+    # starts one rank per core. This is only a tmpfs ceiling (not preallocated
+    # memory) and remains overrideable for smaller nodes.
+    shm_size: ${CATMONITOR_CPU_STRESS_SHM_SIZE:-16gb}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/catmonitor-stress/cpu-runner.sock"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 5s
+    volumes:
+      - type: bind
+        source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}/cpu-runner-benchmark_check.sh
+        target: /etc/catmonitor-stress/benchmark_check.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CATMONITOR_STRESS_STATE_DIR:-/var/lib/catmonitor/stress}
+        target: /var/lib/catmonitor/stress
+        bind:
+          create_host_path: false
+      - type: volume
+        source: catmonitor_stress_socket
+        target: /run/catmonitor-stress
+
+volumes:
+  catmonitor_stress_socket:

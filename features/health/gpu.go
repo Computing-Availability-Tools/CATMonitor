@@ -3,15 +3,16 @@ package health
 import "github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 
 // evaluateGPU evaluates GPU health and returns the component score.
+// Budget: temperature 35%, memory 20%, utilization 15%, ECC 30%.
 func evaluateGPU(metrics []collector.Metric, maxScore int) ComponentScore {
 	score := float64(maxScore)
 	var deductions []Deduction
 
-	// Worst temperature across cards.
+	// Temperature: 35% budget. >80°C: 15%, >90°C: 35%.
 	if worstTemp, ok := worstValue(metrics, "temperature"); ok {
 		switch {
 		case worstTemp > 90:
-			d := Deduction{Rule: "temp>90C", Penalty: float64(maxScore) * 0.30}
+			d := Deduction{Rule: "temp>90C", Penalty: float64(maxScore) * 0.35}
 			score -= d.Penalty
 			deductions = append(deductions, d)
 		case worstTemp > 80:
@@ -21,23 +22,23 @@ func evaluateGPU(metrics []collector.Metric, maxScore int) ComponentScore {
 		}
 	}
 
-	// Worst memory usage across cards.
+	// Memory: 20% budget. >95%: 20%.
 	if worstMem, ok := worstValue(metrics, "memory_usage"); ok && worstMem > 95 {
-		d := Deduction{Rule: "mem>95%", Penalty: float64(maxScore) * 0.10}
+		d := Deduction{Rule: "mem>95%", Penalty: float64(maxScore) * 0.20}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}
 
-	// Worst utilization across cards.
+	// Utilization: 15% budget. >95%: 15%.
 	if worstUtil, ok := worstValue(metrics, "utilization"); ok && worstUtil > 95 {
-		d := Deduction{Rule: "util>95%", Penalty: float64(maxScore) * 0.10}
+		d := Deduction{Rule: "util>95%", Penalty: float64(maxScore) * 0.15}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}
 
-	// ECC errors (any card, uncorrectable).
+	// ECC: 30% budget. >0: 30%.
 	if hasAnyPositive(metrics, "ecc_errors") {
-		d := Deduction{Rule: "ecc_error", Penalty: float64(maxScore) * 0.20}
+		d := Deduction{Rule: "ecc_error", Penalty: float64(maxScore) * 0.30}
 		score -= d.Penalty
 		deductions = append(deductions, d)
 	}

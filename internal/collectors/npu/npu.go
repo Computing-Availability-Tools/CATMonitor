@@ -48,14 +48,15 @@ func (c *NPUCollector) Collect() ([]collector.Metric, error) {
 	// Ensure device list is populated.
 	c.ensureDevices()
 
-	// Phase 1: global/static metrics (once).
+	// Phase 1: global/static metrics (once). Skip when no devices to avoid
+	// emitting npu_num=0 which would falsely trigger accelerated server type.
 	if !c.staticCollected {
-		if collector.AnyWanted("npu", []string{"npu_num", "driver_version", "chip_type", "comm_topo"}) {
+		c.staticCollected = true
+		if len(c.devices) > 0 && collector.AnyWanted("npu", []string{"npu_num", "driver_version", "chip_type", "comm_topo"}) {
 			if m, err := c.collectStatic(now); err == nil {
 				allMetrics = append(allMetrics, m...)
 			}
 		}
-		c.staticCollected = true
 	}
 
 	// Phase 2: per-device metrics (parallel).

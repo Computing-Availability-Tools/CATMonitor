@@ -1,0 +1,20 @@
+# Complete CPU + NPU reliability-stress example.
+#
+# The benchmark executable paths, MPI/thread settings, fixed NPU container and
+# workload remain in the generated benchmark_check.sh host adapter. Generate
+# both this block and the adapter with scripts/stress/generate_stress_deployment.sh.
+# Keep the checked-in main config disabled because runtime assets are optional.
+stress:
+  enabled: true
+  web_enabled: false
+  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
+  default_benchmarks: [stream]
+  benchmarks:
+    stream: { enabled: true, timeout: 1m }
+    hpl: { enabled: true, timeout: 10m }
+    hpcg:
+      enabled: true
+      result_dir: /opt/catmonitor/stress/runtime/hpcg
+      timeout: 3m
+    npu_burn: { enabled: true, timeout: 30m }

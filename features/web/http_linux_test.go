@@ -74,7 +74,7 @@ func TestHTTPAPIReadOnlyConsumer(t *testing.T) {
 	)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(dir, logger)
+	srv := NewServer(dir, logger, nil, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	client := ts.Client()
@@ -84,7 +84,9 @@ func TestHTTPAPIReadOnlyConsumer(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("collectors status=%d want 200", code)
 	}
-	var comps []struct{ Component string `json:"component"` }
+	var comps []struct {
+		Component string `json:"component"`
+	}
 	if err := json.Unmarshal(body, &comps); err != nil {
 		t.Fatalf("decode collectors: %v", err)
 	}
@@ -131,15 +133,18 @@ func TestHTTPAPIReadOnlyConsumer(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("config status=%d want 200", code)
 	}
-	var cfgResp map[string]int
+	var cfgResp map[string]any
 	if err := json.Unmarshal(body, &cfgResp); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}
-	if cfgResp["refresh_interval_ms"] != 1000 {
-		t.Errorf("refresh_interval_ms=%d want 1000", cfgResp["refresh_interval_ms"])
+	if cfgResp["refresh_interval_ms"] != float64(1000) {
+		t.Errorf("refresh_interval_ms=%v want 1000", cfgResp["refresh_interval_ms"])
 	}
-	if cfgResp["history_points"] != 60 {
-		t.Errorf("history_points=%d want 60", cfgResp["history_points"])
+	if cfgResp["history_points"] != float64(60) {
+		t.Errorf("history_points=%v want 60", cfgResp["history_points"])
+	}
+	if cfgResp["version"] == nil {
+		t.Error("config missing version field")
 	}
 
 	// POST /api/config: read-only now (405).
