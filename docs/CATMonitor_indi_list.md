@@ -3,10 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.3.3 ｜ **更新日期**: 2026-08-10 ｜ **指标总数**: 210（High 26 / Medium 125 / Low 59）
-> **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi）。
+> **版本**: v0.3.5 ｜ **更新日期**: 2026-08-25 ｜ **指标总数**: 216（High 26 / Medium 143 / Low 47）
+> **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（15 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi + lspci）。
 > **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。v0.3.3 起 `collection.min_priority`（low/medium/high）按优先级阈值预过滤；v0.3.3 后续 `features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法。
-> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:9527）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表 + 内置 Prometheus exporter :9333/metrics，只读消费 snapshot，:9528）+ `features/exporter`（daemon 内置 Prometheus 导出 :9100/metrics）+ `features/faultsub`（故障订阅推送 :9101）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
+> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:19322）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表 + 内置 Prometheus exporter :9333/metrics + CSV 落盘 + Grafana Dashboard，只读消费 snapshot，:19323）+ `features/stress`（可靠性压测 STREAM/HPL/HPCG/NPU Burn，CLI/Web 共享报告与互斥锁，:19322/stress/）+ `features/exporter`（daemon 内置 Prometheus 导出 :19320/metrics）+ `features/faultsub`（故障订阅推送 :19321）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
 
 ---
 
@@ -24,14 +24,14 @@
 
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
-| CPU | 40 | 4 | 12 | 24 |
-| Memory | 19 | 4 | 7 | 8 |
-| Disk | 13 | 1 | 9 | 3 |
+| CPU | 39 | 4 | 12 | 23 |
+| Memory | 20 | 4 | 7 | 9 |
+| Disk | 14 | 1 | 9 | 4 |
 | GPU | 8 | 3 | 4 | 1 |
-| NPU | 120 | 11 | 87 | 22 |
-| Network | 5 | 1 | 3 | 1 |
+| NPU | 123 | 11 | 90 | 22 |
+| Network | 7 | 1 | 5 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **210** | **26** | **125** | **59** |
+| **合计** | **216** | **26** | **130** | **60** |
 
 ---
 
@@ -2010,7 +2010,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 
 ## 附录B：已实现采集指标清单
 
-> 以下 210 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 扩展至 40、Memory 扩展至 19、Disk 扩展至 13（含累计 raw counters）、GPU 扩展至 8（含 `memory_detail`）、NPU 扩展至 120 个指标（含 `card_drop` 掉卡检测），Chassis 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
+> 以下 216 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 39、Memory 20、Disk 14（含累计 raw counters + `space_detail`）、GPU 8（含 `memory_detail`）、NPU 123 个指标（含 `card_drop` 掉卡检测 + `process_info`/`process_total` 进程信息 + `npu_util` 整体利用率），Network 7（含 `rx/tx_bytes_total`），Chassis 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer，15 包含 lspci)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
 ### CPU（40 个）
 
@@ -2257,15 +2257,15 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 4 | fan_speed | 风扇转速 | Medium | RPM |
 | 5 | fan_power | 风扇功率 | Medium | W |
 
-### 统计汇总
-
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
-| CPU | 40 | 4 | 12 | 24 |
-| Memory | 19 | 4 | 7 | 8 |
-| Disk | 13 | 1 | 9 | 3 |
+| CPU | 39 | 4 | 12 | 23 |
+| Memory | 20 | 4 | 7 | 9 |
+| Disk | 14 | 1 | 9 | 4 |
 | GPU | 8 | 3 | 4 | 1 |
-| NPU | 120 | 11 | 87 | 22 |
-| Network | 5 | 1 | 3 | 1 |
+| NPU | 123 | 11 | 90 | 22 |
+| Network | 7 | 1 | 5 | 1 |
 | Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **210** | **26** | **125** | **59** |
+| **合计** | **216** | **26** | **130** | **60** |
+
+### 统计汇总

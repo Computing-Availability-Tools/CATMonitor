@@ -4,19 +4,41 @@
 
 ---
 
-## Unreleased — reliability stress
+## v0.3.5
 
-- 新增独立 `features/stress`，通过 `catmonitor stress` 显式运行 STREAM、HPL、HPCG、Ascend NPU Burn；普通 health 和 daemon 不自动触发。
-- 新增 `/stress/` 独立页面和 `/api/stress/*`，挂载到 snapshot 只读 Web；Web 默认读取平台 CATMonitor 主配置，也可通过 `CATMONITOR_CONFIG` 或 `-config` 覆盖。
-- CLI/Web 共享原子报告、最近 100 次历史和 Linux 跨进程锁；支持单次缩短超时、作业取消、进程组回收及 profile、资产和配置哈希追溯。
-- 节点执行器、MPI/NUMA 参数继续由源码目录外的 `benchmark_check.sh` 管理；Web 不提供脚本、路径或任意参数编辑。
-- 第一版只支持 Linux 单机执行；Windows 保证构建并返回 `unsupported`，暂不支持 OSU 和多节点 MPI。
-- Ascend NPU Burn 源码按 Mulan PSL v2 以固定上游 revision、许可证和逐文件哈希随仓库提供；CANN、torch_npu、驱动和基础镜像仍由管理员按节点环境准备。接入显式启用 SDC 检测并校验本次 CSV 的 PASS/FAIL 与错误数，不能只依赖工具退出码，未完成即超时不判为通过；针对上游自定义 `--output` 校验缺陷，适配器固定使用工具默认目录，并由固定容器 bootstrap 将宿主结果目录绑定到镜像默认输出目录。
-- 新增 Linux 管理员 CPU benchmark 构建工具：支持从任意位置构建 STREAM/HPL/HPCG、显式选择 GCC/MPI/OpenBLAS、精确应用 HPCG OpenMP 兼容补丁，并输出含工具链与资产哈希的 build manifest；构建、节点适配和运行保持分离。
-- 新增 Ascend NPU Burn 管理员镜像构建工具：默认使用仓库固定源码和管理员批准的本地 CANN/torch_npu 基础镜像；A3 默认使用无补丁 profile，另提供经 Ascend 910B4、CANN 8.3 验证的显式 `a2-cann83` profile，兼容补丁只作用于隔离快照；构建器使用 Bash 显式发现并 source CANN 环境，在 wheel 前校验 HAL、torch、torch_npu 和 TBE，再以离线强制重装方式安装本轮 wheel；最终镜像提供 upstream PCI topology 所需的 `pciutils/lspci`，依赖名由仓库清单维护，正常节点默认联网解析、受限节点安全转发临时代理、完全离线节点注入 RPM/DEB 依赖闭包，代理值不进入日志/manifest/镜像；若基础镜像在构建阶段依赖宿主机驱动库，可通过 `--build-driver-lib-dir` 只注入多阶段构建的 builder，最终镜像不得包含该输入；构建不使用 `npu-smi`、不挂载 NPU 设备，也不运行 NPU 负载；manifest 追溯所选 CANN 环境、pciutils 来源、build-only 驱动输入哈希、wheel 哈希/安装位置和各项预检结果。
-- 新增 NPU Burn 固定容器管理员工具：动态 identity-map 全部 `/dev/davinciN` 和必需控制设备，继承镜像环境，以可配置且纳入一致性校验的 `unless-stopped` 策略安全处理已存在容器；NPU adapter 不默认选择设备，在 describe/运行前交叉检查 `docker_exec` 容器设备节点和 upstream-compatible `lspci` logical topology，拒绝缺失依赖、固定八设备 fallback、集合不一致，以及把 `npu-smi` Phy-ID 或 PyTorch device count 当作可运行范围。
-- 修复 NPU adapter 的 PCI logical ID 计数器未显式初始化问题，避免首个 accelerator 被过滤后把真实 `0..15` 错报为 `1..15`；回归覆盖 1/16 accelerator、16-device describe 和 device16 越界拒绝。
-- 构建文档与 `go.mod` 统一要求 Go 1.23.4+；Makefile 支持通过 `GO=/absolute/path/to/go` 显式选择节点工具链并自动创建 `bin/`，避免系统默认旧 Go 与 `GOTOOLCHAIN=local` 组合导致误用。
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.5 |
+| 发布时间 | 2026-08-25 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 合并来源 | origin/develop → main（merge `243082c`，no-ff，无冲突） |
+
+### 变更摘要
+
+- **可靠性压测模块 `features/stress`（核心新增）**：通过 `catmonitor stress` 显式运行 STREAM / HPL / HPCG / Ascend NPU Burn；普通 health 和 daemon 不自动触发。CLI/Web 共享原子报告、最近 100 次历史和 Linux 跨进程锁；支持单次缩短超时、作业取消、进程组回收及 profile、资产和配置哈希追溯。第一版只支持 Linux 单机执行；Windows 保证构建并返回 `unsupported`，暂不支持 OSU 和多节点 MPI。
+- **stress Web 页面**：新增 `/stress/` 独立页面和 `/api/stress/{config,latest,history,runs}`，挂载到 snapshot 只读 Web；**仅 loopback 监听且 `stress.web_enabled=true` 时启用**，Web 默认读取平台 CATMonitor 主配置，也可通过 `CATMONITOR_CONFIG` 或 `-config` 覆盖。节点执行器、MPI/NUMA 参数继续由源码目录外的 `benchmark_check.sh` 管理；Web 不提供脚本、路径或任意参数编辑。
+- **stress 管理员工具链**：`scripts/stress/` 提供 CPU benchmark 构建器（STREAM/HPL/HPCG，从任意位置构建、显式选择 GCC/MPI/OpenBLAS、精确应用 HPCG OpenMP 兼容补丁、输出含工具链与资产哈希的 build manifest）、Ascend NPU Burn 镜像构建器（固定上游源码 + Mulan PSL v2 + 逐文件 SHA256、显式 source CANN 环境、HAL/torch/torch_npu/TBE 预检、离线强制重装 wheel、pciutils/lspci 依赖闭包）、固定容器创建器（动态 identity-map 全部 `/dev/davinciN`、`unless-stopped` 策略、交叉检查容器设备节点与 upstream `lspci` logical topology）、部署生成器与统一 `catmonitor-install` 安装器；`third_party/ascend_npu_burn/` 随仓提供固定 revision 源码。构建、节点适配和运行保持分离。
+- **dfee CSV 落盘 + Grafana Dashboard**：`features/dfee/csv_writer.go` 标准 CSV 落盘（按启动时间命名、value 格式规则）；`features/dfee/grafana-dashboard.json`（24 面板 6 行）。
+- **健康评估增强**：新增 `features/health/chassis.go`（机箱部件纳入评估：进/出风口温度）、`network.go`（网络部件纳入评估）、`WEIGHT_SPEC.md`（4 套权重方案）；`cpu_only` scheme 新增 network 权重；disk 健康评估改为「按物理盘聚合空间使用率」，无 SMART 数据时不判 `smart_failed`。
+- **server_type 判定一致性修复**：CLI 与 snapshot global writer 在同 scope 下判定一致（消除 v0.3.3/v0.3.4「CLI 判 accelerated、web 判 cpu_only」不一致）；根因改为依赖真实 NPU 指标而非采集器注册存在性，无 NPU 硬件时一致判 `cpu_only`。
+- **collectors 改进**：disk 按物理盘聚合空间使用率 + 过滤 LVM 逻辑卷（`dm-`/mapper）+ 同一分区 bind mount 去重；network 过滤虚拟接口（docker0 等）+ rx/tx 合并 + 接口状态显示 up/down 文本；npu 用 card 替代 devID + 全部 DCMI 指标加 `chip_id` label + `dcmi_get_device_resource_info` 采集进程信息（`process_info`/`process_total`）；CPU 8 个 jiffies 优先级 Low→Medium。
+- **新增 `internal/source/lspci`**：lspci 设备描述采集（网络物理网卡聚合分组等，91 行）。
+- **stragglerout KPI 扩展**：新增 `metrics.yaml`，A3 双芯片 device_id 自算（卡槽定址，掉卡稳定）+ `hbm_bandwidth_util`/`roce` 别名兼容。
+- **端口统一**：daemon exporter `:9100→:19320`、faultsub `:9101→:19321`、web `:9527→:19322`、dfee `:9528→:19323`（dfee exporter `:9333` 不变）。
+- **配置默认值变更**：`features: [web,dfee]→[web,dfee,health]`；新增 `stress:` 段（默认全 false）；`faultsub.rest_addr: :19321`。
+- **版本号**：`internal/version/version.go` 升至 `0.3.5`；指标总数 210→216（CPU 40→39 删 `die_core_num`；Memory 19→20 新增 `swap_detail`；Disk 13→14 新增 `space_detail`；NPU 120→123 新增 `process_info`/`process_total`/`npu_util`；Network 5→7 新增 `rx_bytes_total`/`tx_bytes_total`；High 26 / Medium 125→143 / Low 59→47）。
+- **测试**：`go vet ./...` 零告警；三二进制构建全成功（catmonitor 10.2MB / web 9.5MB / dfee 8.6MB）；`go test ./...` 41 包全绿（含新增 stress 三包 10.9s）；stress hermetic 脚本测试 11 项全 PASS；端到端 5 端点验证通过（`:19320`/`:19321`/`:19322`/`:19323`/`:9333`）；daemon 日志无 error/warn/panic；CLI 与 snapshot 健康度一致（`cpu_only/90`）。
+
+### 已知限制
+
+1. **二进制制品入仓**：合并带入两个二进制 `dfee`(8.6MB) + `web`(8.6MB)（仓库根目录），违反常规 Git 规范，显著增大仓库体积。建议后续从 main 移除并加入 `.gitignore`，改走 release 制品。
+2. **`-c` 短 flag 仍为死代码**（继承 v0.3.3）：`cmd/catmonitor` 的 `c` 短 flag 值被丢弃，须用 `-config` 长形式（stress CLI 已支持 `-c`）。
+3. **DCMI CGo 未真机验证**：`dcmi_cgo.go` 在 `-tags dcmi` 后，本机无 CANN SDK 无法编译，需在真 NPU 服务器验证。
+4. **GPU/NPU/Chassis 无真机**：系统测试仅验证优雅降级路径（空数据 / 计数 0 / 不崩溃），stress 真实 benchmark 执行（STREAM/HPL/HPCG/NPU Burn）与 dfee exporter 的 `dsmi_*`/`ipmi_*` 输出需在配备对应硬件的机器复测。
+5. **dfee static_info 命令依赖**：`static_hardware_info`/`static_software_info` 依赖 `ipmitool`/`dmidecode`/`npu-smi`/`nvidia-smi`/`pip`/`nvcc` 等命令，容器环境需 `--privileged` + 安装对应工具，缺失时对应 label 为空（降级而非报错）。
+6. **stress Web API 需 loopback + web_enabled**：非 loopback 监听或 `stress.web_enabled=false` 时 run 端点不挂载/返回 403（安全设计）。
+7. **`-race` 需 cgo + gcc**：无 `gcc` 环境竞态检测未覆盖。
 
 ---
 
