@@ -1533,7 +1533,6 @@ function renderDetail(compKey, snap) {
     const dpanel = el('div', 'panel deductions-panel');
     const dph = el('div', 'panel-head');
     dph.appendChild(elText('span', '', '扣分项'));
-    dph.appendChild(elText('span', 'sub', compHealth.deductions.length + ' 条'));
     dpanel.appendChild(dph);
     const dbody = el('div', 'panel-body');
     const d = el('div', 'deductions-list');
@@ -1565,7 +1564,6 @@ function renderDetail(compKey, snap) {
     const spanel = el('div', 'panel');
     const sph = el('div', 'panel-head');
     sph.appendChild(elText('span', '', '硬件信息'));
-    sph.appendChild(elText('span', 'sub', compSpecs.length + ' 条'));
     spanel.appendChild(sph);
     const sbody = el('div', 'panel-body');
     if (compKey === 'memory') {
@@ -1589,7 +1587,6 @@ function renderDetail(compKey, snap) {
     const panel = el('div', 'panel');
     const ph = el('div', 'panel-head');
     ph.appendChild(elText('span', '', '趋势'));
-    ph.appendChild(elText('span', 'sub', '近 ' + (snap.history_points || 60) + ' 个采样点'));
     panel.appendChild(ph);
     const body = el('div', 'panel-body trend');
     for (const s of series) {
@@ -1607,9 +1604,8 @@ function renderDetail(compKey, snap) {
   // all metrics (grouped by name)
   const mpanel = el('div', 'panel');
   const mph = el('div', 'panel-head');
-  mph.appendChild(elText('span', '', '全部指标'));
-  mph.appendChild(elText('span', 'sub', metrics.length + ' 条'));
-  mpanel.appendChild(mph);
+    mph.appendChild(elText('span', '', '全部指标'));
+    mpanel.appendChild(mph);
   const mbody = el('div', 'panel-body');
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
