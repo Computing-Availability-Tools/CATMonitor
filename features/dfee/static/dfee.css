@@ -106,7 +106,8 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
 .prio-btn:hover { background: #f0f2f5; }
 .prio-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-.npu-filter { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.filter-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.npu-filter { display: flex; align-items: center; gap: 8px; }
 .filter-label { color: var(--muted); font-size: 12px; font-weight: 400; }
 .npu-dropdown { position: relative; }
 .npu-dropdown-trigger {

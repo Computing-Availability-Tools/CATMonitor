@@ -238,18 +238,22 @@ function buildSections(charts) {
       }
       head.appendChild(filter);
     }
+    var filterWrap = null;
     if (sec.filterKey) {
       const filterIds = getFilterIds(secCharts, sec.filterSegment || 0);
       if (filterIds.length > 1) {
-        head.appendChild(buildFilterDropdown(sec, filterIds, 0));
+        if (!filterWrap) filterWrap = el('div', 'filter-group');
+        filterWrap.appendChild(buildFilterDropdown(sec, filterIds, 0));
       }
     }
     if (sec.filterKey2) {
       const filterIds2 = getFilterIds(secCharts, sec.filterSegment2 || 1);
       if (filterIds2.length > 1) {
-        head.appendChild(buildFilterDropdown(sec, filterIds2, 1));
+        if (!filterWrap) filterWrap = el('div', 'filter-group');
+        filterWrap.appendChild(buildFilterDropdown(sec, filterIds2, 1));
       }
     }
+    if (filterWrap) head.appendChild(filterWrap);
     section.appendChild(head);
 
     const grid = el('div', 'chart-grid');
