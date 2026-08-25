@@ -160,6 +160,15 @@ const SERIES_LABELS = {
   network_error_packets: '网络错包最大 (次)', network_dropped_packets: '网络丢包最大 (次)',
 };
 
+const SERIES_ORDER = {
+  cpu_usage: 0, cpu_load_average: 1, cpu_temperature: 2, cpu_avg_freq: 3,
+  memory_usage: 0, memory_swap_usage: 1, memory_swap_in: 2, memory_fragmentation: 3,
+  disk_space_usage: 0, disk_io_wait: 1, disk_iops: 2, disk_throughput: 3,
+  gpu_utilization: 0, gpu_memory_usage: 1, gpu_temperature: 2,
+  npu_utilization: 0, npu_temperature: 1, npu_memory_usage: 2, npu_power_draw: 3,
+  network_throughput: 0, network_packet_count: 1, network_error_packets: 2, network_dropped_packets: 3,
+};
+
 const METRIC_DESCRIPTIONS = {
   // CPU
   'cpu:usage': 'CPU 使用率',
@@ -1075,6 +1084,11 @@ function componentSeries(compKey, history) {
       out.push({ key: k, label: seriesLabel(k), data: history[k] });
     }
   }
+  out.sort(function(a, b) {
+    var oa = SERIES_ORDER[a.key] !== undefined ? SERIES_ORDER[a.key] : 99;
+    var ob = SERIES_ORDER[b.key] !== undefined ? SERIES_ORDER[b.key] : 99;
+    return oa - ob;
+  });
   return out;
 }
 
