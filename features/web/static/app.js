@@ -154,8 +154,7 @@ const SERIES_LABELS = {
   // v0.2.0 trends.
   cpu_temperature: 'CPU 最高温度 (°C)',
   cpu_avg_freq: 'CPU 平均频率 (MHz)',
-  memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化最大 (%)',
-  memory_swap_in: 'Swap 入页 (次/s)', memory_power: '内存功耗 (W)',
+  memory_swap_in: 'Swap 入页 (次/s)', memory_fragmentation: '内存碎片化最大 (%)',
   disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',
   network_throughput: '网络吞吐最大 (bytes/s)', network_packet_count: '网络包速率最大 (个/s)',
   network_error_count: '网络错误最大 (次)',

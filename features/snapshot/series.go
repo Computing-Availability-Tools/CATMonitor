@@ -39,10 +39,8 @@ var TrackedSeries = []seriesSpec{
 	// data, never an error). Mode 1 = max across devices/sockets/zones.
 	{component: "cpu", name: "temperature", key: "cpu_temperature", mode: 1},
 	{component: "cpu", name: "avg_freq", key: "cpu_avg_freq", mode: 0},
-	{component: "memory", name: "saturation", labelKey: "interval", labelVal: "avg10", key: "memory_saturation", mode: 0},
-	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1},
 	{component: "memory", name: "swap_in", key: "memory_swap_in", mode: 0},
-	{component: "memory", name: "power", key: "memory_power", mode: 1},
+	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1},
 	{component: "disk", name: "io_wait", key: "disk_io_wait", mode: 0},
 	{component: "disk", name: "iops", key: "disk_iops", mode: 1},
 	{component: "disk", name: "throughput", key: "disk_throughput", mode: 1},
