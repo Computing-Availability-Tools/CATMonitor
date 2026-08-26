@@ -285,6 +285,92 @@ docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
   -csv-dir=/var/lib/catmonitor/csv
 ```
 
+### GPU 环境补充
+
+`catmonitor-generic` 镜像基于 Alpine，不含 `nvidia-smi`。GPU 指标采集依赖
+宿主机上的 `nvidia-smi` 命令和 `libnvidia-ml.so` 动态库。以下两种方式任选其一。
+
+#### 方式 A：NVIDIA Container Toolkit（推荐）
+
+宿主机已安装 NVIDIA Container Toolkit 时，Docker Compose 中 daemon 服务追加
+GPU 声明：
+
+```yaml
+# docker-compose.gpu.yml
+services:
+  catmonitor:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+```bash
+CATMONITOR_IMAGE=catmonitor-generic \
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.gpu.yml \
+  up -d
+```
+
+#### 方式 B：手动挂载 nvidia-smi（无需 NVIDIA Container Toolkit）
+
+先确认宿主机上 `nvidia-smi` 和 `libnvidia-ml.so` 的路径：
+
+```bash
+which nvidia-smi
+# 如 /usr/bin/nvidia-smi
+
+find /usr/lib -name 'libnvidia-ml.so*' 2>/dev/null | head -1
+# 如 /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.535.129.03
+```
+
+Docker Compose 中 daemon 服务追加挂载：
+
+```yaml
+# docker-compose.gpu.yml
+services:
+  catmonitor:
+    volumes:
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+```
+
+手动 `docker run` 时追加同样挂载：
+
+```bash
+docker run -d --name catmonitor --privileged --network host --pid host \
+  -v /:/host:ro \
+  -v /etc/os-release:/etc/os-release:ro \
+  -v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro \
+  -e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot \
+  -v cm-data:/var/lib/catmonitor/data \
+  catmonitor-generic
+```
+
+> `libnvidia-ml.so.1` 的实际路径因驱动版本和发行版而异，请用 `find` 确认后替换。
+> web/dfee 容器只读 snapshot，不需要 GPU 访问，启动方式不变。
+
+#### 验证 GPU 采集
+
+```bash
+# daemon 启动 6-9 秒后，检查 GPU 指标
+docker exec catmonitor ls /var/lib/catmonitor/snapshot/snapshot_gpu.json
+
+# 查看 GPU 指标
+curl -s http://localhost:19322/api/snapshot | python3 -m json.tool | grep gpu | head -5
+
+# Prometheus exporter
+curl -s http://localhost:19320/metrics | grep gpu
+```
+
 ## 4. 端口说明
 
 | 容器端口 | 服务 | 端点 |
