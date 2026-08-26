@@ -74,14 +74,12 @@ services:
   catmonitor:
     volumes:
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
-      - /usr/lib/x86_64-linux-gnu:/nvidia-libs:ro
+      - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
     environment:
-      - LD_LIBRARY_PATH=/nvidia-libs
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
 ```
 
-> 挂载到 `/nvidia-libs` 而非容器的 `/usr/lib/x86_64-linux-gnu`，避免覆盖容器自带的库
-> （dmidecode、smartctl、lspci 等工具依赖容器内的 `/usr/lib/x86_64-linux-gnu`）。
-> `nvidia-smi` 通过 `LD_LIBRARY_PATH=/nvidia-libs` 找到 NVIDIA 运行时库。
+> 挂载整个 `/usr/lib/x86_64-linux-gnu` 目录而非单个 `.so` 文件，因为 `nvidia-smi` 可能依赖多个 NVIDIA 库（libnvidia-ml.so、libcuda.so 等）。
 
 #### 只启动部分服务
 
@@ -119,16 +117,16 @@ docker run -d --name catmonitor --privileged --network host --pid host \
   -v /:/host:ro \
   -v /etc/os-release:/etc/os-release:ro \
   -v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
-  -v /usr/lib/x86_64-linux-gnu:/nvidia-libs:ro \
-  -e LD_LIBRARY_PATH=/nvidia-libs \
+  -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro \
+  -e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
   catmonitor-gpu
 ```
 
 > - `-v /usr/bin/nvidia-smi`：挂载宿主机的 nvidia-smi（glibc 编译，需 Debian/glibc 运行时）
-> - `-v /usr/lib/x86_64-linux-gnu:/nvidia-libs`：挂载宿主机 NVIDIA 运行时库到 `/nvidia-libs`（不覆盖容器的同名目录）
-> - `-e LD_LIBRARY_PATH=/nvidia-libs`：让 nvidia-smi 找到 NVIDIA 库，同时不影响容器内 dmidecode/smartctl/lspci 等工具的库依赖
+> - `-v /usr/lib/x86_64-linux-gnu`：挂载 NVIDIA 运行时库（libnvidia-ml.so、libcuda.so 等）
+> - `-e LD_LIBRARY_PATH`：让动态链接器找到 NVIDIA 库
 > - `--pid host` + `-v /:/host:ro`：共享宿主机 PID 命名空间读取 `/proc/1/mounts`，挂载根文件系统给 statfs 访问
 > - `-v /etc/os-release:/etc/os-release:ro`：获取宿主机 OS 信息
 > - `--privileged`：访问 `/dev/ipmi0`（ipmitool）、`/dev/sd*`（smartctl）、`/dev/nvidia*`（GPU）、`/proc`、`/sys`、SMBIOS（dmidecode）
