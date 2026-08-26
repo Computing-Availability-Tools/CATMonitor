@@ -1,0 +1,7 @@
+services:
+  catmonitor:
+    volumes:
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+      - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu

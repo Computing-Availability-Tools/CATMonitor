@@ -2,12 +2,13 @@
 
 ## 1. 概述
 
-CATMonitor 控制面支持两种镜像：
+CATMonitor 控制面支持三种镜像：
 
 | 镜像 | 适用环境 | 说明 |
 |------|---------|------|
 | `catmonitor-npu` | 有 Ascend NPU | CGo 编译，链接 libdcmi.so，采集 123 项 NPU 指标 |
-| `catmonitor-generic` | 无 NPU（纯 CPU/GPU） | 纯 Go 编译，不依赖 NPU 驱动 |
+| `catmonitor-gpu` | 有 NVIDIA GPU | 纯 Go 编译，Debian/glibc 基础，兼容宿主机 nvidia-smi |
+| `catmonitor-generic` | 无 NPU/GPU（纯 CPU） | 纯 Go 编译，Alpine 基础，镜像最小 |
 
 三个服务可以组合使用：
 
@@ -285,83 +286,91 @@ docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
   -csv-dir=/var/lib/catmonitor/csv
 ```
 
-### GPU 环境补充
+### GPU 环境运行
 
-`catmonitor-generic` 镜像基于 Alpine，不含 `nvidia-smi`。GPU 指标采集依赖
-宿主机上的 `nvidia-smi` 命令和 `libnvidia-ml.so` 动态库。以下两种方式任选其一。
+`catmonitor-gpu` 镜像基于 Debian/glibc，可直接运行宿主机的 `nvidia-smi`（glibc 编译）。
+Alpine 基础的 `catmonitor-generic` 因 musl libc 不兼容，无法运行 `nvidia-smi`，
+GPU 环境请使用 `catmonitor-gpu`。
 
-#### 方式 A：NVIDIA Container Toolkit（推荐）
-
-宿主机已安装 NVIDIA Container Toolkit 时，Docker Compose 中 daemon 服务追加
-GPU 声明：
-
-```yaml
-# docker-compose.gpu.yml
-services:
-  catmonitor:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-```
+#### 构建
 
 ```bash
-CATMONITOR_IMAGE=catmonitor-generic \
+bash docker/build.sh gpu
+```
+
+#### Docker Compose
+
+GPU overlay 挂载宿主机的 `nvidia-smi` 和 NVIDIA 运行时库：
+
+```bash
+CATMONITOR_IMAGE=catmonitor-gpu \
 docker compose \
   -f docker/docker-compose.yml \
   -f docker/docker-compose.gpu.yml \
   up -d
 ```
 
-#### 方式 B：手动挂载 nvidia-smi（无需 NVIDIA Container Toolkit）
-
-先确认宿主机上 `nvidia-smi` 和 `libnvidia-ml.so` 的路径：
-
-```bash
-which nvidia-smi
-# 如 /usr/bin/nvidia-smi
-
-find /usr/lib -name 'libnvidia-ml.so*' 2>/dev/null | head -1
-# 如 /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.535.129.03
-```
-
-Docker Compose 中 daemon 服务追加挂载：
+`docker-compose.gpu.yml` 内容：
 
 ```yaml
-# docker-compose.gpu.yml
 services:
   catmonitor:
     volumes:
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
-      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+      - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
 ```
 
-手动 `docker run` 时追加同样挂载：
+> 挂载整个 `/usr/lib/x86_64-linux-gnu` 目录而非单个 `.so` 文件，因为
+> `nvidia-smi` 可能依赖多个 NVIDIA 库（libnvidia-ml.so、libcuda.so 等）。
+> web/dfee 容器只读 snapshot，不需要 GPU 访问，镜像用 `catmonitor-gpu` 或
+> `catmonitor-generic` 均可。
+
+#### 手动 docker run
 
 ```bash
+# 1. 创建卷
+docker volume create cm-snapshot
+docker volume create cm-data
+
+# 2. 启动 daemon（挂载 nvidia-smi + NVIDIA 库）
 docker run -d --name catmonitor --privileged --network host --pid host \
   -v /:/host:ro \
   -v /etc/os-release:/etc/os-release:ro \
   -v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
-  -v /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro \
+  -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro \
   -e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
-  catmonitor-generic
-```
+  catmonitor-gpu
 
-> `libnvidia-ml.so.1` 的实际路径因驱动版本和发行版而异，请用 `find` 确认后替换。
-> web/dfee 容器只读 snapshot，不需要 GPU 访问，启动方式不变。
+# 3. 等待首次采集（6-9 秒）
+docker exec catmonitor ls /var/lib/catmonitor/snapshot
+# 预期包含 snapshot_gpu.json
+
+# 4. 启动 web
+docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  catmonitor-gpu \
+  -addr=:19322 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -config=/etc/catmonitor/catmonitor.yaml
+
+# 5. 启动 dfee
+docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  catmonitor-gpu \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -exporter=enabled \
+  -exporter-port=9333
+```
 
 #### 验证 GPU 采集
 
 ```bash
-# daemon 启动 6-9 秒后，检查 GPU 指标
+# 检查 snapshot 文件
 docker exec catmonitor ls /var/lib/catmonitor/snapshot/snapshot_gpu.json
 
 # 查看 GPU 指标

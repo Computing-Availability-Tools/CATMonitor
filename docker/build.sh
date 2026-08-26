@@ -107,7 +107,7 @@ case "$MODE" in
         ;;
 
     generic)
-        echo "=== Building generic image (multi-stage, pure Go) ==="
+        echo "=== Building generic image (multi-stage, pure Go, Alpine) ==="
         # shellcheck disable=SC2086
         "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS \
             -f docker/Dockerfile.generic \
@@ -116,11 +116,22 @@ case "$MODE" in
         echo "Done. Image: catmonitor-generic"
         ;;
 
+    gpu)
+        echo "=== Building GPU image (multi-stage, pure Go, Debian/glibc) ==="
+        # shellcheck disable=SC2086
+        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS \
+            -f docker/Dockerfile.gpu \
+            -t catmonitor-gpu \
+            "$PROJECT_ROOT"
+        echo "Done. Image: catmonitor-gpu"
+        ;;
+
     *)
-        echo "Usage: $0 [auto|npu|generic]"
+        echo "Usage: $0 [auto|npu|generic|gpu]"
         echo "  auto    - detect NPU driver automatically (default)"
         echo "  npu     - build NPU image (two-step: host-driver compile + runtime package)"
-        echo "  generic - build generic image (multi-stage, no NPU support)"
+        echo "  generic - build generic image (multi-stage, Alpine, no NPU support)"
+        echo "  gpu     - build GPU image (multi-stage, Debian/glibc, for NVIDIA GPU)"
         exit 1
         ;;
 esac
