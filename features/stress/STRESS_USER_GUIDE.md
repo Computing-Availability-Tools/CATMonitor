@@ -241,6 +241,10 @@ generator 只输出配置、profile、Compose override 和 deployment manifest�
 
 ## 7. 验证、运行和取消
 
+Controller 会通过配置的 Docker Unix socket 自动协商 daemon API 版本；无需在
+YAML、Compose 或容器环境中手工设置 `DOCKER_API_VERSION`。这也允许新版 Control
+镜像连接项目支持的较旧 Docker daemon。
+
 通过 Compose project/service label 找到 daemon：
 
 ```bash

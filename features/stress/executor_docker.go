@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -23,13 +26,17 @@ const (
 )
 
 var (
-	containerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
-	containerUserPattern = regexp.MustCompile(`^[0-9]+(?::[0-9]+)?$`)
+	containerNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+	containerUserPattern    = regexp.MustCompile(`^[0-9]+(?::[0-9]+)?$`)
+	dockerAPIVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 )
 
 type DockerExecExecutor struct {
 	binary string
 	socket string
+
+	apiVersionMu sync.Mutex
+	apiVersion   string
 }
 
 func NewDockerExecExecutor(cfg ExecutorConfig) (*DockerExecExecutor, error) {
@@ -115,7 +122,12 @@ func (e *DockerExecExecutor) Run(ctx context.Context, binding Binding, request w
 		return workloadapi.Result{}, err
 	}
 	args := e.workloadArgs(binding, true, "run", "--request", "-")
+	env, err := e.dockerCommandEnv(ctx)
+	if err != nil {
+		return workloadapi.Result{}, err
+	}
 	cmd := exec.Command(e.binary, args...)
+	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout, stderr cappedBuffer
 	cmd.Stdout = &stdout
@@ -195,13 +207,74 @@ func (e *DockerExecExecutor) Status(ctx context.Context, binding Binding, jobID 
 }
 
 func (e *DockerExecExecutor) runCommand(ctx context.Context, stdin io.Reader, args ...string) ([]byte, []byte, error) {
+	env, err := e.dockerCommandEnv(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	cmd := exec.CommandContext(ctx, e.binary, args...)
+	cmd.Env = env
 	cmd.Stdin = stdin
 	var stdout, stderr cappedBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+func (e *DockerExecExecutor) dockerCommandEnv(ctx context.Context) ([]string, error) {
+	apiVersion, err := e.dockerAPIVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("detect Docker daemon API version: %w", err)
+	}
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, "DOCKER_API_VERSION=") {
+			env = append(env, item)
+		}
+	}
+	return append(env, "DOCKER_API_VERSION="+apiVersion), nil
+}
+
+func (e *DockerExecExecutor) dockerAPIVersion(ctx context.Context) (string, error) {
+	e.apiVersionMu.Lock()
+	defer e.apiVersionMu.Unlock()
+	if e.apiVersion != "" {
+		return e.apiVersion, nil
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", e.socket)
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	request, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://docker/version", nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Docker version endpoint returned HTTP %d", response.StatusCode)
+	}
+	var version struct {
+		APIVersion string `json:"ApiVersion"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 64*1024))
+	if err := decoder.Decode(&version); err != nil {
+		return "", fmt.Errorf("decode Docker version response: %w", err)
+	}
+	if !dockerAPIVersionPattern.MatchString(version.APIVersion) {
+		return "", fmt.Errorf("Docker version endpoint returned invalid API version %q", version.APIVersion)
+	}
+	e.apiVersion = version.APIVersion
+	return e.apiVersion, nil
 }
 
 func transportError(operation, container string, err error, stderr, stdout []byte) error {
