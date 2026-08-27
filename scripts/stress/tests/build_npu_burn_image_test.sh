@@ -586,6 +586,7 @@ bash "$BUILD_SCRIPT" \
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'choices=["A2", "A3", "A5"]'
 assert_contains "$FAKE_DOCKER_ROOT/context-utils.py" 'NUMA node{n_id} CPU(s)'
 assert_contains "$FAKE_DOCKER_ROOT/context-utils.py" 'except (TypeError, ValueError)'
+assert_contains "$FAKE_DOCKER_ROOT/context-utils.py" 'if "-" in node0_info and "," not in node0_info:'
 assert_not_contains "$FAKE_DOCKER_ROOT/context-utils.py" 'return [list(range(os.cpu_count() or 1))]'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"profile":"a2-cann83"'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" 'a2-cann83.patch'
