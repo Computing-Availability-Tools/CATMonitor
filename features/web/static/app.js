@@ -46,6 +46,8 @@ const METRIC_NAMES = {
   numa_order_num: 'NUMA 阶数', numa_info: 'NUMA 最高阶',
   cpu_ce_errors: 'CPU CE 错误', cpu_uce_errors: 'CPU UCE 错误',
   mem_temperature: '内存温度', power: '功耗',
+  // Component-specific overrides for shared metric names.
+  'chassis:power': '整机功耗',
   // v0.2.0 Memory source-layer metrics.
   swap_in: 'Swap 入', swap_out: 'Swap 出',
   saturation: '内存压力', fragmentation: '碎片化',
@@ -1628,7 +1630,7 @@ function renderDetail(compKey, snap) {
     for (const name of order) {
       const items = groups[name];
       items.sort(metricSortCmp);
-      const dispName = METRIC_NAMES[name] || name;
+      const dispName = METRIC_NAMES[compKey + ':' + name] || METRIC_NAMES[name] || name;
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
       const gh = el('div', 'metric-group-head');
