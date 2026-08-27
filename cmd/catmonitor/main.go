@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -19,6 +20,7 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/features/health"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stragglerout"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 	stresscli "github.com/Computing-Availability-Tools/CATMonitor/features/stress/cli"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
@@ -194,6 +196,24 @@ func runDaemon() {
 	var sink collector.Storage = cacheStore
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// The daemon is the only Stress Controller. CLI and Web use this local
+	// Unix HTTP/JSON endpoint and never own an executing Manager.
+	stressManager := stress.NewManagerWithLogger(cfg.Stress, logger)
+	if runtime.GOOS == "linux" && cfg.Stress.ControlSocket != "" {
+		controlServer, listenErr := stress.ListenControl(cfg.Stress.ControlSocket, stressManager, logger)
+		if listenErr != nil {
+			logger.Error("failed to listen on stress control socket", "path", cfg.Stress.ControlSocket, "error", listenErr)
+			os.Exit(1)
+		}
+		go func() {
+			logger.Info("stress controller listening", "path", cfg.Stress.ControlSocket)
+			if serveErr := controlServer.Run(ctx); serveErr != nil && ctx.Err() == nil {
+				logger.Error("stress control server failed", "error", serveErr)
+				cancel()
+			}
+		}()
+	}
 	if cfg.StragglerOutput.Enabled {
 		kpiw := stragglerout.NewKPIWriter(cfg.StragglerOutput.DataDir, cfg.StragglerOutput.Retention, logger)
 		sstore := stragglerout.NewStragglerStorage(cacheStore, stragglerout.NewKPIMapper(), kpiw, cfg.StragglerOutput.FlushInterval, logger)
@@ -290,13 +310,23 @@ func runDaemon() {
 
 	scheduler.Start(ctx, collectorCfgs)
 
-	// Wait for shutdown signal
+	// Wait for either an operator signal or an internal subsystem failure.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	logger.Info("CATMonitor daemon started", "version", version.Version)
-	sig := <-sigCh
-	logger.Info("received signal, shutting down", "signal", sig)
+	select {
+	case sig := <-sigCh:
+		logger.Info("received signal, shutting down", "signal", sig)
+	case <-ctx.Done():
+		logger.Error("daemon context cancelled by a subsystem; shutting down")
+	}
 	cancel()
+	stressCtx, stressCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := stressManager.Shutdown(stressCtx); err != nil {
+		logger.Error("stress controller shutdown failed", "error", err)
+	}
+	stressCancel()
 	scheduler.Stop()
 }
 

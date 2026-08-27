@@ -179,6 +179,10 @@ case "${1-}" in
         [ -f "$context/validate_entrypoint.sh" ]
         [ -f "$context/validate_runtime_abi.py" ]
         [ -f "$context/runtime_preflight.sh" ]
+        [ -f "$context/features/stress/workloadapi/protocol.go" ]
+        [ -f "$context/features/stress/resultparse/parse.go" ]
+        [ -f "$context/features/stress/cmd/workload-exec/main_linux.go" ]
+        [ -f "$context/features/stress/workloadplugin/plugin_linux.go" ]
         [ -f "$context/source/LICENSE.md" ]
         [ -d "$context/pciutils-packages" ]
         grep -Fxq 'pciutils' "$context/runtime-packages.txt"
@@ -795,12 +799,16 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'metadata.version("asc
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_RUNTIME_PCIUTILS=PASS'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_PCIUTILS_SOURCE='
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'command -v lspci'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY pciutils-packages/'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'COPY runtime-packages.txt'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'catmonitor-stress-exec'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'features/stress/workloadplugin'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_STRESS_BENCHMARKS=npu_burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'rpm -Uvh --replacepkgs'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'dpkg -i'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'dnf install -y "${runtime_packages[@]}"'

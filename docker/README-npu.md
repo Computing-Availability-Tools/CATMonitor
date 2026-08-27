@@ -72,56 +72,37 @@ LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/l
 
 ## 2. 启动
 
-### 方式一：统一安装入口（推荐）
+### 方式一：Docker Compose（推荐）
 
-先准备完整主配置和本地镜像，再安装统一命令及审核过的 Compose 定义：
+基础监控：
 
 ```bash
-sudo install -d -m 0750 /etc/catmonitor
-sudo install -m 0640 docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
-sudo make install-installer
-
-sudo catmonitor-install --profile monitoring --action plan
-sudo catmonitor-install --profile monitoring
+CATMONITOR_IMAGE=catmonitor-npu \
+docker compose -f docker/docker-compose.yml up -d
 ```
 
-`catmonitor-install` 支持 `monitoring`、`cpu-stress`、`ascend-a2`、`ascend-a3`。默认动作 `up` 只编排已有镜像与资产，不构建镜像、编译 benchmark、编辑 YAML 或运行压测。Web 保持 develop 的默认监听 `:19322`，用于从外部监控节点；端口或绑定地址冲突时可显式传 `--web-addr HOST:PORT`。非回环监听只提供监控和报告读取，现有 stress Web 写接口仍要求服务与请求都来自回环地址。完整 profile、前置条件和安全边界见 [`STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md#9-统一容器安装入口)。
-
-### 方式二：Docker Compose
-
-先构建 NPU 镜像，再叠加 NPU overlay：
+启用 CPU Stress 时，先按
+[`STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md) 生成节点文件，再执行：
 
 ```bash
-bash docker/build.sh npu
-
 CATMONITOR_IMAGE=catmonitor-npu \
 docker compose \
   -f docker/docker-compose.yml \
-  -f docker/docker-compose.npu.yml \
-  up -d
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu up -d
 ```
 
-启动全部三个容器：daemon + web + dfee。
+基础 Compose 启动 daemon + 一个统一 Web + DFeE；不会创建独立 Stress Web。
 
-#### 只启动部分服务
-
-```bash
-# daemon + dfee（跳过 web）
-CATMONITOR_IMAGE=catmonitor-npu \
-docker compose -f docker/docker-compose.yml up -d catmonitor dfee
-
-# 只启动 daemon
-CATMONITOR_IMAGE=catmonitor-npu \
-docker compose -f docker/docker-compose.yml up -d catmonitor
-```
-
-### 方式三：手动 docker run
+### 方式二：手动 docker run
 
 #### 步骤 1：创建卷
 
 ```bash
 docker volume create cm-snapshot
 docker volume create cm-data
+docker volume create cm-control
 ```
 
 #### 步骤 2：启动 daemon
@@ -138,6 +119,7 @@ docker run -d --name catmonitor --privileged --network host --pid host \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
+  -v cm-control:/run/catmonitor \
   catmonitor-npu
 ```
 
@@ -163,10 +145,11 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot
 ```bash
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-control:/run/catmonitor:ro \
   catmonitor-npu \
   -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
-  -config=/etc/catmonitor/catmonitor.yaml
+  -control-socket=/run/catmonitor/control.sock
 ```
 
 #### 步骤 5：启动 dfee
@@ -191,7 +174,7 @@ docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/
   -csv-interval=10s
 ```
 
-### 方式四：只运行 dfee（daemon 在宿主机或其他容器）
+### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
 
 ```bash
 # 基础模式
@@ -254,145 +237,52 @@ docker run -d --name catmonitor \
 
 ## 4. 容器化可靠性压测
 
-可靠性压测是显式启用能力。基础 Compose 不挂载 stress 插件或 Docker socket，也不允许 Web 触发作业。CPU 压测节点叠加 `docker-compose.stress.yml`；只有启用 NPU Burn `docker_exec` 时才继续叠加 `docker-compose.stress-npuburn.yml`。
+Stress V2 使用 daemon-owned Controller 和两个可选 workload profile：
 
-### 4.1 三个容器层次
-
-容器化部署包含两个互相独立的生命周期：
-
-1. CATMonitor daemon/Web 控制容器：读取同一份 YAML、只读插件目录和可写报告目录；
-2. 可选 CPU runner 容器：自带 STREAM/HPL/HPCG 及匹配的 MPI/OpenBLAS，只通过 Unix Socket 接受三个固定项目名；
-3. 固定 NPU Burn 容器：由管理员提前构建并创建，持有 CANN、torch_npu、NPU device 和结果目录。
-
-宿主机原生 CPU adapter 仍受支持并且是默认后端；CPU runner 是容器化控制面推荐的可选交付方式。它不挂 Docker Socket、不监听 TCP，也不接受任意命令或参数。HPL/HPCG 的可写工作目录位于共享状态卷，benchmark 和动态库只读保存在 runner 镜像。
-
-CATMonitor 不在作业时 `pull`、`run`、重建或删除 NPU Burn 容器，只通过 `docker exec <固定容器> ...` 启动一次负载。为此仅在 `docker-compose.stress-npuburn.yml` 中把宿主机 Docker socket 挂入 daemon 和 Web。Docker socket 等价于宿主机 root 权限，只能在受控节点启用。
-
-### 4.2 准备部署文件
-
-先按 [`features/stress/STRESS_TEST_GUIDE.md`](../features/stress/STRESS_TEST_GUIDE.md) 构建 CPU runner 和 NPU Burn 镜像、创建固定 NPU 容器，再生成节点部署文件：
-
-```bash
-sudo bash scripts/stress/build_cpu_runner_image.sh \
-  --image catmonitor/stress-cpu:node-v1 \
-  --stream-src /path/to/stream.c \
-  --hpl-src /path/to/hpl-2.3.tar.gz \
-  --hpl-dat /path/to/HPL.dat \
-  --hpcg-src /path/to/hpcg-3.1.tar.gz \
-  --hpcg-dat /path/to/hpcg.dat \
-  --build-root /var/tmp/catmonitor-cpu-runner-build
+```text
+stress-cpu → STREAM / HPL / HPCG workload image
+stress-npu → Ascend NPU Burn workload image
 ```
 
-默认使用基础镜像自带的 Debian 软件源。受限网络可显式增加 `--debian-mirror https://mirror.example.com`。
+daemon 通过固定 `catmonitor-stress-exec` 协议调用 workload 容器。Web 与 DFeE
+不挂 Docker Socket；同一 Web 进程只监听 `:19322`，同时提供监控、Stress 查询、Run 与 Cancel。
+
+先生成节点配置和设备 override：
 
 ```bash
 sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir /etc/catmonitor/stress-deployment \
-  --plugin-root /opt/catmonitor/stress \
-  --cpu-backend unix \
-  --cpu-runner-image catmonitor/stress-cpu:node-v1 \
-  --cpu-runner-manifest /var/tmp/catmonitor-cpu-runner-build/manifests/cpu-runner-image-manifest.json \
-  --hpl-processes 8 --hpl-threads 12 \
-  --hpcg-processes 96 --hpcg-threads 1 \
-  --npu-manifest /absolute/path/npu-burn-image-manifest.json \
-  --npu-runtime /usr/bin/docker \
-  --npu-container catmonitor-npuburn-a3 \
-  --npu-image catmonitor/npuburn:a3-candidate \
-  --npu-device 14 \
-  --npu-chip-generation A3 \
-  --npu-cann '<deployed-version>' \
-  --npu-torch-npu '<deployed-version>' \
-  --npu-soc '<deployed-model>' \
-  --npu-run-case quant_matmul \
-  --report-path /var/lib/catmonitor/stress/stress-latest.json \
-  --enable-web
-```
-
-生成后安装 adapter 和清单：
-
-```bash
-sudo bash scripts/stress/install_stress_runtime.sh \
-  --adapter /etc/catmonitor/stress-deployment/benchmark_check.sh \
-  --cpu-runner-adapter /etc/catmonitor/stress-deployment/cpu-runner-benchmark_check.sh \
-  --deployment-manifest /etc/catmonitor/stress-deployment/stress-deployment-manifest.json \
+  --output-dir /etc/catmonitor/generated-stress \
+  --cpu-image <cpu-workload-image> \
+  --npu-image <npu-workload-image> \
+  --npu-device-nodes 2,5 \
+  --npu-burn-device 0,1 \
+  --npu-chip-generation A2 \
+  --enable-web \
   --force
 ```
 
-部署时复制 `docker/catmonitor.yaml` 为节点主配置，并用生成文件中的整个顶层 `stress:` 块替换其默认禁用块：
+再启动：
 
 ```bash
-sudo install -d -m 0750 /etc/catmonitor
-sudo install -m 0640 docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
-
-# 将 /etc/catmonitor/stress-deployment/catmonitor-stress.yaml 中的
-# 顶层 stress: 块合并到 /etc/catmonitor/catmonitor.yaml，替换默认 stress: 块。
-```
-
-### 4.3 启动 CATMonitor 与 Web
-
-纯 CPU 节点选择 `cpu-stress`，Ascend 节点选择与部署 manifest 一致的代际：
-
-```bash
-# CPU stress
-sudo make install-installer
-sudo catmonitor-install --profile cpu-stress --action plan
-sudo catmonitor-install --profile cpu-stress
-
-# Ascend A3
-sudo catmonitor-install --profile ascend-a3 --action plan
-sudo catmonitor-install \
-  --profile ascend-a3 \
-  --acknowledge-root-docker-socket
-```
-
-A2 改用 `--profile ascend-a2`。自定义或隔离 Docker daemon 可设置 `--docker-socket` 和 `--docker-bin`。
-
-需要网页 Run/Cancel 时，额外叠加 `docker-compose.stress-web.yml`：
-
-```bash
-export CATMONITOR_CONFIG=/etc/catmonitor/catmonitor.yaml
-export CATMONITOR_STRESS_ROOT=/opt/catmonitor/stress
-export CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress
-export CATMONITOR_DOCKER_SOCKET=/var/run/docker.sock
-export CATMONITOR_NPU_OUTPUT_DIR=/var/lib/catmonitor/npu-output
-
+CATMONITOR_IMAGE=catmonitor-npu \
 docker compose \
   -f docker/docker-compose.yml \
-  -f docker/docker-compose.config.yml \
   -f docker/docker-compose.npu.yml \
   -f docker/docker-compose.stress.yml \
-  -f docker/docker-compose.stress-npuburn.yml \
-  -f docker/docker-compose.stress-web.yml \
-  up -d stress-web
-
-ssh -N -L 29592:127.0.0.1:29592 root@node
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu --profile stress-npu up -d
 ```
 
-访问入口保持分离：
-- 普通只读 Web：`http://<node-address>:19322/`
-- 运维 Stress Web：通过 SSH 隧道访问 `http://127.0.0.1:29592/stress/`
-
-### 4.4 验证
+验证：
 
 ```bash
-sudo catmonitor-install --profile cpu-stress --action status
-sudo catmonitor-install --profile cpu-stress --action doctor
-
-curl -fsS http://127.0.0.1:19322/api/stress/config
-curl -fsS http://127.0.0.1:29592/stress/ >/dev/null
-curl -fsS http://127.0.0.1:29592/api/stress/config
+docker exec catmonitor catmonitor stress doctor -o table
+docker exec catmonitor catmonitor stress run --bench stream -o table
 ```
 
-Ascend 节点把上面的 profile 换为实际 `ascend-a2` 或 `ascend-a3`。
-
-本机无 Ascend 硬件时只能执行容器边界 E2E：
-
-```bash
-CATMONITOR_CONTAINER_IMAGE=catmonitor-npu:latest \
-make test-stress-container-e2e
-```
-
----
+完整镜像构建、A2/A3 device namespace、CLI/Web 与验收步骤见
+[`features/stress/STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md) 和
+[`STRESS_TEST_GUIDE.md`](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ## 5. 端口说明
 

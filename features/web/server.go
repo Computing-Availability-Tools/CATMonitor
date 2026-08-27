@@ -16,60 +16,48 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
 
-// historyPoints is the per-component history ring depth the daemon uses
-// (fixed; not configurable). Reported to the frontend so it knows the trend
-// series length.
 const historyPoints = 60
 
 var webStartup = time.Now().Unix()
 
 type Server struct {
-	dir        string
-	logger     *slog.Logger
-	stress     *stress.Manager
-	stressAddr string
+	dir          string
+	logger       *slog.Logger
+	stressClient *stress.ControlClient
+	listenAddr   string
 }
 
-func NewServer(dir string, logger *slog.Logger, stressManager *stress.Manager, stressAddr string) *Server {
-	return &Server{dir: dir, logger: logger, stress: stressManager, stressAddr: stressAddr}
+func NewServer(dir string, logger *slog.Logger, client *stress.ControlClient, listenAddr string) *Server {
+	return &Server{dir: dir, logger: logger, stressClient: client, listenAddr: listenAddr}
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-
 	sub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		s.logger.Error("static fs sub failed", "error", err)
 	}
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
-	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
-	mux.HandleFunc("/api/collectors", s.handleCollectors)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	if s.stress != nil {
-		stress.Register(mux, s.stress, s.stressAddr, s.logger)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
+	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.HandleFunc("GET /api/snapshot", s.handleSnapshot)
+	mux.HandleFunc("GET /api/collectors", s.handleCollectors)
+	mux.HandleFunc("GET /api/config", s.handleConfig)
+	if s.stressClient != nil {
+		stress.Register(mux, s.stressClient, s.listenAddr, s.logger)
 	}
 	return mux
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	data, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
 		http.Error(w, "index not found", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
-
-// globalPath returns the daemon-produced global snapshot path.
 func (s *Server) globalPath() string { return filepath.Join(s.dir, "snapshot.json") }
-
-// readGlobal loads the global snapshot, returning 503 when not yet produced.
 func (s *Server) readGlobal(w http.ResponseWriter) *snapshot.GlobalSnapshot {
 	g, err := snapshot.ReadGlobal(s.globalPath())
 	if err != nil {
@@ -78,10 +66,6 @@ func (s *Server) readGlobal(w http.ResponseWriter) *snapshot.GlobalSnapshot {
 	}
 	return g
 }
-
-// handleSnapshot assembles the frontend-facing snapshot view from the global
-// snapshot (health/session/refresh) + all per-component files (metrics +
-// history + specs) produced by the daemon.
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	g := s.readGlobal(w)
 	if g == nil {
@@ -107,53 +91,25 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		specs = append(specs, c.Specs...)
 	}
 	specs = append(specs, g.SystemSpecs...)
-
-	snap := &snapshot.Snapshot{
-		SessionID:       g.SessionID,
-		Timestamp:       time.Now(),
-		RefreshInterval: g.RefreshInterval,
-		HistoryPoints:   historyPoints,
-		Health:          g.Health,
-		Metrics:         metrics,
-		History:         history,
-		Specs:           specs,
-	}
+	snap := &snapshot.Snapshot{SessionID: g.SessionID, Timestamp: time.Now(), RefreshInterval: g.RefreshInterval, HistoryPoints: historyPoints, Health: g.Health, Metrics: metrics, History: history, Specs: specs}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
-	json.NewEncoder(w).Encode(snap)
+	_ = json.NewEncoder(w).Encode(snap)
 }
-
-// handleCollectors returns the collector metadata the daemon wrote into the
-// global snapshot (drives the frontend nav). web no longer imports collectors.
 func (s *Server) handleCollectors(w http.ResponseWriter, r *http.Request) {
 	g := s.readGlobal(w)
-	if g == nil {
-		return
+	if g != nil {
+		writeWebJSON(w, g.Collectors)
 	}
-	writeJSON(w, g.Collectors)
 }
-
-// handleConfig is read-only: the refresh cadence is owned by the daemon (read
-// from the global snapshot); the frontend polls at refresh_interval_ms.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	g := s.readGlobal(w)
 	if g == nil {
 		return
 	}
-	writeJSON(w, map[string]any{
-		"version":             version.Version,
-		"started_at":          webStartup,
-		"refresh_interval_ms": g.RefreshInterval,
-		"history_points":      historyPoints,
-	})
+	writeWebJSON(w, map[string]any{"version": version.Version, "started_at": webStartup, "refresh_interval_ms": g.RefreshInterval, "history_points": historyPoints, "stress_operator": true})
 }
-
-func writeJSON(w http.ResponseWriter, v any) {
+func writeWebJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(value)
 }

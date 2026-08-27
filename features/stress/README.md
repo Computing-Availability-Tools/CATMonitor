@@ -1,288 +1,166 @@
-# stress 可靠性压测特性
+# CATMonitor 可靠性压测
 
-`features/stress` 是与 `health`、`dfee` 同级的独立特性。它只在用户显式请求后
-运行 STREAM、HPL、HPCG 或 Ascend NPU Burn，不进入 daemon 周期，也不直接修改健康总分。
-CLI 参数解析与结果展示位于 `features/stress/cli` 子包，主程序只挂载 `stress` 命令。
+Stress 是 CATMonitor 的显式触发可靠性负载特性，支持：
+
+- STREAM：内存带宽与数据搬运；
+- HPL：高密度浮点计算与 MPI；
+- HPCG：内存、计算与 MPI 综合负载；
+- Ascend NPU Burn：昇腾 NPU 高负载计算与 SDC 检测。
+
+压测不会作为周期健康检查自动执行，也不直接计入健康总分。运行期间会占用
+CPU、内存、MPI、NUMA 或 NPU 资源，因此实时健康分可能暂时下降。
+
+## 架构
+
+```text
+catmonitor CLI ───────┐
+                     │  Unix HTTP/JSON
+Web operator ────────┼── /run/catmonitor/control.sock
+                     ▼
+             daemon Stress Controller
+                     │
+                     │ fixed Docker exec protocol
+          ┌──────────┴──────────┐
+          ▼                     ▼
+ CPU workload container   NPU workload container
+ STREAM / HPL / HPCG      Ascend NPU Burn
+          └──── /usr/local/bin/catmonitor-stress-exec
+```
+
+关键边界：
+
+- daemon 是唯一作业所有者，负责互斥、超时、取消、报告和历史；
+- CLI 与 Web 只是本机控制 API 客户端；
+- CPU/NPU 镜像实现同一 workload plugin 协议；
+- Web 和 DFeE 不挂 Docker Socket；
+- 当前 V2 仅 daemon 挂 Docker Socket。这是明确记录的临时高权限边界；
+- 不提供网页脚本编辑、任意命令或任意 benchmark 参数编辑。
+
+## 配置
+
+Linux 默认读取 `/etc/catmonitor/catmonitor.yaml`。关键配置示例：
+
+```yaml
+stress:
+  enabled: true
+  web_enabled: true
+  control_socket: /run/catmonitor/control.sock
+  report_path: /var/lib/catmonitor/stress/stress-latest.json
+  default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
+  benchmarks:
+    stream:
+      enabled: true
+      plugin: stream
+      container: catmonitor-stress-cpu
+      user: "65532:65532"
+      timeout: 1m
+    hpl:
+      enabled: true
+      plugin: hpl
+      container: catmonitor-stress-cpu
+      user: "65532:65532"
+      timeout: 2h
+    hpcg:
+      enabled: true
+      plugin: hpcg
+      container: catmonitor-stress-cpu
+      user: "65532:65532"
+      timeout: 3m
+    npu_burn:
+      enabled: false
+      plugin: npu_burn
+      container: catmonitor-stress-npu
+      timeout: 30m
+```
+
+配置只声明固定 plugin/container/timeout 绑定。benchmark 的 MPI、线程、问题规模、
+NPU logical ID 等参数属于 workload 容器 profile，由 Compose 环境变量预先定义；
+运行请求只能选择项目，并可将本次超时缩短到配置上限以内。
+
+## 部署
+
+先生成节点部署文件：
 
 ```bash
-catmonitor stress -o table
+bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/generated-stress \
+  --cpu-image registry.example/catmonitor/stress-cpu:v0.4.0 \
+  --enable-web \
+  --force
+```
+
+Ascend 节点再传 NPU 镜像与已验证的 NPU Burn logical ID：
+
+```bash
+bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/generated-stress \
+  --cpu-image registry.example/catmonitor/stress-cpu:v0.4.0 \
+  --npu-image registry.example/catmonitor/npuburn:v0.4.0 \
+  --npu-device-nodes 2,5 \
+  --npu-burn-device 0,1 \
+  --npu-chip-generation A2 \
+  --enable-web \
+  --force
+```
+
+然后叠加基础与生成的 Compose：
+
+```bash
+export CATMONITOR_IMAGE=registry.example/catmonitor/control:v0.4.0
+
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu up -d
+```
+
+启用 NPU 时：
+
+```bash
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu --profile stress-npu up -d
+```
+
+## 使用
+
+```bash
+catmonitor stress --help
 catmonitor stress doctor -o table
+catmonitor stress run --bench stream -o table
+catmonitor stress run --bench hpcg --timeout 120s -o table
+catmonitor stress status -o json
+catmonitor stress cancel --job JOB_ID
 ```
 
-Web 入口为 `http://127.0.0.1:9527/stress/`。它拥有自己的嵌入式 SPA 和
-`/api/stress/*` API，由新版只读 snapshot `catmonitor-web` 挂载；Web
-进程不通过 shell 调用 CLI，而是与 CLI 复用 `stress.Manager`。
+Web：
 
-配置只有一份，位于 CATMonitor 主配置的顶层 `stress:`。Web 默认使用平台主配置
-路径，也可用 `CATMONITOR_CONFIG` 或 `-config` 覆盖；它不复制领域
-配置，也不恢复已删除的 Web YAML。CLI 与 Web 共享
-`report_path` 和 Linux 文件锁，因此 Web 能读取 CLI 作业结果，且两个入口
-不能同时启动压测。
+- `:19322`：唯一 Web 入口，提供监控、Stress 配置/报告/history/jobs、Run 与 Cancel；
+- Web 通过 `/run/catmonitor/control.sock` 调用 daemon Controller，不挂 Docker Socket；
+- 当前 Web operator authentication/RBAC 尚未实现，部署方必须自行控制 `:19322` 的网络访问。
 
-`report_path` 保存运行态和最近作业；每次作业结束后还会在同目录更新
-`stress-history.json`，按新到旧保留最近 100 次最终报告。Web 可切换历史作业，
-并按 STREAM 带宽、HPL/HPCG GFLOP/s、NPU Burn 用例结果、时间和运行参数分别展示，避免不同单位
-共用一个比例尺。
+## 状态语义
 
-节点上的 benchmark 可执行文件、环境变量、MPI/NUMA 参数和工作目录统一维护在
-`benchmark_check.sh`。生产环境统一安装到只读插件根
-`/opt/catmonitor/stress`，运行报告、历史和锁写入
-`/var/lib/catmonitor/stress`；特定机器路径和实测数据不得提交到开源仓库。
+- `healthy`：进程成功且必需结果已解析；
+- `time_limit_reached`：STREAM/HPL/HPCG 达到 CATMonitor 上限且此前未报错，按可靠性通过展示，但性能值可能为空；
+- `unhealthy`：命令错误、结果校验失败、NPU Burn 未形成完整结果或协议错误；
+- `unavailable`：容器、资产、MPI/ABI 或配置预检不满足；
+- `cancelled`：用户取消，workload plugin 已终止完整进程组。
 
-适配脚本同时实现只读协议
-`benchmark_check.sh describe <stream|hpl|hpcg|npu_burn>`。它不会启动 benchmark，
-只返回实际路径、线程/MPI 规模、HPL/HPCG 问题规模、资产状态及 MPI ABI
-预检 JSON。Web 在启动前展示这份 profile；作业报告和历史保存 profile、
-脚本/输入资产 SHA-256 及聚合配置哈希，便于复现实机结果。未实现、未声明或
-返回无效 describe v1 的部署脚本会被判定为不可用，不能启动压测。
-
-仓库模板的 HPL/HPCG 启动命令只使用 MPICH/Hydra 与 OpenMPI 共同支持的
-`-np`，并依赖已 `export` 的线程变量。部署时应先确认 launcher 与 benchmark
-使用同一种 MPI 实现，再在部署副本中增加该实现专用的绑核或通信参数。
-
-Ascend NPU Burn 源码以固定上游修订版内置在
-`third_party/ascend_npu_burn/source`，并继续遵循 Mulan PSL v2；来源、Git
-revision、归档哈希和逐文件哈希记录在同目录的 `UPSTREAM*` 与
-`SOURCE_SHA256SUMS`。CATMonitor 不内置 CANN、PyTorch/torch_npu、驱动或基础
-镜像。节点管理员可在脚本中选择宿主机原生执行，
-或使用 `docker_exec` 调用一个已经运行且由管理员维护的固定容器；镜像、设备、挂载、
-环境和容器命令不进入 YAML/Web。`describe` 会把 backend、容器/镜像、CANN、
-torch_npu、SoC、芯片代际、NPU Burn logical device namespace 和用例作为只读
-profile 参数展示并写入配置哈希。
-芯片代际和 workload 必须由节点管理员显式、成对配置；CATMonitor 不根据代际
-暗中改写用例。当前已验证组合为 A2 的 `matmul` 与 A3 的 `quant_matmul`，具体
-可用用例仍以所部署 NPU Burn 版本为准。
-当前上游版本把结果写入 `$HOME/.ascend_npu_burn/output`。CATMonitor 固定省略
-有缺陷的自定义 `--output` 参数：原生模式读取同一账户的默认目录，容器模式由
-bootstrap 把节点结果目录绑定到镜像内默认目录。CATMonitor 只接受本次
-`npu_burn_results.csv` 中所有结果
-均为 `PASS`、`err_count=0` 且全局设备汇总无 `FAIL` 的完整报告；外层超时不作为
-NPU Burn 通过。
-
-## NPU Burn 镜像构建
-
-仓库提供管理员工具 `scripts/stress/build_npu_burn_image.sh`，默认从仓库内固定的
-MindCluster AscendNPUBurn 源码和管理员批准的本地 CANN/torch_npu 基础镜像构建
-可追溯镜像。管理员无需再下载或传入 NPU Burn 源码；`--source` 与
-`--source-metadata` 只供上游升级、开发或兼容性验证覆盖使用。
-A3 首次候选使用 `--compat-profile none`；只有实际兼容故障确认后，才用命名
-profile 和显式审计补丁构建，不会默认带入 A2 修改。
-
-builder 基础镜像必须包含可用于构建的 CANN toolkit/devlib、PyTorch、torch_npu 和
-TBE；runtime 基础镜像应只包含匹配的 CANN runtime、Python、PyTorch 和 torch_npu，
-不得携带 vLLM 或编译工具链。
-构建器会显式发现并 source CANN 环境，依次支持
-`ascend-toolkit/set_env.sh`、`ascend-toolkit/latest/bin/setenv.bash` 和唯一的
-`cann-*/set_env.sh`；多版本歧义时分别用 `--builder-ascend-env-script` 或
-`--runtime-ascend-env-script` 指定对应镜像内绝对路径。旧 `--ascend-env-script` 仅适用于
-两套镜像使用同一路径的兼容场景。
-
-```bash
-sudo bash scripts/stress/build_npu_burn_image.sh \
-  --builder-base-image registry.example/ascend/cann-pytorch-devel:approved \
-  --runtime-base-image registry.example/ascend/cann-pytorch-runtime:approved \
-  --image catmonitor/npuburn:a3-candidate \
-  --compat-profile none
-```
-
-Ascend 910B4（A2）、CANN 8.3.RC2、torch/torch_npu 2.8 使用已审计的
-`a2-cann83` profile。若基础镜像依赖宿主机驱动库才能完成 import，可将
-driver `lib64` 作为仅构建阶段输入：
-
-```bash
-sudo bash scripts/stress/build_npu_burn_image.sh \
-  --builder-base-image quay.io/ascend/vllm-ascend:v0.12.0rc1 \
-  --runtime-base-image registry.example/ascend/cann83-pytorch28-runtime:approved \
-  --image catmonitor/npuburn:a2-cann83 \
-  --compat-profile a2-cann83 \
-  --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
-  --build-driver-lib-dir /usr/local/Ascend/driver/lib64
-```
-
-构建采用多阶段镜像：宿主机驱动只进入 disposable builder，用于 HAL、torch_npu、
-custom ops 和 wheel 验证；disposable builder 派生层用 builder 自带 pip 生成 overlay，
-因此 runtime base 不需要 pip。最终运行镜像从精简 runtime base 开始，只复制已安装的
-NPU Burn Python overlay，不携带 wheel archive、编译工具链或宿主机 driver。CANN runtime
-保留在镜像内，部署时只读挂载宿主机 driver/DCMI。manifest 会记录两套基础镜像身份、
-大小、ABI 比对和 `included_in_final_image=false`。
-
-构建会在 wheel 之前检查 `libascend_hal.so`、torch、torch_npu 和 TBE，再执行
-wheel 构建、纯本地强制重装、安装包元数据、`ascend_npu_burn`/custom ops import
-与入口文件可执行性检查。构建阶段不会启动依赖 NUMA/NPU 拓扑的运行时 CLI。安装使用
-`--no-index --no-deps --force-reinstall`，即使
-基础镜像存在同版本包，最终镜像也必须使用本轮固定源码生成的 wheel。它不要求
-`/usr/local/Ascend/driver`、`npu-smi` 或 NPU 设备，不创建运行容器，也不执行 NPU
-压测。生成的
-`npu-burn-image-manifest.json` 记录源码来源、上游 revision、逐文件校验清单、
-兼容补丁、基础/目标镜像 ID 与摘要、模板哈希、实际 CANN 环境、wheel
-文件名/哈希/安装位置、预检结果和兼容
-profile。真正的驱动、设备与 ABI 验证仍由管理员固定容器、`describe npu_burn`、
-单卡 smoke 和正式验收完成。
-
-最终 runtime image 必须包含 `pciutils/lspci`。这是 upstream 枚举真实 Ascend PCI
-topology 的运行依赖；缺失时 upstream 会静默退回固定八设备假设，在 16-die A3 上
-产生错误范围。依赖名称由仓库的 `docker/stress/npu/runtime-packages.txt` 维护，版本
-由审批基础镜像的软件仓库决定。正常节点默认使用 Docker `default` build network：
-基础镜像已带 `lspci` 时不下载，否则按清单安装。受限节点可临时设置标准 HTTP(S)
-代理环境变量，构建器只把已设置的变量名作为 Docker 预定义 build args 转发，不输出
-值，也不写入 Git、YAML、manifest 或镜像 ENV。隔离节点可重复传入
-`--pciutils-package`，把兼容 RPM/DEB 依赖闭包离线装入镜像；未显式指定网络时该路径
-自动使用 `none`。不要只挂载宿主机 `/usr/bin/lspci`，它还依赖 `libpci` 等与宿主机
-ABI 相关的文件。manifest 会自动记录依赖来源、离线包集合哈希、build network、路径
-和版本，不要求使用者手工计算。
-
-## NPU Burn 固定容器
-
-镜像构建成功后，管理员使用仓库工具创建或安全启动长期运行容器：
-
-```bash
-sudo bash scripts/stress/create_npu_burn_container.sh \
-  --image catmonitor/npuburn:a3-candidate \
-  --name catmonitor-npuburn-a3 \
-  --output-dir /var/lib/catmonitor/stress/npu-burn-output \
-  --docker-bin /usr/bin/docker \
-  --runtime ascend \
-  --restart-policy unless-stopped
-```
-
-工具自动枚举并 identity-map 宿主机全部 `/dev/davinciN`，同时映射必需控制设备、
-已验证的驱动/工具路径和默认结果目录。设备节点 ID 是部署证据，不等同于 NPU Burn
-根据 PCI topology 生成的 logical ID。工具继承镜像 `Config.Env`，不会复制 CANN、
-torch_npu 或 PATH 环境变量。相同 profile 的运行中容器直接复用，停止容器会被启动；
-名称相同但镜像或 profile 不一致时明确失败，不会静默 `rm -f`。
-
-CATMonitor 作业仍只执行 `docker exec`，不会调用该管理员生命周期工具。切换
-`NPU_BURN_DEVICE` 不需要重建容器。对于当前支持并已验证的 fixed-container
-topology，该值来自 upstream 的 PCI topology 枚举并作为 torch_npu device index；
-`/dev/davinciN` 的 `N` 是设备节点 ID，在稀疏/分区节点上不一定等于 logical ID。
-CATMonitor 会交叉检查容器设备节点数量与 `lspci` topology 数量，并把两套 ID 分别展示；
-不得直接填写 `npu-smi` Phy-ID，也不得用 `torch.npu.device_count()` 推导其范围。
-模板不默认选择设备，管理员必须明确配置一个或多个已预留设备，例如 `7` 或
-`0,1,7`。上游支持 `all`，但它只适用于整节点已由本压测独占的场景，不作为共享
-节点推荐值。`describe npu_burn` 会列出容器实际可见的 logical IDs，并在负载启动
-前拒绝空值、重复值、非法格式和越界配置。
-
-## CPU 压测资产构建
-
-仓库提供管理员工具 `scripts/stress/build_cpu_benchmarks.sh`，用于从任意位置的
-STREAM 源文件、HPL/HPCG 源码包以及管理员提供的 `HPL.dat`、`hpcg.dat` 构建
-并安装原生运行资产。它支持显式选择 GCC、MPI 和 OpenBLAS，默认将资产安装到
-`/opt/catmonitor/stress/runtime`，并在相邻的 `manifests` 目录生成
-`cpu-build-manifest.json`。脚本不会修改 CATMonitor YAML、不会覆盖节点
-`benchmark_check.sh`，也不会执行完整 HPL/HPCG 压测。
-
-```bash
-sudo bash scripts/stress/build_cpu_benchmarks.sh \
-  --stream-src /path/to/stream.c \
-  --hpl-src /path/to/hpl-2.3.tar.gz \
-  --hpl-dat /path/to/HPL.dat \
-  --hpcg-src /path/to/hpcg-3.1.tar.gz \
-  --hpcg-dat /path/to/hpcg.dat \
-  --mpicc /absolute/path/to/mpicc \
-  --mpicxx /absolute/path/to/mpicxx \
-  --mpirun /absolute/path/to/mpirun \
-  --openblas-include /absolute/path/to/openblas/include \
-  --openblas-lib /absolute/path/to/openblas/lib
-```
-
-### 可选 CPU runner 镜像
-
-宿主机原生运行仍是默认后端。若 CATMonitor daemon/Web 本身以容器部署，可改用
-独立 CPU runner sidecar，避免把宿主机 CPU 二进制和 MPI/OpenBLAS 动态库挂进控制
-容器。构建器在同一 Debian 多阶段镜像中编译 STREAM/HPL/HPCG，并携带匹配的 MPI、
-OpenBLAS、numactl 与 runner 服务：
-
-容器系统按依赖边界固定：通用 CATMonitor/Web/DFeE 控制面使用 Alpine，CPU runner
-使用 Debian，Ascend 控制面使用 Debian/glibc；NPU Burn 始终继承管理员选择的
-Ascend 基础镜像，不替换其 CANN/torch_npu 对应的系统环境。
-
-```bash
-sudo bash scripts/stress/build_cpu_runner_image.sh \
-  --image catmonitor/stress-cpu:node-v1 \
-  --stream-src /path/to/stream.c \
-  --hpl-src /path/to/hpl-2.3.tar.gz \
-  --hpl-dat /path/to/HPL.dat \
-  --hpcg-src /path/to/hpcg-3.1.tar.gz \
-  --hpcg-dat /path/to/hpcg.dat \
-  --build-root /var/tmp/catmonitor-cpu-runner-build
-```
-
-runner 只监听共享 Unix Socket，只接受 `stream`、`hpl`、`hpcg` 三个固定名称；请求
-不能携带命令、路径、参数或环境变量。CATMonitor 控制镜像只携带固定协议客户端，
-Web 不获得 Docker Socket。runner 同时只执行一个作业，请求取消会终止完整
-shell/MPI 进程组。HPL/HPCG 可写工作目录和结果放在共享
-`/var/lib/catmonitor/stress/work`，镜像内 benchmark 和依赖保持只读。
-
-生成容器部署时增加：
-
-```bash
---cpu-backend unix \
---cpu-runner-image catmonitor/stress-cpu:node-v1 \
---cpu-runner-manifest /absolute/path/cpu-runner-image-manifest.json
-```
-
-生成器会额外输出 `cpu-runner-benchmark_check.sh`。安装时用
-`--cpu-runner-adapter` 安装该文件，并设置
-`CATMONITOR_CPU_STRESS_IMAGE=catmonitor/stress-cpu:node-v1`。正式启动优先使用统一入口：
-
-```bash
-sudo make install-installer
-sudo catmonitor-install --profile cpu-stress --action plan
-sudo catmonitor-install --profile cpu-stress
-```
-
-安装器从部署 manifest 读取并校验 runner 镜像，内部叠加公共只读配置层和
-`docker/docker-compose.stress.yml`。需要 NPU Burn 时选择 `ascend-a2` 或
-`ascend-a3`；当前过渡实现还要求显式确认 root 等价 Docker Socket。CPU runner
-本身从不挂载 Docker Socket。
-
-CPU 资产和固定 NPU 容器准备完成后，使用
-`scripts/stress/generate_stress_deployment.sh` 一次生成源码目录外的完整
-`benchmark_check.sh`、四项配置和部署 manifest，不再靠逐行手工复制节点变量。
-随后执行 `catmonitor stress doctor -o table`，在不启动任何负载的情况下按与 Web
-相同的判据检查四项可用性。构建 manifest 记录构建时事实；部署 manifest 记录配置
-输入；`describe/doctor` 报告当前节点事实，三者职责不同。完整参数、增量构建、
-覆盖策略和验收步骤见 [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)。
-
-宿主机插件布局由 `scripts/stress/install_stress_runtime.sh` 创建。它安装 adapter，
-可选复制已构建 CPU 资产和 manifest，并创建可写状态目录；不会构建 benchmark、
-编辑 CATMonitor 配置、启动服务或运行负载。容器部署使用五层 Compose：基础层、
-公共只读配置层、可选 Ascend 采集层、Unix Socket CPU runner 层，以及仅供 NPU
-Burn `docker_exec` 使用的 socket 层。`scripts/catmonitor-install` 只选择、预检和编排
-这些层；它不构建资产、编辑 YAML、创建固定 NPU 容器或运行压测。主镜像不再内置
-adapter，未启用 stress 的节点不会挂载插件、状态目录或 Docker socket。
-
-## 自动化测试
-
-stress 遵循主项目的测试组织方式：Go UT/组件测试与实现包就近放置，构建工具的
-无硬件 fixture 放在 `scripts/stress/tests`，只有跨真实二进制和 HTTP 边界的产品链
-测试放在顶层 `tests/e2e`。常用入口：
-
-```bash
-make test-stress-ut       # Go UT/组件测试
-make test-stress-build    # CPU/NPU 构建、部署和发布审计 fixture
-make test-stress-e2e      # 编译真实 CLI/Web 后验证完整产品链（Linux，无硬件负载）
-make test-stress-race     # Manager/Web 并发与竞态检查
-make test-stress          # UT + 构建 fixture + E2E
-make test-stress-container-e2e # 需 Docker；验证容器 daemon/Web 与 NPU docker_exec 边界
-```
-
-仓库 E2E 使用临时 adapter，并启动真实 Unix Socket runner/client，只验证四类结果解析、CLI/Web 配置和路由、共享
-报告/历史及跨进程互斥，不声称验证真实性能、MPI 实现、CANN ABI 或 NPU SDC。
-STREAM/HPL/HPCG 和 NPU Burn 的真实执行仍必须按测试指南在对应 Linux/A2/A3 节点
-完成。
-
-develop 的正式容器启动由基础、NPU、CPU stress 和可选 NPU Burn socket 四层
-Compose 组合；Docker socket 只在管理员显式启用 NPU Burn overlay 时挂载。完整说明见
-[`docker/README.md`](../../docker/README.md#8-容器化可靠性压测)。
+不设置 GFLOPS、带宽或运行时间阈值；数值用于记录与观察，不参与健康总分。
 
 ## 文档
 
-| 文档 | 内容 |
-|---|---|
-| [STRESS_USER_GUIDE.md](STRESS_USER_GUIDE.md) | 用户启用、CLI/Web、CPU Runner、A2/A3 NPU 与常见故障 |
-| [STRESS_SPEC.md](STRESS_SPEC.md) | 功能、配置、状态、CLI 与 API 契约 |
-| [STRESS_DESIGN.md](STRESS_DESIGN.md) | 包边界、执行、互斥、持久化和 Web 设计 |
-| [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md) | CPU/NPU 资产构建、新装/升级、candidate 迁移、实机验收与回滚 |
-| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | 仓库分发物与管理员外部资产的许可证边界 |
-| [OSS_RELEASE_AUDIT.md](OSS_RELEASE_AUDIT.md) | 发布审计命令、检查范围和 SBOM 闭环条件 |
+- [STRESS_SPEC.md](STRESS_SPEC.md)：功能契约；
+- [STRESS_DESIGN.md](STRESS_DESIGN.md)：V2 架构与安全边界；
+- [STRESS_USER_GUIDE.md](STRESS_USER_GUIDE.md)：构建、生成、部署和使用；
+- [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)：自动化测试与 A2/A3 实机门禁；
+- [OSS_RELEASE_AUDIT.md](OSS_RELEASE_AUDIT.md)：开源发布审计。

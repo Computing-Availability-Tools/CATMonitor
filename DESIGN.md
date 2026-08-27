@@ -1364,63 +1364,69 @@ features/stragglerout/
 
 ---
 
-## 11. 可靠性压测模块设计（features/stress，v0.3.5 新增，opt-in）
+## 11. 可靠性压测模块设计（features/stress，V2）
 
-> 详细规格见 [`features/stress/STRESS_SPEC.md`](features/stress/STRESS_SPEC.md) 与设计 [`features/stress/STRESS_DESIGN.md`](features/stress/STRESS_DESIGN.md)。本节描述架构、数据流与集成方式。
+> 完整契约见 [`STRESS_SPEC.md`](features/stress/STRESS_SPEC.md)，详细设计见
+> [`STRESS_DESIGN.md`](features/stress/STRESS_DESIGN.md)。本节只保留主项目集成摘要。
 
-### 11.1 模块定位
+### 11.1 定位
 
-为 CATMonitor 提供显式可靠性压测能力（STREAM/HPL/HPCG/Ascend NPU Burn），与日常健康度评估解耦——普通 `health` 与 `daemon` 不自动触发压测，仅由 `catmonitor stress` 子命令或受保护的 `/stress/` Web 接口显式运行。核心原则：CLI 与 Web 共享同一份原子报告、最近 100 次历史与 Linux 跨进程文件锁（同一节点不能同时启动两组作业）；结果不直接计入健康总分；第一版仅 Linux 单机，Windows 保证构建并返回 `unsupported`。
+Stress 提供显式触发的 STREAM/HPL/HPCG/Ascend NPU Burn 可靠性负载，与周期健康
+检查和健康评分解耦。daemon 是唯一作业所有者；CLI/Web 不创建 Manager，不直接执行
+benchmark。第一阶段只支持 Linux 执行，其他平台可构建并明确返回 unsupported。
 
-### 11.2 架构与数据流
+### 11.2 数据流
 
+```text
+CLI ───────────────┐
+                   ├─ Unix HTTP/JSON ─> daemon Stress Controller
+Web operator ──────┘                         │
+                                             │ DockerExecExecutor
+                         ┌───────────────────┴───────────────────┐
+                         ▼                                       ▼
+             CPU workload container                 NPU workload container
+             STREAM / HPL / HPCG                    Ascend NPU Burn
+                         └─ catmonitor-stress-exec common protocol
 ```
-catmonitor stress CLI                    catmonitor-web (/stress/，loopback + web_enabled)
-  stress.Manager.Start(benchmarks)           HTTP /api/stress/runs (POST)
-    → benchmark_check.sh (节点适配器)            ↓
-    → 作业运行 + 进程组回收 + 超时/取消            stress.Manager.StartWithOptions
-    → 解析结果 CSV + SDC 校验                     （共享同一 Manager / 报告 / 锁）
-    → 写 stress-latest.json + history(100)
-    → 返回 Report (profile/资产/配置哈希追溯)
-```
 
-- **节点执行器**：`benchmark_check.sh`（由 `scripts/stress/generate_stress_deployment.sh` 部署到节点）负责 benchmark 绝对路径、环境变量、MPI/NUMA 参数；Web 不提供脚本、路径或任意参数编辑。
-- **Ascend NPU Burn**：固定上游源码（`third_party/ascend_npu_burn/`，Mulan PSL v2 + 逐文件 SHA256），管理员经 `scripts/stress/build_npu_burn_image.sh` 构建镜像（显式 source CANN、HAL/torch/torch_npu/TBE 预检、离线强制重装 wheel、pciutils 依赖闭包），`scripts/stress/create_npu_burn_container.sh` 创建固定容器（identity-map 全部 `/dev/davinciN`），适配器交叉检查容器设备节点与 upstream `lspci` logical topology，管理员显式选择验证后的 logical ID。
-- **安全门禁**：stress Web run 端点须 `cfg.Enabled && cfg.WebEnabled && isLoopback(listenAddr) && ReportPath != ""` 四条件全满足才接受请求，否则返回 403（`handler.go`）。
+Controller 负责互斥、profile、超时、取消、latest/history 与审计；workload plugin 负责
+固定资产调用、完整进程组回收和结果归一化。HPCG 结果文件和 NPU CSV 在 workload
+容器内解析，不向 daemon 暴露私有工作目录。
 
-### 11.3 目录结构
+### 11.3 Web 与安全
 
-```
+一个 Web 进程只监听 `:19322`，同时提供监控、Stress 查询、Run 与 Cancel。写请求保留同源、JSON content type、动作 header 和请求体上限校验。Web/DFeE/workload 容器均无 Docker Socket；Web operator authentication/RBAC 与 daemon Docker Socket root 等价权限是两项明确安全债务。
+
+### 11.4 部署
+
+`docker-compose.yml` 提供 daemon/Web/DFeE；`docker-compose.stress.yml` 提供 daemon
+Docker executor 和 `stress-cpu`/`stress-npu` profiles；
+`generate_stress_deployment.sh` 只生成 daemon YAML、节点 profile、NPU device override
+与 manifest，不调用 Docker。A2/A3 设备节点按实际 `/dev/davinciN` identity-map，
+host node ID 与 NPU Burn logical ID 分开配置。
+
+### 11.5 代码结构
+
+```text
 features/stress/
-├── stress.go              # Config/Manager 核心：Start/StartWithOptions/Shutdown
-├── manager.go             # 作业生命周期 + 进程组回收 + 超时/取消 + profile
-├── handler.go             # HTTP 路由 Register：/stress/、/api/stress/{config,latest,history,runs,runs/}
-├── parse.go               # 结果 CSV/JSONL 解析 + SDC PASS/FAIL 校验
-├── profile.go             # 资产/配置哈希 profile 追溯
-├── joblock_{linux,other}.go # Linux 跨进程文件锁（其他平台 no-op）
-├── command_{linux,other}.go # 平台隔离：linux 执行 / other 返回 unsupported
-├── embed.go               # //go:embed static
-├── cli/cli.go             # stress CLI 子命令（doctor/run/list）
-├── runnerapi/server_linux.go # CPU runner 远程 API（可选）
-├── cmd/cpu-runner/        # CPU runner 独立二进制（Linux）
-├── cmd/cpu-runner-client/ # CPU runner 客户端
-├── static/                # stress SPA（index.html + stress.js + stress.css）
-├── benchmark_check.sh     # 节点执行器适配器（1123 行）
-├── STRESS_{SPEC,DESIGN,TEST_GUIDE,USER_GUIDE}.md  # 规格/设计/测试/用户指南
-├── OSS_RELEASE_AUDIT.md   # 开源发布审计
-└── THIRD_PARTY_NOTICES.md # 第三方声明
+├── manager.go / stress.go          # daemon-owned lifecycle and reports
+├── executor*.go                    # fixed Docker exec transport
+├── control_*.go                    # Unix HTTP/JSON server and client
+├── handler.go / static/            # unified Web proxy and SPA
+├── cli/                            # daemon client CLI
+├── workloadapi/                    # common request/result/status contract
+├── cmd/workload-exec/              # CPU/NPU image plugin executable
+├── resultparse/                    # in-workload normalized parsers
+└── workloadplugin/                 # typed CPU/NPU plugins and preflight
 ```
 
-### 11.4 集成方式（零侵入，opt-in）
+### 11.6 测试
 
-`cmd/catmonitor/main.go` 中按配置注册 stress CLI 子命令；web 经 `stress.NewManagerWithLogger(stressCfg, logger)` 创建 Manager，仅当 `s.stress != nil` 时 `stress.Register(mux, ...)` 挂载路由。`stress.enabled=false`（默认）时 stress 不运行、Web 路由不挂载，daemon 行为不变。
+| 层级 | 命令 |
+|---|---|
+| Go unit/component | `go test ./features/stress/... ./features/web ./internal/config` |
+| workload protocol E2E | `bash tests/e2e/stress_workload_plugin_e2e_test.sh` |
+| build/deployment/audit fixture | `make test-stress-build` |
+| 全部快速门禁 | `make test-stress` |
 
-### 11.5 测试三层
-
-| 层级 | 范围 | 命令 |
-|------|------|------|
-| Go 单元/组件 | manager/profile/parse/handler/runnerapi/config | `go test ./features/stress/...` |
-| hermetic 脚本 | build/deployment/audit fixtures（11 项，不依赖真机） | `make test-stress-build` |
-| Linux e2e | CLI/Web 端到端（mock benchmark_check.sh） | `make test-stress-e2e` |
-
-> 真实 benchmark 性能与 NPU 负载执行仍为显式硬件验收门禁。
+真实 MPI/NUMA/NPU workload 仍是发布前硬件验收门禁。

@@ -1,97 +1,104 @@
-# Explicit opt-in overlay for CPU reliability stress from containerized
-# CATMonitor. The control containers submit only fixed benchmark names over a
-# private Unix socket to a dedicated runner image. No Docker socket, privileged
-# mode, host PID namespace, host network or arbitrary-command API is granted.
+# Reliability Stress execution plane. Combine with docker-compose.yml and opt
+# into one or both profiles:
+#   docker compose --profile stress-cpu up -d
+#   docker compose --profile stress-cpu --profile stress-npu up -d
 services:
   catmonitor:
-    group_add:
-      - "65532"
     volumes:
+      # Temporary V2 security debt: only the daemon/controller receives this
+      # root-equivalent socket. Web and DFeE never receive it.
       - type: bind
-        source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}
-        target: /opt/catmonitor/stress
-        read_only: true
+        source: ${CATMONITOR_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
         bind:
           create_host_path: false
+
       - type: bind
         source: ${CATMONITOR_STRESS_STATE_DIR:-/var/lib/catmonitor/stress}
         target: /var/lib/catmonitor/stress
         bind:
           create_host_path: false
-      - type: volume
-        source: catmonitor_stress_socket
-        target: /run/catmonitor-stress
 
-  web:
-    group_add:
-      - "65532"
-    volumes:
-      - type: bind
-        source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}
-        target: /opt/catmonitor/stress
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${CATMONITOR_STRESS_STATE_DIR:-/var/lib/catmonitor/stress}
-        target: /var/lib/catmonitor/stress
-        bind:
-          create_host_path: false
-      - type: volume
-        source: catmonitor_stress_socket
-        target: /run/catmonitor-stress
-
-  cpu-stress-runner:
-    image: ${CATMONITOR_CPU_STRESS_IMAGE:?set CATMONITOR_CPU_STRESS_IMAGE to the reviewed runner image}
+  catmonitor-stress-cpu:
+    profiles: ["stress-cpu"]
+    container_name: catmonitor-stress-cpu
+    image: ${CATMONITOR_CPU_STRESS_IMAGE:-catmonitor/stress-cpu:configure-me}
     restart: unless-stopped
     read_only: true
     network_mode: none
-    cap_drop:
-      - ALL
-    # Used only by the root entrypoint to initialize bind/volume ownership and
-    # switch to uid/gid 65532. setpriv drops the complete capability bounding
-    # set before the runner or any benchmark starts.
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETPCAP
-      - SETUID
-      # Docker's default seccomp profile exposes NUMA policy syscalls only when
-      # SYS_NICE is requested. setpriv drops the capability itself before the
-      # runner starts; the workload receives no effective/bounding capability.
-      - SYS_NICE
-    security_opt:
-      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETPCAP", "SETUID", "SYS_NICE"]
+    security_opt: ["no-new-privileges:true"]
     pids_limit: ${CATMONITOR_CPU_STRESS_PIDS_LIMIT:-4096}
-    # MPICH/OpenMPI may allocate a large shared-memory region when HPL/HPCG
-    # starts one rank per core. This is only a tmpfs ceiling (not preallocated
-    # memory) and remains overrideable for smaller nodes.
     shm_size: ${CATMONITOR_CPU_STRESS_SHM_SIZE:-16gb}
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+    environment:
+      STREAM_THREADS: ${CATMONITOR_STREAM_THREADS:-0}
+      HPL_MPI_PROCESSES: ${CATMONITOR_HPL_MPI_PROCESSES:-1}
+      HPL_THREADS_PER_PROCESS: ${CATMONITOR_HPL_THREADS_PER_PROCESS:-1}
+      HPCG_MPI_PROCESSES: ${CATMONITOR_HPCG_MPI_PROCESSES:-1}
+      HPCG_THREADS_PER_PROCESS: ${CATMONITOR_HPCG_THREADS_PER_PROCESS:-1}
+      HPCG_NX: ${CATMONITOR_HPCG_NX:-32}
+      HPCG_NY: ${CATMONITOR_HPCG_NY:-32}
+      HPCG_NZ: ${CATMONITOR_HPCG_NZ:-32}
+      HPCG_RUNTIME_SECONDS: ${CATMONITOR_HPCG_RUNTIME_SECONDS:-60}
+    volumes:
+      - stress_cpu_state:/var/lib/catmonitor/stress
     healthcheck:
-      test: ["CMD-SHELL", "test -S /run/catmonitor-stress/cpu-runner.sock"]
+      test:
+        [
+          "CMD",
+          "/usr/bin/setpriv",
+          "--bounding-set=-all",
+          "--inh-caps=-all",
+          "--ambient-caps=-all",
+          "--reuid=65532",
+          "--regid=65532",
+          "--init-groups",
+          "--no-new-privs",
+          "/usr/local/bin/catmonitor-stress-exec",
+          "describe",
+          "--benchmark",
+          "stream",
+          "--json",
+        ]
       interval: 5s
-      timeout: 2s
+      timeout: 3s
       retries: 12
       start_period: 5s
+
+  # The generated A2/A3 overlay supplies devices and identity-mapped
+  # /dev/davinciN entries. The canonical service contains no device-count
+  # assumptions.
+  catmonitor-stress-npu:
+    profiles: ["stress-npu"]
+    container_name: catmonitor-stress-npu
+    image: ${CATMONITOR_NPU_STRESS_IMAGE:-catmonitor/npuburn:configure-me}
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      NPU_BURN_DEVICE: ${CATMONITOR_NPU_BURN_DEVICE:-}
+      NPU_BURN_RUN_CASE: ${CATMONITOR_NPU_BURN_RUN_CASE:-matmul}
+      NPU_BURN_GROUP: ${CATMONITOR_NPU_BURN_GROUP:-}
+      NPU_BURN_CHIP_GENERATION: ${CATMONITOR_NPU_BURN_CHIP_GENERATION:-}
+      NPU_BURN_INTERNAL_TIMEOUT_SECONDS: ${CATMONITOR_NPU_BURN_INTERNAL_TIMEOUT_SECONDS:-300}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
     volumes:
-      - type: bind
-        source: ${CATMONITOR_STRESS_ROOT:-/opt/catmonitor/stress}/cpu-runner-benchmark_check.sh
-        target: /etc/catmonitor-stress/benchmark_check.sh
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${CATMONITOR_STRESS_STATE_DIR:-/var/lib/catmonitor/stress}
-        target: /var/lib/catmonitor/stress
-        bind:
-          create_host_path: false
-      - type: volume
-        source: catmonitor_stress_socket
-        target: /run/catmonitor-stress
+      - stress_npu_state:/var/lib/catmonitor/stress
+      - stress_npu_output:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output
+      - /sys/bus/pci:/sys/bus/pci:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/catmonitor-stress-exec", "describe", "--json"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 volumes:
-  catmonitor_stress_socket:
+  stress_cpu_state:
+  stress_npu_state:
+  stress_npu_output:

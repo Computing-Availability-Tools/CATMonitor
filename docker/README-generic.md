@@ -51,47 +51,37 @@ docker load -i catmonitor-generic.tar
 
 ## 2. 启动
 
-### 方式一：统一安装入口（推荐）
+### 方式一：Docker Compose（推荐）
 
-```bash
-sudo install -d -m 0750 /etc/catmonitor
-sudo install -m 0640 docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
-sudo make install-installer
-
-sudo catmonitor-install --profile monitoring --action plan
-sudo catmonitor-install --profile monitoring
-```
-
-`catmonitor-install` 支持 `monitoring`、`cpu-stress`、`ascend-a2`、`ascend-a3`。默认动作 `up` 只编排已有镜像与资产，不构建镜像、编译 benchmark、编辑 YAML 或运行压测。
-
-### 方式二：Docker Compose
+基础监控：
 
 ```bash
 CATMONITOR_IMAGE=catmonitor-generic \
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-启动全部三个容器：daemon + web + dfee。
-
-#### 只启动部分服务
+启用 CPU Stress 时，先按
+[`STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md) 生成节点文件，再执行：
 
 ```bash
-# daemon + dfee（跳过 web）
 CATMONITOR_IMAGE=catmonitor-generic \
-docker compose -f docker/docker-compose.yml up -d catmonitor dfee
-
-# 只启动 daemon
-CATMONITOR_IMAGE=catmonitor-generic \
-docker compose -f docker/docker-compose.yml up -d catmonitor
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu up -d
 ```
 
-### 方式三：手动 docker run
+基础 Compose 启动 daemon + 一个统一 Web + DFeE；不会创建独立 Stress Web。
+
+### 方式二：手动 docker run
 
 #### 步骤 1：创建卷
 
 ```bash
 docker volume create cm-snapshot
 docker volume create cm-data
+docker volume create cm-control
 ```
 
 #### 步骤 2：启动 daemon
@@ -102,6 +92,7 @@ docker run -d --name catmonitor --privileged --network host --pid host \
   -v /etc/os-release:/etc/os-release:ro \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
+  -v cm-control:/run/catmonitor \
   catmonitor-generic
 ```
 
@@ -121,10 +112,11 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot
 ```bash
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-control:/run/catmonitor:ro \
   catmonitor-generic \
   -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
-  -config=/etc/catmonitor/catmonitor.yaml
+  -control-socket=/run/catmonitor/control.sock
 ```
 
 > `--network host` 后不需要 `-p` 端口映射。
@@ -151,7 +143,7 @@ docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/
   -csv-interval=10s
 ```
 
-### 方式四：只运行 dfee（daemon 在宿主机或其他容器）
+### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
 
 ```bash
 # 基础模式

@@ -75,29 +75,26 @@ catmonitor health -o table
 catmonitor list
 ```
 
-STREAM/HPL/HPCG 不随仓库分发二进制。Linux 管理员可用
-`scripts/stress/build_cpu_benchmarks.sh` 从任意源码位置构建并生成可追溯 manifest；
-参数、安装和验收步骤见 [stress 指南](features/stress/STRESS_TEST_GUIDE.md)。
-Ascend NPU Burn 源码随仓库固定，标准镜像构建无需 `--source`，但管理员必须先
-准备并加载与目标节点匹配、且含 CANN toolkit/devlib、torch_npu 和 TBE
-的基础镜像。构建器显式初始化 CANN 环境并在 wheel 前做 HAL/import 预检，最终镜像
-提供 upstream topology 所需的 `pciutils/lspci`，支持正常联网、临时代理和兼容
-RPM/DEB 依赖闭包离线注入；
-镜像构建不需要宿主机 driver mount 或 NPU 设备，真正 driver/device 验证留在
-固定容器和 `describe npu_burn` 阶段。镜像完成后可用
-`scripts/stress/create_npu_burn_container.sh` 动态映射节点全部 `/dev/davinciN` 并
-创建管理员维护的固定容器；CATMonitor 会交叉检查容器 `/dev/davinciN` 与 upstream
-`lspci` PCI topology，管理员必须显式选择验证后的 NPU Burn logical ID，不使用
-`npu-smi` Phy-ID，`all` 仅用于整节点独占压测。
+可靠性压测采用 daemon-owned Controller 和独立 workload 镜像。CPU 镜像内含
+STREAM/HPL/HPCG 与匹配的 MPI/OpenBLAS；NPU 镜像内含 Ascend NPU Burn、
+CANN/torch_npu runtime 与 topology 所需 `pciutils/lspci`。Control 镜像不包含
+benchmark runtime。
 
-完成 stress 资产部署、节点脚本适配并在主配置中显式启用后，再执行：
+CLI 与 Web 都通过 `/run/catmonitor/control.sock` 访问 daemon；daemon 再通过固定
+`/usr/local/bin/catmonitor-stress-exec` 协议调用 CPU/NPU 容器。Web 和 DFeE 不挂 Docker Socket。唯一 Web 入口 `:19322` 同时提供监控、Stress 报告/history、Run 与 Cancel；当前暂未提供 Web operator 认证/RBAC。
+
+完成镜像构建和节点 deployment 生成后：
 
 ```bash
 catmonitor stress doctor -o table
-catmonitor stress -o table
+catmonitor stress run --bench stream -o table
+catmonitor stress status -o json
+catmonitor stress cancel --job JOB_ID
 ```
 
-> 完整安装、配置、命令、Web 仪表盘、dfee 能效监控、Prometheus 接入与示例见 [使用手册](docs/User_Manual.md)。
+部署生成、CPU-only、Ascend sparse device、Compose profile 和统一 Web 入口见
+[Stress 用户指南](features/stress/STRESS_USER_GUIDE.md)；自动化与实机验收见
+[Stress 测试指南](features/stress/STRESS_TEST_GUIDE.md)。
 
 ## 健康度评分
 

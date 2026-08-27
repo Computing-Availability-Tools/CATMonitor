@@ -13,12 +13,13 @@ ENV CGO_ENABLED=0
 RUN go build -o /catmonitor ./cmd/catmonitor
 RUN go build -o /dfee ./features/dfee
 RUN go build -o /web ./features/web
-RUN go build -o /cpu-runner-client ./features/stress/cmd/cpu-runner-client
+
 
 FROM alpine:latest
 
 RUN apk add --no-cache \
     bash \
+    docker-cli \
     dmidecode \
     ipmitool \
     pciutils \
@@ -28,7 +29,7 @@ RUN apk add --no-cache \
 COPY --from=builder /catmonitor /usr/local/bin/catmonitor
 COPY --from=builder /dfee /usr/local/bin/dfee
 COPY --from=builder /web /usr/local/bin/web
-COPY --from=builder /cpu-runner-client /usr/local/bin/catmonitor-stress-cpu-client
+
 COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
 COPY features/web/metrics.yaml /features/web/metrics.yaml

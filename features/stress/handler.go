@@ -11,48 +11,39 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
-	"sort"
-	"strconv"
 	"strings"
-	"time"
 )
 
 const actionHeader = "stress"
 
-// Handler owns the stress Web API and standalone SPA. The host Web binary only
-// mounts it; stress policy and job semantics remain inside this feature.
-type Handler struct {
-	manager    *Manager
+// WebHandler is a policy-enforcing proxy to the daemon-owned Stress
+// Controller. It never owns a Manager or touches a workload transport.
+type WebHandler struct {
+	client     *ControlClient
 	listenAddr string
 	logger     *slog.Logger
 }
 
-func NewHandler(manager *Manager, listenAddr string, logger *slog.Logger) *Handler {
+func Register(mux *http.ServeMux, client *ControlClient, listenAddr string, logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{manager: manager, listenAddr: listenAddr, logger: logger}
-}
-
-// Register mounts the independent stress UI and API on a host ServeMux.
-func Register(mux *http.ServeMux, manager *Manager, listenAddr string, logger *slog.Logger) {
-	h := NewHandler(manager, listenAddr, logger)
+	h := &WebHandler{client: client, listenAddr: listenAddr, logger: logger}
 	sub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		panic("stress: embed sub failed: " + err.Error())
 	}
-	staticHandler := http.StripPrefix("/stress/static/", http.FileServer(http.FS(sub)))
-	mux.Handle("/stress/static/", noCache(staticHandler))
-	mux.HandleFunc("/stress/", h.handleIndex)
-
-	mux.HandleFunc("/api/stress/config", h.handleConfig)
-	mux.HandleFunc("/api/stress/latest", h.handleLatest)
-	mux.HandleFunc("/api/stress/history", h.handleHistory)
-	mux.HandleFunc("/api/stress/runs", h.handleRuns)
-	mux.HandleFunc("/api/stress/runs/", h.handleRun)
+	mux.Handle("GET /stress/static/", noCache(http.StripPrefix("/stress/static/", http.FileServer(http.FS(sub)))))
+	mux.HandleFunc("GET /stress/{$}", h.index)
+	mux.HandleFunc("GET /api/stress/config", h.config)
+	mux.HandleFunc("GET /api/stress/latest", h.latest)
+	mux.HandleFunc("GET /api/stress/history", h.history)
+	mux.HandleFunc("GET /api/stress/runs/{id}", h.job)
+	mux.HandleFunc("POST /api/stress/runs", h.run)
+	mux.HandleFunc("POST /api/stress/runs/{id}/cancel", h.cancel)
 }
 
-func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (h *WebHandler) index(w http.ResponseWriter, r *http.Request) {
 	data, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
 		http.Error(w, "index not found", http.StatusInternalServerError)
@@ -62,7 +53,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(data)
 }
-
 func noCache(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
@@ -70,102 +60,58 @@ func noCache(next http.Handler) http.Handler {
 	})
 }
 
-func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+func (h *WebHandler) config(w http.ResponseWriter, r *http.Request) {
+	view, err := h.client.Config(r.Context())
+	if err != nil {
+		h.proxyError(w, err)
 		return
 	}
-	cfg := h.manager.Config()
-	type benchmark struct {
-		Name           string            `json:"name"`
-		Enabled        bool              `json:"enabled"`
-		Available      bool              `json:"available"`
-		Message        string            `json:"message,omitempty"`
-		TimeoutSeconds int64             `json:"timeout_seconds"`
-		Profile        *ExecutionProfile `json:"profile,omitempty"`
-		ProfileError   string            `json:"profile_error,omitempty"`
-	}
-	items := make([]benchmark, 0, len(cfg.Benchmarks))
-	for name, item := range cfg.Benchmarks {
-		timeout := effectiveTimeout(item.Timeout)
-		available, message := h.manager.Availability(name)
-		response := benchmark{
-			Name: name, Enabled: item.Enabled, Available: available,
-			Message: message, TimeoutSeconds: int64(timeout / time.Second),
-		}
-		// Disabled features and benchmarks must not probe host executors or
-		// containers merely because a browser polls the read-only config API.
-		if cfg.Enabled && item.Enabled {
-			profile, profileErr := h.manager.Describe(name)
-			response.Profile = profile
-			if profileErr != nil {
-				response.ProfileError = profileErr.Error()
-			}
-		}
-		items = append(items, response)
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-	loopback := isLoopback(h.listenAddr)
-	sharedReport := cfg.ReportPath != ""
 	writeJSON(w, map[string]any{
-		"enabled":            runtime.GOOS == "linux" && cfg.Enabled && cfg.WebEnabled && loopback && sharedReport,
-		"feature_enabled":    cfg.Enabled,
-		"web_enabled":        cfg.WebEnabled,
-		"loopback":           loopback,
-		"shared_report":      sharedReport,
-		"platform":           runtime.GOOS,
-		"default_benchmarks": cfg.DefaultBenchmarks,
-		"benchmarks":         items,
+		"enabled":         runtime.GOOS == "linux" && view.Enabled && view.WebEnabled,
+		"feature_enabled": view.FeatureEnabled, "web_enabled": view.WebEnabled,
+		"loopback": isLoopback(h.listenAddr), "shared_report": view.SharedReport,
+		"platform": view.Platform, "executor": view.Executor,
+		"operator": true, "security_debt_web_operator_auth": true, "default_benchmarks": view.DefaultBenchmarks,
+		"benchmarks": view.Benchmarks,
 	})
 }
 
-func (h *Handler) handleLatest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	report, err := h.manager.Latest()
+func (h *WebHandler) latest(w http.ResponseWriter, r *http.Request) {
+	report, err := h.client.Latest(r.Context())
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "no stress report")
+		h.proxyError(w, err)
 		return
 	}
-	report.Cancellable = h.manager.CanCancel(report.JobID)
 	writeJSON(w, report)
 }
-
-func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
+func (h *WebHandler) history(w http.ResponseWriter, r *http.Request) {
 	limit := defaultHistoryRead
 	if raw := r.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > maxHistoryReports {
+		var parsed int
+		if _, err := fmt.Sscanf(raw, "%d", &parsed); err != nil || parsed < 1 || parsed > maxHistoryReports {
 			writeAPIError(w, http.StatusBadRequest, "limit must be between 1 and 100")
 			return
 		}
 		limit = parsed
 	}
-	reports, err := h.manager.History(limit)
+	reports, err := h.client.History(r.Context(), limit)
 	if err != nil {
-		h.logger.Error("stress history read failed", "error", err)
-		writeAPIError(w, http.StatusInternalServerError, "stress history is unavailable")
+		h.proxyError(w, err)
 		return
 	}
 	writeJSON(w, reports)
 }
-
-func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+func (h *WebHandler) job(w http.ResponseWriter, r *http.Request) {
+	report, err := h.client.Job(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.proxyError(w, err)
 		return
 	}
-	if !h.allowMutation(w, r) {
+	writeJSON(w, report)
+}
+
+func (h *WebHandler) run(w http.ResponseWriter, r *http.Request) {
+	if !h.allowRequest(w, r) {
 		return
 	}
 	var body struct {
@@ -176,76 +122,32 @@ func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.TimeoutSeconds < 0 || body.TimeoutSeconds > (1<<63-1)/int64(time.Second) {
+	if body.TimeoutSeconds < 0 {
 		writeAPIError(w, http.StatusBadRequest, "invalid timeout_seconds")
 		return
 	}
-	report, err := h.manager.StartWithOptions(body.Benchmarks, RunOptions{
-		Timeout:   time.Duration(body.TimeoutSeconds) * time.Second,
-		Initiator: InitiatorWeb,
-	})
-	if err == ErrBusy {
-		report.Cancellable = h.manager.CanCancel(report.JobID)
-		writeJSONStatus(w, report, http.StatusConflict)
-		return
-	}
+	report, err := h.client.Start(r.Context(), ControlStartRequest{Benchmarks: body.Benchmarks, TimeoutSeconds: body.TimeoutSeconds, Initiator: InitiatorWeb})
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		h.proxyError(w, err)
 		return
 	}
 	report.Cancellable = true
 	writeJSONStatus(w, report, http.StatusAccepted)
 }
-
-func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/stress/runs/")
-	parts := strings.Split(rest, "/")
-	if len(parts) == 2 && parts[0] != "" && parts[1] == "cancel" {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		if !h.allowMutation(w, r) {
-			return
-		}
-		if err := h.manager.Cancel(parts[0]); err != nil {
-			writeAPIError(w, http.StatusNotFound, "job not found")
-			return
-		}
-		writeJSON(w, map[string]bool{"ok": true})
+func (h *WebHandler) cancel(w http.ResponseWriter, r *http.Request) {
+	if !h.allowRequest(w, r) {
 		return
 	}
-	if len(parts) != 1 || parts[0] == "" {
-		writeAPIError(w, http.StatusNotFound, "job not found")
+	if err := h.client.Cancel(r.Context(), r.PathValue("id")); err != nil {
+		h.proxyError(w, err)
 		return
 	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	report, err := h.manager.Job(parts[0])
-	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "job not found")
-		return
-	}
-	report.Cancellable = h.manager.CanCancel(report.JobID)
-	writeJSON(w, report)
+	writeJSONStatus(w, map[string]bool{"ok": true}, http.StatusAccepted)
 }
 
-func (h *Handler) allowMutation(w http.ResponseWriter, r *http.Request) bool {
+func (h *WebHandler) allowRequest(w http.ResponseWriter, r *http.Request) bool {
 	if runtime.GOOS != "linux" {
-		writeAPIError(w, http.StatusNotImplemented, "stress execution is supported on Linux only")
-		return false
-	}
-	cfg := h.manager.Config()
-	if !cfg.Enabled || !cfg.WebEnabled || !isLoopback(h.listenAddr) || cfg.ReportPath == "" {
 		writeAPIError(w, http.StatusForbidden, "web stress execution is disabled")
-		return false
-	}
-	if !remoteIsLoopback(r.RemoteAddr) {
-		writeAPIError(w, http.StatusForbidden, "stress requests must originate from a loopback connection")
 		return false
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -253,8 +155,7 @@ func (h *Handler) allowMutation(w http.ResponseWriter, r *http.Request) bool {
 		writeAPIError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 		return false
 	}
-	action := r.Header.Get("X-CATMonitor-Action")
-	if action != actionHeader {
+	if r.Header.Get("X-CATMonitor-Action") != actionHeader {
 		writeAPIError(w, http.StatusForbidden, "missing stress action header")
 		return false
 	}
@@ -265,6 +166,14 @@ func (h *Handler) allowMutation(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+func (h *WebHandler) proxyError(w http.ResponseWriter, err error) {
+	status := http.StatusBadGateway
+	if api, ok := err.(*ControlAPIError); ok {
+		status = api.StatusCode
+	}
+	h.logger.Warn("stress control request failed", "error", err)
+	writeAPIError(w, status, err.Error())
+}
 func isLoopback(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -272,15 +181,6 @@ func isLoopback(addr string) bool {
 	}
 	if strings.EqualFold(host, "localhost") {
 		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func remoteIsLoopback(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return false
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
@@ -297,7 +197,6 @@ func sameOrigin(r *http.Request) bool {
 	}
 	return strings.EqualFold(parsed.Host, r.Host)
 }
-
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, value any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	decoder := json.NewDecoder(r.Body)
@@ -314,17 +213,12 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, value any) error {
 	}
 	return nil
 }
-
-func writeJSON(w http.ResponseWriter, value any) {
-	writeJSONStatus(w, value, http.StatusOK)
-}
-
+func writeJSON(w http.ResponseWriter, value any) { writeJSONStatus(w, value, http.StatusOK) }
 func writeJSONStatus(w http.ResponseWriter, value any, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
-
 func writeAPIError(w http.ResponseWriter, status int, message string) {
 	writeJSONStatus(w, map[string]string{"error": message}, status)
 }

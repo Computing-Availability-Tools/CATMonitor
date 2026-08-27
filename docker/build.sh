@@ -93,7 +93,6 @@ case "$MODE" in
             sh -c 'go build -tags dcmi -o /out/catmonitor ./cmd/catmonitor && \
                    CGO_ENABLED=0 go build -o /out/dfee ./features/dfee && \
                    CGO_ENABLED=0 go build -o /out/web ./features/web && \
-                   CGO_ENABLED=0 go build -o /out/cpu-runner-client ./features/stress/cmd/cpu-runner-client && \
                    echo "Compile done."'
 
         echo "Step 2/2: Building runtime image (debian/glibc)..."

@@ -108,6 +108,7 @@ docker compose \
 ```bash
 docker volume create cm-snapshot
 docker volume create cm-data
+docker volume create cm-control
 ```
 
 #### 步骤 2：启动 daemon（挂载 nvidia-smi + NVIDIA 库）
@@ -121,6 +122,7 @@ docker run -d --name catmonitor --privileged --network host --pid host \
   -e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
+  -v cm-control:/run/catmonitor \
   catmonitor-gpu
 ```
 
@@ -143,10 +145,11 @@ docker exec catmonitor ls /var/lib/catmonitor/snapshot
 ```bash
 docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-control:/run/catmonitor:ro \
   catmonitor-gpu \
   -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
-  -config=/etc/catmonitor/catmonitor.yaml
+  -control-socket=/run/catmonitor/control.sock
 ```
 
 > `--network host` 后不需要 `-p` 端口映射。

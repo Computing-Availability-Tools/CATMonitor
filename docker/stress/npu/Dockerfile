@@ -1,5 +1,17 @@
+ARG GO_IMAGE=golang:1.23-bookworm
 ARG BUILDER_BASE_IMAGE
 ARG RUNTIME_BASE_IMAGE
+
+FROM ${GO_IMAGE} AS stress_exec_builder
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY features/stress/workloadapi ./features/stress/workloadapi
+COPY features/stress/resultparse ./features/stress/resultparse
+COPY features/stress/workloadplugin ./features/stress/workloadplugin
+COPY features/stress/cmd/workload-exec ./features/stress/cmd/workload-exec
+ENV CGO_ENABLED=0
+RUN go build -trimpath -o /out/catmonitor-stress-exec ./features/stress/cmd/workload-exec
+
 FROM ${BUILDER_BASE_IMAGE} AS npuburn_builder
 
 ARG BUILDER_ASCEND_ENV_SCRIPT
@@ -130,7 +142,13 @@ LABEL org.opencontainers.image.title="CATMonitor Ascend NPU Burn runtime" \
 
 ENV HOME=/opt/catmonitor/npuburn-home \
     ASCEND_ENV_SCRIPT=${RUNTIME_ASCEND_ENV_SCRIPT} \
-    PYTHONPATH=/opt/catmonitor/npuburn-python:${PYTHONPATH}
+    PYTHONPATH=/opt/catmonitor/npuburn-python:${PYTHONPATH} \
+    CATMONITOR_STRESS_BENCHMARKS=npu_burn \
+    CATMONITOR_STRESS_STATE_ROOT=/var/lib/catmonitor/stress \
+    NPU_BURN_BACKEND=native \
+    NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn \
+    NPU_BURN_OUTPUT_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output \
+    NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
 
 SHELL ["/bin/bash", "-c"]
 
@@ -138,6 +156,7 @@ COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
 COPY validate_runtime_abi.py /usr/local/libexec/catmonitor/validate_runtime_abi.py
 COPY runtime_preflight.sh /usr/local/bin/catmonitor-npu-burn-preflight
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
+COPY --from=stress_exec_builder /out/catmonitor-stress-exec /usr/local/bin/catmonitor-stress-exec
 COPY --from=npuburn_builder /opt/catmonitor/build-compat/builder-abi.json /usr/local/share/catmonitor/builder-abi.json
 COPY --from=npuburn_runtime_package /opt/catmonitor/npuburn-python/ /opt/catmonitor/npuburn-python/
 COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/LICENSE.md /usr/share/licenses/ascend-npu-burn/LICENSE.md
@@ -219,6 +238,7 @@ RUN set -euo pipefail; \
 RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn-preflight; \
+    chmod 0755 /usr/local/bin/catmonitor-stress-exec; \
     chmod 0644 /usr/local/libexec/catmonitor/ascend_env.sh; \
     chmod 0644 /usr/local/libexec/catmonitor/validate_runtime_abi.py; \
     printf '#!/usr/bin/env bash\nexec python3 -m ascend_npu_burn.npu_burn "$@"\n' \

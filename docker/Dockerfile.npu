@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY docker/.build/catmonitor /usr/local/bin/catmonitor
 COPY docker/.build/dfee /usr/local/bin/dfee
 COPY docker/.build/web /usr/local/bin/web
-COPY docker/.build/cpu-runner-client /usr/local/bin/catmonitor-stress-cpu-client
+
 COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
 COPY features/web/metrics.yaml /features/web/metrics.yaml
