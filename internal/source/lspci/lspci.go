@@ -7,9 +7,11 @@
 package lspci
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Source is the typed interface for the lspci data source.
@@ -63,7 +65,9 @@ func (s *defaultSource) load() {
 	if !s.Available() {
 		return
 	}
-	out, err := exec.Command("lspci", "-q").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "lspci", "-q").Output()
 	if err != nil {
 		return
 	}

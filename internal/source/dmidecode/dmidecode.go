@@ -11,10 +11,12 @@
 package dmidecode
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MemoryDevice holds one SMBIOS Memory Device (type 17) entry.
@@ -88,7 +90,9 @@ func (s *defaultSource) MemoryDevices() ([]MemoryDevice, error) {
 		if s.mockOut != "" {
 			out = s.mockOut
 		} else {
-			o, err := exec.Command("dmidecode", "--type", "17").Output()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			o, err := exec.CommandContext(ctx, "dmidecode", "--type", "17").Output()
 			if err != nil {
 				perr = err
 				return
@@ -110,7 +114,9 @@ func (s *defaultSource) SystemInfo() (*SystemInfo, error) {
 		if s.mockSysOut != "" {
 			out = s.mockSysOut
 		} else {
-			o, err := exec.Command("dmidecode", "--type", "1").Output()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			o, err := exec.CommandContext(ctx, "dmidecode", "--type", "1").Output()
 			if err != nil {
 				perr = err
 				return
