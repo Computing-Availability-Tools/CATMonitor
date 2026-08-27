@@ -262,6 +262,7 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 	}
 	assets := []workloadapi.AssetCheck{
 		asset("executable", executable, "executable"),
+		npuRuntimePreflight(ctx),
 		writableAsset("output_directory", output),
 		writableAsset("log_directory", logDir),
 		writableAsset("runtime_home", runtimeHome),
@@ -285,6 +286,26 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 		parameter("internal_timeout", "Per-case timeout", env("NPU_BURN_INTERNAL_TIMEOUT_SECONDS"), "seconds"),
 	}
 	return profile("npu_burn", params, workloadapi.ResourceProfile{RuntimeSeconds: seconds, ProblemSize: workload}, assets, mpiNone("MPI is not used by Ascend NPU Burn"), failed, 0)
+}
+
+func npuRuntimePreflight(ctx context.Context) workloadapi.AssetCheck {
+	path := envDefault("NPU_BURN_PREFLIGHT_EXECUTABLE", "/usr/local/bin/catmonitor-npu-burn-preflight")
+	check := workloadapi.AssetCheck{Name: "runtime_preflight", Path: path, Kind: "runtime_preflight", Required: true, Status: workloadapi.CheckPass, Message: "CANN, torch_npu, custom ops, and mapped device count passed"}
+	if err := executableFile("Ascend NPU runtime preflight", path); err != nil {
+		check.Status = workloadapi.CheckFail
+		check.Message = err.Error()
+		return check
+	}
+	out, err := exec.CommandContext(ctx, path).CombinedOutput()
+	if err != nil {
+		check.Status = workloadapi.CheckFail
+		message := strings.TrimSpace(truncate(string(out), 1024))
+		if message == "" {
+			message = err.Error()
+		}
+		check.Message = "Ascend NPU runtime preflight failed: " + message
+	}
+	return check
 }
 
 func resolveNPUBurn() (Command, error) {

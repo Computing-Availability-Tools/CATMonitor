@@ -325,8 +325,10 @@ docker-compose.stress.generated.yml
 
 ## 9. A2/A3 设备语义
 
-生成器枚举真实 `/dev/davinciN`，保持节点 ID 映射，并设置
-`CATMONITOR_NPU_DEVICE_COUNT` 为映射数量。必须区分：
+生成器枚举真实 `/dev/davinciN`，保持节点 ID 映射，设置
+`CATMONITOR_NPU_DEVICE_COUNT` 为映射数量，并为 CANN runtime 输出从 0 开始的
+连续 visible IDs。workload describe 还必须执行只读 runtime preflight，验证 CANN
+环境、HAL、torch、torch_npu、custom ops 与 `torch_npu.npu.device_count()`。必须区分：
 
 - device node ID；
 - NPU Burn PCI logical ID；
@@ -337,17 +339,24 @@ docker-compose.stress.generated.yml
 组或 A2 的 `/dev/davinci2,/dev/davinci5`。A2 稀疏节点已经是回归门禁；
 A3 16-device 仍需单独实机验收。
 
+A2/CANN 8.3/runc 的真实 workload 已证明仅映射 device nodes 不足以完成 CANN
+初始化，因此生成的 NPU workload service 使用 `privileged: true`。该权限是当前
+A2 执行面契约与安全债务，只作用于无网络的 NPU workload 容器；不得传播给
+Web、DFeE 或 CPU workload。A3/A5 是否需要同一权限必须分别实机验收。
+
 ## 10. 安全边界与已知债务
 
 本版本允许 daemon 挂 Docker socket：
 
 ```text
 SECURITY_DEBT_DOCKER_SOCKET=true
+SECURITY_DEBT_NPU_WORKLOAD_PRIVILEGED=true
 ```
 
 该权限等价于节点 root，仅能部署在管理员控制的节点。减缓措施：
 
 - Web/DFeE 不挂 socket；
+- NPU privileged 仅限 `network_mode: none` 的 workload 容器；
 - 请求只包含 benchmark 和 schema 声明的 typed option；
 - container 名来自只读配置；
 - executor 只调用固定 shim 路径；

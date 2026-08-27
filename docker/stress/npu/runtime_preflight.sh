@@ -28,6 +28,7 @@ topology_count=$(
 python3 - <<'PY'
 import ctypes
 import importlib
+import os
 
 ctypes.CDLL("libascend_hal.so")
 for name in (
@@ -39,6 +40,17 @@ for name in (
     module = importlib.import_module(name)
     version = getattr(module, "__version__", "unknown")
     print(f"CATMONITOR_RUNTIME_IMPORT_{name.upper().replace('.', '_')}={version}")
+
+torch_npu = importlib.import_module("torch_npu")
+device_count = torch_npu.npu.device_count()
+expected = int(os.environ.get("CATMONITOR_NPU_DEVICE_COUNT", "0"))
+if expected <= 0:
+    raise RuntimeError("CATMONITOR_NPU_DEVICE_COUNT must be a positive integer")
+if device_count != expected:
+    raise RuntimeError(
+        f"torch_npu device count {device_count} does not match expected mapped count {expected}"
+    )
+print(f"CATMONITOR_RUNTIME_DEVICE_COUNT={device_count}")
 PY
 
 printf 'CATMONITOR_RUNTIME_CANN_VERSION=%s\n' "$CATMONITOR_CANN_VERSION"

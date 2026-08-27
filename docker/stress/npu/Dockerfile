@@ -147,6 +147,7 @@ ENV HOME=/opt/catmonitor/npuburn-home \
     CATMONITOR_STRESS_STATE_ROOT=/var/lib/catmonitor/stress \
     NPU_BURN_BACKEND=native \
     NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn \
+    NPU_BURN_PREFLIGHT_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn-preflight \
     NPU_BURN_OUTPUT_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output \
     NPU_BURN_LOG_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log \
     XDG_CACHE_HOME=/opt/catmonitor/npuburn-home/.cache \

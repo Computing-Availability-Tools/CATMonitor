@@ -192,7 +192,14 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
 ```
 
 默认动态发现实际 `/dev/davinciN`；`all` 表示使用经容器 PCI topology 验证通过的
-全部 NPU Burn logical devices。不要用 host 最大 device ID 推导设备数量。
+全部 NPU Burn logical devices。不要用 host 最大 device ID 推导设备数量。generator
+会按映射数量输出 CANN runtime visible IDs；doctor 会在 workload 容器中核对
+CANN、torch_npu、custom ops、PCI topology 和实际 `torch_npu` device count。
+
+A2/CANN 8.3/runc 的已验证运行契约会让 `catmonitor-stress-npu` 使用
+`privileged: true` 与 `network_mode: none`。这是 NPU workload 独有权限；Web、
+DFeE 与 CPU workload 不应获得该权限。A3/A5 仍需独立实机验收，不能从 A2
+结果外推。
 
 ### 5.3 CPU + NPU Full
 
@@ -332,7 +339,8 @@ stress doctor → STREAM → HPCG → HPL → NPU Burn（如启用）
 | Web snapshot 未就绪 | daemon `19320/-/ready`、daemon 日志和 snapshot volume |
 | Stress 显示未配置 | generated override 是否加入 Compose、`stress doctor` |
 | CPU benchmark unavailable | CPU workload 状态、MPI ABI、benchmark 资产和资源规模 |
-| NPU benchmark unavailable | 驱动、CANN/torch_npu、设备映射、容器内 PCI topology |
+| NPU benchmark unavailable | runtime preflight 中的驱动、CANN/torch_npu、设备数量和 PCI topology |
+| `aclInit 507899` / device invalid | 使用 generator 生成的 A2 override；确认只有 NPU workload 为 privileged |
 | Web 无法 Run/Cancel | `--enable-web`、daemon 状态、`19322` 网络策略 |
 | Cancel 后仍有进程 | workload 容器进程；应按缺陷处理，不能忽略 |
 | Registry 不可达 | 用 `docker save/load` 转移同一 v0.3.6 镜像 |

@@ -184,8 +184,17 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --force
 ```
 
-不要把宿主机稀疏 device node ID 当成 NPU Burn logical ID。generator 自动 identity-map
-实际 `/dev/davinciN`；workload 再通过容器内 PCI topology 建立 logical namespace。
+不要把宿主机稀疏 device node ID 当成 NPU Burn logical ID。generator 会：
+
+- identity-map 实际 `/dev/davinciN`；
+- 按映射数量设置连续的 CANN runtime visible IDs；
+- 通过容器内 `lspci` 建立并核对 NPU Burn logical namespace；
+- 由 runtime preflight 核对 `torch_npu.npu.device_count()` 与映射数量。
+
+A2/CANN 8.3/runc 实机还要求 NPU workload 容器使用 `privileged: true`，否则即使
+device node 已显式映射，CANN 仍可能在 `aclInit` 阶段返回 `Resource_Busy` 或
+`Device id is invalid`。该权限只授予 `catmonitor-stress-npu`；Web、DFeE 与 CPU
+workload 不获得此权限，NPU workload 继续使用 `network_mode: none`。
 
 ### 4.3 CPU + NPU Full
 
@@ -321,7 +330,11 @@ OLD_STRESS_YAML_COMPATIBLE=false
 - NPU Monitoring 为空：检查 `npu-smi info`、driver/toolkit 挂载和 daemon 日志。
 - NPU Burn unavailable：执行 doctor，核对 CANN、torch_npu、lspci 与 device count。
 - 稀疏设备映射错误：不要手写连续 `0..N-1` host node，默认让 generator 发现。
-- `No available device`：检查容器内 `lspci -D -d 19e5:` 与 logical topology。
+- `No available device`：检查容器内 `lspci -D -d 19e5:`、
+  `ASCEND_RT_VISIBLE_DEVICES`、`torch_npu.npu.device_count()` 与 logical topology。
+- `aclInit 507899` / `Resource_Busy` / `Device id is invalid`：确认使用 generator
+  生成的 A2 override，且 NPU workload 服务具有 `privileged: true`；不要把该权限
+  加到 Web 或 DFeE。
 - CANN source 失败：NPU workload 镜像必须与实际 CANN/torch_npu profile 匹配。
 - Web snapshot 未就绪：先检查 `19320/-/ready`，不要另起第二个 Web。
 - Registry 不可达：离线传输同一 v0.3.6 镜像；不要替换成旧 a2-r1 镜像。

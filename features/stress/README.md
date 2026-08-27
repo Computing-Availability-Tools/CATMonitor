@@ -121,6 +121,11 @@ bash scripts/stress/generate_stress_deployment.sh \
   --force
 ```
 
+生成器同时设置 CANN runtime visible IDs；doctor 会在 NPU workload 容器中执行
+只读 runtime preflight，验证 CANN、torch_npu、custom ops、PCI topology 与映射
+device count。A2/CANN 8.3/runc 的已验证 profile 仅对 NPU workload 容器启用
+`privileged: true`，并保持 `network_mode: none`；Web/DFeE 不获得该权限。
+
 然后叠加基础与生成的 Compose：
 
 ```bash

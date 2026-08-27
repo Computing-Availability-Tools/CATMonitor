@@ -205,6 +205,9 @@ if [ -n "$NPU_IMAGE" ]; then
     for path in /dev/davinci_manager /dev/devmm_svm /dev/hisi_hdc /usr/local/Ascend/driver/lib64 /usr/local/Ascend/driver/version.info /etc/ascend_install.info /usr/local/dcmi /usr/local/bin/npu-smi; do
         [ -e "$NPU_HOST_ROOT$path" ] || die "required Ascend host path is unavailable: $path"
     done
+    logical_device_ids=()
+    for ((i = 0; i < ${#device_ids[@]}; i++)); do logical_device_ids+=("$i"); done
+    logical_device_csv=$(IFS=,; printf '%s' "${logical_device_ids[*]}")
 fi
 [ "$CPU_ENABLED" = true ] || [ "$NPU_ENABLED" = true ] || die "configure at least one of --cpu-image or --npu-image"
 
@@ -273,9 +276,11 @@ if [ "$NPU_ENABLED" = true ]; then
   catmonitor-stress-npu:
     image: $(yaml_quote "$NPU_IMAGE")
     runtime: $(yaml_quote "$NPU_RUNTIME")
+    privileged: true
 
     environment:
       CATMONITOR_NPU_DEVICE_COUNT: '${#device_ids[@]}'
+      ASCEND_RT_VISIBLE_DEVICES: $(yaml_quote "$logical_device_csv")
       NPU_BURN_DEVICE: $(yaml_quote "$NPU_BURN_DEVICE")
       NPU_BURN_RUN_CASE: $(yaml_quote "$NPU_RUN_CASE")
       NPU_BURN_GROUP: $(yaml_quote "$NPU_GROUP")
@@ -302,7 +307,7 @@ if [ "$NPU_ENABLED" = true ]; then
     device_json=$(printf '%s\n' "${device_ids[@]}" | awk 'BEGIN{printf "["} {if(NR>1)printf ",";printf "%d",$1} END{printf "]"}')
 fi
 cat >"$PROFILE" <<EOF
-{"schema_version":2,"generated_at_utc":$(json_string "$generated_at"),"architecture":"daemon_controller_docker_exec","control_image":$(if [ -n "$CONTROL_IMAGE" ]; then json_string "$CONTROL_IMAGE"; else printf null; fi),"cpu":{"enabled":$CPU_ENABLED,"image":$(if [ -n "$CPU_IMAGE" ]; then json_string "$CPU_IMAGE"; else printf null; fi),"container":"catmonitor-stress-cpu","plugins":["stream","hpl","hpcg"],"user":"65532:65532","resources":{"stream_threads":$STREAM_THREADS,"hpl_processes":$HPL_PROCESSES,"hpl_threads":$HPL_THREADS,"hpcg_processes":$HPCG_PROCESSES,"hpcg_threads":$HPCG_THREADS}},"npu":{"enabled":$NPU_ENABLED,"image":$(if [ -n "$NPU_IMAGE" ]; then json_string "$NPU_IMAGE"; else printf null; fi),"container":"catmonitor-stress-npu","host_device_ids":$device_json,"burn_logical_ids":$(json_string "$NPU_BURN_DEVICE")},"security":{"daemon_docker_socket":true,"web_docker_socket":false,"dfee_docker_socket":false,"debt":"daemon Docker socket is a temporary V2 boundary"}}
+{"schema_version":2,"generated_at_utc":$(json_string "$generated_at"),"architecture":"daemon_controller_docker_exec","control_image":$(if [ -n "$CONTROL_IMAGE" ]; then json_string "$CONTROL_IMAGE"; else printf null; fi),"cpu":{"enabled":$CPU_ENABLED,"image":$(if [ -n "$CPU_IMAGE" ]; then json_string "$CPU_IMAGE"; else printf null; fi),"container":"catmonitor-stress-cpu","plugins":["stream","hpl","hpcg"],"user":"65532:65532","resources":{"stream_threads":$STREAM_THREADS,"hpl_processes":$HPL_PROCESSES,"hpl_threads":$HPL_THREADS,"hpcg_processes":$HPCG_PROCESSES,"hpcg_threads":$HPCG_THREADS}},"npu":{"enabled":$NPU_ENABLED,"image":$(if [ -n "$NPU_IMAGE" ]; then json_string "$NPU_IMAGE"; else printf null; fi),"container":"catmonitor-stress-npu","host_device_ids":$device_json,"runtime_visible_device_ids":$(if [ "$NPU_ENABLED" = true ]; then json_string "$logical_device_csv"; else printf null; fi),"burn_logical_ids":$(json_string "$NPU_BURN_DEVICE"),"privileged":$NPU_ENABLED},"security":{"daemon_docker_socket":true,"web_docker_socket":false,"dfee_docker_socket":false,"npu_workload_privileged":$NPU_ENABLED,"debt":"daemon Docker socket and the enabled NPU workload privilege are temporary V2 boundaries"}}
 EOF
 
 config_sha=$(sha256sum "$CONFIG" | awk '{print $1}')

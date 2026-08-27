@@ -71,7 +71,8 @@ contains "$NPU_OUT/catmonitor-stress.yaml" 'hpcg: { enabled: false'
 contains "$NPU_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: true'
 not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'catmonitor-stress-cpu:'
 contains "$NPU_OUT/docker-compose.stress.generated.yml" 'catmonitor-stress-npu:'
-not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'privileged: true'
+contains "$NPU_OUT/docker-compose.stress.generated.yml" 'privileged: true'
+contains "$NPU_OUT/docker-compose.stress.generated.yml" "ASCEND_RT_VISIBLE_DEVICES: '0,1'"
 not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'network_mode: host'
 not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'read_only: false'
 contains "$NPU_OUT/stress-profile.json" '"cpu":{"enabled":false,"image":null'
@@ -92,6 +93,7 @@ bash "$GENERATOR" \
 contains "$FULL_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: true'
 contains "$FULL_OUT/docker-compose.stress.generated.yml" 'CATMONITOR_NPU_DEVICE_COUNT:'
 contains "$FULL_OUT/docker-compose.stress.generated.yml" "CATMONITOR_NPU_DEVICE_COUNT: '2'"
+contains "$FULL_OUT/docker-compose.stress.generated.yml" "ASCEND_RT_VISIBLE_DEVICES: '0,1'"
 contains "$FULL_OUT/docker-compose.stress.generated.yml" '/dev/davinci2:/dev/davinci2'
 contains "$FULL_OUT/docker-compose.stress.generated.yml" '/dev/davinci5:/dev/davinci5'
 contains "$FULL_OUT/docker-compose.stress.generated.yml" "NPU_BURN_DEVICE: '0,1'"
@@ -99,7 +101,7 @@ contains "$FULL_OUT/stress-profile.json" '"host_device_ids":[2,5]'
 contains "$FULL_OUT/stress-profile.json" '"burn_logical_ids":"0,1"'
 contains "$FULL_OUT/stress-deployment-manifest.json" '"cpu_manifest_sha256":"'
 contains "$FULL_OUT/stress-deployment-manifest.json" '"npu_manifest_sha256":"'
-not_contains "$FULL_OUT/docker-compose.stress.generated.yml" 'privileged: true'
+contains "$FULL_OUT/docker-compose.stress.generated.yml" 'privileged: true'
 not_contains "$FULL_OUT/docker-compose.stress.generated.yml" 'network_mode: host'
 not_contains "$FULL_OUT/docker-compose.stress.generated.yml" 'read_only: false'
 

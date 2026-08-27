@@ -77,9 +77,13 @@ services:
     image: ${CATMONITOR_NPU_STRESS_IMAGE:-catmonitor/npuburn:configure-me}
     restart: unless-stopped
     network_mode: none
+    # The validated A2 runc path requires driver ioctls that are blocked by
+    # Docker's default device/capability boundary even when davinci nodes are
+    # listed explicitly. Keep this privilege on the workload container only.
+    privileged: true
     read_only: true
-    security_opt: ["no-new-privileges:true"]
     environment:
+      ASCEND_RT_VISIBLE_DEVICES: ${CATMONITOR_NPU_RUNTIME_VISIBLE_DEVICES:-}
       NPU_BURN_DEVICE: ${CATMONITOR_NPU_BURN_DEVICE:-}
       NPU_BURN_RUN_CASE: ${CATMONITOR_NPU_BURN_RUN_CASE:-matmul}
       NPU_BURN_GROUP: ${CATMONITOR_NPU_BURN_GROUP:-}

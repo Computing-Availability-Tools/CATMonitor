@@ -276,6 +276,11 @@ socket；Web/DFeE 不得挂。
 - 输出 `catmonitor-stress.yaml`、`stress-profile.json`、
   `docker-compose.stress.generated.yml` 和 deployment manifest；
 - 输出 `CATMONITOR_NPU_DEVICE_COUNT=<映射数量>`；
+- 输出与映射数量一致的连续 CANN runtime visible IDs；
+- NPU describe/doctor 必须在 workload 容器内验证 CANN、HAL、torch_npu、custom
+  ops，并要求 `torch_npu.npu.device_count()` 等于映射数量；
+- A2/CANN 8.3/runc profile 的 NPU workload 容器必须启用 `privileged` 且保持
+  `network_mode: none`，该权限不得授予 Web、DFeE 或 CPU workload；
 - 支持 `--disable-npu` 的 CPU-only 生成；
 - 不生成 forwarding/docker-exec adapter shell。
 

@@ -806,6 +806,7 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_bur
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_PREFLIGHT_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn-preflight'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_LOG_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$HOME/.ascend_npu_burn/log"'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$HOME/.tvm_test_data"'
@@ -877,6 +878,9 @@ if grep -Eq '^COPY --from=npuburn_builder .*driver' "$REPO_ROOT/docker/stress/np
 fi
 assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'ctypes.CDLL("libascend_hal.so")'
 assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'ascend_npu_burn.custom_ops.custom_ops_lib'
+assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'torch_npu.npu.device_count()'
+assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'CATMONITOR_NPU_DEVICE_COUNT'
+assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'CATMONITOR_RUNTIME_DEVICE_COUNT='
 assert_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'CATMONITOR_RUNTIME_PREFLIGHT=PASS'
 assert_not_contains "$REPO_ROOT/docker/stress/npu/runtime_preflight.sh" 'npu-burn '
 
