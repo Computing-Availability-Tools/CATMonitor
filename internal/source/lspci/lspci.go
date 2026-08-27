@@ -67,7 +67,7 @@ func (s *defaultSource) load() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "lspci", "-q").Output()
+	out, err := exec.CommandContext(ctx, "lspci").Output()
 	if err != nil {
 		return
 	}
