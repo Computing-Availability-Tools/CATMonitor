@@ -1197,7 +1197,15 @@ function renderSpecs(snap) {
   if (disks.length) add('硬盘', disks.length + ' 块, 共 ' + fmtGB(disks.reduce((s, m) => s + m.value, 0)));
 
   const nets = specs.filter(m => m.name === 'net_info');
-  if (nets.length) add('网卡', nets.length + ' 块');
+  if (nets.length) {
+    var cardKeys = {};
+    for (var i = 0; i < nets.length; i++) {
+      var lb = nets[i].labels || {};
+      var key = lb.pci_addr ? parentPciAddr(lb.pci_addr) : (lb.interface || '');
+      cardKeys[key] = true;
+    }
+    add('网卡', Object.keys(cardKeys).length + ' 块');
+  }
 
   const gpus = specs.filter(m => m.name === 'gpu_info');
   if (gpus.length) add('GPU', (gpus[0].labels || {}).name + (gpus.length > 1 ? ' 等 ' + gpus.length + ' 卡' : ''));
