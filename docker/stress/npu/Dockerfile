@@ -149,6 +149,8 @@ ENV HOME=/opt/catmonitor/npuburn-home \
     NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn \
     NPU_BURN_OUTPUT_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output \
     NPU_BURN_LOG_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log \
+    XDG_CACHE_HOME=/opt/catmonitor/npuburn-home/.cache \
+    ASCEND_PROCESS_LOG_PATH=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log/ascend \
     NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
 
 SHELL ["/bin/bash", "-c"]
@@ -255,7 +257,10 @@ RUN set -euo pipefail; \
     printf 'CATMONITOR_RUNTIME_NPUBURN_PACKAGE_VERSION=%s\n' "$runtime_package_version"; \
     install -d -m 0750 \
         "$HOME/.ascend_npu_burn/output" \
-        "$HOME/.ascend_npu_burn/log"
+        "$HOME/.ascend_npu_burn/log" \
+        "$HOME/.ascend_npu_burn/log/ascend" \
+        "$HOME/.tvm_test_data" \
+        "$HOME/.cache"
 
 # G. Revalidate the final image without importing the runtime command module or
 # touching NPU devices. The nonce prevents a cached layer from hiding markers

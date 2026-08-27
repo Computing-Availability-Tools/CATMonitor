@@ -802,6 +802,10 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'validate_entrypoint.s
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_LOG_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$HOME/.ascend_npu_burn/log"'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$HOME/.tvm_test_data"'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'XDG_CACHE_HOME=/opt/catmonitor/npuburn-home/.cache'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'ASCEND_PROCESS_LOG_PATH=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log/ascend'
+assert_contains "$REPO_ROOT/docker/stress/npu/entrypoint.sh" 'install -d -m 0750 "$runtime_dir"'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_RUNTIME_PCIUTILS=PASS'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_PCIUTILS_SOURCE='
@@ -901,7 +905,8 @@ printf '%s\n' "$*" >"$ENTRYPOINT_LOG"
 EOF
 chmod 0755 "$TEST_ROOT/tools/npu-burn"
 
-if CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/missing-helper.sh" \
+if HOME="$TEST_ROOT/entrypoint-home" \
+    CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/missing-helper.sh" \
     PATH="$TEST_ROOT/tools:$PATH" \
     bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version \
     >"$TEST_ROOT/entrypoint-missing-helper.log" 2>&1; then
@@ -912,7 +917,8 @@ assert_contains "$TEST_ROOT/entrypoint-missing-helper.log" 'Ascend environment h
 cat >"$TEST_ROOT/bad-ascend-helper.sh" <<'EOF'
 return 19
 EOF
-if CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/bad-ascend-helper.sh" \
+if HOME="$TEST_ROOT/entrypoint-home" \
+    CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/bad-ascend-helper.sh" \
     PATH="$TEST_ROOT/tools:$PATH" \
     bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version \
     >"$TEST_ROOT/entrypoint-bad-helper.log" 2>&1; then
@@ -928,10 +934,15 @@ install -d -m 0755 "$ENTRY_ASCEND_ROOT/cann-9.0.1"
 cat >"$ENTRY_ASCEND_ROOT/cann-9.0.1/set_env.sh" <<'EOF'
 export CATMONITOR_ENTRYPOINT_ENV_SOURCED=true
 EOF
+HOME="$TEST_ROOT/entrypoint-home" \
 CATMONITOR_ASCEND_ENV_ROOT="$ENTRY_ASCEND_ROOT" \
 CATMONITOR_ASCEND_ENV_HELPER="$REPO_ROOT/docker/stress/npu/ascend_env.sh" \
 PATH="$TEST_ROOT/tools:$PATH" \
     bash "$REPO_ROOT/docker/stress/npu/entrypoint.sh" --version
 assert_contains "$ENTRYPOINT_LOG" '--version'
+[ -d "$TEST_ROOT/entrypoint-home/.ascend_npu_burn/output" ] || fail 'entrypoint did not create output directory'
+[ -d "$TEST_ROOT/entrypoint-home/.ascend_npu_burn/log/ascend" ] || fail 'entrypoint did not create Ascend log directory'
+[ -d "$TEST_ROOT/entrypoint-home/.tvm_test_data" ] || fail 'entrypoint did not create TBE runtime directory'
+[ -d "$TEST_ROOT/entrypoint-home/.cache" ] || fail 'entrypoint did not create cache directory'
 
 printf 'PASS: build_npu_burn_image.sh\n'

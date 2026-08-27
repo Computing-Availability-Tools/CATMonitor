@@ -211,8 +211,8 @@ docker exec catmonitor catmonitor stress doctor -o table
 ```
 
 必须 4/4：STREAM、HPL、HPCG、NPU Burn。NPU profile 中的
-output_directory 与 log_directory 资产都必须显示为可写；前者保存 CSV，
-后者应来自限额 tmpfs。
+runtime_home、output_directory 与 log_directory 资产都必须显示为可写；
+runtime HOME 来自限额 tmpfs，CSV 输出目录来自嵌套持久卷。
 
 ### 8.4 Workload 顺序
 

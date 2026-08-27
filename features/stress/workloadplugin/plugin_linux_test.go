@@ -63,6 +63,7 @@ func TestNPUBurnDescribeRequiresWritableRuntimeDirectories(t *testing.T) {
 	deviceRoot := filepath.Join(root, "dev")
 	outputDir := filepath.Join(root, "output")
 	logDir := filepath.Join(root, "log")
+	runtimeHome := filepath.Join(root, "runtime-home")
 	for _, path := range []string{deviceRoot, outputDir} {
 		if err := os.Mkdir(path, 0o750); err != nil {
 			t.Fatal(err)
@@ -75,6 +76,7 @@ func TestNPUBurnDescribeRequiresWritableRuntimeDirectories(t *testing.T) {
 	t.Setenv("NPU_BURN_EXECUTABLE", executable)
 	t.Setenv("NPU_BURN_OUTPUT_DIR", outputDir)
 	t.Setenv("NPU_BURN_LOG_DIR", logDir)
+	t.Setenv("HOME", runtimeHome)
 	t.Setenv("NPU_BURN_INTERNAL_TIMEOUT_SECONDS", "300")
 	t.Setenv("NPU_BURN_DEVICE_ROOT", deviceRoot)
 	t.Setenv("NPU_BURN_DEVICE", "0")
@@ -101,6 +103,22 @@ func TestNPUBurnDescribeRequiresWritableRuntimeDirectories(t *testing.T) {
 	}
 
 	if err := os.Mkdir(logDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	profile, err = Describe(context.Background(), "npu_burn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundHomeFailure := false
+	for _, asset := range profile.Assets {
+		if asset.Name == "runtime_home" && string(asset.Status) == "fail" {
+			foundHomeFailure = true
+		}
+	}
+	if !foundHomeFailure {
+		t.Fatalf("missing runtime home asset failure: %+v", profile.Assets)
+	}
+	if err := os.Mkdir(runtimeHome, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	profile, err = Describe(context.Background(), "npu_burn")

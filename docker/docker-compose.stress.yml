@@ -87,7 +87,7 @@ services:
       NPU_BURN_INTERNAL_TIMEOUT_SECONDS: ${CATMONITOR_NPU_BURN_INTERNAL_TIMEOUT_SECONDS:-300}
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=256m
-      - /opt/catmonitor/npuburn-home/.ascend_npu_burn/log:rw,nosuid,nodev,size=64m,mode=0750
+      - /opt/catmonitor/npuburn-home:rw,nosuid,nodev,size=1g,mode=0750
     volumes:
       - stress_npu_state:/var/lib/catmonitor/stress
       - stress_npu_output:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output

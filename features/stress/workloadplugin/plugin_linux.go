@@ -242,7 +242,7 @@ func describeHPCG(ctx context.Context) *workloadapi.ExecutionProfile {
 }
 
 func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
-	executable, output, logDir := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR")
+	executable, output, logDir, runtimeHome := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR"), env("HOME")
 	seconds, secondsErr := positive("NPU_BURN_INTERNAL_TIMEOUT_SECONDS")
 	devices, nodes, topology, topologyMessage, topologyErr := npuTopology(ctx)
 	selector, workload := "run_case", env("NPU_BURN_RUN_CASE")
@@ -264,6 +264,7 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 		asset("executable", executable, "executable"),
 		writableAsset("output_directory", output),
 		writableAsset("log_directory", logDir),
+		writableAsset("runtime_home", runtimeHome),
 	}
 	deviceAsset := workloadapi.AssetCheck{Name: "logical_devices", Path: filepath.Join(envDefault("NPU_BURN_DEVICE_ROOT", "/dev"), "davinci[0-9]*"), Kind: "device_topology", Required: true, Status: workloadapi.CheckPass, Message: topologyMessage}
 	if topologyErr != nil {
@@ -275,7 +276,7 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 	params := []workloadapi.ProfileParameter{
 		parameter("backend", "Execution backend", "workload_container", ""), parameter("executable", "Executable", executable, ""),
 		parameter("output_mode", "Output mode", "upstream_default", ""), parameter("tool_output_directory", "Tool output directory", output, ""),
-		parameter("result_directory", "Result directory", output, ""), parameter("log_directory", "Log directory", logDir, ""),
+		parameter("result_directory", "Result directory", output, ""), parameter("log_directory", "Log directory", logDir, ""), parameter("runtime_home", "Runtime home", runtimeHome, ""),
 		parameter("selector", "Workload selector", selector, ""), parameter("workload", "Run case / group", workload, ""),
 		parameter("devices", "NPU devices", env("NPU_BURN_DEVICE"), ""), parameter("device_namespace", "Device namespace", "npu_burn_logical", ""),
 		parameter("device_node_ids", "Visible /dev/davinci node IDs", strings.Join(nodes, ","), ""), parameter("available_devices", "Available logical devices", strings.Join(devices, ","), ""),
@@ -287,7 +288,7 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 }
 
 func resolveNPUBurn() (Command, error) {
-	executable, output, logDir := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR")
+	executable, output, logDir, runtimeHome := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR"), env("HOME")
 	if err := executableFile("Ascend NPU Burn", executable); err != nil {
 		return Command{}, err
 	}
@@ -295,6 +296,9 @@ func resolveNPUBurn() (Command, error) {
 		return Command{}, err
 	}
 	if err := writableDirectory("Ascend NPU Burn log directory", logDir); err != nil {
+		return Command{}, err
+	}
+	if err := writableDirectory("Ascend NPU Burn runtime home", runtimeHome); err != nil {
 		return Command{}, err
 	}
 	seconds, err := positive("NPU_BURN_INTERNAL_TIMEOUT_SECONDS")

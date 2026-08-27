@@ -188,9 +188,9 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --force
 ```
 
-Canonical Compose 会把 NPU Burn CSV 输出目录挂为持久卷，并把
-.ascend_npu_burn/log 挂为 64 MiB 的临时可写目录；不要删除该日志挂载，
-否则只读 workload 容器会在启动实际算子前失败。
+Canonical Compose 会把 NPU runtime HOME 挂为限额 1 GiB 的 tmpfs，供日志、
+TBE 临时数据和缓存使用，再把 NPU Burn CSV 输出子目录叠加为持久卷。不要删除
+runtime HOME 挂载，否则只读 workload 容器会在启动实际算子前失败。
 
 ### 5.3 CPU + NPU
 
