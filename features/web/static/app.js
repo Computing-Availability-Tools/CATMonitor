@@ -655,7 +655,7 @@ function renderNetworkCardGroup(specs) {
 
   var title = el('div', 'metric-group-head');
   title.style.cursor = 'default';
-  title.innerHTML = '<span class="metric-group-name">网络 (' + order.length + ')</span>';
+  title.innerHTML = '<span class="metric-group-name">网卡 (' + order.length + ')</span>';
   container.appendChild(title);
 
   var body = el('div', 'metric-group-body');
@@ -1197,7 +1197,7 @@ function renderSpecs(snap) {
   if (disks.length) add('硬盘', disks.length + ' 块, 共 ' + fmtGB(disks.reduce((s, m) => s + m.value, 0)));
 
   const nets = specs.filter(m => m.name === 'net_info');
-  if (nets.length) add('网卡', nets.slice(0, 2).map(netStr).join(', ') + (nets.length > 2 ? ' …' : ''));
+  if (nets.length) add('网卡', nets.length + ' 块');
 
   const gpus = specs.filter(m => m.name === 'gpu_info');
   if (gpus.length) add('GPU', (gpus[0].labels || {}).name + (gpus.length > 1 ? ' 等 ' + gpus.length + ' 卡' : ''));
