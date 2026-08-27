@@ -257,15 +257,15 @@ func (s *defaultSource) PowerReading() (float64, error) {
 func isUsefulSensor(name string) bool {
 	l := strings.ToLower(name)
 	switch {
-	case l == "power":
+	case l == "power" || l == "chassispower":
 		return true
 	case l == "inlet temp":
 		return true
 	case l == "outlet temp":
 		return true
-	case strings.Contains(l, "fan") && strings.Contains(l, "speed"):
+	case strings.HasPrefix(l, "fan") && strings.Contains(l, "speed"):
 		return true
-	case strings.Contains(l, "fan") && strings.Contains(l, "power"):
+	case strings.HasPrefix(l, "fan") && strings.Contains(l, "power"):
 		return true
 	case strings.Contains(l, "cpu") && strings.Contains(l, "temp"):
 		return true

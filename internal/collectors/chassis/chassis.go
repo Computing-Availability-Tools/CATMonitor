@@ -39,6 +39,9 @@ func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
 
 	var metrics []collector.Metric
 	for _, s := range sensors {
+		if s.Status == "na" {
+			continue
+		}
 		name := strings.ToLower(s.Name)
 		switch {
 		// inlet_temp (exact match "Inlet Temp")
@@ -61,13 +64,13 @@ func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
 				Labels:    map[string]string{"fan": fanNum},
 				Timestamp: now,
 			})
-		// power (exact match "Power" — total system power, not PSU outputs like "Power1")
-		case name == "power":
+		// power (exact match "Power" or "ChassisPower" — total system power)
+		case name == "power" || name == "chassispower":
 			metrics = append(metrics, collector.Metric{
 				Component: "chassis", Name: "power", Value: roundFloat(s.Value, 2), Unit: "W",
 				Timestamp: now,
 			})
-		// fan_speed (FAN* F/R Speed)
+		// fan_speed (FAN* Speed)
 		case strings.Contains(name, "fan") && strings.Contains(name, "speed"):
 			fanNum, direction := parseFanName(s.Name)
 			metrics = append(metrics, collector.Metric{
@@ -81,17 +84,49 @@ func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
 	return metrics, nil
 }
 
-// parseFanName extracts the fan number and direction from SDR names like
-// "FAN1 F Speed" → ("1", "F"), "FAN3 R Speed" → ("3", "R").
+// parseFanName extracts the fan number and direction from SDR names.
+// Handles both space-separated ("FAN1 F Speed" → "1", "F") and
+// underscore-separated ("FAN_SPEED_1A" → "1", "A") formats.
 func parseFanName(name string) (fanNum, direction string) {
-	fields := strings.Fields(name)
+	normalized := strings.ReplaceAll(name, "_", " ")
+	fields := strings.Fields(normalized)
 	for _, f := range fields {
 		fl := strings.ToLower(f)
 		if strings.HasPrefix(fl, "fan") && len(fl) > 3 {
 			fanNum = fl[3:]
 		}
-		if f == "F" || f == "R" {
-			direction = f
+		switch fl {
+		case "f", "front":
+			direction = "F"
+		case "r", "rear":
+			direction = "R"
+		}
+	}
+	if fanNum != "" {
+		i := 0
+		for i < len(fanNum) && fanNum[i] >= '0' && fanNum[i] <= '9' {
+			i++
+		}
+		if i > 0 && i < len(fanNum) {
+			if direction == "" {
+				direction = strings.ToUpper(fanNum[i:])
+			}
+			fanNum = fanNum[:i]
+		}
+	}
+	if fanNum == "" {
+		for _, f := range fields {
+			if len(f) > 0 && f[0] >= '0' && f[0] <= '9' {
+				i := 0
+				for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+					i++
+				}
+				fanNum = f[:i]
+				if i < len(f) && direction == "" {
+					direction = strings.ToUpper(f[i:])
+				}
+				break
+			}
 		}
 	}
 	if fanNum == "" {

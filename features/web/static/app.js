@@ -501,12 +501,21 @@ function renderFanSpeedGroup(items) {
     byFan[fan][lb.direction || ''] = mt.value;
   }
   order.sort((a, b) => parseInt(a) - parseInt(b));
+  const dirs = [
+    {k: 'F', label: '前', cls: 'rw-read'},
+    {k: 'R', label: '后', cls: 'rw-write'},
+    {k: 'A', label: 'A', cls: 'rw-read'},
+    {k: 'B', label: 'B', cls: 'rw-write'},
+  ];
   const container = el('div');
   for (const fan of order) {
     const d = byFan[fan];
     const parts = [];
-    if (d.F !== undefined) parts.push('<span class="rw-read">前 ' + fmt(d.F) + '</span>');
-    if (d.R !== undefined) parts.push('<span class="rw-write">后 ' + fmt(d.R) + '</span>');
+    for (const dir of dirs) {
+      if (d[dir.k] !== undefined) {
+        parts.push('<span class="' + dir.cls + '">' + dir.label + ' ' + fmt(d[dir.k]) + '</span>');
+      }
+    }
     const row = el('div', 'metric-row rw-row');
     row.innerHTML = parts.join('') + '<span class="metric-labels">风扇 ' + fan + '</span>';
     container.appendChild(row);
