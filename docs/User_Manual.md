@@ -295,13 +295,20 @@ Server Type:    cpu_only
 
 ```bash
 catmonitor stress --help
-catmonitor stress -o table                  # 运行 YAML 的 default_benchmarks
-catmonitor stress --bench stream -o table   # 覆盖本次运行项目
-catmonitor stress --bench npu_burn -o table # Ascend NPU Burn（需节点安装和脚本适配）
-catmonitor stress -o json                   # 回显完整 JSON 报告
+catmonitor stress doctor -o table
+catmonitor stress run --bench stream -o table
+catmonitor stress run --bench npu_burn -o table
+catmonitor stress status -o json
+catmonitor stress cancel --job JOB_ID
 ```
 
-stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 固定源码随仓库提供，管理员只需准备匹配的原生依赖或 CANN/torch_npu 基础镜像并构建运行环境；脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。日常启用与使用见 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，完整构建、适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+stress 只在用户显式请求时运行。daemon 是唯一 Stress Controller；CLI 与 Web 通过
+`/run/catmonitor/control.sock` 查看和控制同一作业，daemon 再用固定 Docker Executor
+调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置只声明
+启用项目、容器和最大运行窗口，MPI、线程、问题规模和 NPU logical ID 固化在 workload
+profile 中，不能由 Web 编辑。日常部署与使用见
+[STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，自动化与实机验收见
+[STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 3.6 daemon — 守护进程
 
