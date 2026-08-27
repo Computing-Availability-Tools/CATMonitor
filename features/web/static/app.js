@@ -6,7 +6,7 @@ const MANIFEST = {
   memory: { title: '内存', headline: 'memory_usage', headlineLabel: '内存使用率 (%)',
             key: [ 'usage', 'swap_usage', 'saturation', 'fragmentation',
                    'module_num', 'ecc_ce_errors', 'oom_count', 'page_faults' ] },
-  disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '分区空间使用率最高 (%)',
+  disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '挂载点空间使用率最高 (%)',
           key: [ 'space_usage', 'throughput', 'iops', 'io_wait',
                  'io_errors', 'smart_status' ] },
   gpu: { title: 'GPU', headline: 'gpu_utilization', headlineLabel: 'GPU 使用率最高 (%)',
@@ -22,7 +22,7 @@ const MANIFEST = {
 const METRIC_NAMES = {
   usage: '使用率', load_average: '负载', context_switches: '上下文切换',
   process_count: '进程数', model_info: '型号', temperature: '温度', frequency: '频率',
-  space_usage: '分区空间使用率', space_detail: '分区空间明细', throughput: '吞吐量',
+  space_usage: '挂载点空间使用率', space_detail: '挂载点空间明细', throughput: '吞吐量',
   io_wait: 'IO Wait', io_errors: 'IO 错误', iops: 'IOPS',
   smart_status: 'SMART 状态', smart_temperature: 'SMART 温度',
   memory_usage: '显存使用率', memory_detail: '明细',
@@ -96,8 +96,8 @@ const RULE_TEXT = {
   'saturation>80%': '内存饱和度超过 80%',
   'fragmentation>80%': '内存碎片率超过 80%',
   // Disk
-  'space>90%':   '磁盘空间使用率超过 90%',
-  'space>80%':   '磁盘空间使用率超过 80%',
+  'space>90%':   '挂载点空间使用率超过 90%',
+  'space>80%':   '挂载点空间使用率超过 80%',
   'io_wait>20%': '磁盘 IO 等待超过 20%',
   'smart_failed': 'SMART 健康检查未通过',
   // GPU
@@ -150,7 +150,7 @@ const CPU_SPEC_ORDER = {
 const SERIES_LABELS = {
   cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '系统负载 1m',
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
-  disk_space_usage: '分区空间使用率最高 (%)',
+  disk_space_usage: '挂载点空间使用率最高 (%)',
   gpu_utilization: 'GPU 使用率最高 (%)', gpu_memory_usage: 'GPU 显存使用率最高 (%)', gpu_temperature: 'GPU 最高温度 (°C)',
   npu_utilization: 'NPU 使用率最高 (%)', npu_memory_usage: 'NPU 显存使用率最高 (%)', npu_temperature: 'NPU 最高温度 (°C)',   npu_power_draw: 'NPU 功耗最高 (W)',
   // v0.2.0 trends.
@@ -609,10 +609,10 @@ function renderSpaceDetailGroup(items) {
   const container = el('div');
   for (const key of order) {
     const d = byMount[key];
-    const total = d.total ? fmtMB(d.total) : '--';
-    const used = d.used ? fmtMB(d.used) : '--';
-    const avail = d.available ? fmtMB(d.available) : '--';
-    const availPct = d.total > 0 ? (d.available / d.total * 100) : 100;
+    const total = d.total != null ? fmtMB(d.total) : '--';
+    const used = d.used != null ? fmtMB(d.used) : '--';
+    const avail = d.available != null ? fmtMB(d.available) : '--';
+    const availPct = (d.total != null && d.total > 0 && d.available != null) ? (d.available / d.total * 100) : 100;
     const availColor = availPct < 10 ? ' style="color:var(--crit)"' : '';
     const row = el('div', 'metric-row space-detail-row');
     row.innerHTML =
@@ -857,7 +857,7 @@ function renderNetworkStorageGroup(networkMetrics) {
     var m = spaceDetail[i];
     var lb = m.labels || {};
     var key = (lb.device || '') + '|' + (lb.mount_point || '');
-    if (!byMount[key]) { byMount[key] = { device: lb.device, mount: lb.mount_point, fstype: lb.fstype, total: 0, used: 0, avail: 0 }; order.push(key); }
+    if (!byMount[key]) { byMount[key] = { device: lb.device, mount: lb.mount_point, fstype: lb.fstype, total: null, used: null, avail: null }; order.push(key); }
     if (lb.field === 'total') byMount[key].total = m.value;
     if (lb.field === 'used') byMount[key].used = m.value;
     if (lb.field === 'available') byMount[key].avail = m.value;
@@ -894,10 +894,10 @@ function renderNetworkStorageGroup(networkMetrics) {
   var detailBody = el('div', 'metric-group-body');
   for (var i = 0; i < order.length; i++) {
     var d = byMount[order[i]];
-    var total = d.total > 0 ? fmtMB(d.total) : '--';
-    var used = d.total > 0 ? fmtMB(d.used) : '--';
-    var avail = d.avail > 0 ? fmtMB(d.avail) : '--';
-    var availPct = d.total > 0 ? (d.avail / d.total * 100) : 100;
+    var total = d.total != null ? fmtMB(d.total) : '--';
+    var used = d.used != null ? fmtMB(d.used) : '--';
+    var avail = d.avail != null ? fmtMB(d.avail) : '--';
+    var availPct = (d.total != null && d.total > 0 && d.avail != null) ? (d.avail / d.total * 100) : 100;
     var availColor = availPct < 10 ? ' style="color:var(--crit)"' : '';
     var row = el('div', 'metric-row space-detail-row');
     row.innerHTML = '<span class="metric-val">' + total + '</span>' +
