@@ -1,4 +1,4 @@
-# CATMonitor 可靠性压测
+# CATMonitor v0.3.6 可靠性压测
 
 Stress 是 CATMonitor 的显式触发可靠性负载特性，支持：
 
@@ -35,6 +35,9 @@ Web operator ────────┼── /run/catmonitor/control.sock
 - Web 和 DFeE 不挂 Docker Socket；
 - 当前 V2 仅 daemon 挂 Docker Socket。这是明确记录的临时高权限边界；
 - 不提供网页脚本编辑、任意命令或任意 benchmark 参数编辑。
+
+最终发行 tag 以 `v0.3.6` 为目标。Fresh Image Acceptance 前的 RC 只能使用
+`v0.3.6-rc.<shortsha>`；不得提前创建正式 image/tag，也不得复用 a2-r1。
 
 ## 配置
 
@@ -83,25 +86,36 @@ NPU logical ID 等参数属于 workload 容器 profile，由 Compose 环境变�
 
 ## 部署
 
+先设置 v0.3.6 候选镜像变量。正式 registry namespace 与 digest 待 Fresh Image
+Acceptance 后补齐：
+
+```bash
+export CATMONITOR_REGISTRY='<registry>'
+export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
+export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-npu:${CATMONITOR_RELEASE}"
+export CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
+export NPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-npu:${CATMONITOR_RELEASE}"
+```
+
 先生成节点部署文件：
 
 ```bash
 bash scripts/stress/generate_stress_deployment.sh \
   --output-dir /etc/catmonitor/generated-stress \
-  --cpu-image registry.example/catmonitor/stress-cpu:v0.4.0 \
+  --cpu-image "$CPU_STRESS_IMAGE" \
   --enable-web \
   --force
 ```
 
-Ascend 节点再传 NPU 镜像与已验证的 NPU Burn logical ID：
+Ascend 节点再传 NPU 镜像；host device node 动态发现，NPU Burn 使用经 PCI
+topology 校验的 logical devices：
 
 ```bash
 bash scripts/stress/generate_stress_deployment.sh \
   --output-dir /etc/catmonitor/generated-stress \
-  --cpu-image registry.example/catmonitor/stress-cpu:v0.4.0 \
-  --npu-image registry.example/catmonitor/npuburn:v0.4.0 \
-  --npu-device-nodes 2,5 \
-  --npu-burn-device 0,1 \
+  --cpu-image "$CPU_STRESS_IMAGE" \
+  --npu-image "$NPU_STRESS_IMAGE" \
+  --npu-burn-device all \
   --npu-chip-generation A2 \
   --enable-web \
   --force
@@ -110,9 +124,7 @@ bash scripts/stress/generate_stress_deployment.sh \
 然后叠加基础与生成的 Compose：
 
 ```bash
-export CATMONITOR_IMAGE=registry.example/catmonitor/control:v0.4.0
-
-docker compose \
+docker compose -p catmonitor \
   -f docker/docker-compose.yml \
   -f docker/docker-compose.stress.yml \
   -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
@@ -122,7 +134,7 @@ docker compose \
 启用 NPU 时：
 
 ```bash
-docker compose \
+docker compose -p catmonitor \
   -f docker/docker-compose.yml \
   -f docker/docker-compose.npu.yml \
   -f docker/docker-compose.stress.yml \

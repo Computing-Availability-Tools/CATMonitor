@@ -226,16 +226,19 @@ features: [web, dfee, health] # feature-scope 白名单：各 feature metrics.ya
 
 stress:                    # 可靠性压测（默认 off，显式启用）；详见 features/stress/STRESS_SPEC.md
   enabled: false
-  web_enabled: false       # stress Web API 须 loopback 监听 + true 才挂载
-  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  web_enabled: false
+  control_socket: /run/catmonitor/control.sock
   report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
   benchmarks:
-    stream: { enabled: false, timeout: 1m }
-    hpl: { enabled: false, timeout: 2h }
-    hpcg: { enabled: false, result_dir: "", timeout: 3m }
-    npu_burn: { enabled: false, timeout: 30m }
-
+    stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
+    hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
+    hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
 snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 on）
   enabled: true           # off 时 daemon 不写 snapshot 文件，行为同前
   dir: /var/lib/catmonitor/snapshot   # snapshot_<comp>.json + snapshot.json 目录

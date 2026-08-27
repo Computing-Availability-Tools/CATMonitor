@@ -324,5 +324,37 @@ A3_16_DEVICE_VALIDATED=false
 所有自动和 A2 实机门禁通过前：
 
 ```text
-READY_FOR_V0_4_0_RELEASE=false
+READY_FOR_V036_RC_IMAGE_BUILD=false
 ```
+
+## 15. Monitoring 向后兼容契约
+
+Stress V2 是显式可选能力，不得改变既有 Monitoring 部署的启动前提：
+
+- 旧版 daemon `docker run` 方式继续有效；
+- Web 继续接受 `-addr`、`-snapshot-dir` 和旧 `-config` 参数；
+- `-config` 仅作为 deprecated no-op 兼容参数，Web 的数据源仍是 snapshot，
+  Stress 控制源仍是可选的 daemon control socket；
+- DFeE 的既有 flags 和只读 snapshot 消费方式保持不变；
+- `stress.enabled=false` 时 daemon 不创建 Manager、Executor 或 control socket，
+  不要求 Docker CLI、Docker socket、workload 容器和 Stress state；
+- control socket 缺失时 Web 的 Monitoring 页面与 API 必须正常工作；
+  `GET /api/stress/config` 返回 HTTP 200 的禁用能力视图
+  (`enabled=false`, `available=false`)，Run/Cancel 返回 `503 Service Unavailable`；
+- base `docker-compose.yml` 只定义 daemon、Web、DFeE 三个容器，不挂 Docker
+  socket 或 Stress state；执行面只由 `docker-compose.stress.yml` 显式加入。
+
+配置兼容边界固定为：
+
+```text
+OLD_MONITORING_YAML_COMPATIBLE=true
+OLD_STRESS_YAML_COMPATIBLE=false
+```
+
+包含 disabled 旧 Stress 字段的 Monitoring YAML 可以继续用于监控；一旦旧
+`script_path`、`health.stress` 等 V1 执行配置被启用，加载器必须明确要求迁移，
+不得静默解释成 V2 Docker workload 配置。
+
+RC 镜像构建前必须通过 `make test-monitoring-compat`。Fresh Image Acceptance 还
+必须用新镜像执行旧 README 中 daemon、Web、DFeE 的手工 `docker run` 命令；
+不得以源码测试替代镜像级兼容验收。

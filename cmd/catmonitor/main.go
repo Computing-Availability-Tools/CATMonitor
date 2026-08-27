@@ -197,10 +197,12 @@ func runDaemon() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// The daemon is the only Stress Controller. CLI and Web use this local
-	// Unix HTTP/JSON endpoint and never own an executing Manager.
-	stressManager := stress.NewManagerWithLogger(cfg.Stress, logger)
-	if runtime.GOOS == "linux" && cfg.Stress.ControlSocket != "" {
+	// The daemon is the only Stress Controller. In monitoring-only mode it
+	// creates neither the control socket nor an executor, so Docker remains an
+	// optional dependency of the explicit Stress profile.
+	var stressManager *stress.Manager
+	if runtime.GOOS == "linux" && cfg.Stress.Enabled && cfg.Stress.ControlSocket != "" {
+		stressManager = stress.NewManagerWithLogger(cfg.Stress, logger)
 		controlServer, listenErr := stress.ListenControl(cfg.Stress.ControlSocket, stressManager, logger)
 		if listenErr != nil {
 			logger.Error("failed to listen on stress control socket", "path", cfg.Stress.ControlSocket, "error", listenErr)
@@ -322,11 +324,13 @@ func runDaemon() {
 		logger.Error("daemon context cancelled by a subsystem; shutting down")
 	}
 	cancel()
-	stressCtx, stressCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if err := stressManager.Shutdown(stressCtx); err != nil {
-		logger.Error("stress controller shutdown failed", "error", err)
+	if stressManager != nil {
+		stressCtx, stressCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := stressManager.Shutdown(stressCtx); err != nil {
+			logger.Error("stress controller shutdown failed", "error", err)
+		}
+		stressCancel()
 	}
-	stressCancel()
 	scheduler.Stop()
 }
 

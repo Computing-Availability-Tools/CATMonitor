@@ -9,9 +9,9 @@ import (
 func validConfigForTest() Config {
 	return Config{
 		Enabled: true, ControlSocket: "/run/catmonitor/control.sock",
-		ReportPath: "/var/lib/catmonitor/stress/latest.json",
+		ReportPath:        "/var/lib/catmonitor/stress/latest.json",
 		DefaultBenchmarks: []string{"stream"},
-		Executor: ExecutorConfig{Type: "docker_exec", DockerBinary: "/usr/bin/docker", DockerSocket: "/var/run/docker.sock"},
+		Executor:          ExecutorConfig{Type: "docker_exec", DockerBinary: "/usr/bin/docker", DockerSocket: "/var/run/docker.sock"},
 		Benchmarks: map[string]BenchmarkConfig{
 			"stream": {Enabled: true, Plugin: "stream", Container: "catmonitor-stress-cpu", User: "65532:65532", Timeout: time.Minute},
 		},
@@ -21,6 +21,19 @@ func validConfigForTest() Config {
 func TestValidateConfigAcceptsFixedBinding(t *testing.T) {
 	if err := ValidateConfig(validConfigForTest()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateConfigIgnoresDisabledExecutionFields(t *testing.T) {
+	cfg := Config{
+		Enabled:  false,
+		Executor: ExecutorConfig{Type: "legacy-shell"},
+		Benchmarks: map[string]BenchmarkConfig{
+			"stream": {Enabled: false},
+		},
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("disabled Stress must not require an execution plane: %v", err)
 	}
 }
 
@@ -34,8 +47,8 @@ func TestValidateConfigRejectsExpandedExecutionSurface(t *testing.T) {
 			b.Container = "--privileged"
 			c.Benchmarks["stream"] = b
 		},
-		"named user": func(c *Config) { b := c.Benchmarks["stream"]; b.User = "root"; c.Benchmarks["stream"] = b },
-		"zero timeout": func(c *Config) { b := c.Benchmarks["stream"]; b.Timeout = 0; c.Benchmarks["stream"] = b },
+		"named user":       func(c *Config) { b := c.Benchmarks["stream"]; b.User = "root"; c.Benchmarks["stream"] = b },
+		"zero timeout":     func(c *Config) { b := c.Benchmarks["stream"]; b.Timeout = 0; c.Benchmarks["stream"] = b },
 		"disabled default": func(c *Config) { b := c.Benchmarks["stream"]; b.Enabled = false; c.Benchmarks["stream"] = b },
 	}
 	for name, mutate := range tests {

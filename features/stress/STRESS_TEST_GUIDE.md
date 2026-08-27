@@ -19,7 +19,17 @@
 - Web/DFeE 不挂 Docker socket；
 - build 不运行真实 NPU workload。
 
-## 2. 本地快速测试
+## 2. Monitoring 向后兼容门禁
+
+```bash
+make test-monitoring-compat
+```
+
+该门禁覆盖旧 Web/DFeE flags、Web 无 control socket 时的禁用能力视图、daemon 无 Docker socket、
+旧 Monitoring YAML 与 base 三容器 Compose。它是 v0.3.6 RC 镜像构建的前置门禁；
+新镜像仍须额外执行旧 README `docker run` 的镜像级验收。
+
+## 3. 本地快速测试
 
 使用满足 `go.mod` 的 Go toolchain：
 
@@ -48,7 +58,7 @@ bash -n scripts/stress/build_npu_burn_image.sh
 make test-stress
 ```
 
-## 3. Go 单元与组件测试
+## 4. Go 单元与组件测试
 
 重点包：
 
@@ -67,7 +77,7 @@ make test-stress
 go test -race ./features/stress/... ./features/web
 ```
 
-## 4. workload plugin E2E
+## 5. workload plugin E2E
 
 ```bash
 bash tests/e2e/stress_workload_plugin_e2e_test.sh
@@ -84,7 +94,7 @@ bash tests/e2e/stress_workload_plugin_e2e_test.sh
 - 子进程组被回收；
 - 不接受任意 command/options。
 
-## 5. 构建 fixture
+## 6. 构建 fixture
 
 ```bash
 bash scripts/stress/tests/build_cpu_benchmarks_test.sh
@@ -112,7 +122,7 @@ NPU fixture 必须确认：
 - build 阶段不运行 NPU workload；
 - A2 patch 不污染 A3 `none` profile。
 
-## 6. Deployment/Compose 测试
+## 7. Deployment/Compose 测试
 
 ```bash
 bash scripts/stress/tests/generate_stress_deployment_test.sh
@@ -146,7 +156,7 @@ generator 至少运行两组 fixture：
 
 还应静态检查不存在 0..7、两组四卡、最大 device ID 等于设备数等假设。
 
-## 7. 容器集成测试
+## 8. 容器集成测试
 
 容器测试必须使用新名称和新架构：
 
@@ -178,7 +188,7 @@ docker exec catmonitor catmonitor stress run --bench stream -o table
 
 取消用一个可控 fixture 或缩短 workload 验证，不能通过手工 kill daemon 代替。
 
-## 8. A2 实机验收
+## 9. A2 实机验收
 
 发布支持声明前至少完成：
 
@@ -251,7 +261,7 @@ curl -fsS http://127.0.0.1:19322/api/stress/config
 
 通过 API/页面完成：STREAM Run、job 轮询、Cancel、history 持久化。
 
-## 9. A3 16-device 验收矩阵
+## 10. A3 16-device 验收矩阵
 
 代码通用不等于 A3 已验证。未来 A3 门禁至少包含：
 
@@ -266,7 +276,7 @@ curl -fsS http://127.0.0.1:19322/api/stress/config
 
 必须在真实 A3 上运行至少 device 8、14、15 才能声明 16-device support validated。
 
-## 10. 通过标准
+## 11. 通过标准
 
 ```text
 GO_TESTS=PASS

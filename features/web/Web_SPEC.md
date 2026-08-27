@@ -83,37 +83,33 @@ features/web/
 
 ---
 
-## 3. 配置设计
+## 3. 启动参数与数据源
 
-### 3.1 配置文件 `features/web/config.yaml`
+### 3.1 命令行参数
 
-```yaml
-server:
-  addr: ":9527"                # 监听地址（端口被占用时自动 +1 递增直到空闲，见 §8.5）
-collector:
-  refresh_interval: 5s         # 采集周期（也作为前端默认轮询间隔）
-  history_points: 60           # 环形历史保留的采样点数
-  # enabled_components: []     # 空 = 采集全部已注册部件；指定则只采集列出的部件
-storage:
-  snapshot_path: features/web/data/snapshot.json   # 快照文件
-  runtime_path:  features/web/data/runtime.json   # 运行时覆盖持久化
-```
+| 参数 | 默认值 | 作用 |
+|---|---|---|
+| `-addr` | `:19322` | Monitoring 与 Stress API 的统一 listener；端口占用时自动递增 |
+| `-snapshot-dir` | `/var/lib/catmonitor/snapshot` | daemon 生成的只读 snapshot 目录 |
+| `-control-socket` | `/run/catmonitor/control.sock` | 可选的 daemon Stress 控制 socket |
+| `-config` | 空 | deprecated no-op，仅保留旧 `docker run` 命令兼容 |
 
-### 3.2 配置加载优先级（`config.go`）
+### 3.2 数据边界
 
-1. `DefaultConfig()` 提供默认值（addr `:9527`，5s，60 点，全部件启用，相对路径 `features/web/data/...`）。
-2. 若配置文件存在，YAML 覆盖默认值；**文件不存在则静默用默认值**（与主项目 `internal/config` 行为一致，不报错）。
-3. 若 `runtime.json` 存在，其 `refresh_interval_ms` 再覆盖采集周期（界面调整持久化，重启后保留）。
-4. 配置文件路径由 `-config` 命令行 flag 指定，默认 `features/web/config.yaml`。
+Web 不加载 CATMonitor YAML、不采集指标、不写 runtime 配置。Monitoring 数据只来自
+`-snapshot-dir`；Stress config/report/history/job/run/cancel 只通过
+`-control-socket` 代理给 daemon Controller。
 
-> 端口占用回退：启动时 `net.Listen` 探测 `server.addr`，若返回 `EADDRINUSE`（端口被占用）则端口 +1 重试（`:9527`→`:9528`→`:9529`…），直至获取可用端口，实际绑定地址回写 `cfg.Server.Addr` 并打印 warn 日志。非 `EADDRINUSE` 错误（如权限不足）直接失败退出。详见 §8.5。
+### 3.3 Monitoring 兼容性
 
-> 字段类型：`refresh_interval` 为 `time.Duration`（已验证 `yaml.v3` 可直接解析 `5s`）。`enabled_components` 为字符串数组，空/缺省 = 全部。
+control socket 未配置或不存在时，Web 仍必须正常启动，首页与 snapshot API 正常工作。
+`GET /api/stress/config` 返回 HTTP 200，并明确给出 `enabled=false`、
+`available=false`；Stress Run/Cancel 等写操作仍返回 `503 Service Unavailable`。
+旧命令中的 `-config=<path>` 可以继续传入，
+但不会读取或校验该文件。
 
-### 3.3 运行时覆盖 `runtime.json`
-
-界面改刷新间隔 → `POST /api/config` → 更新内存间隔 + 调 `DataCollector.SetInterval` 热生效 + 原子写 `runtime.json`。下次启动时由步骤 3 自动加载。
-
+> 端口占用回退：启动时 `net.Listen` 探测 `-addr`，若返回 `EADDRINUSE` 则端口 +1
+> 重试，直至获取可用端口；非 `EADDRINUSE` 错误直接失败退出。
 ---
 
 ## 4. 数据模型
@@ -393,27 +389,29 @@ Windows：`GOOS=windows go build -o features/web/bin/catmonitor-web.exe ./featur
 ### 8.2 运行
 
 ```bash
-./features/web/bin/catmonitor-web -config features/web/config.yaml    # 默认监听 :9527，被占用则自动递增
-# 浏览器打开 http://localhost:9527（实际端口见启动日志 "web server starting" addr=...）
+./features/web/bin/catmonitor-web -addr=:19322 -snapshot-dir=/var/lib/catmonitor/snapshot
+# 浏览器打开 http://localhost:19322（实际端口见启动日志 "web server starting" addr=...）
 ```
-工作目录需为仓库根（`config.yaml` 中 `snapshot_path`/`runtime_path` 为相对路径 `features/web/data/...`）；或改用绝对路径配置。
+`-control-socket` 默认 `/run/catmonitor/control.sock`。socket 缺失不影响 Monitoring；
+Stress 配置查询返回禁用能力视图，Run/Cancel 返回 503。旧 `-config=<path>` 仍可保留，
+但不会读取该文件。
 
 ### 8.3 systemd 常驻（推荐）
 
 ```bash
 systemd-run --unit=catmonitor-web \
   --working-directory=<repo-root> \
-  <repo-root>/features/web/bin/catmonitor-web -config <repo-root>/features/web/config.yaml
+  <repo-root>/features/web/bin/catmonitor-web -addr=:19322 -snapshot-dir=/var/lib/catmonitor/snapshot
 
 systemctl status catmonitor-web
 journalctl -u catmonitor-web -f
-systemctl restart catmonitor-web   # 重启（重新加载配置）
+systemctl restart catmonitor-web   # 重启并重新读取命令行参数
 systemctl stop catmonitor-web
 ```
 
 ### 8.4 优雅退出
 
-捕获 `SIGINT`/`SIGTERM` → `cancel` ctx（采集循环退出）→ `http.Server.Shutdown`（5s 超时）。
+捕获 `SIGINT`/`SIGTERM` → `http.Server.Shutdown`（5s 超时）。Web 不拥有采集循环。
 
 ### 8.5 端口占用回退（`main.go` `listenWithFallback`）
 

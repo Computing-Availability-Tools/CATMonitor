@@ -68,6 +68,44 @@ type SnapshotConfig struct {
 	Dir     string `yaml:"dir"`
 }
 
+type legacyStressConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	ScriptPath string `yaml:"script_path"`
+	Benchmarks map[string]struct {
+		ResultDir string `yaml:"result_dir"`
+	} `yaml:"benchmarks"`
+}
+
+func (c legacyStressConfig) usesLegacyExecutionFields() bool {
+	if c.ScriptPath != "" {
+		return true
+	}
+	for _, benchmark := range c.Benchmarks {
+		if benchmark.ResultDir != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateLegacyStressCompatibility(data []byte) error {
+	var probe struct {
+		Stress legacyStressConfig `yaml:"stress"`
+		Health struct {
+			Stress *legacyStressConfig `yaml:"stress"`
+		} `yaml:"health"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if probe.Stress.Enabled && probe.Stress.usesLegacyExecutionFields() {
+		return fmt.Errorf("legacy stress configuration is not supported; regenerate the V2 stress configuration")
+	}
+	if probe.Health.Stress != nil && probe.Health.Stress.Enabled {
+		return fmt.Errorf("legacy health.stress configuration is not supported; migrate to the V2 top-level stress configuration")
+	}
+	return nil
+}
 func Default() *Config {
 	return &Config{
 		Server: ServerConfig{Type: "auto"},
@@ -113,6 +151,9 @@ func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+	}
+	if err := validateLegacyStressCompatibility(data); err != nil {
+		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)

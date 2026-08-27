@@ -1,607 +1,327 @@
-# NPU 服务器（Ascend）容器化指南
+# CATMonitor v0.3.6：Ascend NPU 节点
 
-适用于有 Ascend NPU 的服务器。使用 `catmonitor-npu` 镜像（Debian/glibc，CGo 编译，链接 libdcmi.so，采集 123 项 NPU 指标）。
+适用于 Ascend NPU Linux 节点。支持 Ascend Monitoring、可选 CPU Stress 和可选
+NPU Burn。v0.3.6 当前已完成 A2/Ascend910B4 功能验收；其他 SoC/CANN 组合必须单独验收，
+不能由 A2 结果外推。
 
----
+## 1. 前置条件
 
-## 1. 构建
-
-### 构建镜像
+- Linux/arm64；
+- Docker Engine 与 Docker Compose v2；
+- Ascend 驱动可用；
+- 至少一个 `/dev/davinciN`；
+- `npu-smi info` 正常；
+- NPU workload 镜像中的 CANN/torch_npu 与节点驱动兼容。
 
 ```bash
+uname -m
+npu-smi info
+ls -1 /dev/davinci[0-9]*
+docker version
+docker compose version
+```
+
+generator 会动态发现实际存在的 `/dev/davinciN`，不要求设备号从 0 连续，也不能用
+最大设备号推导设备数量。
+
+## 2. 获取 v0.3.6
+
+```bash
+git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-bash docker/build.sh            # 自动检测 NPU driver
-# 或手动指定：
-bash docker/build.sh npu        # 强制 NPU 镜像
+git checkout <v0.3.6-release-ref>
+
+export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
+export CATMONITOR_REGISTRY='<registry>'
+export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-npu:${CATMONITOR_RELEASE}"
+export CATMONITOR_CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
+export CATMONITOR_NPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-npu:${CATMONITOR_RELEASE}"
 ```
 
-输出镜像 `catmonitor-npu`。
-
-### 代理与离线构建
+按实际能力拉取：
 
 ```bash
-export HTTP_PROXY=http://proxy.example.com:3128
-export HTTPS_PROXY=http://proxy.example.com:3128
-export NO_PROXY=127.0.0.1,localhost,registry.internal.example.com
-export GOPROXY=https://proxy.golang.example,direct
+# 必需：Control
+docker pull "$CATMONITOR_IMAGE"
 
+# 可选：CPU Stress
+docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
+
+# 可选：NPU Burn；镜像较大，不启用时无需下载
+docker pull "$CATMONITOR_NPU_STRESS_IMAGE"
+```
+
+从源码构建 Ascend Control：
+
+```bash
 bash docker/build.sh npu
-
-unset HTTP_PROXY HTTPS_PROXY NO_PROXY GOPROXY
+docker tag catmonitor-npu "$CATMONITOR_IMAGE"
 ```
 
-完全离线的目标节点优先加载已在同架构、兼容驱动环境完成验收的镜像：
+CPU/NPU workload 镜像的构建方法见
+[STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)。三张 V2 镜像均需以
+v0.3.6 源码重新构建，不能复用 a2-r1 Image ID 或 digest。
+
+## 3. Ascend Monitoring-only
 
 ```bash
-# 联网或审批构建节点
-docker save -o catmonitor-npu.tar catmonitor-npu
-docker save -o catmonitor-npuburn.tar catmonitor/npuburn:a3-candidate
+export CATMONITOR_CONFIG="$PWD/docker/catmonitor.yaml"
 
-# 离线 A3 节点
-docker load -i catmonitor-npu.tar
-docker load -i catmonitor-npuburn.tar
-```
-
-若必须离线构建，还需预先加载 `golang:1.23` 和 `debian:bookworm-slim`，并准备 Go module cache 与 Debian 系统包来源。CATMonitor 容器镜像和 NPU Burn 运行镜像是两个独立产物，后者的联网/代理/离线流程见 stress 指南。
-
-### NPU 镜像构建说明
-
-NPU 镜像采用**两步构建**，且**必须使用 Debian（glibc）基础镜像**，因为 `libdcmi.so` 是 glibc 链接的，无法在 Alpine（musl libc）上运行：
-
-1. **编译**：启动 `golang:1.23`（Debian/glibc）容器，挂载宿主机 Ascend driver，在容器内用 CGo 编译 `catmonitor`（`-tags dcmi`）+ `dfee` + `web`。
-2. **打包**：将编译好的二进制 COPY 进 `debian:bookworm-slim` 运行时镜像。
-
-编译时 `CGO_LDFLAGS` 加 `-Wl,--allow-shlib-undefined`（`build.sh` 已配置），因为 Debian 的 `ld` 默认不递归解析共享库的传递依赖。
-
-运行时需要设置 `LD_LIBRARY_PATH` 指向 driver、common、toolkit 和 nnae 库目录：
-
-```
-LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
-```
-
-同时需要挂载 driver、nnae 和 toolkit 目录（`libdcmi.so`、`libc_sec.so`、`libmmpa.so` 等分布在不同目录中）。
-
-### Dockerfile 说明
-
-| 文件 | 用途 |
-|------|------|
-| `Dockerfile.npu` | NPU 运行时镜像（debian + 预编译二进制） |
-| `catmonitor.yaml` | 容器版配置（打包在镜像中） |
-
----
-
-## 2. 启动
-
-### 方式一：Docker Compose（推荐）
-
-基础监控：
-
-```bash
-CATMONITOR_IMAGE=catmonitor-npu \
-docker compose -f docker/docker-compose.yml up -d
-```
-
-启用 CPU Stress 时，先按
-[`STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md) 生成节点文件，再执行：
-
-```bash
-CATMONITOR_IMAGE=catmonitor-npu \
-docker compose \
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_CONFIG="$CATMONITOR_CONFIG" \
+  docker compose -p catmonitor \
   -f docker/docker-compose.yml \
-  -f docker/docker-compose.stress.yml \
-  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
-  --profile stress-cpu up -d
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.npu.yml \
+  up -d
 ```
 
-基础 Compose 启动 daemon + 一个统一 Web + DFeE；不会创建独立 Stress Web。
+应只有 3 个服务，不创建任何 Stress workload：
 
-### 方式二：手动 docker run
+```bash
+docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.npu.yml \
+  ps
 
-#### 步骤 1：创建卷
+curl -fsS http://127.0.0.1:19320/-/ready
+curl -fsS http://127.0.0.1:19320/metrics | grep -i npu | head
+curl -fsS http://127.0.0.1:19322/ >/dev/null
+curl -fsS http://127.0.0.1:19323/ >/dev/null
+```
+
+### 3.1 手工 `docker run`（Monitoring-only 兼容）
+
+Compose 是推荐方式；不能使用 Compose 时仍可用下面的旧部署方式。它只启动
+`catmonitor`、`catmonitor-web`、`catmonitor-dfee`，不挂 Docker Socket/control
+socket，也不需要 CPU/NPU workload 镜像。
 
 ```bash
 docker volume create cm-snapshot
 docker volume create cm-data
-docker volume create cm-control
-```
+docker volume create cm-csv
 
-#### 步骤 2：启动 daemon
-
-```bash
 docker run -d --name catmonitor --privileged --network host --pid host \
   -v /:/host:ro \
+  -v /etc/os-release:/etc/os-release:ro \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
   -v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
   -v /usr/bin/hccn_tool:/usr/bin/hccn_tool:ro \
   -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi:ro \
-  -v /etc/os-release:/etc/os-release:ro \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
-  -v cm-control:/run/catmonitor \
-  catmonitor-npu
-```
+  "$CATMONITOR_IMAGE"
 
-> 配置文件已打包在镜像中，默认无需挂载。如需自定义，参见[配置修改](#5-配置修改)。
-
-> NPU 环境专用参数：
-> - `--pid host` + `-v /:/host:ro`：共享宿主机 PID 命名空间读取 `/proc/1/mounts`，挂载根文件系统给 statfs 访问
-> - `-v /usr/local/Ascend/driver` + `-v /usr/local/Ascend/nnae` + `-v /usr/local/Ascend/ascend-toolkit`：挂载驱动
-> - `-v /usr/bin/hccn_tool` + `-v /usr/local/sbin/npu-smi`：挂载 NPU 命令行工具（driver 安装到宿主机系统路径，不在 Ascend 目录下）
-> - `-v /etc/os-release:/etc/os-release:ro`：获取宿主机 OS 信息
-> - `-e LD_LIBRARY_PATH`：让 glibc 找到 libdcmi.so、libc_sec.so、libmmpa.so 等依赖
-> - `--privileged` 已包含 NPU 设备访问权限，无需额外 `--device`
-
-#### 步骤 3：等待首次采集（6-9 秒）
-
-```bash
-docker exec catmonitor ls /var/lib/catmonitor/snapshot
-# 预期：snapshot.json + snapshot_cpu.json + snapshot_npu.json + ...
-```
-
-#### 步骤 4：启动 web
-
-```bash
-docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
+docker run -d --name catmonitor-web --network host \
+  --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  -v cm-control:/run/catmonitor:ro \
-  catmonitor-npu \
+  "$CATMONITOR_IMAGE" \
   -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
-  -control-socket=/run/catmonitor/control.sock
-```
+  -config=/etc/catmonitor/catmonitor.yaml
 
-#### 步骤 5：启动 dfee
-
-```bash
-# 基础模式（仅 SPA + API）
-docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-npu \
-  -snapshot-dir /var/lib/catmonitor/snapshot
-
-# 含 Prometheus exporter + CSV 输出
-docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
+docker run -d --name catmonitor-dfee --network host \
+  --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
   -v cm-csv:/var/lib/catmonitor/csv \
-  catmonitor-npu \
-  -snapshot-dir /var/lib/catmonitor/snapshot \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
   -exporter=enabled \
   -exporter-port=9333 \
-  -csv=enabled \
-  -csv-dir=/var/lib/catmonitor/csv \
-  -csv-interval=10s
-```
-
-### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
-
-```bash
-# 基础模式
-docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-npu \
-  -snapshot-dir /var/lib/catmonitor/snapshot
-
-# 含 exporter + CSV
-docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
-  -v /var/lib/catmonitor/csv:/var/lib/catmonitor/csv \
-  catmonitor-npu \
-  -snapshot-dir /var/lib/catmonitor/snapshot \
-  -exporter=enabled \
-  -exporter-port=9333 \
-  -csv=enabled \
+  -csv=disabled \
   -csv-dir=/var/lib/catmonitor/csv
 ```
 
----
+```bash
+docker exec catmonitor test -s /var/lib/catmonitor/snapshot/snapshot_npu.json
+curl -fsS http://127.0.0.1:19320/-/ready
+curl -fsS http://127.0.0.1:19322/ >/dev/null
+curl -fsS http://127.0.0.1:19323/ >/dev/null
+```
 
-## 3. NPU 环境配置
+Web 中 Stress 配置会显示为未启用；Monitoring 页面不受影响。旧 Monitoring YAML
+可以完全没有顶层 `stress:` 段。
 
-### 设备挂载
+## 4. 生成 Stress 节点配置
 
-`--privileged` 模式下容器自动获得所有设备访问权限（包括 `/dev/davinci*`、`/dev/ipmi0`、`/dev/sd*`），无需额外 `--device`。
-
-如需收紧权限（不用 `--privileged`），可以改为：
+先创建管理员目录：
 
 ```bash
-docker run -d --name catmonitor \
-  --device /dev/davinci0 \
-  --device /dev/davinci_manager \
-  --device /dev/ipmi0 \
-  --cap-add SYS_ADMIN \
-  ...其他参数...
+sudo install -d -m 0750 \
+  /etc/catmonitor/generated-stress \
+  /var/lib/catmonitor/stress \
+  /var/lib/catmonitor/stress/npu-burn-output
 ```
 
-按实际设备调整，`ls /dev/davinci*` 查看可用设备。
-
-### 权限
-
-容器需要 `--privileged` 模式以访问：
-- `/dev/ipmi0`（ipmitool）
-- `/dev/sd*`（smartctl）
-- `/dev/davinci*`（NPU DCMI）
-- `/proc`、`/sys`（系统指标）
-- SMBIOS（dmidecode）
-
-### 运行时库依赖
-
-`libdcmi.so` 是 glibc 链接的，运行时需要：
-- 挂载 `/usr/local/Ascend/driver`（libdcmi.so 本体）
-- 挂载 `/usr/local/Ascend/nnae`（libc_sec.so、libmmpa.so 依赖）
-- 挂载 `/usr/local/Ascend/ascend-toolkit`（toolkit 库）
-- 设置 `LD_LIBRARY_PATH` 指向四个库目录
-
----
-
-## 4. 容器化可靠性压测
-
-Stress V2 使用 daemon-owned Controller 和两个可选 workload profile：
-
-```text
-stress-cpu → STREAM / HPL / HPCG workload image
-stress-npu → Ascend NPU Burn workload image
-```
-
-daemon 通过固定 `catmonitor-stress-exec` 协议调用 workload 容器。Web 与 DFeE
-不挂 Docker Socket；同一 Web 进程只监听 `:19322`，同时提供监控、Stress 查询、Run 与 Cancel。
-
-先生成节点配置和设备 override：
+### 4.1 CPU-only
 
 ```bash
 sudo bash scripts/stress/generate_stress_deployment.sh \
   --output-dir /etc/catmonitor/generated-stress \
-  --cpu-image <cpu-workload-image> \
-  --npu-image <npu-workload-image> \
-  --npu-device-nodes 2,5 \
-  --npu-burn-device 0,1 \
-  --npu-chip-generation A2 \
+  --control-image "$CATMONITOR_IMAGE" \
+  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
   --enable-web \
   --force
 ```
 
-再启动：
+### 4.2 NPU-only
+
+A2 v0.3.6 默认使用全部由 PCI topology 验证通过的 NPU Burn logical devices：
 
 ```bash
-CATMONITOR_IMAGE=catmonitor-npu \
-docker compose \
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/generated-stress \
+  --control-image "$CATMONITOR_IMAGE" \
+  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
+  --npu-burn-device all \
+  --npu-chip-generation A2 \
+  --npu-runtime runc \
+  --enable-web \
+  --force
+```
+
+不要把宿主机稀疏 device node ID 当成 NPU Burn logical ID。generator 自动 identity-map
+实际 `/dev/davinciN`；workload 再通过容器内 PCI topology 建立 logical namespace。
+
+### 4.3 CPU + NPU Full
+
+```bash
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/generated-stress \
+  --control-image "$CATMONITOR_IMAGE" \
+  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
+  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
+  --npu-burn-device all \
+  --npu-chip-generation A2 \
+  --npu-runtime runc \
+  --enable-web \
+  --force
+```
+
+## 5. 启动
+
+### 5.1 CPU-only（4 个服务）
+
+```bash
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress \
+  docker compose -p catmonitor \
   -f docker/docker-compose.yml \
   -f docker/docker-compose.npu.yml \
   -f docker/docker-compose.stress.yml \
   -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
-  --profile stress-cpu --profile stress-npu up -d
+  --profile stress-cpu up -d
 ```
 
-验证：
+### 5.2 NPU-only（4 个服务）
 
 ```bash
-docker exec catmonitor catmonitor stress doctor -o table
-docker exec catmonitor catmonitor stress run --bench stream -o table
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-npu up -d
 ```
 
-完整镜像构建、A2/A3 device namespace、CLI/Web 与验收步骤见
-[`features/stress/STRESS_USER_GUIDE.md`](../features/stress/STRESS_USER_GUIDE.md) 和
-[`STRESS_TEST_GUIDE.md`](../features/stress/STRESS_TEST_GUIDE.md)。
-
-## 5. 端口说明
-
-| 容器端口 | 服务 | 端点 |
-|---------|------|------|
-| 19320 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
-| 19321 | faultsub REST API（可选） | `/faultsub/events` 等 |
-| 19322 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
-| 19323 | dfee SPA | `/`、`/dfee/` |
-| 9333 | dfee Prometheus exporter | `/metrics` |
-
----
-
-## 6. 验证
+### 5.3 CPU + NPU Full（5 个服务）
 
 ```bash
-# daemon
-curl http://localhost:19320/-/healthy           # 200
-curl http://localhost:19320/metrics | grep npu    # NPU 指标
-
-# web
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19322/   # 200
-curl -s http://localhost:19322/api/snapshot | head -c 120           # JSON
-
-# dfee
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19323/   # 200
-curl -s http://localhost:19323/api/dfee | head -c 120           # dfee API
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu \
+  --profile stress-npu \
+  up -d
 ```
 
----
+## 6. 验证与运行
 
-## 7. 配置修改
-
-### 挂载自定义配置
-
-容器内配置文件位置：
-
-| 文件 | 容器路径 | 用途 |
-|------|---------|------|
-| `catmonitor.yaml` | `/etc/catmonitor/catmonitor.yaml` | 主配置（采集器/端口/功能开关等） |
-| `metrics.yaml` | `/etc/catmonitor/metrics.yaml` | 指标目录（优先级/单位/采集间隔） |
-| `features/web/metrics.yaml` | `/features/web/metrics.yaml` | web 特性指标范围 |
-| `features/dfee/metrics.yaml` | `/features/dfee/metrics.yaml` | dfee 特性指标范围 |
-| `features/health/metrics.yaml` | `/features/health/metrics.yaml` | 健康评估指标范围 |
-
-以上文件均已打包在镜像中，挂载自定义文件覆盖即可：
+以 Full 为例：
 
 ```bash
-docker run -d --name catmonitor --privileged --network host \
-  -v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
-  -v /path/to/my-metrics.yaml:/etc/catmonitor/metrics.yaml:ro \
-  ...其他参数...
-  catmonitor-npu
+docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu \
+  --profile stress-npu \
+  ps
 ```
 
-### 开启 faultsub（故障订阅推送）
-
-faultsub 是 NPU 故障检测与推送机制，运行在 daemon 内部。开启后，daemon 周期性采集 NPU 指标时自动检测故障，并推送给已订阅的 webhook。
-
-**配置**：
-
-```yaml
-faultsub:
-  enabled: true
-  rest_addr: ":19321"           # REST API 监听地址
-  webhook_timeout: 5s           # webhook 推送超时
-  webhook_retry: 1             # 失败重试次数
-  event_buffer: 1024           # 事件环形缓冲区大小
-  defaults:
-    debounce_ms: 0             # 订阅去抖窗口（毫秒）
-    min_severity: "warning"    # 最低推送级别
-  rules:                       # 故障检测规则开关
-    card_drop: true            # NPU 掉卡
-    npu_health: true           # NPU 健康状态异常
-    npu_error_code: true       # NPU 错误码
-    hbm_uce: true              # HBM 不可纠正错误
-    ddr_uce: true              # DDR 不可纠正错误
-    roce_link_down: true      # RoCE 链路断开
-    driver_unhealthy: false   # 驱动不健康
-```
-
-**REST API 端点**（端口 19321）：
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/-/healthy` | 健康检查 |
-| GET | `/-/ready` | 就绪检查 |
-| GET | `/faultsub/types` | 支持的故障类型列表 |
-| GET | `/faultsub/snapshot` | 当前故障快照 |
-| GET | `/faultsub/events` | 最近事件列表 |
-| POST | `/faultsub/events` | 手动注入事件 |
-| POST | `/faultsub/subscriptions` | 创建 webhook 订阅 |
-| GET | `/faultsub/subscriptions` | 列出所有订阅 |
-| GET | `/faultsub/subscriptions/{id}` | 查询指定订阅 |
-| DELETE | `/faultsub/subscriptions/{id}` | 删除订阅 |
-
-**使用示例**：
+运行 doctor，必须在执行真实负载前确认 CPU/NPU 预检通过：
 
 ```bash
-# 创建 webhook 订阅（故障事件推送到指定 URL）
-curl -X POST http://localhost:19321/faultsub/subscriptions \
-  -H "Content-Type: application/json" \
-  -d '{"webhook_url": "http://my-fault-manager:8080/fault", "types": ["card_drop", "npu_health"]}'
+SERVICE_ID=$(docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.npu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu \
+  --profile stress-npu ps -q catmonitor)
 
-# 查看当前故障
-curl http://localhost:19321/faultsub/snapshot
-
-# 查看最近事件
-curl http://localhost:19321/faultsub/events
-
-# 列出所有订阅
-curl http://localhost:19321/faultsub/subscriptions
+docker exec "$SERVICE_ID" catmonitor stress doctor \
+  -c /etc/catmonitor/catmonitor.yaml -o table
 ```
 
-**前提**：daemon 容器需要 `--privileged` 模式（已包含 NPU 设备访问），否则故障检测无数据来源。
-
-### 开启 straggler_output
-
-```yaml
-straggler_output:
-  enabled: true
-  data_dir: /var/lib/catmonitor/straggler
-```
-
-### 调整采集优先级
-
-```yaml
-collection:
-  min_priority: low      # low(全采) | medium(跳过Low) | high(只采High)
-```
-
----
-
-## 8. 数据卷说明
-
-| Volume | 写入方 | 读取方 | 内容 |
-|--------|--------|--------|------|
-| `cm-snapshot` | daemon | web, dfee | snapshot.json + snapshot_*.json |
-| `cm-data` | daemon | — | JSONL 历史数据 |
-| `cm-straggler` | daemon | — | straggler KPI 文件（可选） |
-| `cm-csv` | dfee | — | dfee CSV 输出（可选，`-csv=enabled` 时） |
-
----
-
-## 9. 停止与清理
+确认设备空闲后再运行：
 
 ```bash
-# 停止全部容器
-docker rm -f catmonitor catmonitor-web catmonitor-dfee
-
-# 清理数据卷（保留数据则跳过）
-docker volume rm cm-snapshot cm-data cm-csv
-
-# 删除镜像
-docker rmi catmonitor-npu
+docker exec "$SERVICE_ID" catmonitor stress run --bench stream -o table
+docker exec "$SERVICE_ID" catmonitor stress run --bench npu_burn -o table
+docker exec "$SERVICE_ID" catmonitor stress status -o table
 ```
 
----
-
-## 10. 启动顺序
-
-1. **先启动 daemon**（snapshot 生产者），等待 6-9 秒完成首次采集
-2. **后启动 web/dfee**（snapshot 消费者），snapshot 就绪后即有数据
-
-web/dfee 可在任意时刻拉起，只要 snapshot 已存在就有数据。若 snapshot 尚未就绪，web/dfee 返回 503，自动重试即可。
-
----
-
-## 11. 常见问题
-
-### Q: 构建失败，提示找不到 dcmi.h 或 GLIBC 符号
-
-NPU 镜像必须使用 Debian（glibc）基础镜像，不能用 Alpine（musl libc）。
-
-1. 确保构建主机上已安装 Ascend driver：`ls /usr/local/Ascend/driver/include/dcmi_interface_api.h`
-2. 确保使用 `build.sh` 而非手动 `docker build`（脚本会自动选择 `golang:1.23` + `debian:bookworm-slim`）
-3. 如果 driver 安装在其他路径，修改 `docker/build.sh` 中的 `DRIVER_PATH`
-
-### Q: 容器内 ipmitool 报错 "Unable to open /dev/ipmi0"
-
-确保宿主机已加载 ipmi 内核模块：
+NPU Burn 会占用所有选定设备。取消：
 
 ```bash
-sudo modprobe ipmi_devintf
-sudo modprobe ipmi_si
-ls /dev/ipmi0
+docker exec "$SERVICE_ID" catmonitor stress cancel --job <job-id>
+docker exec catmonitor-stress-npu pgrep -af 'ascend_npu_burn|python' || true
 ```
 
-### Q: daemon 容器报 "libc_sec.so: cannot open shared object file"
+第二条无 workload 输出才表示取消清理完成。
 
-需要挂载 nnae 和 toolkit 目录并设置完整 LD_LIBRARY_PATH：
+Web：
 
-```bash
--v /usr/local/Ascend/nnae:/usr/local/Ascend/nnae:ro \
--v /usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit:ro \
--e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64
+```text
+http://<node-address>:19322/
 ```
 
-### Q: dfee/web 容器输出 "snapshot not ready"
+这是唯一 Web listener，同时提供监控、Run、Cancel 与 History。Web/DFeE 不挂
+Docker Socket。当前 operator API 尚无认证/RBAC，只应向可信管理网络开放。
 
-daemon 尚未完成首次采集。等待 6-9 秒后重试。检查 snapshot 是否已生成：
+## 7. 停止和升级
 
-```bash
-docker exec catmonitor ls /var/lib/catmonitor/snapshot/
+使用与启动时相同的 Compose 文件和 profile，将 `up -d` 替换为 `stop`。恢复使用
+`start`；删除容器使用 `down`。需要保留 snapshot 和 Stress history 时不要执行
+`down -v`。
+
+升级到 v0.3.6：
+
+```text
+OLD_STRESS_YAML_COMPATIBLE=false
 ```
 
-### Q: NPU 指标为空
+必须重新运行 generator，不能复制旧 `script_path`、固定 NPU 容器、CPU Runner socket
+或独立 Stress Web 配置。
 
-1. 确认使用了 `catmonitor-npu` 镜像（不是 generic）
-2. 确认 driver + nnae + toolkit 已挂载 + `LD_LIBRARY_PATH` 已设置
-3. 确认 `hccn_tool` 和 `npu-smi` 已挂载（driver 安装到宿主机 `/usr/bin` 和 `/usr/local/sbin`，不在 Ascend 目录下）
-4. 检查 daemon 日志：`docker logs catmonitor`
+## 8. 常见问题
 
-### Q: Web 仪表盘只显示 eth0，MAC 地址相同
-
-daemon 容器未使用 `--network host`，容器有自己的网络命名空间，`/sys/class/net/` 只显示虚拟网卡。加 `--network host` 重启 daemon 即可。
-
-### Q: docker build 时 apt-get 很慢
-
-Dockerfile 默认使用 Debian 官方源。管理员可临时设置代理：
-
-```bash
-export HTTP_PROXY=http://proxy.example.com:3128
-export HTTPS_PROXY=http://proxy.example.com:3128
-./docker/build.sh npu
-unset HTTP_PROXY HTTPS_PROXY
-```
-
-CPU Runner clean build 还可显式使用 `--debian-mirror https://mirror.example.com`。
-
----
-
-## 12. dfee Prometheus Exporter + Grafana
-
-dfee 支持独立的 Prometheus exporter（`:9333`），输出 CPU/内存/磁盘/网络/NPU/机箱指标的 `node_*`/`dsmi_*`/`ipmi_*` 格式，可直接接入 Prometheus + Grafana。
-
-### dfee 参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `-addr` | `:19323` | dfee SPA + API 监听地址 |
-| `-snapshot-dir` | `/var/lib/catmonitor/snapshot` | daemon snapshot 目录 |
-| `-exporter` | `disabled` | `enabled` 开启 Prometheus exporter |
-| `-exporter-port` | `9333` | exporter 监听端口 |
-| `-device` | `""` | NPU 设备过滤（如 `0,1`），空=全部 |
-| `-csv` | `disabled` | `enabled` 开启 CSV 输出 |
-| `-csv-dir` | `/var/lib/catmonitor/csv` | CSV 输出目录 |
-| `-csv-interval` | `10s` | CSV 写入间隔 |
-| `-max-runtime` | `0` | 最大运行时长（如 `10m`、`1h`），0=永久 |
-
-### Docker Compose
-
-`docker-compose.yml` 中 dfee 服务已默认开启 exporter。如需关闭，将 `-exporter=enabled` 改为 `-exporter=disabled`。
-
-### 手动 Docker 启动
-
-```bash
-docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  -v cm-csv:/var/lib/catmonitor/csv \
-  catmonitor-npu \
-  -snapshot-dir /var/lib/catmonitor/snapshot \
-  -exporter=enabled \
-  -exporter-port=9333 \
-  -csv=enabled \
-  -csv-dir=/var/lib/catmonitor/csv
-```
-
-### 安装 Prometheus + Grafana
-
-```bash
-# 1. Prometheus
-docker pull prom/prometheus
-
-mkdir -p $PWD/prometheus/data
-touch $PWD/prometheus/prometheus.yml
-chown -R 65534:65534 $PWD/prometheus/data
-chown 65534:65534 $PWD/prometheus/prometheus.yml
-
-docker run -d \
-  --name prometheus \
-  -v $PWD/prometheus/data:/prometheus \
-  -v $PWD/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
-  -p 9090:9090 \
-  prom/prometheus
-
-# 编辑配置（targets 改为 dfee exporter 地址）
-# vim $PWD/prometheus/prometheus.yml
-# scrape_configs:
-#   - job_name: "CATMonitor"
-#     scrape_interval: 2s
-#     static_configs:
-#       - targets: ["<dfee_exporter_ip>:9333"]
-#         labels:
-#           instance: <dfee_exporter_ip>
-
-# 2. Grafana
-docker pull grafana/grafana
-
-mkdir $PWD/grafana-storage
-chown -R 472:472 $PWD/grafana-storage
-
-docker run -d \
-  --name=grafana \
-  --restart=always \
-  -p 3000:3000 \
-  -v $PWD/grafana-storage:/var/lib/grafana \
-  grafana/grafana
-```
-
-### 导入 Grafana Dashboard
-
-1. 浏览器访问 `http://localhost:3000`（默认账号 `admin / admin`）
-2. **Configuration → Data Sources → Add data source → Prometheus**
-3. URL 填入 `http://<prometheus_ip>:9090`，点击 **Save & Test**
-4. **Dashboards → Import → Upload JSON file**
-5. 选择 `features/dfee/grafana-dashboard.json`
-6. 在导入页面选择 Prometheus 数据源，点击 **Import**
-
-Dashboard 包含 24 个面板（CPU/内存/网络/磁盘/NPU/机箱），支持 `instance`、`job`、`npu_id`、`chip_id` 变量过滤。
-
-> 完整使用文档见 `features/dfee/USAGE.md`。
+- NPU Monitoring 为空：检查 `npu-smi info`、driver/toolkit 挂载和 daemon 日志。
+- NPU Burn unavailable：执行 doctor，核对 CANN、torch_npu、lspci 与 device count。
+- 稀疏设备映射错误：不要手写连续 `0..N-1` host node，默认让 generator 发现。
+- `No available device`：检查容器内 `lspci -D -d 19e5:` 与 logical topology。
+- CANN source 失败：NPU workload 镜像必须与实际 CANN/torch_npu profile 匹配。
+- Web snapshot 未就绪：先检查 `19320/-/ready`，不要另起第二个 Web。
+- Registry 不可达：离线传输同一 v0.3.6 镜像；不要替换成旧 a2-r1 镜像。

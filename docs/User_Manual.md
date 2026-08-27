@@ -125,15 +125,18 @@ health:
 stress:
   enabled: false
   web_enabled: false
-  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  control_socket: /run/catmonitor/control.sock
   report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
   benchmarks:
-    stream: { enabled: false, timeout: 1m }
-    hpl: { enabled: false, timeout: 2h }
-    hpcg: { enabled: false, result_dir: "", timeout: 3m }
-    npu_burn: { enabled: false, timeout: 30m }
-
+    stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
+    hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
+    hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
 collection:
   min_priority: medium     # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 

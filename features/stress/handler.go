@@ -63,11 +63,24 @@ func noCache(next http.Handler) http.Handler {
 func (h *WebHandler) config(w http.ResponseWriter, r *http.Request) {
 	view, err := h.client.Config(r.Context())
 	if err != nil {
-		h.proxyError(w, err)
+		// A missing daemon control socket is the normal Monitoring-only state.
+		// Keep the shared Web UI usable and make the capability explicitly
+		// unavailable; mutation endpoints still fail closed with 503.
+		h.logger.Debug("stress controller unavailable", "error", err)
+		writeJSON(w, map[string]any{
+			"enabled": false, "available": false,
+			"feature_enabled": false, "web_enabled": false,
+			"loopback": isLoopback(h.listenAddr), "shared_report": false,
+			"platform": runtime.GOOS, "executor": "",
+			"operator": true, "security_debt_web_operator_auth": true,
+			"default_benchmarks": []string{}, "benchmarks": []any{},
+			"message": "Stress controller is not enabled",
+		})
 		return
 	}
 	writeJSON(w, map[string]any{
 		"enabled":         runtime.GOOS == "linux" && view.Enabled && view.WebEnabled,
+		"available":       true,
 		"feature_enabled": view.FeatureEnabled, "web_enabled": view.WebEnabled,
 		"loopback": isLoopback(h.listenAddr), "shared_report": view.SharedReport,
 		"platform": view.Platform, "executor": view.Executor,
@@ -167,7 +180,7 @@ func (h *WebHandler) allowRequest(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (h *WebHandler) proxyError(w http.ResponseWriter, err error) {
-	status := http.StatusBadGateway
+	status := http.StatusServiceUnavailable
 	if api, ok := err.(*ControlAPIError); ok {
 		status = api.StatusCode
 	}

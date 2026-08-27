@@ -1,4 +1,5 @@
 .PHONY: all build test test-verbose test-coverage test-stress test-stress-ut \
+	test-monitoring-compat \
 	test-stress-race test-stress-e2e test-stress-build \
 	test-stress-container-e2e \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
@@ -46,7 +47,10 @@ test-coverage:
 # package-local Go unit/component tests, hermetic build/deployment fixtures,
 # and a Linux binary-level CLI/Web end-to-end test. Real benchmark performance
 # and NPU workload execution remain explicit hardware acceptance gates.
-test-stress: test-stress-ut test-stress-build test-stress-e2e
+test-stress: test-monitoring-compat test-stress-ut test-stress-build test-stress-e2e
+
+test-monitoring-compat:
+	GO_BIN="$(GO)" bash scripts/stress/tests/monitoring_compatibility_test.sh
 
 test-stress-ut:
 	$(GO) test ./features/stress/... ./features/web ./internal/config

@@ -10,6 +10,12 @@ import (
 // ValidateConfig enforces the daemon-owned execution boundary before the
 // control socket starts. A run request can select only bindings accepted here.
 func ValidateConfig(cfg Config) error {
+	// Monitoring-only deployments do not instantiate a Stress Controller or
+	// executor. Ignore legacy/partial execution fields while the feature is
+	// disabled so existing monitoring YAML remains loadable without Docker.
+	if !cfg.Enabled {
+		return nil
+	}
 	if cfg.ControlSocket == "" || !filepath.IsAbs(cfg.ControlSocket) {
 		return errors.New("stress.control_socket must be an absolute path")
 	}
@@ -48,20 +54,18 @@ func ValidateConfig(cfg Config) error {
 		}
 	}
 
-	if cfg.Enabled {
-		if len(cfg.DefaultBenchmarks) == 0 {
-			return errors.New("stress.default_benchmarks must not be empty when stress is enabled")
+	if len(cfg.DefaultBenchmarks) == 0 {
+		return errors.New("stress.default_benchmarks must not be empty when stress is enabled")
+	}
+	seen := make(map[string]bool, len(cfg.DefaultBenchmarks))
+	for _, name := range cfg.DefaultBenchmarks {
+		if seen[name] {
+			return fmt.Errorf("stress.default_benchmarks contains duplicate %q", name)
 		}
-		seen := make(map[string]bool, len(cfg.DefaultBenchmarks))
-		for _, name := range cfg.DefaultBenchmarks {
-			if seen[name] {
-				return fmt.Errorf("stress.default_benchmarks contains duplicate %q", name)
-			}
-			seen[name] = true
-			benchmark, ok := cfg.Benchmarks[name]
-			if !ok || !benchmark.Enabled {
-				return fmt.Errorf("stress default benchmark %q is not enabled", name)
-			}
+		seen[name] = true
+		benchmark, ok := cfg.Benchmarks[name]
+		if !ok || !benchmark.Enabled {
+			return fmt.Errorf("stress default benchmark %q is not enabled", name)
 		}
 	}
 	return nil

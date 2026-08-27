@@ -8,8 +8,8 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 说明 |
 |------|------|
-| 版本号 | v0.3.5 |
-| 发布时间 | 2026-08-25 |
+| 版本号 | v0.3.6（候选） |
+| 发布时间 | 候选，未发布 |
 | 平台支持 | Linux (x86_64), Windows (x86_64) |
 | 许可证 | Apache-2.0（见 [LICENSE](LICENSE)） |
 
@@ -81,7 +81,7 @@ CANN/torch_npu runtime 与 topology 所需 `pciutils/lspci`。Control 镜像不�
 benchmark runtime。
 
 CLI 与 Web 都通过 `/run/catmonitor/control.sock` 访问 daemon；daemon 再通过固定
-`/usr/local/bin/catmonitor-stress-exec` 协议调用 CPU/NPU 容器。Web 和 DFeE 不挂 Docker Socket。唯一 Web 入口 `:19322` 同时提供监控、Stress 报告/history、Run 与 Cancel；当前暂未提供 Web operator 认证/RBAC。
+`/usr/local/bin/catmonitor-stress-exec` 协议调用 CPU/NPU 容器。Web 和 DFeE 不挂 Docker Socket。唯一 Web 入口 `:19322` 同时提供监控、Stress 报告/history、Run 与 Cancel；当前暂未提供 Web operator 认证/RBAC，启用 Stress 时不得将该端口直接暴露到不可信网络。
 
 完成镜像构建和节点 deployment 生成后：
 
