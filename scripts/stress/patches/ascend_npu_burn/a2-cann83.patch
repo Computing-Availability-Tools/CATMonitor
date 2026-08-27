@@ -48,17 +48,7 @@
  import subprocess
  from collections import defaultdict
  from dataclasses import dataclass, field
-@@ -43,6 +44,9 @@ def _find_command_path(cmd: str) -> Optional[str]:
- 
- 
- def get_numa_configs():
-+    container_device_count = int(os.getenv("CATMONITOR_NPU_DEVICE_COUNT", "0"))
-+    if container_device_count > 0:
-+        return [list(range(os.cpu_count() or 1))]
-     # 查找lscpu命令路径
-     lscpu_path = _find_command_path('lscpu') or '/usr/bin/lscpu'  # 使用默认路径作为备选
- 
-@@ -183,11 +187,15 @@ def get_npu_numa_topology():
+@@ -183,11 +184,15 @@ def get_npu_numa_topology():
  
      except Exception as e:
          logger.warning(f"Could not detect NPU topology automatically: {e}")

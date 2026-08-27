@@ -190,6 +190,8 @@ case "${1-}" in
             printf 'proxy-debug=%s\n' "${HTTP_PROXY-}"
         fi
         cp "$context/source/ascend_npu_burn/npu_burn.py" "$FAKE_DOCKER_ROOT/context-npu-burn.py"
+        [ ! -f "$context/source/ascend_npu_burn/common/utils.py" ] || \
+            cp "$context/source/ascend_npu_burn/common/utils.py" "$FAKE_DOCKER_ROOT/context-utils.py"
         cp "$context/source/README.md" "$FAKE_DOCKER_ROOT/context-readme.md" 2>/dev/null || true
         selected_builder_env=$(cat "$FAKE_DOCKER_ROOT/builder-ascend-env-override")
         selected_runtime_env=$(cat "$FAKE_DOCKER_ROOT/runtime-ascend-env-override")
@@ -582,6 +584,8 @@ bash "$BUILD_SCRIPT" \
     --build-driver-lib-dir "$A2_DRIVER_LIB" \
     --build-root "$A2_PATCH_ROOT"
 assert_contains "$FAKE_DOCKER_ROOT/context-npu-burn.py" 'choices=["A2", "A3", "A5"]'
+assert_contains "$FAKE_DOCKER_ROOT/context-utils.py" 'NUMA node{n_id} CPU(s)'
+assert_not_contains "$FAKE_DOCKER_ROOT/context-utils.py" 'return [list(range(os.cpu_count() or 1))]'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"profile":"a2-cann83"'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" 'a2-cann83.patch'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"build_driver":{"injected":true'
