@@ -800,6 +800,8 @@ assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_bur
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'import ascend_npu_burn.custom_ops.custom_ops_lib'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'NPU_BURN_LOG_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log'
+assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" '"$HOME/.ascend_npu_burn/log"'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_RUNTIME_PCIUTILS=PASS'
 assert_contains "$REPO_ROOT/docker/stress/npu/Dockerfile" 'CATMONITOR_PCIUTILS_SOURCE='

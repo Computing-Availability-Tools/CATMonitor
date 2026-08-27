@@ -210,7 +210,9 @@ docker compose ... --profile stress-cpu --profile stress-npu up -d
 docker exec catmonitor catmonitor stress doctor -o table
 ```
 
-必须 4/4：STREAM、HPL、HPCG、NPU Burn。
+必须 4/4：STREAM、HPL、HPCG、NPU Burn。NPU profile 中的
+output_directory 与 log_directory 资产都必须显示为可写；前者保存 CSV，
+后者应来自限额 tmpfs。
 
 ### 8.4 Workload 顺序
 

@@ -188,6 +188,10 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --force
 ```
 
+Canonical Compose 会把 NPU Burn CSV 输出目录挂为持久卷，并把
+.ascend_npu_burn/log 挂为 64 MiB 的临时可写目录；不要删除该日志挂载，
+否则只读 workload 容器会在启动实际算子前失败。
+
 ### 5.3 CPU + NPU
 
 在 5.2 命令中再加入以下参数即可同时生成 CPU workload profile：

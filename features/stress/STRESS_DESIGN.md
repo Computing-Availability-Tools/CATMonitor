@@ -153,7 +153,9 @@ shim 负责：
 - 统一 result envelope。
 
 Web 请求永远不能传 command、可执行路径、环境变量或任意 shell 参数。
-运行路径和资源规模来自管理员生成并挂入容器的只读 profile。
+运行路径和资源规模来自管理员生成并挂入容器的只读 profile。NPU workload
+容器保持只读根文件系统；CSV 输出目录使用持久卷，upstream NPU Burn 日志目录使用
+独立、限额的可写 tmpfs，两者都必须通过无副作用的 writable-mount 预检。
 
 ## 4. Plugin 协议
 

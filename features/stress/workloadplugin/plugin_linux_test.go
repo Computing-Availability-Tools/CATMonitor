@@ -56,6 +56,61 @@ func TestNPUTopologyMapsSparseDeviceNodesToContiguousLogicalIDs(t *testing.T) {
 	}
 }
 
+func TestNPUBurnDescribeRequiresWritableRuntimeDirectories(t *testing.T) {
+	root := t.TempDir()
+	executable := executableFixture(t, root, "npu-burn", "#!/bin/sh\nexit 0\n")
+	lspci := executableFixture(t, root, "lspci", "#!/bin/sh\nprintf '%s\\n' '0000:01:00.0 Processing accelerators: Huawei Device d803'\n")
+	deviceRoot := filepath.Join(root, "dev")
+	outputDir := filepath.Join(root, "output")
+	logDir := filepath.Join(root, "log")
+	for _, path := range []string{deviceRoot, outputDir} {
+		if err := os.Mkdir(path, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(deviceRoot, "davinci2"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("NPU_BURN_EXECUTABLE", executable)
+	t.Setenv("NPU_BURN_OUTPUT_DIR", outputDir)
+	t.Setenv("NPU_BURN_LOG_DIR", logDir)
+	t.Setenv("NPU_BURN_INTERNAL_TIMEOUT_SECONDS", "300")
+	t.Setenv("NPU_BURN_DEVICE_ROOT", deviceRoot)
+	t.Setenv("NPU_BURN_DEVICE", "0")
+	t.Setenv("NPU_BURN_RUN_CASE", "matmul")
+	t.Setenv("NPU_BURN_GROUP", "")
+	t.Setenv("NPU_BURN_CHIP_GENERATION", "A2")
+	t.Setenv("CATMONITOR_LSPCI", lspci)
+
+	profile, err := Describe(context.Background(), "npu_burn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(profile.Preflight.Status) != "fail" {
+		t.Fatalf("missing log directory must fail preflight: %+v", profile.Preflight)
+	}
+	foundLogFailure := false
+	for _, asset := range profile.Assets {
+		if asset.Name == "log_directory" && string(asset.Status) == "fail" {
+			foundLogFailure = true
+		}
+	}
+	if !foundLogFailure {
+		t.Fatalf("missing log directory asset failure: %+v", profile.Assets)
+	}
+
+	if err := os.Mkdir(logDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	profile, err = Describe(context.Background(), "npu_burn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(profile.Preflight.Status) != "pass" {
+		t.Fatalf("writable runtime directories must pass preflight: %+v", profile)
+	}
+}
 func TestNPUSummaryRequiresCompletePass(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "npu_burn_results.csv")
 	data := "task,device,x,y,z,exetime,error,result\nmatmul,0,1,1,1,2.5,0,PASS\nmatmul,1,1,1,1,3.5,0,PASS\n"

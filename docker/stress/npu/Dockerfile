@@ -148,6 +148,7 @@ ENV HOME=/opt/catmonitor/npuburn-home \
     NPU_BURN_BACKEND=native \
     NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn \
     NPU_BURN_OUTPUT_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/output \
+    NPU_BURN_LOG_DIR=/opt/catmonitor/npuburn-home/.ascend_npu_burn/log \
     NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300
 
 SHELL ["/bin/bash", "-c"]
@@ -252,7 +253,9 @@ RUN set -euo pipefail; \
         --cann-version "$CATMONITOR_CANN_VERSION"; \
     runtime_package_version=$(python3 -c 'import importlib.metadata as metadata; print(metadata.version("ascend-npu-burn"))'); \
     printf 'CATMONITOR_RUNTIME_NPUBURN_PACKAGE_VERSION=%s\n' "$runtime_package_version"; \
-    install -d -m 0750 "$HOME/.ascend_npu_burn/output"
+    install -d -m 0750 \
+        "$HOME/.ascend_npu_burn/output" \
+        "$HOME/.ascend_npu_burn/log"
 
 # G. Revalidate the final image without importing the runtime command module or
 # touching NPU devices. The nonce prevents a cached layer from hiding markers

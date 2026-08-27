@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
@@ -241,7 +242,7 @@ func describeHPCG(ctx context.Context) *workloadapi.ExecutionProfile {
 }
 
 func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
-	executable, output := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR")
+	executable, output, logDir := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR")
 	seconds, secondsErr := positive("NPU_BURN_INTERNAL_TIMEOUT_SECONDS")
 	devices, nodes, topology, topologyMessage, topologyErr := npuTopology(ctx)
 	selector, workload := "run_case", env("NPU_BURN_RUN_CASE")
@@ -259,7 +260,11 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 	if generation := env("NPU_BURN_CHIP_GENERATION"); generation != "A2" && generation != "A3" && generation != "A5" {
 		failed++
 	}
-	assets := []workloadapi.AssetCheck{asset("executable", executable, "executable"), asset("output_directory", output, "directory")}
+	assets := []workloadapi.AssetCheck{
+		asset("executable", executable, "executable"),
+		writableAsset("output_directory", output),
+		writableAsset("log_directory", logDir),
+	}
 	deviceAsset := workloadapi.AssetCheck{Name: "logical_devices", Path: filepath.Join(envDefault("NPU_BURN_DEVICE_ROOT", "/dev"), "davinci[0-9]*"), Kind: "device_topology", Required: true, Status: workloadapi.CheckPass, Message: topologyMessage}
 	if topologyErr != nil {
 		deviceAsset.Status = workloadapi.CheckFail
@@ -270,7 +275,8 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 	params := []workloadapi.ProfileParameter{
 		parameter("backend", "Execution backend", "workload_container", ""), parameter("executable", "Executable", executable, ""),
 		parameter("output_mode", "Output mode", "upstream_default", ""), parameter("tool_output_directory", "Tool output directory", output, ""),
-		parameter("result_directory", "Result directory", output, ""), parameter("selector", "Workload selector", selector, ""), parameter("workload", "Run case / group", workload, ""),
+		parameter("result_directory", "Result directory", output, ""), parameter("log_directory", "Log directory", logDir, ""),
+		parameter("selector", "Workload selector", selector, ""), parameter("workload", "Run case / group", workload, ""),
 		parameter("devices", "NPU devices", env("NPU_BURN_DEVICE"), ""), parameter("device_namespace", "Device namespace", "npu_burn_logical", ""),
 		parameter("device_node_ids", "Visible /dev/davinci node IDs", strings.Join(nodes, ","), ""), parameter("available_devices", "Available logical devices", strings.Join(devices, ","), ""),
 		parameter("topology_source", "Topology source", "container_lspci", ""), parameter("pci_topology_devices", "PCI topology logical devices", strings.Join(topology, ","), ""),
@@ -281,11 +287,14 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 }
 
 func resolveNPUBurn() (Command, error) {
-	executable, output := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR")
+	executable, output, logDir := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR")
 	if err := executableFile("Ascend NPU Burn", executable); err != nil {
 		return Command{}, err
 	}
-	if err := directory("Ascend NPU Burn output directory", output); err != nil {
+	if err := writableDirectory("Ascend NPU Burn output directory", output); err != nil {
+		return Command{}, err
+	}
+	if err := writableDirectory("Ascend NPU Burn log directory", logDir); err != nil {
 		return Command{}, err
 	}
 	seconds, err := positive("NPU_BURN_INTERNAL_TIMEOUT_SECONDS")
@@ -380,6 +389,14 @@ func asset(name, path, kind string) workloadapi.AssetCheck {
 	}
 	return a
 }
+func writableAsset(name, path string) workloadapi.AssetCheck {
+	a := workloadapi.AssetCheck{Name: name, Path: path, Kind: "writable_directory", Required: true, Status: workloadapi.CheckPass, Message: "available and writable"}
+	if err := writableDirectory(name, path); err != nil {
+		a.Status = workloadapi.CheckFail
+		a.Message = err.Error()
+	}
+	return a
+}
 func failedAssets(assets []workloadapi.AssetCheck) int {
 	n := 0
 	for _, a := range assets {
@@ -437,6 +454,20 @@ func directory(name, path string) error {
 	i, e := os.Stat(path)
 	if e != nil || !i.IsDir() {
 		return fmt.Errorf("%s is unavailable: %s", name, path)
+	}
+	return nil
+}
+func writableDirectory(name, path string) error {
+	if err := directory(name, path); err != nil {
+		return err
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return fmt.Errorf("cannot inspect %s filesystem: %w", name, err)
+	}
+	const statfsReadOnly = 1 // Linux ST_RDONLY from statfs(2).
+	if stat.Flags&statfsReadOnly != 0 {
+		return fmt.Errorf("%s is on a read-only filesystem: %s", name, path)
 	}
 	return nil
 }
