@@ -6,7 +6,7 @@ const MANIFEST = {
   memory: { title: '内存', headline: 'memory_usage', headlineLabel: '内存使用率 (%)',
             key: [ 'usage', 'swap_usage', {name:'fragmentation', max:true}, 'oom_count' ] },
   disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '挂载点空间使用率最高 (%)',
-          key: [ 'space_usage', {name:'throughput', max:true}, {name:'iops', max:true} ] },
+          key: [ 'space_usage', {name:'throughput', sum:true}, {name:'iops', sum:true} ] },
   gpu: { title: 'GPU', headline: 'gpu_utilization', headlineLabel: 'GPU 使用率最高 (%)',
          key: [ {name:'utilization', avg:true}, {name:'memory_usage', max:true},
                 {name:'temperature', max:true}, {name:'power_draw', max:true} ] },
@@ -14,8 +14,8 @@ const MANIFEST = {
          key: [ {name:'utilization', avg:true}, {name:'memory_usage', max:true},
                 {name:'temperature', max:true}, {name:'power_draw', max:true} ] },
   network: { title: '网络', headline: null,
-             key: [ {name:'throughput', max:true}, {name:'packet_count', max:true},
-                    {name:'error_count', max:true} ] },
+             key: [ {name:'throughput', sum:true}, {name:'packet_count', sum:true},
+                    {name:'error_count', sum:true} ] },
   chassis: { title: '机箱', headline: null,
              key: [ 'power', 'inlet_temp', 'outlet_temp', {name:'fan_power', max:true} ] },
 };
@@ -1058,6 +1058,7 @@ function pickMetric(metrics, spec) {
   const prefer = typeof spec === 'string' ? null : spec.prefer;
   const wantMax = typeof spec === 'object' && spec.max;
   const wantAvg = typeof spec === 'object' && spec.avg;
+  const wantSum = typeof spec === 'object' && spec.sum;
   let first = null;
   let best = null, bestVal = -Infinity;
   let sum = 0, count = 0;
@@ -1068,17 +1069,19 @@ function pickMetric(metrics, spec) {
       let match = true;
       for (const k in prefer) { if ((m.labels || {})[k] !== prefer[k]) { match = false; break; } }
       if (match) {
-        if (!wantMax && !wantAvg) return m;
+        if (!wantMax && !wantAvg && !wantSum) return m;
         if (wantMax && m.value > bestVal) { bestVal = m.value; best = m; }
         if (wantAvg) { sum += m.value; count++; }
+        if (wantSum) { sum += m.value; count++; }
       }
     } else {
       if (wantMax && m.value > bestVal) { bestVal = m.value; best = m; }
       if (wantAvg) { sum += m.value; count++; }
+      if (wantSum) { sum += m.value; count++; }
     }
   }
   if (wantMax && best) return best;
-  if (wantAvg && count > 0) { first = Object.assign({}, first, {value: sum / count}); }
+  if ((wantAvg || wantSum) && count > 0) { first = Object.assign({}, first, {value: wantSum ? sum : sum / count}); }
   return first;
 }
 
@@ -1508,9 +1511,11 @@ function summaryCard(compKey, snap) {
       if (mm.name === headlineMetric) continue;
       const isMax = typeof spec === 'object' && spec.max;
       const isAvg = typeof spec === 'object' && spec.avg;
+      const isSum = typeof spec === 'object' && spec.sum;
       let label = METRIC_NAMES[compKey + ':' + mm.name] || METRIC_NAMES[mm.name] || mm.name;
       if (isMax) label += /温度|功耗|使用率/.test(label) ? '最高' : '最大';
       if (isAvg) label += '平均';
+      if (isSum) label += '合计';
       kv.appendChild(elText('div', 'k', label));
       const v = el('div', 'v');
       if (mm.name === 'smart_status') {
