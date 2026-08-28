@@ -259,9 +259,9 @@ func isUsefulSensor(name string) bool {
 	switch {
 	case l == "power" || l == "chassispower":
 		return true
-	case strings.Contains(l, "inlet") || (strings.Contains(l, "input") && strings.Contains(l, "temp")):
+	case l == "inlet temp":
 		return true
-	case strings.Contains(l, "outlet") || (strings.Contains(l, "output") && strings.Contains(l, "temp")):
+	case l == "outlet temp":
 		return true
 	case strings.HasPrefix(l, "fan") && strings.Contains(l, "speed"):
 		return true
