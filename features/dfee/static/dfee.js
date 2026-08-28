@@ -731,6 +731,24 @@ async function manualRefresh() {
 
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+document.getElementById('resetLayoutBtn').addEventListener('click', function() {
+  localStorage.removeItem('dfee-card-order');
+  localStorage.removeItem('dfee-card-size');
+  localStorage.removeItem('dfee-collapsed');
+  for (const sec of SECTIONS) {
+    if (sec.filterKey) localStorage.removeItem('dfee-filter-' + sec.filterKey);
+    if (sec.filterKey2) localStorage.removeItem('dfee-filter-' + sec.filterKey2);
+  }
+  cardOrders = {};
+  cardSizes = {};
+  filterSets = {};
+  hiddenSeries = {};
+  const charts = Object.values(chartDefs);
+  if (charts.length > 0) {
+    buildSections(charts);
+    renderAllCharts();
+  }
+});
 (async function init() {
   loadCardLayout();
   for (const sec of SECTIONS) {
