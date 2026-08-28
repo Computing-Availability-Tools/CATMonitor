@@ -36,7 +36,7 @@ type Sensor struct {
 const (
 	defaultCacheTTL    = 10 * time.Second
 	nameCacheTTL       = 24 * time.Hour
-	execTimeout        = 60 * time.Second
+	execTimeout        = 120 * time.Second
 	sensorGetTimeout   = 5 * time.Second
 	defaultCacheDir    = "/var/lib/catmonitor"
 	sensorMapFilename  = "ipmi_sensor_map.json"
