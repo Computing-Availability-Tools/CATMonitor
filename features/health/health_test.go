@@ -87,12 +87,13 @@ func TestEvaluateFullCPUOnlyWithIssues(t *testing.T) {
 
 	result := evaluator.Evaluate(metrics)
 
-	// CPU: 25 - 5 (usage>90% 20%) = 20
+	// No chassis metrics → chassis weight (10) redistributed to CPU (25→35)
+	// CPU: 35 - 7 (usage>90% 20% of 35) = 28
 	// Memory: 25 - 6.25 (usage>90% 25%) - 1.25 (ce_error 5%) = 17.5 → 17
 	// Disk: 30 - 4.5 (space>80% 15%) = 25.5 → 25
-	// Total: 20 + 17 + 25 = 62
-	if result.Score != 62 {
-		t.Errorf("expected total score 62, got %d", result.Score)
+	// Total: 28 + 17 + 25 = 70
+	if result.Score != 70 {
+		t.Errorf("expected total score 70, got %d", result.Score)
 	}
 	if result.Grade != "Warning" {
 		t.Errorf("expected grade 'Warning', got '%s'", result.Grade)
