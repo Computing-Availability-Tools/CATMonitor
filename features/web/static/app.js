@@ -17,8 +17,7 @@ const MANIFEST = {
              key: [ {name:'throughput', max:true}, {name:'packet_count', max:true},
                     {name:'error_count', max:true} ] },
   chassis: { title: '机箱', headline: null,
-             key: [ 'power', {name:'inlet_temp', max:true}, {name:'outlet_temp', max:true},
-                    {name:'fan_speed', avg:true}, {name:'fan_power', max:true} ] },
+             key: [ 'power', 'inlet_temp', 'outlet_temp', {name:'fan_power', max:true} ] },
 };
 
 const METRIC_NAMES = {
@@ -1509,7 +1508,7 @@ function summaryCard(compKey, snap) {
       if (mm.name === headlineMetric) continue;
       const isMax = typeof spec === 'object' && spec.max;
       const isAvg = typeof spec === 'object' && spec.avg;
-      let label = METRIC_NAMES[mm.name] || mm.name;
+      let label = METRIC_NAMES[compKey + ':' + mm.name] || METRIC_NAMES[mm.name] || mm.name;
       if (isMax) label += /温度|功耗|使用率/.test(label) ? '最高' : '最大';
       if (isAvg) label += '平均';
       kv.appendChild(elText('div', 'k', label));
