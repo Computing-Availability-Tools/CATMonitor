@@ -2,21 +2,23 @@
 const MANIFEST = {
   cpu: { title: 'CPU', headline: 'cpu_usage', headlineLabel: 'CPU 使用率 (%)',
          key: [ {name:'usage', prefer:{core:'total'}}, 'load_average', 'avg_freq',
-                'temperature', 'power', 'cpu_ce_errors', 'model_info' ] },
+                {name:'temperature', max:true}, {name:'power', max:true} ] },
   memory: { title: '内存', headline: 'memory_usage', headlineLabel: '内存使用率 (%)',
-            key: [ 'usage', 'swap_usage', 'saturation', 'fragmentation',
-                   'module_num', 'ecc_ce_errors', 'oom_count', 'page_faults' ] },
+            key: [ 'usage', 'swap_usage', {name:'fragmentation', max:true}, 'oom_count' ] },
   disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '挂载点空间使用率最高 (%)',
-          key: [ 'space_usage', 'throughput', 'iops', 'io_wait',
-                 'io_errors', 'smart_status' ] },
+          key: [ 'space_usage', {name:'throughput', max:true}, {name:'iops', max:true} ] },
   gpu: { title: 'GPU', headline: 'gpu_utilization', headlineLabel: 'GPU 使用率最高 (%)',
-         key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
+         key: [ {name:'utilization', avg:true}, {name:'memory_usage', max:true},
+                {name:'temperature', max:true}, {name:'power_draw', max:true} ] },
   npu: { title: 'NPU', headline: 'npu_utilization', headlineLabel: 'NPU 使用率最高 (%)',
-         key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
+         key: [ {name:'utilization', avg:true}, {name:'memory_usage', max:true},
+                {name:'temperature', max:true}, {name:'power_draw', max:true} ] },
   network: { title: '网络', headline: null,
-             key: [ 'throughput', 'packet_count', 'error_count', 'connection_count' ] },
+             key: [ {name:'throughput', max:true}, {name:'packet_count', max:true},
+                    {name:'error_count', max:true} ] },
   chassis: { title: '机箱', headline: null,
-             key: [ 'power', 'inlet_temp', 'outlet_temp', 'fan_speed', 'fan_power' ] },
+             key: [ 'power', {name:'inlet_temp', max:true}, {name:'outlet_temp', max:true},
+                    {name:'fan_speed', avg:true}, {name:'fan_power', max:true} ] },
 };
 
 const METRIC_NAMES = {
@@ -1055,16 +1057,29 @@ function metricsFor(snap, compKey) { return (snap.metrics || []).filter(m => m.c
 function pickMetric(metrics, spec) {
   const name = typeof spec === 'string' ? spec : spec.name;
   const prefer = typeof spec === 'string' ? null : spec.prefer;
+  const wantMax = typeof spec === 'object' && spec.max;
+  const wantAvg = typeof spec === 'object' && spec.avg;
   let first = null;
+  let best = null, bestVal = -Infinity;
+  let sum = 0, count = 0;
   for (const m of metrics) {
     if (m.name !== name) continue;
     if (!first) first = m;
     if (prefer) {
       let match = true;
       for (const k in prefer) { if ((m.labels || {})[k] !== prefer[k]) { match = false; break; } }
-      if (match) return m;
+      if (match) {
+        if (!wantMax && !wantAvg) return m;
+        if (wantMax && m.value > bestVal) { bestVal = m.value; best = m; }
+        if (wantAvg) { sum += m.value; count++; }
+      }
+    } else {
+      if (wantMax && m.value > bestVal) { bestVal = m.value; best = m; }
+      if (wantAvg) { sum += m.value; count++; }
     }
   }
+  if (wantMax && best) return best;
+  if (wantAvg && count > 0) { first = Object.assign({}, first, {value: sum / count}); }
   return first;
 }
 
@@ -1492,7 +1507,12 @@ function summaryCard(compKey, snap) {
       const mm = pickMetric(metrics, spec);
       if (!mm) continue;
       if (mm.name === headlineMetric) continue;
-      kv.appendChild(elText('div', 'k', METRIC_NAMES[mm.name] || mm.name));
+      const isMax = typeof spec === 'object' && spec.max;
+      const isAvg = typeof spec === 'object' && spec.avg;
+      let label = METRIC_NAMES[mm.name] || mm.name;
+      if (isMax) label += /温度|功耗|使用率/.test(label) ? '最高' : '最大';
+      if (isAvg) label += '平均';
+      kv.appendChild(elText('div', 'k', label));
       const v = el('div', 'v');
       if (mm.name === 'smart_status') {
         v.textContent = mm.value >= 1 ? 'PASSED' : 'FAILED';

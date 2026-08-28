@@ -13,6 +13,7 @@ type MemoryCollector struct {
 	prevSwapOut         uint64
 	hasPrevSwapIO       bool
 	moduleInfoCollected bool
+	prevOOMCount        int
 }
 
 func New() *MemoryCollector {

@@ -309,6 +309,7 @@ func TestCollectOOMCount(t *testing.T) {
 	c := New()
 	now := time.Now()
 
+	// First call: delta = full count (prevOOMCount starts at 0)
 	metrics, err := c.collectOOMCount(now)
 	if err != nil {
 		t.Fatalf("collectOOMCount failed: %v", err)
@@ -317,7 +318,16 @@ func TestCollectOOMCount(t *testing.T) {
 		t.Fatalf("expected 1 metric, got %d", len(metrics))
 	}
 	if metrics[0].Value != 2 {
-		t.Errorf("expected 2 OOM events, got %.0f", metrics[0].Value)
+		t.Errorf("expected 2 OOM events on first call, got %.0f", metrics[0].Value)
+	}
+
+	// Second call: no new OOM events, delta should be 0
+	metrics2, err := c.collectOOMCount(now)
+	if err != nil {
+		t.Fatalf("second collectOOMCount failed: %v", err)
+	}
+	if metrics2[0].Value != 0 {
+		t.Errorf("expected 0 OOM events on second call, got %.0f", metrics2[0].Value)
 	}
 }
 
