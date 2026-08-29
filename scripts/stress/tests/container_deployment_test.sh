@@ -95,4 +95,53 @@ if grep -Fq 'goproxy.cn' "$REPO_ROOT/docker/build.sh"; then
     fail 'container build must not hard-code a site-specific Go proxy'
 fi
 
+# README-npu is the public source of truth for the supported manual docker run
+# path. Keep the three Stress profiles complete and aligned with the canonical
+# Compose security boundary.
+require_fixed docker/README.md '`docker run` 是完整支持的手工兼容入口'
+require_fixed docker/README-npu.md '### 5.2 Manual `docker run` — CPU Stress'
+require_fixed docker/README-npu.md '### 6.2 Manual `docker run` — NPU Stress'
+require_fixed docker/README-npu.md '### 7.2 Manual `docker run` — CPU + NPU Full'
+require_fixed docker/README-npu.md 'stress-profile.json'
+require_fixed docker/README-npu.md 'CATMONITOR_NPU_DEVICE_COUNT'
+require_fixed docker/README-npu.md 'CATMONITOR_NPU_DEVICE_ARGS'
+require_fixed docker/README-npu.md '--runtime runc --privileged --read-only --network none'
+require_fixed docker/README-npu.md '--cap-drop ALL'
+require_fixed docker/README-npu.md '--pids-limit 4096 --shm-size=16g'
+require_fixed docker/README-npu.md '-control-socket=/run/catmonitor/control.sock'
+require_fixed docker/README-npu.md '-v /var/run/docker.sock:/var/run/docker.sock'
+
+cpu_manual=$(sed -n '/^### 5\.2 /,/^## 6\./p' "$REPO_ROOT/docker/README-npu.md")
+npu_manual=$(sed -n '/^### 6\.2 /,/^## 7\./p' "$REPO_ROOT/docker/README-npu.md")
+full_manual=$(sed -n '/^### 7\.2 /,/^## 8\./p' "$REPO_ROOT/docker/README-npu.md")
+for name in cpu npu full; do
+    case "$name" in
+        cpu) section=$cpu_manual ;;
+        npu) section=$npu_manual ;;
+        full) section=$full_manual ;;
+    esac
+    [ -n "$section" ] || fail "README-npu $name manual section is empty"
+    [ "$(grep -Fc -- '-v /var/run/docker.sock:/var/run/docker.sock' <<<"$section")" -eq 1 ] ||
+        fail "README-npu $name manual path must mount Docker socket exactly once on daemon"
+    grep -Fq -- '--name catmonitor' <<<"$section" || fail "$name manual path lacks daemon"
+    grep -Fq -- '--name catmonitor-web' <<<"$section" || fail "$name manual path lacks Web"
+    grep -Fq -- '--name catmonitor-dfee' <<<"$section" || fail "$name manual path lacks DFeE"
+    if grep -Fq 'docker compose' <<<"$section"; then
+        fail "README-npu $name manual section must not require Compose"
+    fi
+done
+grep -Fq -- '--name catmonitor-stress-cpu' <<<"$cpu_manual" || fail 'CPU manual path lacks workload'
+grep -Fq -- '--name catmonitor-stress-npu' <<<"$npu_manual" || fail 'NPU manual path lacks workload'
+grep -Fq -- '--name catmonitor-stress-cpu' <<<"$full_manual" || fail 'Full manual path lacks CPU workload'
+grep -Fq -- '--name catmonitor-stress-npu' <<<"$full_manual" || fail 'Full manual path lacks NPU workload'
+
+if grep -Eq -- '--device=/dev/davinci(2|5)(:|[[:space:]])' "$REPO_ROOT/docker/README-npu.md"; then
+    fail 'README-npu must not hard-code the observed A2 sparse device IDs in docker run'
+fi
+for retired in catmonitor-install benchmark_check.sh catmonitor-stress-web ':29592'; do
+    if grep -Fq -- "$retired" "$REPO_ROOT/docker/README-npu.md"; then
+        fail "README-npu still references retired V1 entry: $retired"
+    fi
+done
+
 printf 'PASS: unified daemon/controller and CPU/NPU workload container contracts\n'

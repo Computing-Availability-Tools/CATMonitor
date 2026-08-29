@@ -1,7 +1,7 @@
 # CATMonitor v0.3.6 容器部署
 
-本目录是 CATMonitor 新用户的容器部署入口。推荐使用 Docker Compose；
-`docker run` 仅作为故障排查参考。
+本目录是 CATMonitor 新用户的容器部署入口。Docker Compose 是推荐入口；
+`docker run` 是完整支持的手工兼容入口，两种方式必须使用相同的镜像、配置和运行契约。
 
 > v0.3.6 镜像尚待 Fresh Image Acceptance。正式发行名以 `v0.3.6` 为目标；RC
 > 构建只能使用 `v0.3.6-rc.<shortsha>`，不得提前创建正式 image/tag。registry
