@@ -59,6 +59,19 @@ export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
 
 随后按节点文档拉取对应 Control 和可选 workload 镜像。
 
+受限网络从源码构建 Control 时，可以显式配置包仓库镜像；不设置时仍使用基础镜像的
+官方仓库配置：
+
+```bash
+# Alpine 仓库根目录，供 Generic Control 使用
+export CATMONITOR_ALPINE_MIRROR='https://mirror.example.com/alpine'
+# Debian 镜像站 origin；构建器会使用其 /debian 与 /debian-security
+export CATMONITOR_DEBIAN_MIRROR='https://mirror.example.com'
+```
+
+镜像地址只作为 build argument 使用，不会成为运行时 `ENV`。仓库不保存代理地址、
+镜像站凭据或节点专用配置。
+
 ## 4. 唯一运行链路
 
 ```text

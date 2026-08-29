@@ -44,6 +44,8 @@ docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 从源码构建 Control：
 
 ```bash
+# 可选；只填写 mirror origin，不包含 /debian 路径
+export CATMONITOR_DEBIAN_MIRROR='https://mirror.example.com'
 bash docker/build.sh gpu
 docker tag catmonitor-gpu "$CATMONITOR_IMAGE"
 ```

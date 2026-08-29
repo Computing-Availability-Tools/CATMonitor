@@ -94,6 +94,11 @@ fi
 if grep -Fq 'goproxy.cn' "$REPO_ROOT/docker/build.sh"; then
     fail 'container build must not hard-code a site-specific Go proxy'
 fi
+require_fixed docker/build.sh 'CATMONITOR_ALPINE_MIRROR'
+require_fixed docker/build.sh 'CATMONITOR_DEBIAN_MIRROR'
+require_fixed docker/Dockerfile.generic 'ARG ALPINE_MIRROR=""'
+require_fixed docker/Dockerfile.gpu 'ARG DEBIAN_MIRROR=""'
+require_fixed docker/Dockerfile.npu 'ARG DEBIAN_MIRROR=""'
 
 # README-npu is the public source of truth for the supported manual docker run
 # path. Keep the three Stress profiles complete and aligned with the canonical

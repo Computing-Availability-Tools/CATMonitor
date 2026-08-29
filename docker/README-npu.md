@@ -57,6 +57,8 @@ docker pull "$CATMONITOR_NPU_STRESS_IMAGE"
 从源码构建 Ascend Control：
 
 ```bash
+# 可选；只填写 mirror origin，不包含 /debian 路径
+export CATMONITOR_DEBIAN_MIRROR='https://mirror.example.com'
 bash docker/build.sh npu
 docker tag catmonitor-npu "$CATMONITOR_IMAGE"
 ```

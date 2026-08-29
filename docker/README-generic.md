@@ -48,6 +48,8 @@ docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 需要从源码构建 Control 时：
 
 ```bash
+# 可选；不设置时继续使用 Alpine 官方仓库
+export CATMONITOR_ALPINE_MIRROR='https://mirror.example.com/alpine'
 bash docker/build.sh generic
 docker tag catmonitor-generic "$CATMONITOR_IMAGE"
 ```

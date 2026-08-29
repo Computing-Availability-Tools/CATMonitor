@@ -7,6 +7,8 @@ PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 BUILD_DIR="$PROJECT_ROOT/docker/.build"
 DOCKER_BIN=${CATMONITOR_DOCKER_BIN:-docker}
 DOCKER_BUILD_NETWORK=${CATMONITOR_DOCKER_BUILD_NETWORK:-default}
+ALPINE_MIRROR=${CATMONITOR_ALPINE_MIRROR:-}
+DEBIAN_MIRROR=${CATMONITOR_DEBIAN_MIRROR:-}
 
 case "$DOCKER_BUILD_NETWORK" in
     default|host|none) ;;
@@ -15,11 +17,51 @@ case "$DOCKER_BUILD_NETWORK" in
         exit 1
         ;;
 esac
+
+validate_alpine_mirror() {
+    [ -z "$ALPINE_MIRROR" ] && return 0
+    case "$ALPINE_MIRROR" in
+        http://?*|https://?*) ;;
+        *)
+            echo "ERROR: CATMONITOR_ALPINE_MIRROR must use http:// or https://." >&2
+            exit 1
+            ;;
+    esac
+    case "$ALPINE_MIRROR" in
+        *[!A-Za-z0-9._:/-]*|*/)
+            echo "ERROR: CATMONITOR_ALPINE_MIRROR must be a safe repository root without credentials, query, fragment, or trailing slash." >&2
+            exit 1
+            ;;
+    esac
+}
+
+validate_debian_mirror() {
+    [ -z "$DEBIAN_MIRROR" ] && return 0
+    case "$DEBIAN_MIRROR" in
+        http://?*|https://?*) ;;
+        *)
+            echo "ERROR: CATMONITOR_DEBIAN_MIRROR must use http:// or https://." >&2
+            exit 1
+            ;;
+    esac
+    mirror_authority=${DEBIAN_MIRROR#*://}
+    case "$mirror_authority" in
+        ''|*/*|*[!A-Za-z0-9.:-]*)
+            echo "ERROR: CATMONITOR_DEBIAN_MIRROR must be an origin root without credentials, path, query, fragment, or trailing slash." >&2
+            exit 1
+            ;;
+    esac
+}
+
+validate_alpine_mirror
+validate_debian_mirror
 # Forward only variables explicitly configured by the administrator. Values are
 # inherited from the environment and are not printed or persisted in this file.
 PROXY_BUILD_ARGS=
 GO_BUILD_ARGS=
 GO_RUN_ENV_ARGS=
+ALPINE_BUILD_ARGS=
+DEBIAN_BUILD_ARGS=
 for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
     eval "proxy_value=\${$proxy_name-}"
     if [ -n "$proxy_value" ]; then
@@ -27,6 +69,12 @@ for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_prox
         GO_RUN_ENV_ARGS="$GO_RUN_ENV_ARGS -e $proxy_name"
     fi
 done
+if [ -n "$ALPINE_MIRROR" ]; then
+    ALPINE_BUILD_ARGS="--build-arg ALPINE_MIRROR=$ALPINE_MIRROR"
+fi
+if [ -n "$DEBIAN_MIRROR" ]; then
+    DEBIAN_BUILD_ARGS="--build-arg DEBIAN_MIRROR=$DEBIAN_MIRROR"
+fi
 for go_name in GOPROXY GOSUMDB GOPRIVATE GONOSUMDB; do
     eval "go_value=\${$go_name-}"
     if [ -n "$go_value" ]; then
@@ -40,6 +88,9 @@ if [ -n "$PROXY_BUILD_ARGS" ]; then
 fi
 if [ -n "$GO_BUILD_ARGS" ]; then
     echo "Go module environment: configured"
+fi
+if [ -n "$ALPINE_BUILD_ARGS$DEBIAN_BUILD_ARGS" ]; then
+    echo "Package mirror: configured"
 fi
 
 cleanup_build_dir() {
@@ -97,7 +148,7 @@ case "$MODE" in
 
         echo "Step 2/2: Building runtime image (debian/glibc)..."
         # shellcheck disable=SC2086
-        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS \
+        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $DEBIAN_BUILD_ARGS \
             -f docker/Dockerfile.npu \
             -t catmonitor-npu \
             "$PROJECT_ROOT"
@@ -108,7 +159,7 @@ case "$MODE" in
     generic)
         echo "=== Building generic image (multi-stage, pure Go, Alpine) ==="
         # shellcheck disable=SC2086
-        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS \
+        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS $ALPINE_BUILD_ARGS \
             -f docker/Dockerfile.generic \
             -t catmonitor-generic \
             "$PROJECT_ROOT"
@@ -118,7 +169,7 @@ case "$MODE" in
     gpu)
         echo "=== Building GPU image (multi-stage, pure Go, Debian/glibc) ==="
         # shellcheck disable=SC2086
-        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS \
+        "$DOCKER_BIN" build --network "$DOCKER_BUILD_NETWORK" $PROXY_BUILD_ARGS $GO_BUILD_ARGS $DEBIAN_BUILD_ARGS \
             -f docker/Dockerfile.gpu \
             -t catmonitor-gpu \
             "$PROJECT_ROOT"

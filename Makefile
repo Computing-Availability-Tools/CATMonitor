@@ -79,6 +79,7 @@ test-stress-build-npu:
 	bash scripts/stress/tests/runtime_preflight_test.sh
 
 test-stress-deployment:
+	bash scripts/stress/tests/control_image_build_test.sh
 	bash scripts/stress/tests/generate_stress_deployment_test.sh
 	bash scripts/stress/tests/container_deployment_test.sh
 
