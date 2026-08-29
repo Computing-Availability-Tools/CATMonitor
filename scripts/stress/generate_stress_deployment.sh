@@ -225,7 +225,35 @@ PROFILE="$OUTPUT_DIR/stress-profile.json"
 COMPOSE="$OUTPUT_DIR/docker-compose.stress.generated.yml"
 MANIFEST="$OUTPUT_DIR/stress-deployment-manifest.json"
 
+# This file is mounted as the daemon's complete /etc/catmonitor/catmonitor.yaml
+# by both the generated Compose override and the documented manual deployment
+# flow. Keep the canonical monitoring configuration here; emitting only the
+# stress section silently disables snapshot production because the safe config
+# default for snapshot.enabled is false.
 cat >"$CONFIG" <<EOF
+collectors:
+  chassis: { enabled: true, interval: 3s }
+  cpu: { enabled: true, interval: 3s }
+  memory: { enabled: true, interval: 3s }
+  disk: { enabled: true, interval: 5s }
+  gpu: { enabled: true, interval: 3s }
+  npu: { enabled: true, interval: 3s }
+  network: { enabled: true, interval: 3s }
+
+storage:
+  data_dir: /var/lib/catmonitor/data
+  max_file_age: 168h
+  rotation: daily
+
+collection:
+  min_priority: medium
+
+features: [web, dfee, health]
+
+snapshot:
+  enabled: true
+  dir: /var/lib/catmonitor/snapshot
+
 stress:
   enabled: true
   web_enabled: $WEB_ENABLED

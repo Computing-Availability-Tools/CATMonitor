@@ -25,6 +25,11 @@ bash "$GENERATOR" \
 for file in catmonitor-stress.yaml stress-profile.json docker-compose.stress.generated.yml stress-deployment-manifest.json; do
     test -f "$CPU_OUT/$file" || fail "missing CPU-only output: $file"
 done
+contains "$CPU_OUT/catmonitor-stress.yaml" 'collectors:'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'features: [web, dfee, health]'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'snapshot:'
+contains "$CPU_OUT/catmonitor-stress.yaml" '  enabled: true'
+contains "$CPU_OUT/catmonitor-stress.yaml" '  dir: /var/lib/catmonitor/snapshot'
 contains "$CPU_OUT/catmonitor-stress.yaml" 'type: docker_exec'
 contains "$CPU_OUT/catmonitor-stress.yaml" 'container: catmonitor-stress-cpu'
 contains "$CPU_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: false'
