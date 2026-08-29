@@ -14,7 +14,6 @@ RUN go build -o /catmonitor ./cmd/catmonitor
 RUN go build -o /dfee ./features/dfee
 RUN go build -o /web ./features/web
 
-
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,7 +29,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /catmonitor /usr/local/bin/catmonitor
 COPY --from=builder /dfee /usr/local/bin/dfee
 COPY --from=builder /web /usr/local/bin/web
-
 COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
 COPY features/web/metrics.yaml /features/web/metrics.yaml
