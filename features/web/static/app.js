@@ -28,7 +28,7 @@ const METRIC_NAMES = {
   smart_status: 'SMART 状态', smart_temperature: 'SMART 温度',
   memory_usage: '显存使用率', memory_detail: '明细',
   power_draw: '功耗', fan_speed: '风扇转速', ecc_errors: 'ECC 错误',
-  inlet_temp: '进风口温度', outlet_temp: '出风口温度', fan_power: '风扇功率',
+  inlet_temp: '进风口温度', outlet_temp: '出风口温度', fan_power: '风扇功耗',
   clock_frequency: '频率', utilization: '使用率', health_status: '健康状态',
   swap_usage: 'Swap 使用率', swap_detail: 'Swap 明细', oom_count: 'OOM 次数', page_faults: '页错误',
   rx_bytes_total: '接收字节', tx_bytes_total: '发送字节',
@@ -387,7 +387,7 @@ const METRIC_DESCRIPTIONS = {
   // Chassis
   inlet_temp: '进风口温度',
   outlet_temp: '出风口温度',
-  fan_power: '风扇功率',
+  fan_power: '风扇功耗',
 };
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
