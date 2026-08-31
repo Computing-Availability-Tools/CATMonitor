@@ -519,7 +519,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 		)
 	}
 	// 5.69 roce_speed_status, 5.70 roce_link_health
-	if speed, err := hccn_tool.Default().Speed(d.phyID); err == nil && speed != "" {
+	if speed, err := hccn_tool.Default().Speed(d.phyID); err == nil && speed != "" && speed != "Unknown!" {
 		metrics = append(metrics, collector.Metric{Component: "npu", Name: "roce_speed_status", Value: 0, Unit: "", Labels: map[string]string{"npu_id": strconv.Itoa(card), "chip_id": strconv.Itoa(devID), "roce_speed": speed}, Timestamp: now})
 	}
 	if link, err := hccn_tool.Default().Link(d.phyID); err == nil && link != "" {
