@@ -1751,7 +1751,12 @@ function renderDetail(compKey, snap) {
             .filter(([k]) => !(
               (mt.name === 'error_code' && k === 'error_codes') ||
               (mt.name === 'roce_speed_status' && k === 'roce_speed') ||
-              (mt.name === 'roce_link_health' && k === 'roce_link')
+              (mt.name === 'roce_link_health' && k === 'roce_link') ||
+              (mt.name === 'health_status' && k === 'status') ||
+              ((mt.name.endsWith('_ecc') || mt.name.endsWith('_ecc_isolated')) && (k === 'device_type' || k === 'kind')) ||
+              (mt.name.startsWith('aicore') && mt.name.endsWith('_temp') && k === 'aicore') ||
+              (mt.name.startsWith('ntc') && mt.name.endsWith('_temp') && k === 'ntc') ||
+              ((mt.name.endsWith('_tx_bandwidth') || mt.name.endsWith('_rx_bandwidth')) && k === 'direction')
             ))
             .map(([k, v]) => k + '=' + v).join(', ') : '';
           row.innerHTML =
