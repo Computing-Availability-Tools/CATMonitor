@@ -18,7 +18,7 @@ import (
 // daemon-produced per-component snapshot files from Dir (concatenating metrics
 // across components) and the global snapshot for session/timestamp/refresh,
 // filters to the 74 efficiency metrics, derives 7 CPU utilization percentages
-// from 8 raw jiffies, and groups the result into 14 charts.
+// from 8 raw jiffies, and groups the result into 29 charts.
 type Handler struct {
 	dir string
 	mu  sync.Mutex

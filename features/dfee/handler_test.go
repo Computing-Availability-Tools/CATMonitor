@@ -63,8 +63,8 @@ func TestHandleAPI(t *testing.T) {
 	if resp1.RefreshInterval != 5000 {
 		t.Errorf("refresh_interval=%d, want 5000", resp1.RefreshInterval)
 	}
-	if len(resp1.Charts) != 25 {
-		t.Errorf("expected 25 charts, got %d", len(resp1.Charts))
+	if len(resp1.Charts) != 29 {
+		t.Errorf("expected 29 charts, got %d", len(resp1.Charts))
 	}
 	cpuChart := findChart(resp1.Charts, "cpu_utilization")
 	if cpuChart == nil {

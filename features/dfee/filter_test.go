@@ -183,9 +183,9 @@ func TestDominantUnit(t *testing.T) {
 	}
 }
 
-// TestChartGroupCount verifies 14 charts defined.
+// TestChartGroupCount verifies 29 charts defined.
 func TestChartGroupCount(t *testing.T) {
-	if len(chartGroups) != 25 {
-		t.Errorf("expected 25 chart groups, got %d", len(chartGroups))
+	if len(chartGroups) != 29 {
+		t.Errorf("expected 29 chart groups, got %d", len(chartGroups))
 	}
 }

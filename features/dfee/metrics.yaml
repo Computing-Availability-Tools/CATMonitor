@@ -94,6 +94,14 @@ components:
         priority: Medium
       - name: llc_throughput
         priority: Medium
+      - name: hccs_tx_bandwidth
+        priority: Medium
+      - name: hccs_rx_bandwidth
+        priority: Medium
+      - name: pcie_tx_bandwidth
+        priority: Medium
+      - name: pcie_rx_bandwidth
+        priority: Medium
   - component: cpu
     interval: 1s
     metrics:

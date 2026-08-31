@@ -73,6 +73,11 @@ var efficiencySpecs = []efficiencySpec{
 	{"npu", "llc_write_hit_rate", "", nil},
 	{"npu", "llc_read_hit_rate", "", nil},
 	{"npu", "llc_throughput", "", nil},
+	// NPU: Bandwidth (4)
+	{"npu", "hccs_tx_bandwidth", "", nil},
+	{"npu", "hccs_rx_bandwidth", "", nil},
+	{"npu", "pcie_tx_bandwidth", "", nil},
+	{"npu", "pcie_rx_bandwidth", "", nil},
 	// CPU: Time breakdown (8, core=total only) — filtered out by handler, replaced by derived
 	{"cpu", "user_time", "core", []string{"total"}},
 	{"cpu", "nice_time", "core", []string{"total"}},
@@ -140,6 +145,10 @@ var chartGroups = []chartGroup{
 	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "npu_id", "", "", ""},
 	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", "", ""},
 	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", "", ""},
+	{"npu_hccs_tx_bw", "HCCS带宽(发送)", "npu", []string{"hccs_tx_bandwidth"}, "npu_id", "", "", ""},
+	{"npu_hccs_rx_bw", "HCCS带宽(接收)", "npu", []string{"hccs_rx_bandwidth"}, "npu_id", "", "", ""},
+	{"npu_pcie_tx_bw", "PCIe带宽(发送)", "npu", []string{"pcie_tx_bandwidth"}, "npu_id", "", "", ""},
+	{"npu_pcie_rx_bw", "PCIe带宽(接收)", "npu", []string{"pcie_rx_bandwidth"}, "npu_id", "", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
 	{"cpu_utilization", "CPU 利用率", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
 	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", "", ""},
@@ -293,6 +302,8 @@ var metricDisplayNames = map[string]string{
 	"npu:fan_speed": "风扇转速",
 	// NPU LLC
 	"npu:llc_write_hit_rate": "LLC写命中率", "npu:llc_read_hit_rate": "LLC读命中率", "npu:llc_throughput": "LLC吞吐量",
+	"npu:hccs_tx_bandwidth": "HCCS发送带宽", "npu:hccs_rx_bandwidth": "HCCS接收带宽",
+	"npu:pcie_tx_bandwidth": "PCIe发送带宽", "npu:pcie_rx_bandwidth": "PCIe接收带宽",
 	// CPU derived
 	"cpu:idle_util": "空闲", "cpu:non_idle_util": "非空闲", "cpu:user_util": "用户态",
 	"cpu:system_util": "内核态", "cpu:iowait_util": "IO等待", "cpu:irq_util": "中断", "cpu:steal_util": "Steal",
