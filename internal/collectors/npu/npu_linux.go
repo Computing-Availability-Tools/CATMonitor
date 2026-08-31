@@ -226,6 +226,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 				Component: "npu", Name: "error_code", Value: float64(errs.Count), Unit: "",
 				Labels: map[string]string{
 					"npu_id":      label["npu_id"],
+					"chip_id":     label["chip_id"],
 					"error_codes": joinStrings(errs.Codes, ","),
 				}, Timestamp: now,
 			})
@@ -501,7 +502,7 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 			}
 			metrics = append(metrics, collector.Metric{
 				Component: "npu", Name: "roce_link_status", Value: float64(v), Unit: "",
-				Labels: map[string]string{"npu_id": strconv.Itoa(card), "status": statusStr}, Timestamp: now,
+				Labels: map[string]string{"npu_id": strconv.Itoa(card), "chip_id": strconv.Itoa(devID), "status": statusStr}, Timestamp: now,
 			})
 		}
 	}

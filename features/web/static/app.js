@@ -392,14 +392,28 @@ const METRIC_DESCRIPTIONS = {
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
 
+const LABEL_PRIORITY = [
+  'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
+  'interface', 'device', 'mount_point', 'mc', 'locator', 'sensor',
+  'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
+  'kind', 'interval', 'state', 'status',
+];
+
+function sortedLabelEntries(labels) {
+  if (!labels) return [];
+  return Object.entries(labels).sort((a, b) => {
+    const ia = LABEL_PRIORITY.indexOf(a[0]);
+    const ib = LABEL_PRIORITY.indexOf(b[0]);
+    if (ia === -1 && ib === -1) return a[0] < b[0] ? -1 : 1;
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
 function metricSortCmp(a, b) {
   const la = a.labels || {}, lb = b.labels || {};
-  for (const key of [
-    'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
-    'interface', 'mount_point', 'device', 'mc', 'locator', 'sensor',
-    'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
-    'kind', 'interval', 'state', 'status',
-  ]) {
+  for (const key of LABEL_PRIORITY) {
     const va = la[key], vb = lb[key];
     if (va === undefined && vb === undefined) continue;
     if (va === undefined) return 1;
@@ -1329,7 +1343,7 @@ function specsGroup(comp, arr) {
       primary = (m.value !== undefined && m.value !== null) ? (m.value + (m.unit ? ' ' + m.unit : '')) : '';
     }
     const rest = [];
-    for (const k in lb) {
+    for (const [k] of sortedLabelEntries(lb)) {
       if (k === def.primary) continue;
       rest.push((LABEL_NAMES[k] || k) + ': ' + lb[k]);
     }
@@ -1703,7 +1717,7 @@ function renderDetail(compKey, snap) {
         gb.appendChild(renderErrorCountGroup(items));
       } else {
         for (const mt of items) {
-          const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+          const labels = mt.labels ? sortedLabelEntries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
           const row = el('div', 'metric-row');
           let valStr;
           if (mt.name === 'health_status') {
@@ -1725,7 +1739,7 @@ function renderDetail(compKey, snap) {
           } else {
             valStr = fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '');
           }
-          const cleanLabels = mt.labels ? Object.entries(mt.labels)
+          const cleanLabels = mt.labels ? sortedLabelEntries(mt.labels)
             .filter(([k]) => !(mt.name === 'error_code' && k === 'error_codes'))
             .map(([k, v]) => k + '=' + v).join(', ') : '';
           row.innerHTML =
