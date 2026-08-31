@@ -1736,11 +1736,23 @@ function renderDetail(compKey, snap) {
               const codes = (mt.labels || {}).error_codes || '';
               valStr = '<span style="color:var(--crit);font-weight:600">' + codes + '</span>';
             }
+          } else if (mt.name === 'roce_link_status') {
+            valStr = mt.value === 0
+              ? '<span style="color:var(--crit);font-weight:600">down</span>'
+              : '<span style="color:var(--ok);font-weight:600">up</span>';
+          } else if (mt.name === 'roce_speed_status') {
+            valStr = (mt.labels || {}).roce_speed || '--';
+          } else if (mt.name === 'roce_link_health') {
+            valStr = (mt.labels || {}).roce_link || '--';
           } else {
             valStr = fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '');
           }
           const cleanLabels = mt.labels ? sortedLabelEntries(mt.labels)
-            .filter(([k]) => !(mt.name === 'error_code' && k === 'error_codes'))
+            .filter(([k]) => !(
+              (mt.name === 'error_code' && k === 'error_codes') ||
+              (mt.name === 'roce_speed_status' && k === 'roce_speed') ||
+              (mt.name === 'roce_link_health' && k === 'roce_link')
+            ))
             .map(([k, v]) => k + '=' + v).join(', ') : '';
           row.innerHTML =
             '<span class="metric-val">' + valStr + '</span>' +

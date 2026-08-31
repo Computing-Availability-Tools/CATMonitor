@@ -496,13 +496,13 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 	// --- 5.68 roce_link_status (DCMI) ---
 	if src.Available() {
 		if v, err := src.NetworkHealth(card, devID); err == nil {
-			statusStr := "down"
+			linkVal := 0.0
 			if v > 0 {
-				statusStr = "up"
+				linkVal = 1.0
 			}
 			metrics = append(metrics, collector.Metric{
-				Component: "npu", Name: "roce_link_status", Value: float64(v), Unit: "",
-				Labels: map[string]string{"npu_id": strconv.Itoa(card), "chip_id": strconv.Itoa(devID), "status": statusStr}, Timestamp: now,
+				Component: "npu", Name: "roce_link_status", Value: linkVal, Unit: "",
+				Labels: map[string]string{"npu_id": strconv.Itoa(card), "chip_id": strconv.Itoa(devID)}, Timestamp: now,
 			})
 		}
 	}
