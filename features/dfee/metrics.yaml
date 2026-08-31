@@ -102,6 +102,19 @@ components:
         priority: Medium
       - name: pcie_rx_bandwidth
         priority: Medium
+  - component: gpu
+    interval: 1s
+    metrics:
+      - name: power_draw
+        priority: Medium
+      - name: utilization
+        priority: High
+      - name: temperature
+        priority: High
+      - name: memory_usage
+        priority: High
+      - name: clock_frequency
+        priority: Medium
   - component: cpu
     interval: 1s
     metrics:

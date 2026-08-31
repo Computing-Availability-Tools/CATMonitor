@@ -44,21 +44,21 @@ func TestFilterEfficiencyAll(t *testing.T) {
 		emetric("memory", "usage_detail", 32768, map[string]string{"field": "total"}),
 		emetric("memory", "usage_detail", 16000, map[string]string{"field": "used"}), // excluded
 		emetric("chassis", "power", 350, nil),
+		emetric("gpu", "utilization", 60, nil),
 		// Should NOT match.
 		emetric("npu", "health_status", 1, nil),
 		emetric("cpu", "usage", 12.3, map[string]string{"core": "total"}),
 		emetric("memory", "usage", 50, nil),
 		emetric("disk", "space_usage", 50, nil),
-		emetric("gpu", "utilization", 60, nil),
 	}
 	out := filterEfficiency(in)
-	// Expected: 7 (aicore_freq, temperature, user_time total, load_average, usage_detail total, chassis power, + per-core user_time excluded)
-	if len(out) != 6 {
-		t.Fatalf("expected 6 filtered metrics, got %d", len(out))
+	// Expected: 7 (aicore_freq, temperature, user_time total, load_average, usage_detail total, chassis power, gpu utilization)
+	if len(out) != 7 {
+		t.Fatalf("expected 7 filtered metrics, got %d", len(out))
 	}
 	// Verify excluded metrics.
 	for _, m := range out {
-		if m.Name == "usage" || m.Name == "health_status" || m.Name == "space_usage" || m.Name == "utilization" {
+		if m.Name == "usage" || m.Name == "health_status" || m.Name == "space_usage" {
 			t.Errorf("non-efficiency metric leaked: %s/%s", m.Component, m.Name)
 		}
 		if m.Name == "user_time" && m.Labels["core"] != "total" {
@@ -183,9 +183,9 @@ func TestDominantUnit(t *testing.T) {
 	}
 }
 
-// TestChartGroupCount verifies 29 charts defined.
+// TestChartGroupCount verifies 34 charts defined.
 func TestChartGroupCount(t *testing.T) {
-	if len(chartGroups) != 29 {
-		t.Errorf("expected 29 chart groups, got %d", len(chartGroups))
+	if len(chartGroups) != 34 {
+		t.Errorf("expected 34 chart groups, got %d", len(chartGroups))
 	}
 }

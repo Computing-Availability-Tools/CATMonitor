@@ -7,6 +7,7 @@ const PALETTE = [
 
 const SECTIONS = [
   { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_hccs_tx_bw', 'npu_hccs_rx_bw', 'npu_pcie_tx_bw', 'npu_pcie_rx_bw'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3, 'npu_hccs_tx_bw': 3, 'npu_hccs_rx_bw': 3, 'npu_pcie_tx_bw': 3, 'npu_pcie_rx_bw': 3 }, filterLabel: 'NPU ID', filterKey: 'npu_', filterPrefix: 'NPU ', filterSegment: 0, filterLabel2: 'CHIP ID', filterKey2: 'npu_chip_', filterPrefix2: 'Chip ', filterSegment2: 1 },
+  { title: 'GPU', accent: '#ca8a04', ids: ['gpu_power_draw', 'gpu_utilization', 'gpu_temperature', 'gpu_memory_usage', 'gpu_clock_frequency'], gridCols: 3, filterLabel: 'GPU ID', filterKey: 'gpu_', filterPrefix: 'GPU ', filterSegment: 0 },
   { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
   { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
   { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
@@ -214,6 +215,7 @@ function buildSections(charts) {
     const orderedIds = getOrderedIds(sec);
     const secCharts = orderedIds.map(id => chartDefs[id]).filter(c => c);
     const available = secCharts.filter(c => (c.series || []).length > 0).length;
+    if (available === 0) continue;
     const hasPriority = secCharts.some(c => c.priority);
     const collapsedSet = getCollapsedSet();
 

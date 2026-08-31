@@ -17,8 +17,8 @@ import (
 // Handler serves the dfee energy-efficiency API and static SPA. It reads the
 // daemon-produced per-component snapshot files from Dir (concatenating metrics
 // across components) and the global snapshot for session/timestamp/refresh,
-// filters to the 74 efficiency metrics, derives 7 CPU utilization percentages
-// from 8 raw jiffies, and groups the result into 29 charts.
+// filters to the 78 efficiency metrics, derives 7 CPU utilization percentages
+// from 8 raw jiffies, and groups the result into 34 charts.
 type Handler struct {
 	dir string
 	mu  sync.Mutex
