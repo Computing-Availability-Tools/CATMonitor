@@ -11,6 +11,7 @@ import (
 type npuDevice struct {
 	cardID int
 	devID  int
+	phyID  int
 }
 
 // NPUCollector collects metrics from Huawei Ascend NPUs via DCMI (CGo) and
