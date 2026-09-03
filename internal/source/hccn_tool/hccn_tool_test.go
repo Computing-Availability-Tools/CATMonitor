@@ -3,7 +3,9 @@ package hccn_tool
 import (
 	"os"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 )
 
 func readMock(t *testing.T, path string) string {
@@ -98,5 +100,52 @@ func TestStatistics(t *testing.T) {
 		if _, ok := stats[key]; !ok {
 			t.Errorf("missing %s", key)
 		}
+	}
+}
+
+// TestCachedDoesNotHoldLockAcrossFetch is a regression test for the lock
+// scope: the mutex must NOT be held while fetch runs. Callers are
+// device-parallel goroutines with distinct cache keys; if execs serialized
+// on the lock, an N-device collection would take N×fetch instead of ~fetch.
+// The mock fetch sleeps 100ms; 8 concurrent misses for 8 distinct devices
+// must finish in well under 8×100ms.
+func TestCachedDoesNotHoldLockAcrossFetch(t *testing.T) {
+	SetMock(func(devID int, opt string) (string, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "out-" + strconv.Itoa(devID), nil
+	})
+	defer ResetFetcher()
+
+	const devices = 8
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < devices; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			if _, err := Default().Statistics(idx); err != nil {
+				t.Errorf("Statistics(%d) failed: %v", idx, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	elapsed := time.Since(start)
+
+	// Serialized: 8 × 100ms = 800ms. Parallel: ~100ms. Allow generous
+	// headroom for CI jitter; anything ≥ 400ms means execs serialized.
+	if elapsed >= 400*time.Millisecond {
+		t.Errorf("concurrent fetches serialized: %d misses took %v (want <400ms, ideal ~100ms)", devices, elapsed)
+	}
+
+	// Cache must be populated: a second round of the same keys is all hits
+	// and therefore near-instant even though the fetch still sleeps 100ms.
+	start = time.Now()
+	for i := 0; i < devices; i++ {
+		if _, err := Default().Statistics(i); err != nil {
+			t.Errorf("cached Statistics(%d) failed: %v", i, err)
+		}
+	}
+	if cached := time.Since(start); cached >= 100*time.Millisecond {
+		t.Errorf("cache hits blocked by fetch: 8 hits took %v (want <100ms)", cached)
 	}
 }

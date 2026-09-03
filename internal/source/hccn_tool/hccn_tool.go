@@ -1,7 +1,8 @@
 // Package hccn_tool provides a data source that wraps the `hccn_tool` command
 // for NPU network diagnostics (bandwidth, RoCE speed/link). It is exec-based
-// (no CGo) and mirrors the ipmi/smartctl pattern: singleton, fetcher seam,
-// 5s timeout, per-device 30s cache.
+// (no CGo): singleton, fetcher seam, 5s timeout, per-device 30s cache.
+// Safe for concurrent use: the mutex only guards the cache maps, and fetches
+// run outside the lock so device-parallel callers do not serialize on execs.
 package hccn_tool
 
 import (
@@ -79,19 +80,30 @@ func (s *defaultSource) Available() bool {
 	return err == nil
 }
 
+// cached returns the cached output for (devID, opt), executing the fetch on
+// miss. The mutex only guards the shared cache maps — the fetch itself runs
+// WITHOUT the lock: callers are device-parallel goroutines with distinct
+// cache keys (phyID:opt), so serializing execs would kill that parallelism
+// while the same-key dedup benefit never materializes.
 func (s *defaultSource) cached(devID int, opt string) (string, error) {
 	key := strconv.Itoa(devID) + ":" + opt
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if at, ok := s.at[key]; ok && time.Since(at) < cacheTTL {
-		return s.cache[key], nil
+		out := s.cache[key]
+		s.mu.Unlock()
+		return out, nil
 	}
+	s.mu.Unlock()
+
 	out, err := s.fetch(devID, opt)
 	if err != nil {
 		return "", err
 	}
+
+	s.mu.Lock()
 	s.cache[key] = out
 	s.at[key] = time.Now()
+	s.mu.Unlock()
 	return out, nil
 }
 
