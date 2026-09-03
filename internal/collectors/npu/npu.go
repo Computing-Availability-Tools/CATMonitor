@@ -14,10 +14,38 @@ type npuDevice struct {
 	phyID  int
 }
 
+// statisticsMetricNames lists the hccn_tool statistics metrics (MAC/ROCE/NIC
+// packet counters, specs 5.75-6.19) that one `hccn_tool -i N -stat -g` run
+// produces. Used by collectDevice to gate the Statistics command. Keep in
+// sync with the "hccn_tool statistics" block in configs/metrics.yaml (npu
+// section, 48 entries) and hccn_tool's parseStatistics.
+var statisticsMetricNames = []string{
+	// MAC pause/PFC
+	"mac_tx_mac_pause_num", "mac_rx_mac_pause_num",
+	"mac_tx_pfc_pkt_num",
+	"mac_tx_pfc_pri0_pkt_num", "mac_tx_pfc_pri1_pkt_num", "mac_tx_pfc_pri2_pkt_num", "mac_tx_pfc_pri3_pkt_num",
+	"mac_tx_pfc_pri4_pkt_num", "mac_tx_pfc_pri5_pkt_num", "mac_tx_pfc_pri6_pkt_num", "mac_tx_pfc_pri7_pkt_num",
+	"mac_rx_pfc_pkt_num",
+	"mac_rx_pfc_pri0_pkt_num", "mac_rx_pfc_pri1_pkt_num", "mac_rx_pfc_pri2_pkt_num", "mac_rx_pfc_pri3_pkt_num",
+	"mac_rx_pfc_pri4_pkt_num", "mac_rx_pfc_pri5_pkt_num", "mac_rx_pfc_pri6_pkt_num", "mac_rx_pfc_pri7_pkt_num",
+	// MAC totals
+	"mac_tx_total_pkt_num", "mac_tx_total_oct_num", "mac_tx_bad_pkt_num", "mac_tx_bad_oct_num",
+	"mac_rx_total_pkt_num", "mac_rx_total_oct_num", "mac_rx_bad_pkt_num", "mac_rx_bad_oct_num",
+	"mac_rx_fcs_err_pkt_num",
+	// RoCE
+	"roce_rx_rc_pkt_num", "roce_rx_all_pkt_num", "roce_rx_err_pkt_num",
+	"roce_tx_rc_pkt_num", "roce_tx_all_pkt_num", "roce_tx_err_pkt_num",
+	"roce_cqe_num", "roce_rx_cnp_pkt_num", "roce_tx_cnp_pkt_num",
+	"roce_unexpected_ack_num", "roce_out_of_order_num", "roce_verification_err_num",
+	"roce_qp_status_err_num", "roce_new_pkt_rty_num", "roce_ecn_db_num",
+	// NIC
+	"nic_tx_all_pkg_num", "nic_tx_all_oct_num", "nic_rx_all_pkg_num", "nic_rx_all_oct_num",
+}
+
 // deviceMetricNames lists every per-device metric collectDevice (npu_linux.go)
 // can produce. Collect()'s Phase-2 gate uses it: if none is wanted, the whole
 // per-device collection is skipped. Keep in sync with collectDevice.
-var deviceMetricNames = []string{
+var deviceMetricNames = append([]string{
 	// utilization & memory
 	"utilization", "memory_usage", "hbm_total_memory", "hbm_used_memory",
 	"npu_util", "aicpu_util", "ctrlcpu_util", "vector_core_util",
@@ -49,7 +77,7 @@ var deviceMetricNames = []string{
 	"net_tx_bandwidth", "net_rx_bandwidth",
 	"pcie_tx_bandwidth", "pcie_rx_bandwidth",
 	"hccs_tx_bandwidth", "hccs_rx_bandwidth",
-}
+}, statisticsMetricNames...)
 
 // NPUCollector collects metrics from Huawei Ascend NPUs via DCMI (CGo) and
 // npu-smi/hccn_tool commands. Collection is device-parallel: each NPU's

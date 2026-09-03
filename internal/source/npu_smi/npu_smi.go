@@ -28,8 +28,9 @@ type Source interface {
 	// Topo returns the NPU communication topology string. Cached permanently
 	// (static).
 	Topo() (string, error)
-	// HccsBandwidth returns HCCS TX/RX bandwidth (MB/s) for a device. Cached
-	// per-device for 30s.
+	// HccsBandwidth returns HCCS TX/RX bandwidth (MB/s) for a device.
+	// Not cached: the command samples live bandwidth (-time 50), so every
+	// call executes npu-smi.
 	HccsBandwidth(card, chip int) (*HccsBw, error)
 	// Available reports whether npu-smi is on PATH.
 	Available() bool
