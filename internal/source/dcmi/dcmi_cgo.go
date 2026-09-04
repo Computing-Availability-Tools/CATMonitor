@@ -422,3 +422,19 @@ func (p *cgoProvider) DriverHealth() (uint, error) {
 	}
 	return uint(health), nil
 }
+
+// DevicePhyID maps (card_id, device_id) to the physical NPU id that external
+// tools (hccn_tool -i, /dev/davinciN, npu-smi NPU ID) expect. It chains the
+// two DCMI translation calls: (card,dev) → logic id → phy id. Callers must
+// treat an error as "unknown" and keep their own fallback numbering.
+func (p *cgoProvider) DevicePhyID(card, dev int) (int, error) {
+	var logicID C.int
+	if rc := C.dcmi_get_device_logic_id(&logicID, C.int(card), C.int(dev)); rc != 0 {
+		return 0, fmt.Errorf("dcmi_get_device_logic_id(card=%d,dev=%d): %d", card, dev, int32(rc))
+	}
+	var phyID C.uint
+	if rc := C.dcmi_get_device_phyid_from_logicid(C.uint(logicID), &phyID); rc != 0 {
+		return 0, fmt.Errorf("dcmi_get_device_phyid_from_logicid(logic=%d): %d", int(logicID), int32(rc))
+	}
+	return int(phyID), nil
+}

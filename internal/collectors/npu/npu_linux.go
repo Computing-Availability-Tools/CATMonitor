@@ -69,6 +69,11 @@ const (
 
 // ensureDevices populates devices from DCMI CardList + DeviceNumInCard.
 // Enumerates (card_id, device_id) pairs so all NPU chips are discovered.
+// phyID is the physical NPU id required by external tools (hccn_tool -i,
+// /dev/davinciN, npu-smi NPU ID). It is resolved via the DCMI
+// logic-id→phy-id translation; when that API is unavailable or fails, we
+// fall back to the enumeration index, which matches physical ids on hosts
+// whose cards are numbered consecutively from 0 (e.g. 8-card trainers).
 func (c *NPUCollector) ensureDevices() {
 	if c.devicesReady {
 		return
@@ -89,7 +94,11 @@ func (c *NPUCollector) ensureDevices() {
 			devMax = 1 // fallback: assume 1 device per card
 		}
 		for d := 0; d < devMax; d++ {
-			c.devices = append(c.devices, npuDevice{cardID: cardID, devID: d, phyID: len(c.devices)})
+			phyID := len(c.devices) // fallback: enumeration index
+			if pid, err := src.DevicePhyID(cardID, d); err == nil && pid >= 0 {
+				phyID = pid
+			}
+			c.devices = append(c.devices, npuDevice{cardID: cardID, devID: d, phyID: phyID})
 		}
 	}
 }

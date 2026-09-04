@@ -487,3 +487,80 @@ func TestCollectorInterface(t *testing.T) {
 		t.Error("expected default enabled true")
 	}
 }
+
+// --- ensureDevices phyID resolution ---
+
+// TestEnsureDevicesPhyIDFromAPI: on hosts whose cards are NOT numbered
+// consecutively from 0 (e.g. cards 2 and 5), phyID must come from the DCMI
+// logic→phy translation, not the enumeration index.
+func TestEnsureDevicesPhyIDFromAPI(t *testing.T) {
+	dcmi.SetProvider(&dcmi.MockProvider{
+		CardListVal: []int{2, 5},
+		PhyIDs: map[[2]int]int{
+			{2, 0}: 2,
+			{5, 0}: 5,
+		},
+	})
+	t.Cleanup(func() { dcmi.SetProvider(nil) })
+
+	c := New()
+	c.ensureDevices()
+	if len(c.devices) != 2 {
+		t.Fatalf("expected 2 devices, got %d", len(c.devices))
+	}
+	want := []int{2, 5}
+	for i, d := range c.devices {
+		if d.phyID != want[i] {
+			t.Errorf("device %d: expected phyID=%d (physical), got %d", i, want[i], d.phyID)
+		}
+	}
+}
+
+// TestEnsureDevicesPhyIDFallback: when the phy-id API is unavailable (nil
+// PhyIDs), phyID falls back to the enumeration index — identical to the
+// pre-fix behaviour on hosts numbered 0..N-1, so 8-card trainers regress
+// nothing even if the API fails there.
+func TestEnsureDevicesPhyIDFallback(t *testing.T) {
+	dcmi.SetProvider(&dcmi.MockProvider{
+		CardListVal: []int{0, 1, 2, 3, 4, 5, 6, 7},
+		PhyIDs:      nil, // API unavailable
+	})
+	t.Cleanup(func() { dcmi.SetProvider(nil) })
+
+	c := New()
+	c.ensureDevices()
+	if len(c.devices) != 8 {
+		t.Fatalf("expected 8 devices, got %d", len(c.devices))
+	}
+	for i, d := range c.devices {
+		if d.phyID != i {
+			t.Errorf("device %d: expected fallback phyID=%d, got %d", i, i, d.phyID)
+		}
+	}
+}
+
+// TestEnsureDevicesPhyIDMultiChip: a multi-chip card (2 devices on one card)
+// gets per-chip phy ids from the API.
+func TestEnsureDevicesPhyIDMultiChip(t *testing.T) {
+	dcmi.SetProvider(&dcmi.MockProvider{
+		CardListVal: []int{4},
+		DevMax:      2,
+		PhyIDs: map[[2]int]int{
+			{4, 0}: 9,
+			{4, 1}: 11,
+		},
+	})
+	t.Cleanup(func() { dcmi.SetProvider(nil) })
+
+	c := New()
+	c.ensureDevices()
+	if len(c.devices) != 2 {
+		t.Fatalf("expected 2 devices, got %d", len(c.devices))
+	}
+	want := []int{9, 11}
+	for i, d := range c.devices {
+		if d.phyID != want[i] {
+			t.Errorf("chip %d: expected phyID=%d, got %d", i, want[i], d.phyID)
+		}
+	}
+}
