@@ -100,10 +100,44 @@ require_fixed docker/Dockerfile.generic 'ARG ALPINE_MIRROR=""'
 require_fixed docker/Dockerfile.gpu 'ARG DEBIAN_MIRROR=""'
 require_fixed docker/Dockerfile.npu 'ARG DEBIAN_MIRROR=""'
 
+# The V2 guides extend rather than replace the public Monitoring contracts from
+# develop. Keep partial service startup, standalone DFeE, configuration paths,
+# data volumes, faultsub and the exporter integration visible in every hardware
+# guide. These are static documentation gates; real hardware validation is
+# tracked separately in STRESS_TEST_GUIDE.md.
+require_fixed docker/README.md '`docker run` 是各节点指南均已写明的手工兼容入口'
+require_fixed docker/README.md 'OLD_MONITORING_YAML_COMPATIBLE=true'
+require_fixed docker/README.md 'OLD_STRESS_YAML_COMPATIBLE=false'
+for readme in docker/README-generic.md docker/README-gpu.md docker/README-npu.md; do
+    monitoring=$(sed -n '/^## 3\./,/^## 4\./p' "$REPO_ROOT/$readme")
+    [ -n "$monitoring" ] || fail "$readme Monitoring section is empty"
+    for expected in \
+        'up -d catmonitor dfee' \
+        '/etc/catmonitor/catmonitor.yaml' \
+        '/etc/catmonitor/metrics.yaml' \
+        '/var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro' \
+        'cm-straggler' \
+        '/var/lib/catmonitor/straggler' \
+        '`19320`' \
+        '`19321`' \
+        '`19322`' \
+        '`19323`' \
+        '`9333`' \
+        'faultsub/snapshot' \
+        'features/dfee/grafana-dashboard.json'; do
+        grep -Fq -- "$expected" <<<"$monitoring" ||
+            fail "$readme Monitoring compatibility section is missing: $expected"
+    done
+    grep -Fq -- '--name catmonitor-dfee' <<<"$monitoring" ||
+        fail "$readme lacks standalone DFeE docker run"
+    if grep -Fq '/var/run/docker.sock' <<<"$monitoring"; then
+        fail "$readme Monitoring-only path must not mount Docker socket"
+    fi
+done
+
 # README-npu is the public source of truth for the supported manual docker run
 # path. Keep the three Stress profiles complete and aligned with the canonical
 # Compose security boundary.
-require_fixed docker/README.md '`docker run` 是完整支持的手工兼容入口'
 require_fixed docker/README-npu.md '### 5.3 Manual `docker run`'
 require_fixed docker/README-npu.md '### 6.4 Manual `docker run`'
 require_fixed docker/README-npu.md '### 7.3 Manual `docker run`'

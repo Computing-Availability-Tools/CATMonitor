@@ -156,6 +156,48 @@ generator 至少运行两组 fixture：
 
 还应静态检查不存在 0..7、两组四卡、最大 device ID 等于设备数等假设。
 
+### 7.1 手工 `docker run` 文档契约
+
+`container_deployment_test.sh` 会解析三份硬件 README，检查 Monitoring 公共兼容路径
+和五种 Stress 手工部署章节，包括容器数量、mount、Docker Socket 所有权、只读根
+文件系统、network/capability 与动态 NPU device 参数。该检查不会启动容器：
+
+```text
+STATIC_DOCUMENT_CONTRACT=PASS
+```
+
+只能证明“文档中写出了完整且自洽的命令”，不能证明对应镜像、驱动、MPI 或真实
+workload 已在目标硬件运行。
+
+### 7.2 当前手工部署验收矩阵
+
+| 手工路径 | 静态契约 | 已有独立实机证据 | 结论 |
+|---|---:|---:|---|
+| Generic Monitoring-only | PASS | 未使用 Generic Control 单独闭环 | 待验收 |
+| Generic + CPU Stress | PASS | 未使用 Generic Control 单独闭环 | 待验收 |
+| NVIDIA Monitoring-only | PASS | 未在 NVIDIA 节点闭环 | 待验收 |
+| NVIDIA + CPU Stress | PASS | 未在 NVIDIA 节点闭环 | 待验收 |
+| Ascend A2 Monitoring-only | PASS | PASS | 已验收 |
+| Ascend A2 + CPU Stress | PASS | PASS | 已验收 |
+| Ascend A2 + NPU Stress | PASS | PASS | 已验收 |
+| Ascend A2 Full | PASS | PASS | 已验收 |
+
+现有 A2 证据基于源码 `c22c8db0cdb0677ddf4a1b8dea426f088dd615ad` 和 NPU
+Control 镜像，覆盖稀疏 `/dev/davinci2,/dev/davinci5` 节点。Generic/GPU CPU 手工
+章节在后续文档提交中加入，因此 A2 结果不能替代它们各自的 Control 镜像实机验收。
+
+最近一次 README 手工演示的 workload 覆盖是：
+
+| 项目 | 演示结果 | 边界 |
+|---|---:|---|
+| STREAM | 完整运行 PASS | 有性能指标和最终报告 |
+| HPL | 启动与 Cancel 清理 PASS | 本轮未运行至正常完成 |
+| HPCG | doctor PASS | 本轮未执行完整 workload |
+| NPU Burn | 完整运行 PASS | 两个 mapped device、CSV、`err_count=0` |
+
+因此不得把 `container_deployment_test.sh` 通过或这次 A2 演示描述为“当前 HEAD 所有
+README 命令逐条实测通过”。
+
 ## 8. 容器集成测试
 
 容器测试必须使用新名称和新架构：
@@ -192,7 +234,7 @@ docker exec catmonitor catmonitor stress run --bench stream -o table
 
 发布支持声明前至少完成：
 
-### 8.1 环境
+### 9.1 环境
 
 记录但不提交节点隐私：
 
@@ -204,7 +246,7 @@ npu-smi info
 ls -l /dev/davinci*
 ```
 
-### 8.2 镜像身份
+### 9.2 镜像身份
 
 ```bash
 docker image inspect <control> <cpu> <npu> \
@@ -213,7 +255,7 @@ docker image inspect <control> <cpu> <npu> \
 
 记录 source commit、image ID/digest、CPU/NPU manifests。
 
-### 8.3 启动与预检
+### 9.3 启动与预检
 
 ```bash
 docker compose ... --profile stress-cpu --profile stress-npu up -d
@@ -224,7 +266,7 @@ docker exec catmonitor catmonitor stress doctor -o table
 runtime_home、output_directory 与 log_directory 资产都必须显示为可写；
 runtime HOME 来自限额 tmpfs，CSV 输出目录来自嵌套持久卷。
 
-### 8.4 Workload 顺序
+### 9.4 Workload 顺序
 
 ```bash
 docker exec catmonitor catmonitor stress run --bench stream -o table
@@ -240,7 +282,7 @@ pgrep -af 'stream_omp|xhpl|xhpcg|mpirun|numactl' || true
 docker exec catmonitor-stress-npu pgrep -af 'ascend_npu_burn|python' || true
 ```
 
-### 8.5 A2 sparse device
+### 9.5 A2 sparse device
 
 若 host 只有 `/dev/davinci2,/dev/davinci5`，必须确认：
 
@@ -250,7 +292,7 @@ docker exec catmonitor-stress-npu pgrep -af 'ascend_npu_burn|python' || true
 - NPU Burn logical ID 使用已验证的 0、1，而不是 2、5；
 - device count 取映射数量 2，不取最大 ID 5。
 
-### 8.6 Web
+### 9.6 Web
 
 ```bash
 curl -fsS http://127.0.0.1:19322/api/stress/config

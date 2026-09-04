@@ -1,7 +1,8 @@
 # CATMonitor 容器部署
 
 本目录是 CATMonitor 新用户的容器部署入口。Docker Compose 是推荐入口；
-`docker run` 是完整支持的手工兼容入口，两种方式必须使用相同的镜像、配置和运行契约。
+`docker run` 是各节点指南均已写明的手工兼容入口，两种方式使用相同的镜像、配置和
+运行契约。文档契约完整不等于每种硬件镜像都已经实机执行，验证范围见第 7 节。
 
 > 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
 > `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
@@ -123,3 +124,31 @@ docker exec "$DAEMON_ID" catmonitor stress doctor \
 ```text
 http://<node-address>:19322/
 ```
+
+## 7. Monitoring 兼容边界与验证范围
+
+Unified Stress V2 是原 `develop` Monitoring 的增量能力，不替换原有部署契约：
+
+- Monitoring-only 仍使用 `catmonitor`、`catmonitor-web`、`catmonitor-dfee`；
+- daemon/Web/DFeE 程序、`catmonitor.yaml`/`metrics.yaml`、snapshot/data/straggler/CSV
+  路径与 `19320`、`19321`、`19322`、`19323`、`9333` 端口保持兼容；
+- 各硬件指南继续给出 Compose、Monitoring-only `docker run`、部分服务启动、独立
+  DFeE、自定义配置及 Prometheus/Grafana 接入；
+- 旧 Monitoring YAML 可以没有 `stress:`；旧 Stress V1 YAML 不能直接迁移。
+
+```text
+OLD_MONITORING_YAML_COMPATIBLE=true
+OLD_STRESS_YAML_COMPATIBLE=false
+```
+
+当前验证口径：
+
+| 路径 | 静态文档契约 | 独立实机验收 |
+|---|---:|---:|
+| Generic Monitoring / CPU Stress `docker run` | PASS | 待 Generic 节点闭环 |
+| NVIDIA Monitoring / CPU Stress `docker run` | PASS | 待 NVIDIA 节点闭环 |
+| Ascend A2 Monitoring / CPU-only / NPU-only / Full | PASS | PASS |
+
+已有 A2 实机证据使用 Ascend Control 镜像，不能替代 Generic 或 NVIDIA Control 镜像
+验收；后来增加的 Generic/GPU CPU 手工章节目前仅由静态契约测试覆盖。详细 workload
+与版本边界见 [Stress 测试指南](../features/stress/STRESS_TEST_GUIDE.md)。

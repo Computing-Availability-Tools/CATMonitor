@@ -89,6 +89,7 @@ control volume。
 ```bash
 docker volume create cm-snapshot
 docker volume create cm-data
+docker volume create cm-straggler
 docker volume create cm-csv
 
 docker run -d --name catmonitor --restart unless-stopped \
@@ -103,6 +104,7 @@ docker run -d --name catmonitor --restart unless-stopped \
   -e LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/nnae/latest/lib64 \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
+  -v cm-straggler:/var/lib/catmonitor/straggler \
   "$CATMONITOR_IMAGE"
 
 docker run -d --name catmonitor-web --restart unless-stopped --network host \
@@ -141,6 +143,139 @@ curl -fsS http://127.0.0.1:9333/metrics >/dev/null
 ### 3.3 Verify
 
 Web 中 Stress 显示未启用；旧 Monitoring YAML 可以完全没有顶层 `stress:` 段。
+
+### 3.4 只启动部分 Monitoring 服务
+
+```bash
+# daemon + DFeE（跳过 Web）
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_CONFIG="$CATMONITOR_CONFIG" \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.npu.yml \
+  up -d catmonitor dfee
+
+# 只启动 daemon
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_CONFIG="$CATMONITOR_CONFIG" \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.npu.yml \
+  up -d catmonitor
+```
+
+### 3.5 自定义 Monitoring 配置
+
+Monitoring 公共配置路径保持不变：
+
+| 文件 | 容器内路径 | 所有者 |
+|---|---|---|
+| 主配置 | `/etc/catmonitor/catmonitor.yaml` | daemon |
+| 指标目录 | `/etc/catmonitor/metrics.yaml` | daemon |
+
+Compose 通过 `CATMONITOR_CONFIG` 挂载主配置。手工启动时如需替换两份配置，把下面
+两个只读 bind mount 加到 `catmonitor` 容器；Web/DFeE 只消费 snapshot，不重复读取
+daemon 配置。
+
+```bash
+-v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
+-v /path/to/my-metrics.yaml:/etc/catmonitor/metrics.yaml:ro
+```
+
+旧 Monitoring YAML 不含 `stress:` 时仍可启动，且不会创建 Stress Manager、
+`control.sock` 或 Docker executor。旧 Stress V1 YAML 不兼容 V2。
+
+### 3.6 独立运行 DFeE
+
+daemon 已在宿主机写入 `/var/lib/catmonitor/snapshot` 时：
+
+```bash
+sudo install -d -m 0750 /var/lib/catmonitor/csv
+
+docker run -d --name catmonitor-dfee --network host \
+  --entrypoint /usr/local/bin/dfee \
+  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v /var/lib/catmonitor/csv:/var/lib/catmonitor/csv \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -exporter=enabled -exporter-port=9333 \
+  -csv=disabled -csv-dir=/var/lib/catmonitor/csv
+```
+
+daemon 位于另一个容器时改为共享 `cm-snapshot` named volume。DFeE 不需要 Ascend
+设备、driver/toolkit 或 Docker Socket，它消费 daemon 已生成的 snapshot。
+
+### 3.7 Monitoring 端口与数据
+
+| 端口 | 组件 | 用途 |
+|---:|---|---|
+| `19320` | daemon | `/metrics`、`/-/healthy`、`/-/ready` |
+| `19321` | faultsub | 启用后提供故障订阅 REST API |
+| `19322` | Web | Monitoring；启用 V2 Stress 后同时提供 Run/Cancel/History |
+| `19323` | DFeE | 能效页面与 API |
+| `9333` | DFeE exporter | Prometheus metrics |
+
+| 卷/宿主目录 | 容器内路径 | 用途 |
+|---|---|---|
+| `cm-snapshot` | `/var/lib/catmonitor/snapshot` | daemon 写，Web/DFeE 只读 |
+| `cm-data` | `/var/lib/catmonitor/data` | daemon 原始 JSONL；按 retention 管理 |
+| `cm-straggler`（可选） | `/var/lib/catmonitor/straggler` | straggler 专用输出 |
+| `cm-csv` | `/var/lib/catmonitor/csv` | DFeE CSV |
+
+要启用 faultsub，在 daemon 的 `catmonitor.yaml` 中设置：
+
+```yaml
+faultsub:
+  enabled: true
+  rest_addr: ":19321"
+  webhook_timeout: 5s
+  webhook_retry: 1
+  event_buffer: 1024
+  defaults:
+    debounce_ms: 0
+    min_severity: warning
+```
+
+可选的 straggler 专用输出仍使用原路径：
+
+```yaml
+straggler_output:
+  enabled: true
+  data_dir: /var/lib/catmonitor/straggler
+  retention: 360h
+  flush_interval: 60s
+```
+
+验证当前故障与最近事件：
+
+```bash
+curl -fsS http://127.0.0.1:19321/-/ready
+curl -fsS http://127.0.0.1:19321/faultsub/snapshot
+curl -fsS http://127.0.0.1:19321/faultsub/events
+```
+
+### 3.8 DFeE Exporter、Prometheus 与 Grafana
+
+```bash
+curl -fsS http://127.0.0.1:9333/metrics | head
+```
+
+Prometheus 增加：
+
+```yaml
+scrape_configs:
+  - job_name: CATMonitor
+    scrape_interval: 2s
+    static_configs:
+      - targets: ["<dfee_exporter_ip>:9333"]
+```
+
+在 `http://<prometheus-address>:9090/targets` 确认 target 为 `UP`，再在 Grafana 导入
+`features/dfee/grafana-dashboard.json`。完整 DFeE 参数与独立二进制用法见
+[DFeE 使用文档](../features/dfee/USAGE.md)。
 
 ## 4. Stress 运行目录
 
