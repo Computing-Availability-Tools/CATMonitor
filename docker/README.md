@@ -92,6 +92,7 @@ CPU/NPU workload container（可选）
 | [README-generic.md](README-generic.md) | Generic Monitoring / CPU Stress |
 | [README-gpu.md](README-gpu.md) | NVIDIA Monitoring / CPU Stress |
 | [README-npu.md](README-npu.md) | Ascend Monitoring / CPU Stress / NPU Burn |
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Generic Monitoring、CPU Stress、Ascend Full 三阶段交互演示 |
 | [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md) | Stress 配置、资源参数、操作、迁移和故障排查 |
 | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | 五张镜像构建、mirror/proxy、manifest 与 RC 发布 |
 

@@ -36,7 +36,7 @@
 ### 变更摘要
 
 - **可靠性压测模块 `features/stress`（核心新增）**：通过 `catmonitor stress` 显式运行 STREAM / HPL / HPCG / Ascend NPU Burn；普通 health 和 daemon 不自动触发。CLI/Web 共享原子报告、最近 100 次历史和 Linux 跨进程锁；支持单次缩短超时、作业取消、进程组回收及 profile、资产和配置哈希追溯。第一版只支持 Linux 单机执行；Windows 保证构建并返回 `unsupported`，暂不支持 OSU 和多节点 MPI。
-- **Stress V2 Web**：`/stress/` 与 `/api/stress/{config,latest,history,runs}` 统一挂载到 `:19322`；GET/Run/Cancel 均通过 `/run/catmonitor/control.sock` 调用 daemon Controller。Web 不挂 Docker Socket，也不提供脚本、路径或任意参数编辑；operator authentication/RBAC 作为后续安全债务。
+- **历史 Stress Web（V1，已退休）**：提供 `/stress/` 与 `/api/stress/*`，当时以 loopback 与 `web_enabled` 限制写操作；该实现已由 v0.3.6 候选的 daemon Controller、统一 `:19322` listener 与 control socket 架构替代。
 - **stress 管理员工具链**：`scripts/stress/` 提供 CPU benchmark 构建器（STREAM/HPL/HPCG，从任意位置构建、显式选择 GCC/MPI/OpenBLAS、精确应用 HPCG OpenMP 兼容补丁、输出含工具链与资产哈希的 build manifest）、Ascend NPU Burn 镜像构建器（固定上游源码 + Mulan PSL v2 + 逐文件 SHA256、显式 source CANN 环境、HAL/torch/torch_npu/TBE 预检、离线强制重装 wheel、pciutils/lspci 依赖闭包）、固定容器创建器（动态 identity-map 全部 `/dev/davinciN`、`unless-stopped` 策略、交叉检查容器设备节点与 upstream `lspci` logical topology）、部署生成器与统一 `catmonitor-install` 安装器；`third_party/ascend_npu_burn/` 随仓提供固定 revision 源码。构建、节点适配和运行保持分离。
 - **dfee CSV 落盘 + Grafana Dashboard**：`features/dfee/csv_writer.go` 标准 CSV 落盘（按启动时间命名、value 格式规则）；`features/dfee/grafana-dashboard.json`（24 面板 6 行）。
 - **健康评估增强**：新增 `features/health/chassis.go`（机箱部件纳入评估：进/出风口温度）、`network.go`（网络部件纳入评估）、`WEIGHT_SPEC.md`（4 套权重方案）；`cpu_only` scheme 新增 network 权重；disk 健康评估改为「按物理盘聚合空间使用率」，无 SMART 数据时不判 `smart_failed`。

@@ -22,7 +22,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 - **Web 仪表盘**：独立 `catmonitor-web` 二进制，**只读消费** daemon 产出的 snapshot，可视化单机健康度与各部件指标，默认端口 19322
 - **能效监控（dfee）**：独立 `catmonitor-dfee` 二进制，**只读消费** snapshot 渲染能效指标实时图表 SPA（卡片拖拽缩放、多选下拉筛选、模块折叠），默认端口 19323；**内置 Prometheus exporter**（`:9333/metrics`）将 snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*` 格式，无需额外进程
 - **Prometheus 导出（exporter）**：daemon 内置 `/metrics` 端点（`:19320`），一次采集同时落盘 JSONL + 缓存导出，零额外进程
-- **容器化部署**：`docker/` 提供 NPU（Debian/glibc 两步构建 + driver/nnae 挂载）与 generic（alpine 多阶段）两种镜像，`build.sh` 自动检测 driver，`docker-compose.yml` 一键编排 daemon + web + dfee 三服务，详见 [容器化文档](docker/README.md)
+- **容器化部署**：`docker/` 提供 Generic、NVIDIA GPU、Ascend NPU 三类 Control 镜像，以及可选 CPU/NPU Stress workload 镜像；Monitoring-only 保持 daemon + Web + DFeE 三服务，详见 [容器化文档](docker/README.md)
 - **指标采集目录**：`configs/metrics.yaml` 统一管控采哪些指标、优先级、默认是否采集，模块可覆盖
 - **Feature-scoped 采集**：`features` 配置列表声明各特性所需指标，`internal/metrics` 以 `SetFeatureScope` 建立白名单（各 feature `metrics.yaml` 的并集）；非空时只采白名单内且 `priority ≥ min_priority` 的指标，`AnyWanted` 跳过产出全 out-of-scope 的子方法，避免空跑硬件；空则用默认目录全集。同时 `ComponentIntervals` 取各 feature `metrics.yaml` 声明 interval 的**最小值**派生每组件采集 cadence（C_comp），覆盖 `collectors.<name>.interval`，使 feature 所需刷新节奏成为采集节奏
 - **采集粒度控制**：`collection.min_priority` 配置（low/medium/high）按优先级阈值预过滤采集，采集器经 `AnyWanted` DI 在执行前跳过无需采集的指标组，降低开销
@@ -120,8 +120,9 @@ catmonitor stress cancel --job JOB_ID
 | [SPEC.md](SPEC.md) | 功能规格说明书（不含技术细节） |
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单（216 项） |
-| [docs/test_report.md](docs/test_report.md) | 测试报告（无 NPU/GPU 系统测试） |
-| [docker/README.md](docker/README.md) | 容器化部署（NPU/generic 镜像 + compose 编排） |
+| [docs/test_report.md](docs/test_report.md) | v0.3.5/V1 历史测试报告（当前 V2 范围见 Stress 测试指南） |
+| [docker/README.md](docker/README.md) | 三类 Control、可选 Stress workload、Compose 与手工部署入口 |
+| [docker/DEMO_GUIDE.md](docker/DEMO_GUIDE.md) | Generic Monitoring、CPU Stress、Ascend Full 三阶段交互演示 |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |
 | [features/stress/README.md](features/stress/README.md) | 可靠性压测入口、规格、设计与部署验收文档 |
 | [features/web/Web_SPEC.md](features/web/Web_SPEC.md) | Web 仪表盘规格 |
@@ -151,7 +152,7 @@ CATMonitor/
 │   ├── faultsub/            #   故障订阅推送（FaultStorage + HTTP Webhook + REST）
 │   └── stragglerout/        #   落后节点 KPI 文件输出（StragglerStorage + KPIWriter）
 ├── configs/                 # 默认配置（catmonitor.yaml + metrics.yaml）
-├── docker/                  # 容器化（Dockerfile.npu/generic + build.sh + compose + README）
+├── docker/                  # 容器化（Generic/GPU/NPU Control + CPU/NPU workload + Compose/手工指南）
 ├── docs/                    # 文档（指标清单 / 使用手册 / 测试报告）
 ├── tests/ scripts/          # 测试框架与数据 / 安装脚本
 └── Makefile                # make all/build/web/dfee + DCMI 头自动探测

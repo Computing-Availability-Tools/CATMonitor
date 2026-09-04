@@ -218,4 +218,30 @@ for retired in catmonitor-install benchmark_check.sh catmonitor-stress-web ':295
     done
 done
 
+# The interactive demo is the copy/paste path used for manual acceptance. It
+# must preserve the same three-stage architecture and leave Web mutations to
+# the operator instead of replacing them with API calls.
+require_fixed docker/README.md '[DEMO_GUIDE.md](DEMO_GUIDE.md)'
+require_fixed docker/DEMO_GUIDE.md '## 1. Generic Monitoring'
+require_fixed docker/DEMO_GUIDE.md '## 2. Generic + CPU Stress'
+require_fixed docker/DEMO_GUIDE.md '## 3. Ascend Full（CPU + NPU）'
+require_fixed docker/DEMO_GUIDE.md 'docker exec catmonitor catmonitor collect -o table'
+require_fixed docker/DEMO_GUIDE.md 'docker exec catmonitor catmonitor stress doctor'
+require_fixed docker/DEMO_GUIDE.md '用户 Web Run/Cancel 检查点'
+require_fixed docker/DEMO_GUIDE.md '用户 Web 发起 NPU Burn'
+require_fixed docker/DEMO_GUIDE.md 'Web 上的开始与取消必须由用户完成'
+require_fixed docker/DEMO_GUIDE.md '"${CATMONITOR_NPU_DEVICE_ARGS[@]}"'
+require_fixed docker/DEMO_GUIDE.md 'export CATMONITOR_ONLINE_CPUS="$(nproc)"'
+require_fixed docker/DEMO_GUIDE.md 'CATMONITOR_ONLINE_CPUS % CATMONITOR_HPL_PROCESSES'
+require_fixed docker/DEMO_GUIDE.md 'HPL_MPI_PROCESSES="$CATMONITOR_HPL_PROCESSES"'
+require_fixed docker/DEMO_GUIDE.md 'HPCG_MPI_PROCESSES="$CATMONITOR_HPCG_PROCESSES"'
+if grep -Fq 'docker compose' "$REPO_ROOT/docker/DEMO_GUIDE.md"; then
+    fail 'interactive docker run demo must not depend on Compose'
+fi
+for retired in catmonitor-install benchmark_check.sh catmonitor-stress-web ':29592' cpu-runner.sock; do
+    if grep -Fq -- "$retired" "$REPO_ROOT/docker/DEMO_GUIDE.md"; then
+        fail "interactive demo still references retired V1 entry: $retired"
+    fi
+done
+
 printf 'PASS: unified daemon/controller and CPU/NPU workload container contracts\n'

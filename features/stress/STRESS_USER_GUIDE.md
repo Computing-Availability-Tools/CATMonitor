@@ -49,8 +49,10 @@ GPU pre-release package 当前为 Private；GPU 用户拉取前需要完成 GHCR
 
 - Linux；
 - Docker Engine；
-- Docker Compose v2；
 - 足够的镜像与 workload 运行空间。
+
+使用推荐的 Compose 路径时额外需要 Docker Compose v2；使用各硬件 README 中完整的
+`docker run` 路径时不需要 Compose。
 
 CPU Stress：
 
@@ -66,7 +68,7 @@ Ascend NPU Stress：
 
 ```bash
 docker version
-docker compose version
+docker compose version 2>/dev/null || true
 uname -m
 ```
 
