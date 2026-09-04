@@ -383,7 +383,6 @@ function renderConfig() {
   if (config.platform !== 'linux') reasons.push('第一版仅支持 Linux');
   if (!config.feature_enabled) reasons.push('stress.enabled 未启用');
   if (!config.web_enabled) reasons.push('stress.web_enabled 未启用');
-  if (!config.loopback) reasons.push('Web 未绑定回环地址');
   if (!config.shared_report) reasons.push('report_path 未配置');
   if (selectable.length === 0) reasons.push('当前没有通过资产预检的项目');
   byId('policy').textContent = reasons.length

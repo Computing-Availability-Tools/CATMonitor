@@ -1,17 +1,7 @@
-# Read one administrator-owned CATMonitor configuration in every control-plane
-# profile. The file is mounted read-only into the daemon and Web containers;
-# DFeE does not read CATMonitor YAML.
+# Read one administrator-owned CATMonitor configuration in the daemon. Web and
+# DFeE consume daemon-owned snapshot/control APIs and do not parse this YAML.
 services:
   catmonitor:
-    volumes:
-      - type: bind
-        source: ${CATMONITOR_CONFIG:?set CATMONITOR_CONFIG to the absolute CATMonitor YAML path}
-        target: /etc/catmonitor/catmonitor.yaml
-        read_only: true
-        bind:
-          create_host_path: false
-
-  web:
     volumes:
       - type: bind
         source: ${CATMONITOR_CONFIG:?set CATMONITOR_CONFIG to the absolute CATMonitor YAML path}

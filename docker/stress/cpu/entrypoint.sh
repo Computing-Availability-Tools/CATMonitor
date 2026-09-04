@@ -2,41 +2,40 @@
 
 set -euo pipefail
 
-RUNNER_UID=65532
-RUNNER_GID=65532
-STATE_ROOT=/var/lib/catmonitor/stress
-SOCKET_ROOT=/run/catmonitor-stress
-ADAPTER=/etc/catmonitor-stress/benchmark_check.sh
+WORKLOAD_UID=65532
+WORKLOAD_GID=65532
+STATE_ROOT=${CATMONITOR_STRESS_STATE_ROOT:-/var/lib/catmonitor/stress}
 
-[ "$#" -gt 0 ] || { echo "ERROR: CPU runner command is empty" >&2; exit 1; }
-[ -x "$ADAPTER" ] || {
-    echo "ERROR: runner-local adapter is unavailable or not executable: $ADAPTER" >&2
-    exit 1
-}
-
-install -d -o "$RUNNER_UID" -g "$RUNNER_GID" -m 0750 \
+[ "$#" -gt 0 ] || { echo "ERROR: CPU workload command is empty" >&2; exit 1; }
+install -d -o "$WORKLOAD_UID" -g "$WORKLOAD_GID" -m 0750 \
     "$STATE_ROOT" \
     "$STATE_ROOT/work" \
     "$STATE_ROOT/work/hpl" \
     "$STATE_ROOT/work/hpcg"
-install -d -o "$RUNNER_UID" -g "$RUNNER_GID" -m 0750 "$SOCKET_ROOT"
 
-# HPL and HPCG write result files in their current working directories. Keep
-# immutable benchmark assets in the image and initialize only the writable
-# per-node inputs under the shared state volume.
-install -o "$RUNNER_UID" -g "$RUNNER_GID" -m 0640 \
-    /opt/catmonitor/stress/runtime/hpl/HPL.dat \
-    "$STATE_ROOT/work/hpl/HPL.dat"
-install -o "$RUNNER_UID" -g "$RUNNER_GID" -m 0640 \
-    /opt/catmonitor/stress/runtime/hpcg/hpcg.dat \
-    "$STATE_ROOT/work/hpcg/hpcg.dat"
+# HPL and HPCG write inputs and result files in their current directories.
+# Immutable image assets are copied only when the writable profile is absent.
+if [ ! -f "$STATE_ROOT/work/hpl/HPL.dat" ]; then
+    install -o "$WORKLOAD_UID" -g "$WORKLOAD_GID" -m 0640 \
+        /opt/catmonitor/stress/runtime/hpl/HPL.dat \
+        "$STATE_ROOT/work/hpl/HPL.dat"
+fi
+if [ ! -f "$STATE_ROOT/work/hpcg/hpcg.dat" ]; then
+    install -o "$WORKLOAD_UID" -g "$WORKLOAD_GID" -m 0640 \
+        /opt/catmonitor/stress/runtime/hpcg/hpcg.dat \
+        "$STATE_ROOT/work/hpcg/hpcg.dat"
+fi
+
+if [ "$1" = "__serve__" ]; then
+    set -- sleep infinity
+fi
 
 exec setpriv \
     --bounding-set=-all \
     --inh-caps=-all \
     --ambient-caps=-all \
-    --reuid="$RUNNER_UID" \
-    --regid="$RUNNER_GID" \
+    --reuid="$WORKLOAD_UID" \
+    --regid="$WORKLOAD_GID" \
     --init-groups \
     --no-new-privs \
     "$@"

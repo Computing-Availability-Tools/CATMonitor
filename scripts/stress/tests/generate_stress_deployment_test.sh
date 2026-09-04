@@ -1,174 +1,117 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-GENERATOR=$(cd -- "$SCRIPT_DIR/.." && pwd -P)/generate_stress_deployment.sh
-TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-stress-deploy-test.XXXXXXXX")
-
-cleanup() {
-    case "$TEST_ROOT" in */catmonitor-stress-deploy-test.*) rm -rf -- "$TEST_ROOT" ;; esac
-}
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/../../.." && pwd -P)
+GENERATOR="$REPO_ROOT/scripts/stress/generate_stress_deployment.sh"
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-stress-generator-v2.XXXXXXXX")
+cleanup() { rm -rf -- "$TEST_ROOT"; }
 trap cleanup EXIT HUP INT TERM
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-assert_contains() { grep -Fq -- "$2" "$1" || fail "$1 does not contain: $2"; }
-assert_fails() { if "$@" >/dev/null 2>&1; then fail "command unexpectedly succeeded: $*"; fi; }
+contains() { grep -F -- "$2" "$1" >/dev/null || fail "$1 is missing: $2"; }
+not_contains() { ! grep -F -- "$2" "$1" >/dev/null || fail "$1 unexpectedly contains: $2"; }
+expect_fail() { if "$@" >/dev/null 2>&1; then fail "command unexpectedly succeeded: $*"; fi; }
 
-RUNTIME_ROOT="$TEST_ROOT/runtime"
-PLUGIN_ROOT="$TEST_ROOT/plugin"
-OUTPUT_DIR="$TEST_ROOT/deployment"
-TOOLS="$TEST_ROOT/tools"
-install -d -m 0755 \
-    "$RUNTIME_ROOT/stream" "$RUNTIME_ROOT/hpl" "$RUNTIME_ROOT/hpcg" \
-    "$TEST_ROOT/manifests" "$TEST_ROOT/npu-output" "$TOOLS"
+CPU_OUT="$TEST_ROOT/cpu-only"
+bash "$GENERATOR" \
+    --output-dir "$CPU_OUT" \
+    --control-image ghcr.io/example/catmonitor:fixture \
+    --cpu-image ghcr.io/example/cpu:fixture \
+    --hpl-processes 8 --hpl-threads 12 \
+    --hpcg-processes 96 --hpcg-threads 1 \
+    --enable-web
 
-for executable in \
-    "$RUNTIME_ROOT/stream/stream_omp" \
-    "$RUNTIME_ROOT/hpl/xhpl" \
-    "$RUNTIME_ROOT/hpcg/xhpcg"; do
-    printf '#!/usr/bin/env bash\nexit 0\n' >"$executable"
-    chmod 0755 "$executable"
+for file in catmonitor-stress.yaml stress-profile.json docker-compose.stress.generated.yml stress-deployment-manifest.json; do
+    test -f "$CPU_OUT/$file" || fail "missing CPU-only output: $file"
 done
-cat >"$RUNTIME_ROOT/hpl/HPL.dat" <<'EOF'
-HPLinpack benchmark input file
-CATMonitor fixture
-HPL.out
-6
-1
-50000
-1
-256
-0
-1
-4
-2
-EOF
-printf '32 32 32\n60\n' >"$RUNTIME_ROOT/hpcg/hpcg.dat"
-printf '{"schema_version":1,"fixture":"cpu"}\n' >"$TEST_ROOT/manifests/cpu.json"
-printf '{"schema_version":1,"fixture":"npu"}\n' >"$TEST_ROOT/manifests/npu.json"
-printf '{"schema_version":1,"feature":"stress_cpu_runner"}\n' >"$TEST_ROOT/manifests/cpu-runner.json"
+contains "$CPU_OUT/catmonitor-stress.yaml" 'collectors:'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'features: [web, dfee, health]'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'snapshot:'
+contains "$CPU_OUT/catmonitor-stress.yaml" '  enabled: true'
+contains "$CPU_OUT/catmonitor-stress.yaml" '  dir: /var/lib/catmonitor/snapshot'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'type: docker_exec'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'container: catmonitor-stress-cpu'
+contains "$CPU_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: false'
+contains "$CPU_OUT/docker-compose.stress.generated.yml" "image: 'ghcr.io/example/cpu:fixture'"
+not_contains "$CPU_OUT/docker-compose.stress.generated.yml" 'devices:'
+contains "$CPU_OUT/stress-profile.json" '"cpu":{"enabled":true'
+contains "$CPU_OUT/stress-profile.json" '"daemon_docker_socket":true'
+contains "$CPU_OUT/stress-profile.json" '"web_docker_socket":false'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/no-profile"
+expect_fail bash "$GENERATOR" --output-dir "$CPU_OUT" --cpu-image ghcr.io/example/cpu:fixture
+bash "$GENERATOR" --output-dir "$CPU_OUT" --cpu-image ghcr.io/example/cpu:fixture --force >/dev/null
 
-cat >"$TOOLS/numactl" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-cat >"$TOOLS/mpirun" <<'EOF'
-#!/usr/bin/env bash
-if [ "${1-}" = --version ]; then echo 'HYDRA build details: Version 4.1.3'; fi
-exit 0
-EOF
-cat >"$TOOLS/docker" <<'EOF'
-#!/usr/bin/env bash
-case "${1-}" in
-    inspect)
-        printf 'true|catmonitor/npuburn:test\n'
-        ;;
-    exec)
-        command_line=$*
-        case "$command_line" in
-            *'/usr/bin/test -x'*) exit 0 ;;
-            *'/dev/davinci[0-9]'*) printf '0\n1\n' ;;
-            *'lspci_path='*) printf '0\n1\n' ;;
-            *) exit 0 ;;
-        esac
-        ;;
-    *) exit 2 ;;
-esac
-EOF
-chmod 0755 "$TOOLS/"*
+HOST="$TEST_ROOT/host"
+mkdir -p \
+    "$HOST/dev" \
+    "$HOST/usr/local/Ascend/driver/lib64" \
+    "$HOST/usr/local/Ascend/driver" \
+    "$HOST/usr/local/dcmi" \
+    "$HOST/usr/local/bin" \
+    "$HOST/etc"
+touch \
+    "$HOST/dev/davinci2" "$HOST/dev/davinci5" \
+    "$HOST/dev/davinci_manager" "$HOST/dev/devmm_svm" "$HOST/dev/hisi_hdc" \
+    "$HOST/usr/local/Ascend/driver/version.info" \
+    "$HOST/etc/ascend_install.info" "$HOST/usr/local/bin/npu-smi"
+printf '{"schema_version":1}\n' >"$TEST_ROOT/cpu-manifest.json"
+printf '{"schema_version":1}\n' >"$TEST_ROOT/npu-manifest.json"
 
-generate() {
-    bash "$GENERATOR" \
-        --output-dir "$OUTPUT_DIR" \
-        --runtime-root "$RUNTIME_ROOT" \
-        --plugin-root "$PLUGIN_ROOT" \
-        --cpu-manifest "$TEST_ROOT/manifests/cpu.json" \
-        --npu-manifest "$TEST_ROOT/manifests/npu.json" \
-        --numactl "$TOOLS/numactl" \
-        --mpi-launcher "$TOOLS/mpirun" \
-        --hpl-processes 8 \
-        --hpl-threads 12 \
-        --hpcg-processes 96 \
-        --hpcg-threads 1 \
-        --npu-runtime "$TOOLS/docker" \
-        --npu-container catmonitor-npu-burn \
-        --npu-image catmonitor/npuburn:test \
-        --npu-output-dir "$TEST_ROOT/npu-output" \
-        --npu-device 1 \
-        --npu-chip-generation A3 \
-        --npu-cann 9.0.1 \
-        --npu-torch-npu 2.10.0.post2 \
-        --npu-soc Ascend-A3 \
-        --npu-run-case quant_matmul \
-        --enable-web \
-        "$@"
-}
+NPU_OUT="$TEST_ROOT/npu-only"
+bash "$GENERATOR" \
+    --output-dir "$NPU_OUT" \
+    --npu-image ghcr.io/example/npu:fixture \
+    --npu-manifest "$TEST_ROOT/npu-manifest.json" \
+    --npu-host-root "$HOST" \
+    --npu-device-nodes 5,2 \
+    --npu-burn-device 0,1 \
+    --npu-chip-generation A2 \
+    --npu-run-case matmul
 
-assert_fails bash "$GENERATOR"
-assert_fails generate --output-dir "$TEST_ROOT/bad-device" --npu-device 0,,1
-assert_fails generate --output-dir "$TEST_ROOT/bad-processes" --hpl-processes 0
-assert_fails generate --output-dir "$TEST_ROOT/missing-manifest" --npu-manifest "$TEST_ROOT/manifests/missing.json"
-generate
+contains "$NPU_OUT/catmonitor-stress.yaml" 'default_benchmarks: [npu_burn]'
+contains "$NPU_OUT/catmonitor-stress.yaml" 'stream: { enabled: false'
+contains "$NPU_OUT/catmonitor-stress.yaml" 'hpl: { enabled: false'
+contains "$NPU_OUT/catmonitor-stress.yaml" 'hpcg: { enabled: false'
+contains "$NPU_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: true'
+not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'catmonitor-stress-cpu:'
+contains "$NPU_OUT/docker-compose.stress.generated.yml" 'catmonitor-stress-npu:'
+contains "$NPU_OUT/docker-compose.stress.generated.yml" 'privileged: true'
+contains "$NPU_OUT/docker-compose.stress.generated.yml" "ASCEND_RT_VISIBLE_DEVICES: '0,1'"
+not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'network_mode: host'
+not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'read_only: false'
+contains "$NPU_OUT/stress-profile.json" '"cpu":{"enabled":false,"image":null'
 
-ADAPTER="$OUTPUT_DIR/benchmark_check.sh"
-CONFIG="$OUTPUT_DIR/catmonitor-stress.yaml"
-MANIFEST="$OUTPUT_DIR/stress-deployment-manifest.json"
-for file in "$ADAPTER" "$CONFIG" "$MANIFEST"; do [ -f "$file" ] || fail "missing generated file: $file"; done
-if command -v python3 >/dev/null 2>&1; then python3 -m json.tool "$MANIFEST" >/dev/null; fi
-bash -n "$ADAPTER"
-assert_contains "$ADAPTER" "HPL_MPI_PROCESSES=8"
-assert_contains "$ADAPTER" "HPCG_MPI_PROCESSES=96"
-assert_contains "$ADAPTER" "NPU_BURN_BACKEND=docker_exec"
-assert_contains "$ADAPTER" "NPU_BURN_DEVICE=1"
-assert_contains "$CONFIG" "web_enabled: true"
-assert_contains "$CONFIG" "script_path: \"$PLUGIN_ROOT/benchmark_check.sh\""
-assert_contains "$CONFIG" "stream: { enabled: true, timeout: 1m }"
-assert_contains "$CONFIG" "hpl: { enabled: true, timeout: 10m }"
-assert_contains "$CONFIG" "npu_burn: { enabled: true, timeout: 30m }"
-assert_contains "$MANIFEST" '"schema_version":1'
-assert_contains "$MANIFEST" "\"installed_path\":\"$PLUGIN_ROOT/benchmark_check.sh\""
-assert_contains "$MANIFEST" '"hpcg_mpi_processes":96'
+FULL_OUT="$TEST_ROOT/full"
+bash "$GENERATOR" \
+    --output-dir "$FULL_OUT" \
+    --cpu-image ghcr.io/example/cpu:fixture \
+    --npu-image ghcr.io/example/npu:fixture \
+    --cpu-manifest "$TEST_ROOT/cpu-manifest.json" \
+    --npu-manifest "$TEST_ROOT/npu-manifest.json" \
+    --npu-host-root "$HOST" \
+    --npu-device-nodes 5,2 \
+    --npu-burn-device 0,1 \
+    --npu-chip-generation A2 \
+    --npu-run-case matmul
 
-for benchmark in stream hpl hpcg npu_burn; do
-    profile="$TEST_ROOT/$benchmark.json"
-    bash "$ADAPTER" describe "$benchmark" >"$profile"
-    assert_contains "$profile" "\"benchmark\":\"$benchmark\""
-    grep -Eq '"preflight":\{"status":"(pass|warn)"' "$profile" || \
-        fail "$benchmark describe did not pass: $(cat "$profile")"
-done
+contains "$FULL_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: true'
+contains "$FULL_OUT/docker-compose.stress.generated.yml" 'CATMONITOR_NPU_DEVICE_COUNT:'
+contains "$FULL_OUT/docker-compose.stress.generated.yml" "CATMONITOR_NPU_DEVICE_COUNT: '2'"
+contains "$FULL_OUT/docker-compose.stress.generated.yml" "ASCEND_RT_VISIBLE_DEVICES: '0,1'"
+contains "$FULL_OUT/docker-compose.stress.generated.yml" '/dev/davinci2:/dev/davinci2'
+contains "$FULL_OUT/docker-compose.stress.generated.yml" '/dev/davinci5:/dev/davinci5'
+contains "$FULL_OUT/docker-compose.stress.generated.yml" "NPU_BURN_DEVICE: '0,1'"
+contains "$FULL_OUT/stress-profile.json" '"host_device_ids":[2,5]'
+contains "$FULL_OUT/stress-profile.json" '"burn_logical_ids":"0,1"'
+contains "$FULL_OUT/stress-deployment-manifest.json" '"cpu_manifest_sha256":"'
+contains "$FULL_OUT/stress-deployment-manifest.json" '"npu_manifest_sha256":"'
+contains "$FULL_OUT/docker-compose.stress.generated.yml" 'privileged: true'
+not_contains "$FULL_OUT/docker-compose.stress.generated.yml" 'network_mode: host'
+not_contains "$FULL_OUT/docker-compose.stress.generated.yml" 'read_only: false'
 
-assert_fails generate
-generate --force
+expect_fail bash "$GENERATOR" \
+    --output-dir "$TEST_ROOT/bad" --cpu-image cpu:test --npu-image npu:test \
+    --npu-host-root "$HOST" --npu-device-nodes 2,9 --npu-burn-device 0,1
 
-UNIX_OUTPUT="$TEST_ROOT/deployment-unix"
-generate \
-    --output-dir "$UNIX_OUTPUT" \
-    --cpu-backend unix \
-    --cpu-runner-image catmonitor/stress-cpu:test \
-    --cpu-runner-manifest "$TEST_ROOT/manifests/cpu-runner.json"
-
-UNIX_ADAPTER="$UNIX_OUTPUT/benchmark_check.sh"
-RUNNER_ADAPTER="$UNIX_OUTPUT/cpu-runner-benchmark_check.sh"
-UNIX_CONFIG="$UNIX_OUTPUT/catmonitor-stress.yaml"
-UNIX_MANIFEST="$UNIX_OUTPUT/stress-deployment-manifest.json"
-for file in "$UNIX_ADAPTER" "$RUNNER_ADAPTER" "$UNIX_CONFIG" "$UNIX_MANIFEST"; do
-    [ -f "$file" ] || fail "missing generated CPU runner deployment file: $file"
-done
-if command -v python3 >/dev/null 2>&1; then python3 -m json.tool "$UNIX_MANIFEST" >/dev/null; fi
-bash -n "$UNIX_ADAPTER"
-bash -n "$RUNNER_ADAPTER"
-assert_contains "$UNIX_ADAPTER" 'CPU_EXECUTION_BACKEND=unix'
-assert_contains "$UNIX_ADAPTER" 'CPU_RUNNER_CLIENT=/usr/local/bin/catmonitor-stress-cpu-client'
-assert_contains "$UNIX_ADAPTER" 'CPU_RUNNER_SOCKET=/run/catmonitor-stress/cpu-runner.sock'
-assert_contains "$RUNNER_ADAPTER" 'CPU_EXECUTION_BACKEND=local'
-assert_contains "$RUNNER_ADAPTER" 'CPU_EXECUTION_PROFILE=container_runner'
-assert_contains "$RUNNER_ADAPTER" 'CPU_EXECUTION_IMAGE=catmonitor/stress-cpu:test'
-assert_contains "$RUNNER_ADAPTER" 'HPL_WORKDIR=/var/lib/catmonitor/stress/work/hpl'
-assert_contains "$RUNNER_ADAPTER" 'HPCG_WORKDIR=/var/lib/catmonitor/stress/work/hpcg'
-assert_contains "$UNIX_CONFIG" 'result_dir: "/var/lib/catmonitor/stress/work/hpcg"'
-assert_contains "$UNIX_MANIFEST" '"cpu_backend":"unix"'
-assert_contains "$UNIX_MANIFEST" '"cpu_runner_image":"catmonitor/stress-cpu:test"'
-assert_contains "$UNIX_MANIFEST" '"cpu_runner_image_manifest":{'
-
-printf 'PASS: complete stress deployment generator fixture\n'
+printf 'PASS: daemon/controller Stress deployment generator\n'

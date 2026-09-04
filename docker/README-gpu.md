@@ -1,464 +1,477 @@
-# GPU 服务器（NVIDIA）容器化指南
+# CATMonitor：NVIDIA GPU 节点
 
-适用于有 NVIDIA GPU 的服务器。使用 `catmonitor-gpu` 镜像（Debian/glibc，纯 Go 编译，兼容宿主机 nvidia-smi）。
+适用于带 NVIDIA GPU 的 Linux 节点。当前提供 NVIDIA Monitoring 和可选 CPU Stress，
+不提供 GPU workload 压测插件。
 
-> **不要使用 `catmonitor-generic`（Alpine/musl）运行 GPU 环境。** Alpine 使用 musl libc，无法运行 glibc 编译的 `nvidia-smi`，导致 GPU 指标采集静默失败。
+> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
+> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+>
+> GPU pre-release 镜像当前为 Private，拉取前需要完成 GHCR 身份认证。
 
----
+## 1. 前置条件
 
-## 1. 构建
-
-### 构建镜像
+- Linux/amd64 或 Linux/arm64；
+- Docker Engine 与 Docker Compose v2；
+- 宿主机 `nvidia-smi` 可执行；
+- Docker 可读取宿主机 NVIDIA 动态库路径。
 
 ```bash
+nvidia-smi
+docker version
+docker compose version
+```
+
+## 2. 获取 ARM64 Stress pre-release 镜像
+
+```bash
+git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-bash docker/build.sh gpu
+git checkout refactor/unified-stress-platform
+
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
+export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-gpu:${CATMONITOR_RELEASE}"
+export CATMONITOR_CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
 ```
 
-输出镜像 `catmonitor-gpu`。多阶段构建：`golang:1.23` 编译 + `debian:bookworm-slim` 运行时。
-
-### 代理与离线构建
+Monitoring-only：
 
 ```bash
-export HTTP_PROXY=http://proxy.example.com:3128
-export HTTPS_PROXY=http://proxy.example.com:3128
-export NO_PROXY=127.0.0.1,localhost
-export GOPROXY=https://proxy.golang.example,direct
-
-bash docker/build.sh gpu
-
-unset HTTP_PROXY HTTPS_PROXY NO_PROXY GOPROXY
+docker pull "$CATMONITOR_IMAGE"
 ```
 
-完全离线节点优先加载已构建好的镜像：
+启用 CPU Stress 时再执行：
 
 ```bash
-# 联网节点
-docker save -o catmonitor-gpu.tar catmonitor-gpu
-
-# 离线节点
-docker load -i catmonitor-gpu.tar
+docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 ```
 
-离线构建还需预先加载 `golang:1.23` 和 `debian:bookworm-slim`，并准备 Go module cache。
+需要从源码构建 GPU Control 或 CPU workload、配置 Debian mirror，或制作 RC 镜像时，
+请使用 [镜像构建与发布开发者指南](DEVELOPER_GUIDE.md)。
 
-### Dockerfile 说明
-
-| 文件 | 用途 |
-|------|------|
-| `Dockerfile.gpu` | GPU 控制镜像（多阶段，golang 编译 + Debian 运行时） |
-| `catmonitor.yaml` | 容器版配置（打包在镜像中） |
-
----
-
-## 2. 启动
-
-### 方式一：Docker Compose（推荐）
-
-GPU overlay 挂载宿主机的 `nvidia-smi` 和 NVIDIA 运行时库：
+## 3. NVIDIA Monitoring
 
 ```bash
-CATMONITOR_IMAGE=catmonitor-gpu \
-docker compose \
+export CATMONITOR_CONFIG="$PWD/docker/catmonitor.yaml"
+
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_CONFIG="$CATMONITOR_CONFIG" \
+  docker compose -p catmonitor \
   -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
   -f docker/docker-compose.gpu.yml \
   up -d
 ```
 
-启动全部三个容器：daemon + web + dfee。
-
-`docker-compose.gpu.yml` 内容：
-
-```yaml
-services:
-  catmonitor:
-    volumes:
-      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
-      - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
-    environment:
-      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
-```
-
-> 挂载整个 `/usr/lib/x86_64-linux-gnu` 目录而非单个 `.so` 文件，因为 `nvidia-smi` 可能依赖多个 NVIDIA 库（libnvidia-ml.so、libcuda.so 等）。
-
-#### 只启动部分服务
+应创建 `catmonitor`、`web`、`dfee` 三个服务：
 
 ```bash
-# daemon + dfee（跳过 web）
-CATMONITOR_IMAGE=catmonitor-gpu \
-docker compose \
+docker compose -p catmonitor \
   -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
   -f docker/docker-compose.gpu.yml \
-  up -d catmonitor dfee
+  ps
 
-# 只启动 daemon
-CATMONITOR_IMAGE=catmonitor-gpu \
-docker compose \
-  -f docker/docker-compose.yml \
-  -f docker/docker-compose.gpu.yml \
-  up -d catmonitor
+curl -fsS http://127.0.0.1:19320/-/ready
+curl -fsS http://127.0.0.1:19322/ >/dev/null
+curl -fsS http://127.0.0.1:19323/ >/dev/null
 ```
 
-> web/dfee 容器只读 snapshot，不需要 GPU 访问，镜像用 `catmonitor-gpu` 或 `catmonitor-generic` 均可。
-
-### 方式二：手动 docker run
-
-#### 步骤 1：创建卷
+确认 GPU snapshot 与 exporter：
 
 ```bash
+docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.gpu.yml \
+  exec catmonitor \
+  sh -c 'test -s /var/lib/catmonitor/snapshot/snapshot_gpu.json'
+
+curl -fsS http://127.0.0.1:19320/metrics | grep -i gpu | head
+```
+
+### 3.1 手工 `docker run`（Monitoring-only 兼容）
+
+Compose 是推荐方式；不能使用 Compose 时仍可用下面的旧部署方式。它只启动三个
+Monitoring 容器，不挂 Docker Socket/control socket，也不需要 CPU workload 镜像。
+以下 NVIDIA 库目录按节点实际架构调整。
+
+```bash
+export NVIDIA_LIB_DIR=/usr/lib/x86_64-linux-gnu
+
 docker volume create cm-snapshot
 docker volume create cm-data
-```
+docker volume create cm-straggler
+docker volume create cm-csv
 
-#### 步骤 2：启动 daemon（挂载 nvidia-smi + NVIDIA 库）
-
-```bash
 docker run -d --name catmonitor --privileged --network host --pid host \
   -v /:/host:ro \
   -v /etc/os-release:/etc/os-release:ro \
   -v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
-  -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro \
-  -e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
+  -v "$NVIDIA_LIB_DIR:$NVIDIA_LIB_DIR:ro" \
+  -e "LD_LIBRARY_PATH=$NVIDIA_LIB_DIR" \
   -v cm-snapshot:/var/lib/catmonitor/snapshot \
   -v cm-data:/var/lib/catmonitor/data \
-  catmonitor-gpu
-```
+  -v cm-straggler:/var/lib/catmonitor/straggler \
+  "$CATMONITOR_IMAGE"
 
-> - `-v /usr/bin/nvidia-smi`：挂载宿主机的 nvidia-smi（glibc 编译，需 Debian/glibc 运行时）
-> - `-v /usr/lib/x86_64-linux-gnu`：挂载 NVIDIA 运行时库（libnvidia-ml.so、libcuda.so 等）
-> - `-e LD_LIBRARY_PATH`：让动态链接器找到 NVIDIA 库
-> - `--pid host` + `-v /:/host:ro`：共享宿主机 PID 命名空间读取 `/proc/1/mounts`，挂载根文件系统给 statfs 访问
-> - `-v /etc/os-release:/etc/os-release:ro`：获取宿主机 OS 信息
-> - `--privileged`：访问 `/dev/ipmi0`（ipmitool）、`/dev/sd*`（smartctl）、`/dev/nvidia*`（GPU）、`/proc`、`/sys`、SMBIOS（dmidecode）
-
-#### 步骤 3：等待首次采集（6-9 秒）
-
-```bash
-docker exec catmonitor ls /var/lib/catmonitor/snapshot
-# 预期：snapshot.json + snapshot_cpu.json + snapshot_gpu.json + ...
-```
-
-#### 步骤 4：启动 web
-
-```bash
-docker run -d --name catmonitor-web --network host --entrypoint /usr/local/bin/web \
+docker run -d --name catmonitor-web --network host \
+  --entrypoint /usr/local/bin/web \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-gpu \
+  "$CATMONITOR_IMAGE" \
   -addr=:19322 \
   -snapshot-dir=/var/lib/catmonitor/snapshot \
   -config=/etc/catmonitor/catmonitor.yaml
-```
 
-> `--network host` 后不需要 `-p` 端口映射。
-
-#### 步骤 5：启动 dfee
-
-```bash
-# 基础模式（仅 SPA + API）
-docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-gpu \
-  -snapshot-dir /var/lib/catmonitor/snapshot
-
-# 含 Prometheus exporter + CSV 输出
-docker run -d --name catmonitor-dfee --network host --entrypoint /usr/local/bin/dfee \
+docker run -d --name catmonitor-dfee --network host \
+  --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
   -v cm-csv:/var/lib/catmonitor/csv \
-  catmonitor-gpu \
-  -snapshot-dir /var/lib/catmonitor/snapshot \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
   -exporter=enabled \
   -exporter-port=9333 \
-  -csv=enabled \
-  -csv-dir=/var/lib/catmonitor/csv \
-  -csv-interval=10s
-```
-
-### 方式三：只运行 dfee（daemon 在宿主机或其他容器）
-
-```bash
-# 基础模式
-docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
-  catmonitor-gpu \
-  -snapshot-dir /var/lib/catmonitor/snapshot
-
-# 含 exporter + CSV
-docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
-  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
-  -v /var/lib/catmonitor/csv:/var/lib/catmonitor/csv \
-  catmonitor-gpu \
-  -snapshot-dir /var/lib/catmonitor/snapshot \
-  -exporter=enabled \
-  -exporter-port=9333 \
-  -csv=enabled \
+  -csv=disabled \
   -csv-dir=/var/lib/catmonitor/csv
 ```
 
----
-
-## 3. 验证 GPU 采集
-
 ```bash
-# 检查 snapshot 文件
-docker exec catmonitor ls /var/lib/catmonitor/snapshot/snapshot_gpu.json
-
-# 查看 GPU 指标
-curl -s http://localhost:19322/api/snapshot | python3 -m json.tool | grep gpu | head -5
-
-# Prometheus exporter
-curl -s http://localhost:19320/metrics | grep gpu
+docker exec catmonitor test -s /var/lib/catmonitor/snapshot/snapshot_gpu.json
+curl -fsS http://127.0.0.1:19320/-/ready
+curl -fsS http://127.0.0.1:19322/ >/dev/null
+curl -fsS http://127.0.0.1:19323/ >/dev/null
 ```
 
-如果 `snapshot_gpu.json` 不存在，参见[常见问题](#7-常见问题)排查。
+Web 中 Stress 配置会显示为未启用；Monitoring 页面不受影响。旧 Monitoring YAML
+可以完全没有顶层 `stress:` 段。
 
----
-
-## 4. 端口说明
-
-| 容器端口 | 服务 | 端点 |
-|---------|------|------|
-| 19320 | daemon Prometheus exporter | `/metrics`、`/-/healthy`、`/-/ready` |
-| 19322 | web 仪表盘 | `/`、`/api/snapshot`、`/api/collectors` |
-| 19323 | dfee SPA | `/`、`/dfee/` |
-| 9333 | dfee Prometheus exporter | `/metrics` |
-
----
-
-## 5. 验证
+### 3.2 只启动部分 Monitoring 服务
 
 ```bash
-# daemon
-curl http://localhost:19320/-/healthy           # 200
-curl http://localhost:19320/metrics | grep gpu    # GPU 指标
+# daemon + DFeE（跳过 Web）
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_CONFIG="$CATMONITOR_CONFIG" \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.gpu.yml \
+  up -d catmonitor dfee
 
-# web
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19322/   # 200
-curl -s http://localhost:19322/api/snapshot | head -c 120           # JSON
-
-# dfee
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19323/   # 200
-curl -s http://localhost:19323/api/dfee | head -c 120           # dfee API
+# 只启动 daemon
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_CONFIG="$CATMONITOR_CONFIG" \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.gpu.yml \
+  up -d catmonitor
 ```
 
----
+### 3.3 自定义 Monitoring 配置
 
-## 6. 配置修改
+Monitoring 公共配置路径保持不变：
 
-### 挂载自定义配置
+| 文件 | 容器内路径 | 所有者 |
+|---|---|---|
+| 主配置 | `/etc/catmonitor/catmonitor.yaml` | daemon |
+| 指标目录 | `/etc/catmonitor/metrics.yaml` | daemon |
 
-容器内配置文件位置：
-
-| 文件 | 容器路径 | 用途 |
-|------|---------|------|
-| `catmonitor.yaml` | `/etc/catmonitor/catmonitor.yaml` | 主配置（采集器/端口/功能开关等） |
-| `metrics.yaml` | `/etc/catmonitor/metrics.yaml` | 指标目录（优先级/单位/采集间隔） |
-| `features/web/metrics.yaml` | `/features/web/metrics.yaml` | web 特性指标范围 |
-| `features/dfee/metrics.yaml` | `/features/dfee/metrics.yaml` | dfee 特性指标范围 |
-| `features/health/metrics.yaml` | `/features/health/metrics.yaml` | 健康评估指标范围 |
-
-以上文件均已打包在镜像中，挂载自定义文件覆盖即可：
+Compose 通过 `CATMONITOR_CONFIG` 挂载主配置。手工启动时如需替换两份配置，把下面
+两个只读 bind mount 加到 `catmonitor` 容器；Web/DFeE 只消费 snapshot，不重复读取
+daemon 配置。
 
 ```bash
-docker run -d --name catmonitor --privileged --network host \
-  -v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
-  -v /path/to/my-metrics.yaml:/etc/catmonitor/metrics.yaml:ro \
-  ...其他参数...
-  catmonitor-gpu
+-v /path/to/my-catmonitor.yaml:/etc/catmonitor/catmonitor.yaml:ro \
+-v /path/to/my-metrics.yaml:/etc/catmonitor/metrics.yaml:ro
 ```
 
-Docker Compose 用户取消 `docker-compose.yml` 中 volumes 段的注释，将宿主机文件挂载覆盖即可。
+旧 Monitoring YAML 不含 `stress:` 时仍可启动，且不会创建 Stress Manager、
+`control.sock` 或 Docker executor。旧 Stress V1 YAML 不兼容 V2。
 
-### 开启 straggler_output
+### 3.4 独立运行 DFeE
+
+daemon 已在宿主机写入 `/var/lib/catmonitor/snapshot` 时：
+
+```bash
+sudo install -d -m 0750 /var/lib/catmonitor/csv
+
+docker run -d --name catmonitor-dfee --network host \
+  --entrypoint /usr/local/bin/dfee \
+  -v /var/lib/catmonitor/snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v /var/lib/catmonitor/csv:/var/lib/catmonitor/csv \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -exporter=enabled -exporter-port=9333 \
+  -csv=disabled -csv-dir=/var/lib/catmonitor/csv
+```
+
+daemon 位于另一个容器时改为共享 `cm-snapshot` named volume。DFeE 不挂 NVIDIA
+设备、NVIDIA 库或 Docker Socket，它消费 daemon 已生成的 snapshot。
+
+### 3.5 Monitoring 端口与数据
+
+| 端口 | 组件 | 用途 |
+|---:|---|---|
+| `19320` | daemon | `/metrics`、`/-/healthy`、`/-/ready` |
+| `19321` | faultsub | 启用后提供故障订阅 REST API |
+| `19322` | Web | Monitoring；启用 V2 Stress 后同时提供 Run/Cancel/History |
+| `19323` | DFeE | 能效页面与 API |
+| `9333` | DFeE exporter | Prometheus metrics |
+
+| 卷/宿主目录 | 容器内路径 | 用途 |
+|---|---|---|
+| `cm-snapshot` | `/var/lib/catmonitor/snapshot` | daemon 写，Web/DFeE 只读 |
+| `cm-data` | `/var/lib/catmonitor/data` | daemon 原始 JSONL；按 retention 管理 |
+| `cm-straggler`（可选） | `/var/lib/catmonitor/straggler` | straggler 专用输出 |
+| `cm-csv` | `/var/lib/catmonitor/csv` | DFeE CSV |
+
+要启用 faultsub，在 daemon 的 `catmonitor.yaml` 中设置：
+
+```yaml
+faultsub:
+  enabled: true
+  rest_addr: ":19321"
+  webhook_timeout: 5s
+  webhook_retry: 1
+  event_buffer: 1024
+```
+
+可选的 straggler 专用输出仍使用原路径：
 
 ```yaml
 straggler_output:
   enabled: true
   data_dir: /var/lib/catmonitor/straggler
+  retention: 360h
+  flush_interval: 60s
 ```
 
-### 调整采集优先级
+验证：
+
+```bash
+curl -fsS http://127.0.0.1:19321/-/ready
+curl -fsS http://127.0.0.1:19321/faultsub/snapshot
+```
+
+### 3.6 DFeE Exporter、Prometheus 与 Grafana
+
+```bash
+curl -fsS http://127.0.0.1:9333/metrics | head
+```
+
+Prometheus 增加：
 
 ```yaml
-collection:
-  min_priority: low      # low(全采) | medium(跳过Low) | high(只采High)
+scrape_configs:
+  - job_name: CATMonitor
+    scrape_interval: 2s
+    static_configs:
+      - targets: ["<dfee_exporter_ip>:9333"]
 ```
 
----
+在 `http://<prometheus-address>:9090/targets` 确认 target 为 `UP`，再在 Grafana 导入
+`features/dfee/grafana-dashboard.json`。完整 DFeE 参数与独立二进制用法见
+[DFeE 使用文档](../features/dfee/USAGE.md)。
 
-## 7. 数据卷说明
+## 4. NVIDIA Monitoring + CPU Stress
 
-| Volume | 写入方 | 读取方 | 内容 |
-|--------|--------|--------|------|
-| `cm-snapshot` | daemon | web, dfee | snapshot.json + snapshot_*.json |
-| `cm-data` | daemon | — | JSONL 历史数据 |
-| `cm-straggler` | daemon | — | straggler KPI 文件（可选） |
-| `cm-csv` | dfee | — | dfee CSV 输出（可选，`-csv=enabled` 时） |
-
----
-
-## 8. 停止与清理
+### 4.1 Generate
 
 ```bash
-# 停止全部容器
-docker rm -f catmonitor catmonitor-web catmonitor-dfee
+sudo install -d -m 0750 \
+  /etc/catmonitor/generated-stress \
+  /var/lib/catmonitor/stress
 
-# 清理数据卷（保留数据则跳过）
-docker volume rm cm-snapshot cm-data cm-csv
-
-# 删除镜像
-docker rmi catmonitor-gpu
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir /etc/catmonitor/generated-stress \
+  --control-image "$CATMONITOR_IMAGE" \
+  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
+  --stream-threads 0 \
+  --hpl-processes 8 \
+  --hpl-threads 12 \
+  --hpcg-processes 96 \
+  --hpcg-threads 1 \
+  --enable-web \
+  --force
 ```
 
----
+以上是已验证的 96 核 profile；其他节点必须按在线 CPU 数和 HPL `P×Q` 调整。
 
-## 9. 启动顺序
+### 4.2 Compose
 
-1. **先启动 daemon**（snapshot 生产者），等待 6-9 秒完成首次采集
-2. **后启动 web/dfee**（snapshot 消费者），snapshot 就绪后即有数据
-
-web/dfee 可在任意时刻拉起，只要 snapshot 已存在就有数据。若 snapshot 尚未就绪，web/dfee 返回 503，自动重试即可。
-
----
-
-## 10. 常见问题
-
-### Q: 没有 snapshot_gpu.json，GPU 指标为空
-
-最常见原因：使用了 `catmonitor-generic`（Alpine）而非 `catmonitor-gpu`（Debian）。Alpine 使用 musl libc，无法运行 glibc 编译的 `nvidia-smi`。
-
-解决：改用 `catmonitor-gpu` 镜像，并挂载 nvidia-smi + NVIDIA 库：
+启动四个服务：
 
 ```bash
--v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
--v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro \
--e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
+CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
+CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress \
+  docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.gpu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu \
+  up -d
 ```
 
-验证 nvidia-smi 是否能在容器内运行：
+该组合不会创建 NPU workload，也不会将 Docker Socket 挂给 Web/DFeE。
+
+### 4.3 Manual `docker run`
+
+不能使用 Compose 时，下面命令完整创建 CPU workload、NVIDIA daemon、Web 与 DFeE
+共 4 个容器。按节点实际架构设置 NVIDIA 动态库目录。
 
 ```bash
-docker exec catmonitor nvidia-smi --query-gpu=index,name --format=csv
-```
+export NVIDIA_LIB_DIR=/usr/lib/aarch64-linux-gnu
 
-### Q: 容器内 ipmitool 报错 "Unable to open /dev/ipmi0"
+docker volume create cm-snapshot
+docker volume create cm-data
+docker volume create cm-straggler
+docker volume create cm-control
+docker volume create cm-csv
+docker volume create cm-stress-cpu-state
 
-确保宿主机已加载 ipmi 内核模块：
+docker run -d --name catmonitor-stress-cpu --restart unless-stopped \
+  --read-only --network none \
+  --cap-drop ALL \
+  --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --cap-add SETGID --cap-add SETPCAP --cap-add SETUID --cap-add SYS_NICE \
+  --security-opt no-new-privileges:true \
+  --pids-limit 4096 --shm-size=16g \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+  -e STREAM_THREADS=0 \
+  -e HPL_MPI_PROCESSES=8 \
+  -e HPL_THREADS_PER_PROCESS=12 \
+  -e HPCG_MPI_PROCESSES=96 \
+  -e HPCG_THREADS_PER_PROCESS=1 \
+  -e HPCG_NX=32 -e HPCG_NY=32 -e HPCG_NZ=32 \
+  -e HPCG_RUNTIME_SECONDS=60 \
+  -v cm-stress-cpu-state:/var/lib/catmonitor/stress \
+  --health-cmd='/usr/bin/setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all --reuid=65532 --regid=65532 --init-groups --no-new-privs /usr/local/bin/catmonitor-stress-exec describe --benchmark stream --json' \
+  --health-interval=5s --health-timeout=3s --health-retries=12 \
+  --health-start-period=5s \
+  "$CATMONITOR_CPU_STRESS_IMAGE"
 
-```bash
-sudo modprobe ipmi_devintf
-sudo modprobe ipmi_si
-ls /dev/ipmi0
-```
+docker run -d --name catmonitor --restart unless-stopped \
+  --privileged --network host --pid host \
+  -v /:/host:ro \
+  -v /etc/os-release:/etc/os-release:ro \
+  -v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
+  -v "$NVIDIA_LIB_DIR:$NVIDIA_LIB_DIR:ro" \
+  -e "LD_LIBRARY_PATH=$NVIDIA_LIB_DIR" \
+  -v /etc/catmonitor/generated-stress/catmonitor-stress.yaml:/etc/catmonitor/catmonitor.yaml:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/catmonitor/stress:/var/lib/catmonitor/stress \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot \
+  -v cm-data:/var/lib/catmonitor/data \
+  -v cm-straggler:/var/lib/catmonitor/straggler \
+  -v cm-control:/run/catmonitor \
+  "$CATMONITOR_IMAGE"
 
-### Q: dfee/web 容器输出 "snapshot not ready"
+docker run -d --name catmonitor-web --restart unless-stopped --network host \
+  --entrypoint /usr/local/bin/web \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-control:/run/catmonitor:ro \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19322 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -control-socket=/run/catmonitor/control.sock
 
-daemon 尚未完成首次采集。等待 6-9 秒后重试。检查 snapshot 是否已生成：
-
-```bash
-docker exec catmonitor ls /var/lib/catmonitor/snapshot/
-```
-
-### Q: Web 仪表盘只显示 eth0，MAC 地址相同
-
-daemon 容器未使用 `--network host`，容器有自己的网络命名空间，`/sys/class/net/` 只显示虚拟网卡。加 `--network host` 重启 daemon 即可。
-
-### Q: docker build 时 apt-get 很慢
-
-Dockerfile 默认使用 Debian 官方源。管理员可临时设置代理：
-
-```bash
-export HTTP_PROXY=http://proxy.example.com:3128
-export HTTPS_PROXY=http://proxy.example.com:3128
-./docker/build.sh gpu
-unset HTTP_PROXY HTTPS_PROXY
-```
-
----
-
-## 11. dfee Prometheus Exporter + Grafana
-
-dfee 支持独立的 Prometheus exporter（`:9333`），输出 CPU/内存/磁盘/网络/GPU/机箱指标的 `node_*`/`ipmi_*` 格式，可直接接入 Prometheus + Grafana。
-
-### dfee 参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `-addr` | `:19323` | dfee SPA + API 监听地址 |
-| `-snapshot-dir` | `/var/lib/catmonitor/snapshot` | daemon snapshot 目录 |
-| `-exporter` | `disabled` | `enabled` 开启 Prometheus exporter |
-| `-exporter-port` | `9333` | exporter 监听端口 |
-| `-csv` | `disabled` | `enabled` 开启 CSV 输出 |
-| `-csv-dir` | `/var/lib/catmonitor/csv` | CSV 输出目录 |
-| `-csv-interval` | `10s` | CSV 写入间隔 |
-| `-max-runtime` | `0` | 最大运行时长（如 `10m`、`1h`），0=永久 |
-
-### Docker Compose
-
-`docker-compose.yml` 中 dfee 服务已默认开启 exporter。如需关闭，将 `-exporter=enabled` 改为 `-exporter=disabled`。
-
-### 手动 Docker 启动
-
-```bash
-docker run -d --name dfee --network host --entrypoint /usr/local/bin/dfee \
+docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
+  --entrypoint /usr/local/bin/dfee \
   -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
   -v cm-csv:/var/lib/catmonitor/csv \
-  catmonitor-gpu \
-  -snapshot-dir /var/lib/catmonitor/snapshot \
-  -exporter=enabled \
-  -exporter-port=9333 \
-  -csv=enabled \
-  -csv-dir=/var/lib/catmonitor/csv
+  "$CATMONITOR_IMAGE" \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -exporter=enabled -exporter-port=9333 \
+  -csv=disabled -csv-dir=/var/lib/catmonitor/csv -csv-interval=10s
 ```
 
-### 安装 Prometheus + Grafana
+只有 daemon 挂 Docker Socket；CPU workload 使用 `network none`，Web/DFeE 不挂
+socket，也不会创建 NPU workload。
+
+## 5. 验证与运行
 
 ```bash
-# 1. Prometheus
-docker pull prom/prometheus
-
-mkdir -p $PWD/prometheus/data
-touch $PWD/prometheus/prometheus.yml
-chown -R 65534:65534 $PWD/prometheus/data
-chown 65534:65534 $PWD/prometheus/prometheus.yml
-
-docker run -d \
-  --name prometheus \
-  -v $PWD/prometheus/data:/prometheus \
-  -v $PWD/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
-  -p 9090:9090 \
-  prom/prometheus
-
-# 编辑配置（targets 改为 dfee exporter 地址）
-# vim $PWD/prometheus/prometheus.yml
-# scrape_configs:
-#   - job_name: "CATMonitor"
-#     scrape_interval: 2s
-#     static_configs:
-#       - targets: ["<dfee_exporter_ip>:9333"]
-#         labels:
-#           instance: <dfee_exporter_ip>
-
-# 2. Grafana
-docker pull grafana/grafana
-
-mkdir $PWD/grafana-storage
-chown -R 472:472 $PWD/grafana-storage
-
-docker run -d \
-  --name=grafana \
-  --restart=always \
-  -p 3000:3000 \
-  -v $PWD/grafana-storage:/var/lib/grafana \
-  grafana/grafana
+docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.gpu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu \
+  exec catmonitor \
+  catmonitor stress doctor -c /etc/catmonitor/catmonitor.yaml -o table
 ```
 
-### 导入 Grafana Dashboard
+获取 daemon 容器 ID 后运行：
 
-1. 浏览器访问 `http://localhost:3000`（默认账号 `admin / admin`）
-2. **Configuration → Data Sources → Add data source → Prometheus**
-3. URL 填入 `http://<prometheus_ip>:9090`，点击 **Save & Test**
-4. **Dashboards → Import → Upload JSON file**
-5. 选择 `features/dfee/grafana-dashboard.json`
-6. 在导入页面选择 Prometheus 数据源，点击 **Import**
+```bash
+SERVICE_ID=$(docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.gpu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu ps -q catmonitor)
 
-> 完整使用文档见 `features/dfee/USAGE.md`。
+docker exec "$SERVICE_ID" catmonitor stress run --bench stream -o table
+docker exec "$SERVICE_ID" catmonitor stress run --bench hpcg -o table
+docker exec "$SERVICE_ID" catmonitor stress run --bench hpl -o table
+```
+
+Web：
+
+```text
+http://<node-address>:19322/
+```
+
+`19322` 同时提供 Monitoring、Stress Run/Cancel/History。当前没有 Web operator
+认证/RBAC，应限制为可信管理网络。
+
+## 6. 配置边界
+
+- GPU workload plugin：当前不支持；
+- CPU benchmark 参数由生成的 Compose profile 固定；
+- Web 只能选项目并缩短单次超时，不能编辑脚本、命令或 MPI 参数；
+- daemon 是唯一 Controller，Web 与 DFeE 不挂 Docker Socket。
+
+高级 CPU 参数见
+[STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)。
+
+## 7. 停止与升级
+
+Monitoring-only：
+
+```bash
+docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.config.yml \
+  -f docker/docker-compose.gpu.yml stop
+```
+
+CPU Stress：
+
+```bash
+docker compose -p catmonitor \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.gpu.yml \
+  -f docker/docker-compose.stress.yml \
+  -f /etc/catmonitor/generated-stress/docker-compose.stress.generated.yml \
+  --profile stress-cpu stop
+```
+
+换成 `start` 可恢复，换成 `down` 可删除容器。保留数据时不要使用 `down -v`。
+切换到新的 Stress 镜像集合时必须重新生成 Stress 配置：
+
+```text
+OLD_STRESS_YAML_COMPATIBLE=false
+```
+
+## 8. 常见问题
+
+- 无 `snapshot_gpu.json`：先在宿主机运行 `nvidia-smi`，再检查 GPU overlay 的挂载路径。
+- Web snapshot 未就绪：检查 daemon `19320/-/ready` 与日志。
+- Stress 未配置：确认 generated override 已加入 Compose 命令。
+- CPU benchmark unavailable：执行 `stress doctor` 检查 workload、MPI ABI 和资产。
+- Registry 不可达：使用 `docker save/load` 传输同一标签和 Image ID 的镜像。

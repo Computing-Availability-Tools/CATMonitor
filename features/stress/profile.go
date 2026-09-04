@@ -1,19 +1,13 @@
 package stress
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"runtime"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -23,66 +17,48 @@ const (
 	npuDescribeTimeout      = 30 * time.Second
 	describeCacheTTL        = 10 * time.Second
 	npuDescribeCacheTTL     = 60 * time.Second
-	maxDescribeBytes        = 256 * 1024
-	describeProtocolMarker  = "CATMONITOR_STRESS_DESCRIBE_PROTOCOL=1"
 )
 
 type profileCacheEntry struct {
 	profile   *ExecutionProfile
 	err       error
 	expiresAt time.Time
-	scriptMod time.Time
-	scriptLen int64
 }
 
-// Describe returns the effective, read-only workload profile for a benchmark.
-// The dispatcher contract is:
-//
-//	bash benchmark_check.sh describe <stream|hpl|hpcg|npu_burn>
-//
-// It must write exactly one JSON object to stdout and must not launch a
-// benchmark. Results are cached briefly because the Web UI polls configuration.
 func (m *Manager) Describe(name string) (*ExecutionProfile, error) {
 	return m.describeWithTimeout(name, 0)
 }
 
 func (m *Manager) describeWithTimeout(name string, timeoutOverride time.Duration) (*ExecutionProfile, error) {
-	if runtime.GOOS != "linux" {
-		return nil, errors.New("describe is supported on Linux only")
-	}
 	if !supportedBenchmark(name) {
 		return nil, fmt.Errorf("unsupported benchmark %q", name)
 	}
-	info, err := os.Stat(m.cfg.ScriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("benchmark dispatcher script is unavailable: %w", err)
-	}
-
 	m.profileMu.Lock()
-	cached, ok := m.profileCache[name]
-	if ok && time.Now().Before(cached.expiresAt) &&
-		cached.scriptMod.Equal(info.ModTime()) && cached.scriptLen == info.Size() {
-		profile := copyExecutionProfile(cached.profile)
-		cachedErr := cached.err
+	if cached, ok := m.profileCache[name]; ok && time.Now().Before(cached.expiresAt) {
+		profile, err := copyExecutionProfile(cached.profile), cached.err
 		m.profileMu.Unlock()
-		return m.applyRunConfiguration(profile, name, timeoutOverride), cachedErr
+		return m.applyRunConfiguration(profile, name, timeoutOverride), err
 	}
 	m.profileMu.Unlock()
 
-	profile, describeErr := m.readDescribeProfile(name)
-	if describeErr == nil {
-		profile = m.applyRunConfiguration(profile, name, 0)
-	}
-
+	timeout := describeTimeout
 	cacheTTL := describeCacheTTL
 	if name == "npu_burn" {
-		cacheTTL = npuDescribeCacheTTL
+		timeout, cacheTTL = npuDescribeTimeout, npuDescribeCacheTTL
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	profile, describeErr := m.executor.Describe(ctx, m.binding(name))
+	if describeErr == nil {
+		if err := validateDescribeProfile(name, profile); err != nil {
+			describeErr = err
+		} else {
+			profile = m.applyRunConfiguration(profile, name, 0)
+		}
 	}
 	m.profileMu.Lock()
 	m.profileCache[name] = profileCacheEntry{
-		profile: copyExecutionProfile(profile), err: describeErr,
-		expiresAt: time.Now().Add(cacheTTL),
-		scriptMod: info.ModTime(), scriptLen: info.Size(),
+		profile: copyExecutionProfile(profile), err: describeErr, expiresAt: time.Now().Add(cacheTTL),
 	}
 	m.profileMu.Unlock()
 	if describeErr != nil {
@@ -91,67 +67,10 @@ func (m *Manager) describeWithTimeout(name string, timeoutOverride time.Duration
 	return m.applyRunConfiguration(copyExecutionProfile(profile), name, timeoutOverride), nil
 }
 
-func (m *Manager) readDescribeProfile(name string) (*ExecutionProfile, error) {
-	script, err := os.ReadFile(m.cfg.ScriptPath)
-	if err != nil {
-		return nil, err
-	}
-	if !bytes.Contains(script, []byte(describeProtocolMarker)) {
-		return nil, errors.New("dispatcher does not declare describe protocol version 1")
-	}
-	timeout := describeTimeout
-	if name == "npu_burn" {
-		// The fixed-container preflight imports torch/torch_npu and validates
-		// PCI topology. Real Ascend runtimes take several seconds even though
-		// describe remains read-only, so retain the short generic bound while
-		// giving only NPU Burn a larger, still-bounded window.
-		timeout = npuDescribeTimeout
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := benchmarkCommand(ctx, "bash", m.cfg.ScriptPath, "describe", name)
-	cmd.Dir = filepath.Dir(m.cfg.ScriptPath)
-	cmd.Env = os.Environ()
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, errors.New("describe protocol timed out")
-		}
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = strings.TrimSpace(stdout.String())
-		}
-		if len(message) > 256 {
-			message = message[:256]
-		}
-		return nil, fmt.Errorf("describe command failed: %v: %s", err, message)
-	}
-	if stdout.Len() > maxDescribeBytes {
-		return nil, fmt.Errorf("describe response exceeds %d bytes", maxDescribeBytes)
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
-	decoder.DisallowUnknownFields()
-	var profile ExecutionProfile
-	if err := decoder.Decode(&profile); err != nil {
-		return nil, fmt.Errorf("decode describe response: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, errors.New("decode describe response: multiple JSON values")
-		}
-		return nil, fmt.Errorf("decode describe response: %w", err)
-	}
-	if err := validateDescribeProfile(name, &profile); err != nil {
-		return nil, err
-	}
-	return &profile, nil
-}
-
 func validateDescribeProfile(name string, profile *ExecutionProfile) error {
+	if profile == nil {
+		return errors.New("empty describe profile")
+	}
 	if profile.ProtocolVersion != describeProtocolVersion {
 		return fmt.Errorf("unsupported describe protocol version %d", profile.ProtocolVersion)
 	}
@@ -161,8 +80,7 @@ func validateDescribeProfile(name string, profile *ExecutionProfile) error {
 	if !validCheckStatus(profile.Preflight.Status) {
 		return fmt.Errorf("invalid preflight status %q", profile.Preflight.Status)
 	}
-	if !validCheckStatus(profile.MPI.Status) ||
-		profile.MPI.Implementation == "" || profile.MPI.ExecutableABI == "" {
+	if !validCheckStatus(profile.MPI.Status) || profile.MPI.Implementation == "" || profile.MPI.ExecutableABI == "" {
 		return fmt.Errorf("invalid MPI check status %q", profile.MPI.Status)
 	}
 	if profile.Resources.MPIProcesses < 0 || profile.Resources.ThreadsPerProcess < 0 ||
@@ -224,8 +142,12 @@ func (m *Manager) applyRunConfiguration(profile *ExecutionProfile, name string, 
 		timeout = timeoutOverride
 	}
 	profile.TimeoutSeconds = int64(timeout / time.Second)
-	profile.ResultDirectory = benchmark.ResultDir
-	profile.ScriptSHA256, _ = fileSHA256(m.cfg.ScriptPath)
+	profile.Executor = "docker_exec"
+	profile.Container = benchmark.Container
+	profile.Plugin = benchmark.Plugin
+	if profile.Plugin == "" {
+		profile.Plugin = name
+	}
 	profile.ConfigurationSHA256 = ""
 	data, err := json.Marshal(profile)
 	if err == nil {
@@ -233,19 +155,6 @@ func (m *Manager) applyRunConfiguration(profile *ExecutionProfile, name string, 
 		profile.ConfigurationSHA256 = hex.EncodeToString(sum[:])
 	}
 	return profile
-}
-
-func fileSHA256(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func aggregateConfigurationSHA256(names []string, profiles map[string]*ExecutionProfile) string {
@@ -274,5 +183,11 @@ func copyExecutionProfile(profile *ExecutionProfile) *ExecutionProfile {
 	copy := *profile
 	copy.Parameters = append([]ProfileParameter(nil), profile.Parameters...)
 	copy.Assets = append([]AssetCheck(nil), profile.Assets...)
+	if profile.RuntimeIdentity != nil {
+		copy.RuntimeIdentity = make(map[string]string, len(profile.RuntimeIdentity))
+		for key, value := range profile.RuntimeIdentity {
+			copy.RuntimeIdentity[key] = value
+		}
+	}
 	return &copy
 }

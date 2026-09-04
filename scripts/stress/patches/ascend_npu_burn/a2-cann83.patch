@@ -48,17 +48,38 @@
  import subprocess
  from collections import defaultdict
  from dataclasses import dataclass, field
-@@ -43,6 +44,9 @@ def _find_command_path(cmd: str) -> Optional[str]:
+@@ -59,11 +60,17 @@ def get_numa_configs():
+             key, val = line.split(":", 1)
+             sys_info[key.strip()] = val.strip()
  
++    def parse_int(key):
++        try:
++            return int(sys_info.get(key, 0))
++        except (TypeError, ValueError):
++            return 0
++
+     # 提取基础硬件参数
+-    total_cpus = int(sys_info.get("CPU(s)", 0))
+-    threads_per_core = int(sys_info.get("Thread(s) per core", 0))
+-    cores_per_socket = int(sys_info.get("Core(s) per socket", 0))
+-    sockets_count = int(sys_info.get("Socket(s)", 0))
++    total_cpus = parse_int("CPU(s)")
++    threads_per_core = parse_int("Thread(s) per core")
++    cores_per_socket = parse_int("Core(s) per socket")
++    sockets_count = parse_int("Socket(s)")
  
- def get_numa_configs():
-+    container_device_count = int(os.getenv("CATMONITOR_NPU_DEVICE_COUNT", "0"))
-+    if container_device_count > 0:
-+        return [list(range(os.cpu_count() or 1))]
-     # 查找lscpu命令路径
-     lscpu_path = _find_command_path('lscpu') or '/usr/bin/lscpu'  # 使用默认路径作为备选
+     cpus_per_socket = (total_cpus // sockets_count) if sockets_count > 0 else 0
  
-@@ -183,11 +187,15 @@ def get_npu_numa_topology():
+@@ -74,7 +81,7 @@ def get_numa_configs():
+ 
+     node0_info = sys_info.get("NUMA node0 CPU(s)")
+     if node0_info:
+-        if "-" in node0_info:
++        if "-" in node0_info and "," not in node0_info:
+             core_is_continuous = True
+             boundaries = node0_info.split("-")
+             # 通过首尾差值判断线程是否连续
+@@ -183,11 +190,15 @@ def get_npu_numa_topology():
  
      except Exception as e:
          logger.warning(f"Could not detect NPU topology automatically: {e}")

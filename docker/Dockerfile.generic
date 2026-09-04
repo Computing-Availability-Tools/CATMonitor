@@ -13,12 +13,21 @@ ENV CGO_ENABLED=0
 RUN go build -o /catmonitor ./cmd/catmonitor
 RUN go build -o /dfee ./features/dfee
 RUN go build -o /web ./features/web
-RUN go build -o /cpu-runner-client ./features/stress/cmd/cpu-runner-client
 
 FROM alpine:latest
 
-RUN apk add --no-cache \
+ARG ALPINE_MIRROR=""
+RUN if [ -n "${ALPINE_MIRROR}" ]; then \
+      case "${ALPINE_MIRROR}" in http://?*|https://?*) ;; *) echo "invalid ALPINE_MIRROR" >&2; exit 2 ;; esac; \
+      case "${ALPINE_MIRROR}" in *[!A-Za-z0-9._:/-]*|*/) echo "invalid ALPINE_MIRROR repository root" >&2; exit 2 ;; esac; \
+      sed -i \
+        -e "s#http://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#g" \
+        -e "s#https://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#g" \
+        /etc/apk/repositories; \
+    fi \
+    && apk add --no-cache \
     bash \
+    docker-cli \
     dmidecode \
     ipmitool \
     pciutils \
@@ -28,7 +37,6 @@ RUN apk add --no-cache \
 COPY --from=builder /catmonitor /usr/local/bin/catmonitor
 COPY --from=builder /dfee /usr/local/bin/dfee
 COPY --from=builder /web /usr/local/bin/web
-COPY --from=builder /cpu-runner-client /usr/local/bin/catmonitor-stress-cpu-client
 COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
 COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
 COPY features/web/metrics.yaml /features/web/metrics.yaml

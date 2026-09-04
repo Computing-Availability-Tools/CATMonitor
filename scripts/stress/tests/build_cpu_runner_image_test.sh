@@ -4,10 +4,10 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd -P)
 BUILD_SCRIPT="$REPO_ROOT/scripts/stress/build_cpu_runner_image.sh"
-TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-cpu-runner-image-test.XXXXXXXX")
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/catmonitor-cpu-workload-image-test.XXXXXXXX")
 
 cleanup() {
-    case "$TEST_ROOT" in "${TMPDIR:-/tmp}"/catmonitor-cpu-runner-image-test.*) rm -rf -- "$TEST_ROOT" ;; esac
+    case "$TEST_ROOT" in "${TMPDIR:-/tmp}"/catmonitor-cpu-workload-image-test.*) rm -rf -- "$TEST_ROOT" ;; esac
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -43,13 +43,17 @@ if [ "${1-}" = build ]; then
     test -f "$context/inputs/HPL.dat"
     test -f "$context/inputs/hpcg.tar.gz"
     test -f "$context/inputs/hpcg.dat"
-    test -f "$context/features/stress/runnerapi/server_linux.go"
-    test -f "$context/features/stress/cmd/cpu-runner/main_linux.go"
+    test -f "$context/features/stress/workloadapi/protocol.go"
+    test -f "$context/features/stress/resultparse/parse.go"
+    test -f "$context/features/stress/cmd/workload-exec/main_linux.go"
+    test -f "$context/features/stress/workloadplugin/plugin_linux.go"
     test -f "$context/scripts/stress/build_cpu_benchmarks.sh"
     test -f "$context/docker/stress/cpu/entrypoint.sh"
     grep -Fq -- '--stream-smoke-numa-policy "$STREAM_SMOKE_NUMA_POLICY"' \
         "$context/docker/stress/cpu/Dockerfile"
     grep -Fq 'libmpich-dev' "$context/docker/stress/cpu/Dockerfile"
+    grep -Fq 'catmonitor-stress-exec' "$context/docker/stress/cpu/Dockerfile"
+    ! grep -Fq 'catmonitor-stress-cpu-runner' "$context/docker/stress/cpu/Dockerfile"
     [ "$(grep -Fc 'ARG DEBIAN_MIRROR=""' "$context/docker/stress/cpu/Dockerfile")" -eq 2 ]
     grep -Fq '${root}/debian-security' "$context/docker/stress/cpu/Dockerfile"
     touch "$FAKE_DOCKER_STATE"
@@ -65,7 +69,7 @@ export HTTPS_PROXY=https://user:secret@proxy.invalid:8443
 grep -Fq -- '--debian-mirror URL' <(bash "$BUILD_SCRIPT" --help) ||
     fail '--help does not describe --debian-mirror'
 
-MANIFEST="$TEST_ROOT/output/cpu-runner-image.json"
+MANIFEST="$TEST_ROOT/output/cpu-workload-image.json"
 bash "$BUILD_SCRIPT" \
     --image catmonitor/stress-cpu:test \
     --docker-bin "$TEST_ROOT/bin/docker" \
@@ -81,10 +85,10 @@ bash "$BUILD_SCRIPT" \
     --stream-array-size 4096 \
     --stream-ntimes 3
 
-test -s "$MANIFEST" || fail 'CPU runner image manifest was not generated'
+test -s "$MANIFEST" || fail 'CPU workload image manifest was not generated'
 if command -v python3 >/dev/null 2>&1; then python3 -m json.tool "$MANIFEST" >/dev/null; fi
 grep -Fq '"schema_version":1' "$MANIFEST" || fail 'manifest schema is not numeric'
-grep -Fq '"feature":"stress_cpu_runner"' "$MANIFEST" || fail 'manifest feature is missing'
+grep -Fq '"feature":"stress_cpu_workload"' "$MANIFEST" || fail 'manifest feature is missing'
 grep -Fq '"image":"catmonitor/stress-cpu:test"' "$MANIFEST" || fail 'manifest image is missing'
 grep -Fq '"debian_mirror":"https://mirror.example.invalid"' "$MANIFEST" ||
     fail 'manifest Debian mirror provenance is missing or not normalized'
@@ -114,7 +118,7 @@ fi
 
 rm -f "$FAKE_DOCKER_STATE"
 : >"$FAKE_DOCKER_LOG"
-DEFAULT_MANIFEST="$TEST_ROOT/output/cpu-runner-image-default.json"
+DEFAULT_MANIFEST="$TEST_ROOT/output/cpu-workload-image-default.json"
 bash "$BUILD_SCRIPT" \
     --image catmonitor/stress-cpu:default-test \
     --docker-bin "$TEST_ROOT/bin/docker" \
@@ -157,4 +161,4 @@ for forbidden_mirror in \
     fi
 done
 
-printf 'PASS: CPU runner image build context, manifest and replacement boundary\n'
+printf 'PASS: CPU workload image build context, manifest and replacement boundary\n'
