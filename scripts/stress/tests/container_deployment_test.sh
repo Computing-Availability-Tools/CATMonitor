@@ -140,13 +140,48 @@ grep -Fq -- '--name catmonitor-stress-npu' <<<"$npu_manual" || fail 'NPU manual 
 grep -Fq -- '--name catmonitor-stress-cpu' <<<"$full_manual" || fail 'Full manual path lacks CPU workload'
 grep -Fq -- '--name catmonitor-stress-npu' <<<"$full_manual" || fail 'Full manual path lacks NPU workload'
 
+# Generic and GPU guides make the same complete manual CPU deployment promise.
+# Each standalone section must contain all four containers and preserve the
+# canonical Docker socket and workload security boundaries.
+require_fixed docker/README-generic.md '### 4.3 Manual `docker run`'
+require_fixed docker/README-gpu.md '### 4.3 Manual `docker run`'
+generic_cpu_manual=$(sed -n '/^### 4\.3 /,/^## 5\./p' "$REPO_ROOT/docker/README-generic.md")
+gpu_cpu_manual=$(sed -n '/^### 4\.3 /,/^## 5\./p' "$REPO_ROOT/docker/README-gpu.md")
+for name in generic_cpu gpu_cpu; do
+    case "$name" in
+        generic_cpu) section=$generic_cpu_manual ;;
+        gpu_cpu) section=$gpu_cpu_manual ;;
+    esac
+    [ -n "$section" ] || fail "$name manual section is empty"
+    [ "$(grep -Fc -- '-v /var/run/docker.sock:/var/run/docker.sock' <<<"$section")" -eq 1 ] ||
+        fail "$name manual path must mount Docker socket exactly once on daemon"
+    grep -Fq -- '--name catmonitor-stress-cpu' <<<"$section" || fail "$name manual path lacks CPU workload"
+    grep -Fq -- '--name catmonitor' <<<"$section" || fail "$name manual path lacks daemon"
+    grep -Fq -- '--name catmonitor-web' <<<"$section" || fail "$name manual path lacks Web"
+    grep -Fq -- '--name catmonitor-dfee' <<<"$section" || fail "$name manual path lacks DFeE"
+    grep -Fq -- '--read-only --network none' <<<"$section" || fail "$name CPU workload lacks isolation"
+    grep -Fq -- '--cap-drop ALL' <<<"$section" || fail "$name CPU workload lacks capability boundary"
+    grep -Fq -- '-control-socket=/run/catmonitor/control.sock' <<<"$section" ||
+        fail "$name Web lacks daemon control socket"
+    if grep -Fq 'docker compose' <<<"$section"; then
+        fail "$name manual section must not require Compose"
+    fi
+    if grep -Fq -- '--name catmonitor-stress-npu' <<<"$section"; then
+        fail "$name CPU-only manual path must not create NPU workload"
+    fi
+done
+grep -Fq -- '-v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro' <<<"$gpu_cpu_manual" ||
+    fail 'GPU CPU manual daemon lacks nvidia-smi mount'
+
 if grep -Eq -- '--device=/dev/davinci(2|5)(:|[[:space:]])' "$REPO_ROOT/docker/README-npu.md"; then
     fail 'README-npu must not hard-code the observed A2 sparse device IDs in docker run'
 fi
 for retired in catmonitor-install benchmark_check.sh catmonitor-stress-web ':29592'; do
-    if grep -Fq -- "$retired" "$REPO_ROOT/docker/README-npu.md"; then
-        fail "README-npu still references retired V1 entry: $retired"
-    fi
+    for readme in docker/README-generic.md docker/README-gpu.md docker/README-npu.md; do
+        if grep -Fq -- "$retired" "$REPO_ROOT/$readme"; then
+            fail "$readme still references retired V1 entry: $retired"
+        fi
+    done
 done
 
 printf 'PASS: unified daemon/controller and CPU/NPU workload container contracts\n'

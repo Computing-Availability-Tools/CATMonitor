@@ -146,6 +146,8 @@ Web 中 Stress 配置会显示为未启用；Monitoring 页面不受影响。旧
 
 ## 4. NVIDIA Monitoring + CPU Stress
 
+### 4.1 Generate
+
 ```bash
 sudo install -d -m 0750 \
   /etc/catmonitor/generated-stress \
@@ -155,9 +157,18 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --output-dir /etc/catmonitor/generated-stress \
   --control-image "$CATMONITOR_IMAGE" \
   --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
+  --stream-threads 0 \
+  --hpl-processes 8 \
+  --hpl-threads 12 \
+  --hpcg-processes 96 \
+  --hpcg-threads 1 \
   --enable-web \
   --force
 ```
+
+以上是已验证的 96 核 profile；其他节点必须按在线 CPU 数和 HPL `P×Q` 调整。
+
+### 4.2 Compose
 
 启动四个服务：
 
@@ -174,6 +185,81 @@ CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress \
 ```
 
 该组合不会创建 NPU workload，也不会将 Docker Socket 挂给 Web/DFeE。
+
+### 4.3 Manual `docker run`
+
+不能使用 Compose 时，下面命令完整创建 CPU workload、NVIDIA daemon、Web 与 DFeE
+共 4 个容器。按节点实际架构设置 NVIDIA 动态库目录。
+
+```bash
+export NVIDIA_LIB_DIR=/usr/lib/aarch64-linux-gnu
+
+docker volume create cm-snapshot
+docker volume create cm-data
+docker volume create cm-straggler
+docker volume create cm-control
+docker volume create cm-csv
+docker volume create cm-stress-cpu-state
+
+docker run -d --name catmonitor-stress-cpu --restart unless-stopped \
+  --read-only --network none \
+  --cap-drop ALL \
+  --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --cap-add SETGID --cap-add SETPCAP --cap-add SETUID --cap-add SYS_NICE \
+  --security-opt no-new-privileges:true \
+  --pids-limit 4096 --shm-size=16g \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+  -e STREAM_THREADS=0 \
+  -e HPL_MPI_PROCESSES=8 \
+  -e HPL_THREADS_PER_PROCESS=12 \
+  -e HPCG_MPI_PROCESSES=96 \
+  -e HPCG_THREADS_PER_PROCESS=1 \
+  -e HPCG_NX=32 -e HPCG_NY=32 -e HPCG_NZ=32 \
+  -e HPCG_RUNTIME_SECONDS=60 \
+  -v cm-stress-cpu-state:/var/lib/catmonitor/stress \
+  --health-cmd='/usr/bin/setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all --reuid=65532 --regid=65532 --init-groups --no-new-privs /usr/local/bin/catmonitor-stress-exec describe --benchmark stream --json' \
+  --health-interval=5s --health-timeout=3s --health-retries=12 \
+  --health-start-period=5s \
+  "$CATMONITOR_CPU_STRESS_IMAGE"
+
+docker run -d --name catmonitor --restart unless-stopped \
+  --privileged --network host --pid host \
+  -v /:/host:ro \
+  -v /etc/os-release:/etc/os-release:ro \
+  -v /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro \
+  -v "$NVIDIA_LIB_DIR:$NVIDIA_LIB_DIR:ro" \
+  -e "LD_LIBRARY_PATH=$NVIDIA_LIB_DIR" \
+  -v /etc/catmonitor/generated-stress/catmonitor-stress.yaml:/etc/catmonitor/catmonitor.yaml:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/catmonitor/stress:/var/lib/catmonitor/stress \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot \
+  -v cm-data:/var/lib/catmonitor/data \
+  -v cm-straggler:/var/lib/catmonitor/straggler \
+  -v cm-control:/run/catmonitor \
+  "$CATMONITOR_IMAGE"
+
+docker run -d --name catmonitor-web --restart unless-stopped --network host \
+  --entrypoint /usr/local/bin/web \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-control:/run/catmonitor:ro \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19322 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -control-socket=/run/catmonitor/control.sock
+
+docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
+  --entrypoint /usr/local/bin/dfee \
+  -v cm-snapshot:/var/lib/catmonitor/snapshot:ro \
+  -v cm-csv:/var/lib/catmonitor/csv \
+  "$CATMONITOR_IMAGE" \
+  -addr=:19323 \
+  -snapshot-dir=/var/lib/catmonitor/snapshot \
+  -exporter=enabled -exporter-port=9333 \
+  -csv=disabled -csv-dir=/var/lib/catmonitor/csv -csv-interval=10s
+```
+
+只有 daemon 挂 Docker Socket；CPU workload 使用 `network none`，Web/DFeE 不挂
+socket，也不会创建 NPU workload。
 
 ## 5. 验证与运行
 
