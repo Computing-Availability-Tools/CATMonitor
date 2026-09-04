@@ -149,3 +149,125 @@ func TestCachedDoesNotHoldLockAcrossFetch(t *testing.T) {
 		t.Errorf("cache hits blocked by fetch: 8 hits took %v (want <100ms)", cached)
 	}
 }
+
+// TestStaleWhileRevalidate verifies the SWR contract: an expired entry is
+// served immediately (no blocking fetch) while a single background refresh
+// updates the cache for subsequent reads.
+func TestStaleWhileRevalidate(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	SetMock(func(devID int, opt string) (string, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		time.Sleep(100 * time.Millisecond)
+		return "out-" + strconv.Itoa(n), nil
+	})
+	defer ResetFetcher()
+
+	// Cold start: synchronous, first value.
+	out, err := defaultSrc.cached(0, "-speed")
+	if err != nil || out != "out-1" {
+		t.Fatalf("cold start: out=%q err=%v", out, err)
+	}
+
+	// Force expiry.
+	defaultSrc.mu.Lock()
+	defaultSrc.at["0:-speed"] = time.Now().Add(-time.Hour)
+	defaultSrc.mu.Unlock()
+
+	// Expired read must return the stale value WITHOUT blocking on the
+	// 100ms fetch.
+	start := time.Now()
+	out, err = defaultSrc.cached(0, "-speed")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expired read failed: %v", err)
+	}
+	if elapsed >= 80*time.Millisecond {
+		t.Errorf("expired read blocked on fetch: %v (want <80ms)", elapsed)
+	}
+	if out != "out-1" {
+		t.Errorf("expired read: expected stale out-1, got %q", out)
+	}
+
+	// The background refresh must land and update the cache.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		defaultSrc.mu.Lock()
+		val := defaultSrc.cache["0:-speed"]
+		defaultSrc.mu.Unlock()
+		if val == "out-2" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background refresh never updated the cache (val=%q)", val)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Subsequent read returns the refreshed value.
+	out, err = defaultSrc.cached(0, "-speed")
+	if err != nil || out != "out-2" {
+		t.Errorf("post-refresh read: out=%q err=%v", out, err)
+	}
+}
+
+// TestSWRInflightDedup verifies that concurrent expired reads spawn exactly
+// one background refresh per key, not one per caller.
+func TestSWRInflightDedup(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	SetMock(func(devID int, opt string) (string, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		return "fresh", nil
+	})
+	defer ResetFetcher()
+
+	if _, err := defaultSrc.cached(0, "-link"); err != nil {
+		t.Fatalf("cold start failed: %v", err)
+	}
+
+	defaultSrc.mu.Lock()
+	defaultSrc.at["0:-link"] = time.Now().Add(-time.Hour)
+	defaultSrc.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := defaultSrc.cached(0, "-link"); err != nil {
+				t.Errorf("cached failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Wait for the single background refresh to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		c := calls
+		mu.Unlock()
+		if c >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background refresh never ran (calls=%d)", c)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Grace period for a broken (non-deduped) implementation to over-count.
+	time.Sleep(250 * time.Millisecond)
+	mu.Lock()
+	c := calls
+	mu.Unlock()
+	if c != 2 {
+		t.Errorf("expected exactly 2 fetches (cold + 1 refresh), got %d", c)
+	}
+}

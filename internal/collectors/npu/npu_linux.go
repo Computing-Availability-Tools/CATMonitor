@@ -509,9 +509,11 @@ func (c *NPUCollector) collectDevice(d npuDevice, now time.Time) []collector.Met
 
 	// --- Command-based metrics (npu_smi / hccn_tool) ---
 	// Each block is gated (AnyWanted) so unwanted commands never execute,
-	// and re-stamps `now`: the command chain can take seconds, so metrics
-	// carry their actual read time, not the cycle-start time used by the
-	// DCMI metrics above.
+	// and re-stamps `now` so metrics carry their actual read time. hccn_tool
+	// reads are SWR-cached: they return immediately once warmed (values
+	// refresh in the background every ~cacheTTL), so only the daemon-start
+	// cycle pays the full command chain. npu-smi hccs-bw still execs
+	// synchronously on every cycle.
 
 	// 5.66-5.67, 5.71-5.72 net/pcie bandwidth (hccn_tool)
 	if collector.AnyWanted("npu", []string{"net_tx_bandwidth", "net_rx_bandwidth", "pcie_tx_bandwidth", "pcie_rx_bandwidth"}) {
