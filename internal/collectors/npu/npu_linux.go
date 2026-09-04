@@ -582,7 +582,7 @@ func (c *NPUCollector) emitEccMetrics(metrics *[]collector.Metric, cardID, devID
 	chip := strconv.Itoa(devID)
 
 	// single_bit errors (delta)
-	singleKey := id + ":" + devType + ":single"
+	singleKey := id + ":" + chip + ":" + devType + ":single"
 	singleDelta := uint64(0)
 	if prev, ok := c.prevEcc[singleKey]; ok && prev > 0 {
 		singleDelta = uint64(ecc.SingleBitErrorCnt) - prev
@@ -594,7 +594,7 @@ func (c *NPUCollector) emitEccMetrics(metrics *[]collector.Metric, cardID, devID
 	})
 
 	// double_bit errors (delta)
-	doubleKey := id + ":" + devType + ":double"
+	doubleKey := id + ":" + chip + ":" + devType + ":double"
 	doubleDelta := uint64(0)
 	if prev, ok := c.prevEcc[doubleKey]; ok && prev > 0 {
 		doubleDelta = uint64(ecc.DoubleBitErrorCnt) - prev

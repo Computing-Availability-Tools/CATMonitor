@@ -261,6 +261,54 @@ func TestCollectEccDelta(t *testing.T) {
 	}
 }
 
+// TestCollectEccDeltaMultiChip is a regression test for the prevEcc key
+// collision: the delta bookkeeping key must include the chip ID. With the
+// old card-only key, both chips of one card shared one prevEcc entry, so
+// each chip's delta was computed against the other chip's cumulative count
+// (garbage, uint64 underflow). On healthy hardware prev==0 masked the bug
+// via the prev>0 guard; it fired exactly when real ECC errors appeared.
+func TestCollectEccDeltaMultiChip(t *testing.T) {
+	useTestdata(t)
+	c := New()
+	now := time.Now()
+
+	// Card 0 with two chips carrying different cumulative HBM ECC counts.
+	mock := &dcmi.MockProvider{
+		CardListVal: []int{0},
+		Eccs: map[[3]int]*dcmi.EccInfo{
+			{0, 0, 2}: {SingleBitErrorCnt: 10, DoubleBitErrorCnt: 0},
+			{0, 1, 2}: {SingleBitErrorCnt: 100, DoubleBitErrorCnt: 0},
+		},
+	}
+	dcmi.SetProvider(mock)
+
+	// First round: both chips report delta 0 (no previous sample of their
+	// own). With the old key, chip 1's first round leaked chip 0's stored
+	// count and reported 100-10=90.
+	m0 := c.collectDevice(npuDevice{cardID: 0, devID: 0, phyID: 0}, now)
+	m1 := c.collectDevice(npuDevice{cardID: 0, devID: 1, phyID: 1}, now)
+	if v := findMetric(m0, "hbm_single_ecc"); v == nil || v.Value != 0 {
+		t.Errorf("chip0 round1: expected delta 0, got %v", v)
+	}
+	if v := findMetric(m1, "hbm_single_ecc"); v == nil || v.Value != 0 {
+		t.Errorf("chip1 round1: expected delta 0, got %v", v)
+	}
+
+	// Second round: chip0 grows +5, chip1 grows +10. With the old key the
+	// chips cross-read each other's prev (chip0: 15-100 underflows to a
+	// huge uint64; chip1: 110-15=95).
+	mock.Eccs[[3]int{0, 0, 2}] = &dcmi.EccInfo{SingleBitErrorCnt: 15, DoubleBitErrorCnt: 0}
+	mock.Eccs[[3]int{0, 1, 2}] = &dcmi.EccInfo{SingleBitErrorCnt: 110, DoubleBitErrorCnt: 0}
+	m0 = c.collectDevice(npuDevice{cardID: 0, devID: 0, phyID: 0}, now)
+	m1 = c.collectDevice(npuDevice{cardID: 0, devID: 1, phyID: 1}, now)
+	if v := findMetric(m0, "hbm_single_ecc"); v == nil || v.Value != 5 {
+		t.Errorf("chip0 round2: expected delta 5, got %v", v)
+	}
+	if v := findMetric(m1, "hbm_single_ecc"); v == nil || v.Value != 10 {
+		t.Errorf("chip1 round2: expected delta 10, got %v", v)
+	}
+}
+
 func TestCollectIntegration(t *testing.T) {
 	useTestdata(t)
 	c := New()

@@ -86,7 +86,7 @@ type NPUCollector struct {
 	mu              sync.Mutex
 	devices         []npuDevice    // populated at startup from CardList + DeviceNumInCard
 	devicesReady    bool
-	prevEcc         map[string]uint64 // key "dev:type:kind" → cumulative count for delta
+	prevEcc         map[string]uint64 // key "card:chip:type:kind" → cumulative count for delta
 	staticCollected bool              // topo, npu_num, driver_version, chip_type, comm_topo
 }
 
