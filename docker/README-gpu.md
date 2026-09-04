@@ -1,7 +1,12 @@
-# CATMonitor v0.3.6：NVIDIA GPU 节点
+# CATMonitor：NVIDIA GPU 节点
 
 适用于带 NVIDIA GPU 的 Linux 节点。当前提供 NVIDIA Monitoring 和可选 CPU Stress，
 不提供 GPU workload 压测插件。
+
+> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
+> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+>
+> GPU pre-release 镜像当前为 Private，拉取前需要完成 GHCR 身份认证。
 
 ## 1. 前置条件
 
@@ -16,15 +21,15 @@ docker version
 docker compose version
 ```
 
-## 2. 获取 v0.3.6
+## 2. 获取 ARM64 Stress pre-release 镜像
 
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout <v0.3.6-release-ref>
+git checkout refactor/unified-stress-platform
 
-export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
-export CATMONITOR_REGISTRY='<registry>'
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
 export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-gpu:${CATMONITOR_RELEASE}"
 export CATMONITOR_CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
 ```
@@ -41,14 +46,8 @@ docker pull "$CATMONITOR_IMAGE"
 docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 ```
 
-从源码构建 Control：
-
-```bash
-# 可选；只填写 mirror origin，不包含 /debian 路径
-export CATMONITOR_DEBIAN_MIRROR='https://mirror.example.com'
-bash docker/build.sh gpu
-docker tag catmonitor-gpu "$CATMONITOR_IMAGE"
-```
+需要从源码构建 GPU Control 或 CPU workload、配置 Debian mirror，或制作 RC 镜像时，
+请使用 [镜像构建与发布开发者指南](DEVELOPER_GUIDE.md)。
 
 ## 3. NVIDIA Monitoring
 
@@ -246,7 +245,7 @@ docker compose -p catmonitor \
 ```
 
 换成 `start` 可恢复，换成 `down` 可删除容器。保留数据时不要使用 `down -v`。
-升级到 v0.3.6 必须重新生成 Stress 配置：
+切换到新的 Stress 镜像集合时必须重新生成 Stress 配置：
 
 ```text
 OLD_STRESS_YAML_COMPATIBLE=false
@@ -258,4 +257,4 @@ OLD_STRESS_YAML_COMPATIBLE=false
 - Web snapshot 未就绪：检查 daemon `19320/-/ready` 与日志。
 - Stress 未配置：确认 generated override 已加入 Compose 命令。
 - CPU benchmark unavailable：执行 `stress doctor` 检查 workload、MPI ABI 和资产。
-- Registry 不可达：使用 `docker save/load` 传输同一 v0.3.6 镜像。
+- Registry 不可达：使用 `docker save/load` 传输同一标签和 Image ID 的镜像。

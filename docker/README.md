@@ -1,11 +1,13 @@
-# CATMonitor v0.3.6 容器部署
+# CATMonitor 容器部署
 
 本目录是 CATMonitor 新用户的容器部署入口。Docker Compose 是推荐入口；
 `docker run` 是完整支持的手工兼容入口，两种方式必须使用相同的镜像、配置和运行契约。
 
-> v0.3.6 镜像尚待 Fresh Image Acceptance。正式发行名以 `v0.3.6` 为目标；RC
-> 构建只能使用 `v0.3.6-rc.<shortsha>`，不得提前创建正式 image/tag。registry
-> namespace、Image ID 与 digest 在正式发布后补齐，不能复用 a2-r1。
+> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
+> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+>
+> 该标签明确表示 Linux/ARM64 Stress 专用构建，不是通用 `v0.3.5` 或最终
+> `v0.3.6` 镜像；源码提交、Image ID 与 registry digest 仍须单独记录。
 
 ## 1. 选择部署模式
 
@@ -24,53 +26,47 @@
 | NPU-only Stress | 4：Monitoring + `catmonitor-stress-npu` |
 | Ascend Full | 5：Monitoring + CPU + NPU workload |
 
-## 2. v0.3.6 镜像命名
+## 2. Stress 镜像命名
 
-最终 tag 统一为 `v0.3.6`：
+当前已验收的构建平台是 Linux/ARM64，Stress 专用 tag 统一为
+`arm64-v0.3.5-stress`：
 
 | 职责 | 镜像名称 |
 |---|---|
-| Generic Control | `<registry>/catmonitor-generic:v0.3.6` |
-| NVIDIA Control | `<registry>/catmonitor-gpu:v0.3.6` |
-| Ascend Control | `<registry>/catmonitor-npu:v0.3.6` |
-| CPU workload | `<registry>/catmonitor-stress-cpu:v0.3.6` |
-| NPU workload | `<registry>/catmonitor-stress-npu:v0.3.6` |
+| Generic Control | `ghcr.io/spike677/catmonitor-generic:arm64-v0.3.5-stress` |
+| NVIDIA Control | `ghcr.io/spike677/catmonitor-gpu:arm64-v0.3.5-stress`（当前为 Private，需先登录 GHCR） |
+| Ascend Control | `ghcr.io/spike677/catmonitor-npu:arm64-v0.3.5-stress` |
+| CPU workload | `ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.5-stress` |
+| NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.5-stress` |
 
 Control 镜像包含 `catmonitor`、Web 与 DFeE。CPU workload 镜像包含
 STREAM/HPL/HPCG；NPU workload 镜像包含 CANN/torch_npu/NPU Burn 运行环境。
-三类 V2 镜像都必须重新构建和验收。
+三张 Control 镜像是“监控能力 + Stress Controller”的集成构建；CPU/NPU workload
+镜像才是专用压测执行环境。五张镜像属于同一 Stress 候选集合，不能与普通 0.3.5
+镜像混用。
 
 ## 3. 获取源码和镜像
 
-正式发布后使用 v0.3.6 release ref：
+使用与镜像 manifest 记录一致的 Stress release ref：
 
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout <v0.3.6-release-ref>
+git checkout refactor/unified-stress-platform
 ```
 
-设置发布后的 registry namespace；当前草案不要把占位符直接复制执行：
+设置当前 pre-release registry namespace：
 
 ```bash
-export CATMONITOR_REGISTRY='<registry>'
-export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
 ```
 
 随后按节点文档拉取对应 Control 和可选 workload 镜像。
 
-受限网络从源码构建 Control 时，可以显式配置包仓库镜像；不设置时仍使用基础镜像的
-官方仓库配置：
-
-```bash
-# Alpine 仓库根目录，供 Generic Control 使用
-export CATMONITOR_ALPINE_MIRROR='https://mirror.example.com/alpine'
-# Debian 镜像站 origin；构建器会使用其 /debian 与 /debian-security
-export CATMONITOR_DEBIAN_MIRROR='https://mirror.example.com'
-```
-
-镜像地址只作为 build argument 使用，不会成为运行时 `ENV`。仓库不保存代理地址、
-镜像站凭据或节点专用配置。
+需要从源码构建 Control/Stress workload 镜像、配置构建镜像源或代理，或制作
+RC/Release 镜像的开发者，请参阅 [镜像构建与发布开发者指南](DEVELOPER_GUIDE.md)。
+普通部署不需要理解 build inputs、manifest 或 build daemon。
 
 ## 4. 唯一运行链路
 
@@ -95,7 +91,8 @@ CPU/NPU workload container（可选）
 | [README-generic.md](README-generic.md) | Generic Monitoring / CPU Stress |
 | [README-gpu.md](README-gpu.md) | NVIDIA Monitoring / CPU Stress |
 | [README-npu.md](README-npu.md) | Ascend Monitoring / CPU Stress / NPU Burn |
-| [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md) | 镜像构建、资源参数、迁移和故障排查 |
+| [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md) | Stress 配置、资源参数、操作、迁移和故障排查 |
+| [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | 五张镜像构建、mirror/proxy、manifest 与 RC 发布 |
 
 ## 6. 通用验证入口
 

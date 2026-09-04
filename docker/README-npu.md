@@ -1,11 +1,14 @@
-# CATMonitor v0.3.6：Ascend NPU 节点
+# CATMonitor：Ascend NPU 节点
 
 适用于 Ascend NPU Linux 节点。支持 Ascend Monitoring、可选 CPU Stress 和可选
-NPU Burn。v0.3.6 当前只声明已完成 A2/Ascend910B4、CANN 8.3、`runc` 的功能验收；
+NPU Burn。当前 Stress 镜像只声明已完成 A2/Ascend910B4、CANN 8.3、`runc` 的功能验收；
 其他 SoC/CANN 组合必须单独验收，不能由 A2 结果外推。
 
 Docker Compose 是推荐入口；本页同时给出完整的 `docker run` 入口。两种入口使用
 相同镜像、generator 配置、挂载、权限和 3/4/4/5 容器模型。
+
+> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
+> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
 
 ## 1. 前置条件
 
@@ -35,10 +38,10 @@ generator 会动态发现实际存在的 `/dev/davinciN`。设备号不要求从
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout <v0.3.6-release-ref>
+git checkout refactor/unified-stress-platform
 
-export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
-export CATMONITOR_REGISTRY='<registry>'
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
 export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-npu:${CATMONITOR_RELEASE}"
 export CATMONITOR_CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
 export CATMONITOR_NPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-npu:${CATMONITOR_RELEASE}"
@@ -54,18 +57,10 @@ docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 docker pull "$CATMONITOR_NPU_STRESS_IMAGE"
 ```
 
-从源码构建 Ascend Control：
-
-```bash
-# 可选；只填写 mirror origin，不包含 /debian 路径
-export CATMONITOR_DEBIAN_MIRROR='https://mirror.example.com'
-bash docker/build.sh npu
-docker tag catmonitor-npu "$CATMONITOR_IMAGE"
-```
-
-CPU/NPU workload 镜像构建见
-[STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)。发布镜像必须来自同一
-v0.3.6 release source，不得复用 a2-r1 的镜像身份。
+需要从源码构建 Ascend Control、CPU/NPU workload，选择 CANN builder/runtime base，
+配置 Debian mirror，或制作 RC 镜像时，请使用
+[镜像构建与发布开发者指南](DEVELOPER_GUIDE.md)。发布镜像必须来自同一 Stress
+release source，不得复用 a2-r1 的镜像身份。
 
 ## 3. Monitoring-only
 
@@ -143,9 +138,11 @@ curl -fsS http://127.0.0.1:19323/ >/dev/null
 curl -fsS http://127.0.0.1:9333/metrics >/dev/null
 ```
 
+### 3.3 Verify
+
 Web 中 Stress 显示未启用；旧 Monitoring YAML 可以完全没有顶层 `stress:` 段。
 
-## 4. 生成 Stress 配置
+## 4. Stress 运行目录
 
 generator 只生成节点配置和只读 metadata，不启动或删除容器。以下 A2 参数是当前
 96 核验收节点使用的 profile；换机器时必须让 HPL 的 MPI ranks 与 `HPL.dat` 的
@@ -162,100 +159,25 @@ sudo install -d -m 0750 \
   "$CATMONITOR_NPU_OUTPUT_DIR"
 ```
 
-CPU-only：
-
-```bash
-sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir "$CATMONITOR_GENERATED_DIR" \
-  --control-image "$CATMONITOR_IMAGE" \
-  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
-  --stream-threads 0 \
-  --hpl-processes 8 \
-  --hpl-threads 12 \
-  --hpcg-processes 96 \
-  --hpcg-threads 1 \
-  --enable-web \
-  --force
-```
-
-NPU-only：
-
-```bash
-sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir "$CATMONITOR_GENERATED_DIR" \
-  --control-image "$CATMONITOR_IMAGE" \
-  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
-  --npu-burn-device all \
-  --npu-chip-generation A2 \
-  --npu-runtime runc \
-  --enable-web \
-  --force
-```
-
-Full：
-
-```bash
-sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir "$CATMONITOR_GENERATED_DIR" \
-  --control-image "$CATMONITOR_IMAGE" \
-  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
-  --stream-threads 0 \
-  --hpl-processes 8 \
-  --hpl-threads 12 \
-  --hpcg-processes 96 \
-  --hpcg-threads 1 \
-  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
-  --npu-burn-device all \
-  --npu-chip-generation A2 \
-  --npu-runtime runc \
-  --enable-web \
-  --force
-```
-
-手工 NPU 命令从 `stress-profile.json` 读取 host IDs、映射数量与 runtime logical IDs：
-
-```bash
-export CATMONITOR_STRESS_PROFILE="$CATMONITOR_GENERATED_DIR/stress-profile.json"
-mapfile -t CATMONITOR_NPU_PROFILE_FIELDS < <(
-  python3 - "$CATMONITOR_STRESS_PROFILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    profile = json.load(stream)
-npu = profile["npu"]
-ids = npu["host_device_ids"]
-if not npu["enabled"] or not ids:
-    raise SystemExit("generated NPU profile is disabled or empty")
-print(len(ids))
-print(npu["runtime_visible_device_ids"])
-print(npu["burn_logical_ids"])
-for device_id in ids:
-    print(device_id)
-PY
-)
-
-export CATMONITOR_NPU_DEVICE_COUNT="${CATMONITOR_NPU_PROFILE_FIELDS[0]}"
-export CATMONITOR_NPU_RUNTIME_VISIBLE_DEVICES="${CATMONITOR_NPU_PROFILE_FIELDS[1]}"
-export CATMONITOR_NPU_BURN_DEVICE="${CATMONITOR_NPU_PROFILE_FIELDS[2]}"
-CATMONITOR_NPU_DEVICE_ARGS=()
-for device_id in "${CATMONITOR_NPU_PROFILE_FIELDS[@]:3}"; do
-  test -e "/dev/davinci${device_id}"
-  CATMONITOR_NPU_DEVICE_ARGS+=(
-    "--device=/dev/davinci${device_id}:/dev/davinci${device_id}"
-  )
-done
-test "${#CATMONITOR_NPU_DEVICE_ARGS[@]}" -eq "$CATMONITOR_NPU_DEVICE_COUNT"
-```
-
-例如宿主机观察到 `/dev/davinci2` 与 `/dev/davinci5`，只表示两个 host device
-node；它们不代表 NPU Burn logical ID 是 `2,5`。generator 会得到 mapped count 2，
-runtime logical namespace `0,1`，并在 workload preflight 中与 PCI topology、
-`torch_npu.npu.device_count()` 交叉检查。
-
 ## 5. CPU Stress
 
-### 5.1 Compose
+### 5.1 Generate
+
+```bash
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir "$CATMONITOR_GENERATED_DIR" \
+  --control-image "$CATMONITOR_IMAGE" \
+  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
+  --stream-threads 0 \
+  --hpl-processes 8 \
+  --hpl-threads 12 \
+  --hpcg-processes 96 \
+  --hpcg-threads 1 \
+  --enable-web \
+  --force
+```
+
+### 5.2 Compose
 
 先执行第 4 节 CPU-only generator，然后：
 
@@ -270,7 +192,7 @@ CATMONITOR_STRESS_STATE_DIR="$CATMONITOR_STRESS_STATE_DIR" \
   --profile stress-cpu up -d
 ```
 
-### 5.2 Manual `docker run` — CPU Stress
+### 5.3 Manual `docker run`
 
 先执行第 4 节 CPU-only generator。下面命令完整创建 CPU workload、daemon、Web 与
 DFeE 共 4 个容器；只有 daemon 挂 Docker Socket。
@@ -348,9 +270,77 @@ generated YAML、state、control 与 Docker Socket；CPU workload 使用 `networ
 只读根文件系统、最小 capabilities、16 GiB shm、只读安全选项和独立可写 state；
 Web/DFeE 不挂 Docker Socket。
 
+### 5.4 Doctor / Run / Cancel
+
+```bash
+docker exec catmonitor catmonitor stress doctor \
+  -c /etc/catmonitor/catmonitor.yaml -o table
+docker exec catmonitor catmonitor stress run --bench stream -o table
+docker exec catmonitor catmonitor stress status -o table
+docker exec catmonitor catmonitor stress cancel --job <job-id>
+docker top catmonitor-stress-cpu | grep -E 'xhpl|xhpcg|mpirun|hydra' && exit 1 || true
+```
+
 ## 6. NPU Stress
 
-### 6.1 Compose
+### 6.1 Generate
+
+```bash
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir "$CATMONITOR_GENERATED_DIR" \
+  --control-image "$CATMONITOR_IMAGE" \
+  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
+  --npu-burn-device all \
+  --npu-chip-generation A2 \
+  --npu-runtime runc \
+  --enable-web \
+  --force
+```
+
+### 6.2 Device mapping
+
+手工 NPU 命令从 `stress-profile.json` 读取 host IDs、映射数量与 runtime logical IDs：
+
+```bash
+export CATMONITOR_STRESS_PROFILE="$CATMONITOR_GENERATED_DIR/stress-profile.json"
+mapfile -t CATMONITOR_NPU_PROFILE_FIELDS < <(
+  python3 - "$CATMONITOR_STRESS_PROFILE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    profile = json.load(stream)
+npu = profile["npu"]
+ids = npu["host_device_ids"]
+if not npu["enabled"] or not ids:
+    raise SystemExit("generated NPU profile is disabled or empty")
+print(len(ids))
+print(npu["runtime_visible_device_ids"])
+print(npu["burn_logical_ids"])
+for device_id in ids:
+    print(device_id)
+PY
+)
+
+export CATMONITOR_NPU_DEVICE_COUNT="${CATMONITOR_NPU_PROFILE_FIELDS[0]}"
+export CATMONITOR_NPU_RUNTIME_VISIBLE_DEVICES="${CATMONITOR_NPU_PROFILE_FIELDS[1]}"
+export CATMONITOR_NPU_BURN_DEVICE="${CATMONITOR_NPU_PROFILE_FIELDS[2]}"
+CATMONITOR_NPU_DEVICE_ARGS=()
+for device_id in "${CATMONITOR_NPU_PROFILE_FIELDS[@]:3}"; do
+  test -e "/dev/davinci${device_id}"
+  CATMONITOR_NPU_DEVICE_ARGS+=(
+    "--device=/dev/davinci${device_id}:/dev/davinci${device_id}"
+  )
+done
+test "${#CATMONITOR_NPU_DEVICE_ARGS[@]}" -eq "$CATMONITOR_NPU_DEVICE_COUNT"
+```
+
+例如宿主机观察到 `/dev/davinci2` 与 `/dev/davinci5`，只表示两个 host device
+node；它们不代表 NPU Burn logical ID 是 `2,5`。generator 会得到 mapped count 2，
+runtime logical namespace `0,1`，并在 workload preflight 中与 PCI topology、
+`torch_npu.npu.device_count()` 交叉检查。
+
+### 6.3 Compose
 
 先执行第 4 节 NPU-only generator，然后：
 
@@ -365,7 +355,7 @@ CATMONITOR_STRESS_STATE_DIR="$CATMONITOR_STRESS_STATE_DIR" \
   --profile stress-npu up -d
 ```
 
-### 6.2 Manual `docker run` — NPU Stress
+### 6.4 Manual `docker run`
 
 先执行第 4 节 NPU-only generator和 profile 读取块。下面命令动态使用 generator
 发现的所有 host nodes，不允许手工把稀疏 host ID 当成 NPU Burn logical ID。
@@ -447,9 +437,40 @@ NPU workload 的根文件系统只读；`HOME=/opt/catmonitor/npuburn-home` 由 
 运行期可写目录，结果另外持久化到 `$CATMONITOR_NPU_OUTPUT_DIR`。A2/CANN 8.3/runc
 profile 只给 NPU workload `privileged=true`，其网络为 `none`；Web/DFeE 不获得该权限。
 
+### 6.5 Doctor / Run / Cancel
+
+```bash
+docker exec catmonitor catmonitor stress doctor \
+  -c /etc/catmonitor/catmonitor.yaml -o table
+docker exec catmonitor catmonitor stress run --bench npu_burn -o table
+docker exec catmonitor catmonitor stress status -o table
+docker exec catmonitor catmonitor stress cancel --job <job-id>
+docker top catmonitor-stress-npu | grep -E 'ascend_npu_burn|multiprocessing' && exit 1 || true
+```
+
 ## 7. CPU + NPU Full
 
-### 7.1 Compose
+### 7.1 Generate
+
+```bash
+sudo bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir "$CATMONITOR_GENERATED_DIR" \
+  --control-image "$CATMONITOR_IMAGE" \
+  --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
+  --stream-threads 0 \
+  --hpl-processes 8 \
+  --hpl-threads 12 \
+  --hpcg-processes 96 \
+  --hpcg-threads 1 \
+  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
+  --npu-burn-device all \
+  --npu-chip-generation A2 \
+  --npu-runtime runc \
+  --enable-web \
+  --force
+```
+
+### 7.2 Compose
 
 先执行第 4 节 Full generator，然后：
 
@@ -464,7 +485,7 @@ CATMONITOR_STRESS_STATE_DIR="$CATMONITOR_STRESS_STATE_DIR" \
   --profile stress-cpu --profile stress-npu up -d
 ```
 
-### 7.2 Manual `docker run` — CPU + NPU Full
+### 7.3 Manual `docker run`
 
 先执行第 4 节 Full generator和 profile 读取块。下面是完整的 5 容器命令，不需要从
 其他章节拼接隐藏参数。
@@ -564,28 +585,7 @@ docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
 Full 必须恰好 5 个容器。daemon 因启用 Stress 获得 Docker Socket；Web 与 DFeE
 仍没有 Docker Socket。
 
-## 8. Doctor、Run、Status 与 Cancel
-
-Compose 与手工入口都在 daemon 容器执行同一 CLI：
-
-```bash
-docker exec catmonitor catmonitor stress doctor \
-  -c /etc/catmonitor/catmonitor.yaml -o table
-
-docker exec catmonitor catmonitor stress run --bench stream -o table
-docker exec catmonitor catmonitor stress run --bench npu_burn -o table
-docker exec catmonitor catmonitor stress status -o table
-docker exec catmonitor catmonitor stress cancel --job <job-id>
-```
-
-取消后必须检查完整进程树已退出：
-
-```bash
-docker top catmonitor-stress-cpu | grep -E 'xhpl|xhpcg|mpirun|hydra' && exit 1 || true
-docker top catmonitor-stress-npu | grep -E 'ascend_npu_burn|python' && exit 1 || true
-```
-
-## 9. Web
+## 8. Web
 
 ```text
 http://<node-address>:19322/
@@ -595,7 +595,7 @@ http://<node-address>:19322/
 Web/DFeE 不挂 Docker Socket。当前 operator API 尚无认证/RBAC，只能向可信管理网络
 开放，或由带认证的反向代理保护。
 
-## 10. 停止与升级
+## 9. 停止与清理
 
 手工入口停止但保留容器：
 
@@ -607,7 +607,7 @@ docker stop catmonitor catmonitor-web catmonitor-dfee \
 重新启动只选择当前 profile 实际存在的容器。删除容器不会删除 named volumes；不要在
 需要保留 snapshot/history 时删除这些 volumes。
 
-升级到 v0.3.6：
+切换到新的 Stress 镜像集合：
 
 ```text
 OLD_STRESS_YAML_COMPATIBLE=false
@@ -616,7 +616,7 @@ OLD_STRESS_YAML_COMPATIBLE=false
 必须重新运行 generator，不能复制旧 `script_path`、固定 NPU 容器、CPU Runner socket
 或独立 Stress Web 配置。Monitoring-only YAML 可以没有 `stress:` 段。
 
-## 11. 故障排查
+## 10. 故障排查
 
 - NPU Monitoring 为空：检查 `npu-smi info`、driver/toolkit 挂载和 daemon 日志。
 - NPU Burn unavailable：执行 doctor，核对 CANN、torch_npu、lspci 与 device count。
@@ -627,6 +627,6 @@ OLD_STRESS_YAML_COMPATIBLE=false
   NPU workload 使用 `--privileged`；不要把该权限授予 Web 或 DFeE。
 - HPL 立即失败：核对 `HPL_MPI_PROCESSES == P×Q`，不要盲用默认值 1。
 - Web snapshot 未就绪：先检查 `19320/-/ready`，不要另起第二个 Web。
-- Docker API 版本不匹配：v0.3.6 Controller 会通过配置的 Unix socket 自动协商，
+- Docker API 版本不匹配：当前 Stress Controller 会通过配置的 Unix socket 自动协商，
   用户不应手工设置 `DOCKER_API_VERSION`。
-- Registry 不可达：离线传输同一 v0.3.6 镜像，不得替换成旧 a2-r1 镜像。
+- Registry 不可达：离线传输同一标签和 Image ID 的镜像，不得替换成旧 a2-r1 镜像。

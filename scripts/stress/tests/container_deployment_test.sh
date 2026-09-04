@@ -104,9 +104,9 @@ require_fixed docker/Dockerfile.npu 'ARG DEBIAN_MIRROR=""'
 # path. Keep the three Stress profiles complete and aligned with the canonical
 # Compose security boundary.
 require_fixed docker/README.md '`docker run` 是完整支持的手工兼容入口'
-require_fixed docker/README-npu.md '### 5.2 Manual `docker run` — CPU Stress'
-require_fixed docker/README-npu.md '### 6.2 Manual `docker run` — NPU Stress'
-require_fixed docker/README-npu.md '### 7.2 Manual `docker run` — CPU + NPU Full'
+require_fixed docker/README-npu.md '### 5.3 Manual `docker run`'
+require_fixed docker/README-npu.md '### 6.4 Manual `docker run`'
+require_fixed docker/README-npu.md '### 7.3 Manual `docker run`'
 require_fixed docker/README-npu.md 'stress-profile.json'
 require_fixed docker/README-npu.md 'CATMONITOR_NPU_DEVICE_COUNT'
 require_fixed docker/README-npu.md 'CATMONITOR_NPU_DEVICE_ARGS'
@@ -116,9 +116,9 @@ require_fixed docker/README-npu.md '--pids-limit 4096 --shm-size=16g'
 require_fixed docker/README-npu.md '-control-socket=/run/catmonitor/control.sock'
 require_fixed docker/README-npu.md '-v /var/run/docker.sock:/var/run/docker.sock'
 
-cpu_manual=$(sed -n '/^### 5\.2 /,/^## 6\./p' "$REPO_ROOT/docker/README-npu.md")
-npu_manual=$(sed -n '/^### 6\.2 /,/^## 7\./p' "$REPO_ROOT/docker/README-npu.md")
-full_manual=$(sed -n '/^### 7\.2 /,/^## 8\./p' "$REPO_ROOT/docker/README-npu.md")
+cpu_manual=$(sed -n '/^### 5\.3 /,/^### 5\.4 /p' "$REPO_ROOT/docker/README-npu.md")
+npu_manual=$(sed -n '/^### 6\.4 /,/^### 6\.5 /p' "$REPO_ROOT/docker/README-npu.md")
+full_manual=$(sed -n '/^### 7\.3 /,/^## 8\./p' "$REPO_ROOT/docker/README-npu.md")
 for name in cpu npu full; do
     case "$name" in
         cpu) section=$cpu_manual ;;

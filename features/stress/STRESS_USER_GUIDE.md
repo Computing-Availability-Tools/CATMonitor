@@ -1,4 +1,4 @@
-# CATMonitor v0.3.6 可靠性压测使用指南
+# CATMonitor 可靠性压测使用指南
 
 本文面向首次部署和日常操作 CATMonitor Stress 的节点管理员。用户只需要理解：
 
@@ -13,6 +13,9 @@ optional NPU Stress（Ascend NPU Burn）
 项目专属 IP、代理、账号、PAT 和实机绝对路径不得写入仓库。受限节点使用临时
 环境变量或离线镜像包。
 
+> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
+> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+
 ## 1. 镜像与容器
 
 | 镜像 | 作用 | 是否必需 |
@@ -24,18 +27,21 @@ optional NPU Stress（Ascend NPU Burn）
 容器数量：Monitoring-only 3 个；CPU-only 4 个；NPU-only 4 个；CPU+NPU Full
 5 个。CPU-only 用户不需要下载较大的 NPU workload 镜像。
 
-v0.3.6 最终命名：
+当前 Linux/ARM64 Stress 专用镜像命名：
 
 ```text
-<registry>/catmonitor-generic:v0.3.6
-<registry>/catmonitor-gpu:v0.3.6
-<registry>/catmonitor-npu:v0.3.6
-<registry>/catmonitor-stress-cpu:v0.3.6
-<registry>/catmonitor-stress-npu:v0.3.6
+ghcr.io/spike677/catmonitor-generic:arm64-v0.3.5-stress
+ghcr.io/spike677/catmonitor-gpu:arm64-v0.3.5-stress
+ghcr.io/spike677/catmonitor-npu:arm64-v0.3.5-stress
+ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.5-stress
+ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.5-stress
 ```
 
-当前已冻结 tag 命名，但 registry namespace、Image ID、digest 和 Git release tag
-仍须在 Fresh Image Acceptance 后填写，不能复用 a2-r1。
+程序版本由项目 owner 保持为 `0.3.5`；`stress` 后缀表示该镜像来自 Stress 集成分支，
+不是通用 0.3.5 或最终 v0.3.6 正式镜像。Image ID、digest 和 Git source commit
+仍须随发布记录核对，不能复用 a2-r1。
+
+GPU pre-release package 当前为 Private；GPU 用户拉取前需要完成 GHCR 身份认证。
 
 ## 2. 前置条件
 
@@ -56,7 +62,7 @@ Ascend NPU Stress：
 - Linux/arm64；
 - Ascend driver、`npu-smi` 和 `/dev/davinciN` 正常；
 - NPU workload 镜像的 CANN/torch_npu 与宿主机驱动兼容；
-- v0.3.6 当前发布声明只覆盖已验证的 A2/Ascend910B4，其他 SoC 需单独验收。
+- 当前 Stress 镜像只覆盖已验证的 A2/Ascend910B4，其他 SoC 需单独验收。
 
 ```bash
 docker version
@@ -64,16 +70,16 @@ docker compose version
 uname -m
 ```
 
-## 3. 获取 v0.3.6
+## 3. 获取 ARM64 Stress pre-release 镜像
 
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout <v0.3.6-release-ref>
+git checkout refactor/unified-stress-platform
 git status --short
 
-export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
-export CATMONITOR_REGISTRY='<registry>'
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
 ```
 
 按节点选择 Control 镜像：
@@ -102,60 +108,14 @@ docker pull "$NPU_STRESS_IMAGE"  # 仅 NPU Stress
 - [NVIDIA GPU](../../docker/README-gpu.md)
 - [Ascend NPU](../../docker/README-npu.md)
 
-## 4. 从源码构建镜像
+## 4. 镜像来源边界
 
-最终 v0.3.6 三类 V2 镜像都必须重新构建；当前 A2 功能验收使用的旧 Golden
-runtime 只能作为回归证据，不能作为最终镜像。
+节点管理员应优先拉取同一 release 发布的 Control 和所需 workload 镜像，然后从第 5
+节开始生成节点配置。构建 STREAM/HPL/HPCG 或 NPU Burn 镜像、选择 CANN base、配置
+mirror/proxy、生成 manifest 和制作 RC tag 属于开发/发布职责，统一见
+[镜像构建与发布开发者指南](../../docker/DEVELOPER_GUIDE.md)。
 
-### 4.1 Control
-
-```bash
-bash docker/build.sh generic  # Generic
-bash docker/build.sh gpu      # NVIDIA
-bash docker/build.sh npu      # Ascend
-```
-
-构建脚本分别产生本地 `catmonitor-generic`、`catmonitor-gpu`、`catmonitor-npu`，
-验收后再 tag 为对应的 v0.3.6 registry ref。
-
-### 4.2 CPU workload
-
-```bash
-bash scripts/stress/build_cpu_runner_image.sh \
-  --image "$CPU_STRESS_IMAGE" \
-  --stream-src /srv/sources/stream.c \
-  --hpl-src /srv/sources/hpl-2.3.tar.gz \
-  --hpl-dat /srv/profiles/HPL.dat \
-  --hpcg-src /srv/sources/hpcg-3.1.tar.gz \
-  --hpcg-dat /srv/profiles/hpcg.dat \
-  --build-root /var/tmp/catmonitor-build/cpu-v0.3.6 \
-  --manifest /var/tmp/catmonitor-build/cpu-v0.3.6/cpu-image-manifest.json \
-  --jobs 16
-```
-
-受限 Debian 网络可增加：
-
-```bash
---debian-mirror https://mirrors.aliyun.com/debian
-```
-
-构建会编译并验证资产，但不会运行 HPL/HPCG 实机负载。
-
-### 4.3 NPU workload
-
-```bash
-bash scripts/stress/build_npu_burn_image.sh \
-  --builder-base-image <reviewed-cann-builder> \
-  --runtime-base-image <reviewed-cann-runtime> \
-  --image "$NPU_STRESS_IMAGE" \
-  --compat-profile a2-cann83 \
-  --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
-  --build-root /var/tmp/catmonitor-build/npuburn-v0.3.6-a2 \
-  --manifest /var/tmp/catmonitor-build/npuburn-v0.3.6-a2/npu-image-manifest.json
-```
-
-builder 提供完整编译环境；runtime 包含 CANN runtime、Python、torch/torch_npu 与
-`pciutils/lspci`；运行时只从宿主机挂载驱动和设备。镜像构建不运行真实 NPU workload。
+不要把不同源码提交、RC 后缀或未经对应硬件验收的 workload 镜像混在同一部署中。
 
 ## 5. 生成节点配置
 
@@ -347,7 +307,7 @@ stress doctor → STREAM → HPCG → HPL → NPU Burn（如启用）
 | `aclInit 507899` / device invalid | 使用 generator 生成的 A2 override；确认只有 NPU workload 为 privileged |
 | Web 无法 Run/Cancel | `--enable-web`、daemon 状态、`19322` 网络策略 |
 | Cancel 后仍有进程 | workload 容器进程；应按缺陷处理，不能忽略 |
-| Registry 不可达 | 用 `docker save/load` 转移同一 v0.3.6 镜像 |
+| Registry 不可达 | 用 `docker save/load` 转移同一标签和 Image ID 的镜像 |
 
 设计与测试人员可继续参考 [STRESS_DESIGN.md](STRESS_DESIGN.md) 和
 [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)。

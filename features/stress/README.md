@@ -1,4 +1,4 @@
-# CATMonitor v0.3.6 可靠性压测
+# CATMonitor 可靠性压测
 
 Stress 是 CATMonitor 的显式触发可靠性负载特性，支持：
 
@@ -36,8 +36,9 @@ Web operator ────────┼── /run/catmonitor/control.sock
 - 当前 V2 仅 daemon 挂 Docker Socket。这是明确记录的临时高权限边界；
 - 不提供网页脚本编辑、任意命令或任意 benchmark 参数编辑。
 
-最终发行 tag 以 `v0.3.6` 为目标。Fresh Image Acceptance 前的 RC 只能使用
-`v0.3.6-rc.<shortsha>`；不得提前创建正式 image/tag，也不得复用 a2-r1。
+当前程序版本由项目 owner 保持为 `0.3.5`。Linux/ARM64 Stress 集成镜像使用
+`arm64-v0.3.5-stress`，不得标记为通用 `v0.3.5`/`latest`，也不得复用 a2-r1。
+目标发布线为 `v0.3.6`；当前标签只是 pre-release，不代表正式 `v0.3.6` 已发布。
 
 ## 配置
 
@@ -86,12 +87,11 @@ NPU logical ID 等参数属于 workload 容器 profile，由 Compose 环境变�
 
 ## 部署
 
-先设置 v0.3.6 候选镜像变量。正式 registry namespace 与 digest 待 Fresh Image
-Acceptance 后补齐：
+先设置当前 Stress pre-release 镜像变量：
 
 ```bash
-export CATMONITOR_REGISTRY='<registry>'
-export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
 export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-npu:${CATMONITOR_RELEASE}"
 export CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
 export NPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-npu:${CATMONITOR_RELEASE}"

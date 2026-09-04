@@ -1,34 +1,41 @@
-# CATMonitor v0.3.6：Generic CPU 节点
+# CATMonitor：Generic CPU 节点
 
 适用于没有 NVIDIA GPU 或 Ascend NPU 的 Linux 节点。推荐部署 Monitoring，按需增加
 STREAM、HPL、HPCG CPU Stress。
+
+> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
+> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
 
 ## 1. 前置条件
 
 - Linux/amd64 或 Linux/arm64；
 - Docker Engine；
-- Docker Compose v2（`docker compose version`）；
-- 访问镜像 registry，或已离线导入相同的 v0.3.6 镜像。
+- 访问镜像 registry，或已离线导入相同的 Stress 镜像。
+
+使用推荐的 Compose 部署方式时才额外需要 Docker Compose v2。只使用本页的
+`docker run` 兼容入口时不需要 Compose。直接拉取预构建镜像时需要访问镜像
+registry，受限节点也可以提前离线导入相同标签和 Image ID 的镜像。
 
 ```bash
 docker version
-docker compose version
 uname -m
+# 仅 Compose 部署需要
+docker compose version 2>/dev/null || true
 ```
 
-## 2. 获取 v0.3.6
+## 2. 获取 ARM64 Stress pre-release 镜像
 
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout <v0.3.6-release-ref>
+git checkout refactor/unified-stress-platform
 ```
 
-v0.3.6 最终镜像名如下；发布前将 `<registry>` 替换为正式 namespace：
+当前 Linux/ARM64 Stress 专用镜像如下：
 
 ```bash
-export CATMONITOR_RELEASE='v0.3.6-rc.<shortsha>'
-export CATMONITOR_REGISTRY='<registry>'
+export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
+export CATMONITOR_REGISTRY='ghcr.io/spike677'
 export CATMONITOR_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-generic:${CATMONITOR_RELEASE}"
 export CATMONITOR_CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
 ```
@@ -45,14 +52,9 @@ docker pull "$CATMONITOR_IMAGE"
 docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 ```
 
-需要从源码构建 Control 时：
-
-```bash
-# 可选；不设置时继续使用 Alpine 官方仓库
-export CATMONITOR_ALPINE_MIRROR='https://mirror.example.com/alpine'
-bash docker/build.sh generic
-docker tag catmonitor-generic "$CATMONITOR_IMAGE"
-```
+需要从源码构建 Generic Control 或 CPU workload、配置 Alpine mirror，或制作 RC
+镜像时，请使用 [镜像构建与发布开发者指南](DEVELOPER_GUIDE.md)。普通节点只需拉取
+与当前 release 匹配的镜像。
 
 ## 3. Monitoring-only
 
@@ -259,7 +261,7 @@ docker compose -p catmonitor \
 将 `stop` 换成 `start` 可恢复；换成 `down` 可删除容器和网络。命名卷默认保留，
 不要在需要保留 snapshot/history 时使用 `down -v`。
 
-升级到 v0.3.6 时必须重新生成 Stress 配置：
+切换到新的 Stress 镜像集合时必须重新生成 Stress 配置：
 
 ```text
 OLD_STRESS_YAML_COMPATIBLE=false
@@ -271,4 +273,4 @@ OLD_STRESS_YAML_COMPATIBLE=false
 - Stress 显示未配置：确认使用了 generated Compose override，并执行 `stress doctor`。
 - HPL/HPCG 不可用：检查 workload 镜像内 MPI 与 benchmark ABI，不要在 Web 编辑命令。
 - Docker Socket 权限失败：仅 daemon 需要访问；不要把 socket 挂给 Web 或 DFeE。
-- Registry 不可达：在联网节点 `docker save`，离线节点 `docker load` 同一 v0.3.6 镜像。
+- Registry 不可达：在联网节点 `docker save`，离线节点 `docker load` 同一标签和 Image ID 的镜像。
