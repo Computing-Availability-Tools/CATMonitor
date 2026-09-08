@@ -235,7 +235,10 @@ func runDaemon() {
 		wh := faultsub.NewWebhook(cfg.FaultSub.WebhookTimeout, logger)
 		disp := faultsub.NewDispatcher(wh, faultsub.NewSubscriptionManager(),
 			cfg.FaultSub.WebhookRetry, cfg.FaultSub.EventBuffer, logger)
-		fstore := faultsub.NewFaultStorage(cacheStore, det, disp, logger)
+		// Wrap the current chain head (sink), not cacheStore directly: when
+		// straggler_output is also enabled the write path must flow through
+		// StragglerStorage, otherwise its KPI tap is silently bypassed.
+		fstore := faultsub.NewFaultStorage(sink, det, disp, logger)
 		go faultsub.ServeAPI(ctx, cfg.FaultSub.RestAddr, disp, fstore, logger)
 		sink = fstore
 		logger.Info("faultsub enabled", "rest_addr", cfg.FaultSub.RestAddr)
