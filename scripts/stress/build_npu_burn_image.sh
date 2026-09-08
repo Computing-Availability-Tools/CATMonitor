@@ -431,7 +431,19 @@ CONTEXT="$RUN_ROOT/context"
 STAGED_SOURCE="$CONTEXT/source"
 STAGED_BUILD_DRIVER="$CONTEXT/build-driver-lib64"
 STAGED_PCIUTILS_PACKAGES="$CONTEXT/pciutils-packages"
-install -d -m 0755 "$STAGED_SOURCE" "$STAGED_BUILD_DRIVER" "$STAGED_PCIUTILS_PACKAGES"
+install -d -m 0755 \
+    "$STAGED_SOURCE" \
+    "$STAGED_BUILD_DRIVER" \
+    "$STAGED_PCIUTILS_PACKAGES" \
+    "$CONTEXT/features/stress/workloadapi" \
+    "$CONTEXT/features/stress/resultparse" \
+    "$CONTEXT/features/stress/workloadplugin" \
+    "$CONTEXT/features/stress/cmd/workload-exec"
+install -m 0644 "$REPO_ROOT/go.mod" "$REPO_ROOT/go.sum" "$CONTEXT/"
+install -m 0644 "$REPO_ROOT/features/stress/workloadapi/"*.go "$CONTEXT/features/stress/workloadapi/"
+install -m 0644 "$REPO_ROOT/features/stress/resultparse/"*.go "$CONTEXT/features/stress/resultparse/"
+install -m 0644 "$REPO_ROOT/features/stress/workloadplugin/"*.go "$CONTEXT/features/stress/workloadplugin/"
+install -m 0644 "$REPO_ROOT/features/stress/cmd/workload-exec/"*.go "$CONTEXT/features/stress/cmd/workload-exec/"
 
 # Copy a clean source snapshot. Generated wheels, VCS metadata and Python/C++
 # cache products are not accepted as source inputs.

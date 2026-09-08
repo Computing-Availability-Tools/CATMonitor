@@ -117,8 +117,13 @@ func (c *MemoryCollector) collectOOMCount(now time.Time) ([]collector.Metric, er
 			count++
 		}
 	}
+	delta := count - c.prevOOMCount
+	if delta < 0 {
+		delta = 0
+	}
+	c.prevOOMCount = count
 	return []collector.Metric{{
-		Component: "memory", Name: "oom_count", Value: float64(count), Unit: "次", Timestamp: now,
+		Component: "memory", Name: "oom_count", Value: float64(delta), Unit: "次", Timestamp: now,
 	}}, nil
 }
 

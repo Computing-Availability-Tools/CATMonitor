@@ -28,9 +28,10 @@ type Source interface {
 	// Topo returns the NPU communication topology string. Cached permanently
 	// (static).
 	Topo() (string, error)
-	// HccsBandwidth returns HCCS TX/RX bandwidth (MB/s) for a device. Cached
-	// per-device for 30s.
-	HccsBandwidth(devID int) (*HccsBw, error)
+	// HccsBandwidth returns HCCS TX/RX bandwidth (MB/s) for a device.
+	// Not cached: the command samples live bandwidth (-time 50), so every
+	// call executes npu-smi.
+	HccsBandwidth(card, chip int) (*HccsBw, error)
 	// Available reports whether npu-smi is on PATH.
 	Available() bool
 }
@@ -88,13 +89,13 @@ func (s *defaultSource) Topo() (string, error) {
 	return s.topoCache, perr
 }
 
-func (s *defaultSource) HccsBandwidth(devID int) (*HccsBw, error) {
-	out, err := s.fetch("info", "-t", "hccs-bw", "-i", strconv.Itoa(devID), "-c", "0", "-time", "50")
+func (s *defaultSource) HccsBandwidth(card, chip int) (*HccsBw, error) {
+	out, err := s.fetch("info", "-t", "hccs-bw", "-i", strconv.Itoa(card), "-c", strconv.Itoa(chip), "-time", "50")
 	if err != nil {
 		return nil, err
 	}
 	if strings.Contains(strings.ToLower(out), "does not support") {
-		return nil, fmt.Errorf("npu-smi: device %d does not support hccs-bw", devID)
+		return nil, fmt.Errorf("npu-smi: device %d chip %d does not support hccs-bw", card, chip)
 	}
 	return parseHccsBw(out), nil
 }

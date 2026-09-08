@@ -261,6 +261,54 @@ func TestCollectEccDelta(t *testing.T) {
 	}
 }
 
+// TestCollectEccDeltaMultiChip is a regression test for the prevEcc key
+// collision: the delta bookkeeping key must include the chip ID. With the
+// old card-only key, both chips of one card shared one prevEcc entry, so
+// each chip's delta was computed against the other chip's cumulative count
+// (garbage, uint64 underflow). On healthy hardware prev==0 masked the bug
+// via the prev>0 guard; it fired exactly when real ECC errors appeared.
+func TestCollectEccDeltaMultiChip(t *testing.T) {
+	useTestdata(t)
+	c := New()
+	now := time.Now()
+
+	// Card 0 with two chips carrying different cumulative HBM ECC counts.
+	mock := &dcmi.MockProvider{
+		CardListVal: []int{0},
+		Eccs: map[[3]int]*dcmi.EccInfo{
+			{0, 0, 2}: {SingleBitErrorCnt: 10, DoubleBitErrorCnt: 0},
+			{0, 1, 2}: {SingleBitErrorCnt: 100, DoubleBitErrorCnt: 0},
+		},
+	}
+	dcmi.SetProvider(mock)
+
+	// First round: both chips report delta 0 (no previous sample of their
+	// own). With the old key, chip 1's first round leaked chip 0's stored
+	// count and reported 100-10=90.
+	m0 := c.collectDevice(npuDevice{cardID: 0, devID: 0, phyID: 0}, now)
+	m1 := c.collectDevice(npuDevice{cardID: 0, devID: 1, phyID: 1}, now)
+	if v := findMetric(m0, "hbm_single_ecc"); v == nil || v.Value != 0 {
+		t.Errorf("chip0 round1: expected delta 0, got %v", v)
+	}
+	if v := findMetric(m1, "hbm_single_ecc"); v == nil || v.Value != 0 {
+		t.Errorf("chip1 round1: expected delta 0, got %v", v)
+	}
+
+	// Second round: chip0 grows +5, chip1 grows +10. With the old key the
+	// chips cross-read each other's prev (chip0: 15-100 underflows to a
+	// huge uint64; chip1: 110-15=95).
+	mock.Eccs[[3]int{0, 0, 2}] = &dcmi.EccInfo{SingleBitErrorCnt: 15, DoubleBitErrorCnt: 0}
+	mock.Eccs[[3]int{0, 1, 2}] = &dcmi.EccInfo{SingleBitErrorCnt: 110, DoubleBitErrorCnt: 0}
+	m0 = c.collectDevice(npuDevice{cardID: 0, devID: 0, phyID: 0}, now)
+	m1 = c.collectDevice(npuDevice{cardID: 0, devID: 1, phyID: 1}, now)
+	if v := findMetric(m0, "hbm_single_ecc"); v == nil || v.Value != 5 {
+		t.Errorf("chip0 round2: expected delta 5, got %v", v)
+	}
+	if v := findMetric(m1, "hbm_single_ecc"); v == nil || v.Value != 10 {
+		t.Errorf("chip1 round2: expected delta 10, got %v", v)
+	}
+}
+
 func TestCollectIntegration(t *testing.T) {
 	useTestdata(t)
 	c := New()
@@ -437,5 +485,82 @@ func TestCollectorInterface(t *testing.T) {
 	}
 	if !c.DefaultEnabled() {
 		t.Error("expected default enabled true")
+	}
+}
+
+// --- ensureDevices phyID resolution ---
+
+// TestEnsureDevicesPhyIDFromAPI: on hosts whose cards are NOT numbered
+// consecutively from 0 (e.g. cards 2 and 5), phyID must come from the DCMI
+// logic→phy translation, not the enumeration index.
+func TestEnsureDevicesPhyIDFromAPI(t *testing.T) {
+	dcmi.SetProvider(&dcmi.MockProvider{
+		CardListVal: []int{2, 5},
+		PhyIDs: map[[2]int]int{
+			{2, 0}: 2,
+			{5, 0}: 5,
+		},
+	})
+	t.Cleanup(func() { dcmi.SetProvider(nil) })
+
+	c := New()
+	c.ensureDevices()
+	if len(c.devices) != 2 {
+		t.Fatalf("expected 2 devices, got %d", len(c.devices))
+	}
+	want := []int{2, 5}
+	for i, d := range c.devices {
+		if d.phyID != want[i] {
+			t.Errorf("device %d: expected phyID=%d (physical), got %d", i, want[i], d.phyID)
+		}
+	}
+}
+
+// TestEnsureDevicesPhyIDFallback: when the phy-id API is unavailable (nil
+// PhyIDs), phyID falls back to the enumeration index — identical to the
+// pre-fix behaviour on hosts numbered 0..N-1, so 8-card trainers regress
+// nothing even if the API fails there.
+func TestEnsureDevicesPhyIDFallback(t *testing.T) {
+	dcmi.SetProvider(&dcmi.MockProvider{
+		CardListVal: []int{0, 1, 2, 3, 4, 5, 6, 7},
+		PhyIDs:      nil, // API unavailable
+	})
+	t.Cleanup(func() { dcmi.SetProvider(nil) })
+
+	c := New()
+	c.ensureDevices()
+	if len(c.devices) != 8 {
+		t.Fatalf("expected 8 devices, got %d", len(c.devices))
+	}
+	for i, d := range c.devices {
+		if d.phyID != i {
+			t.Errorf("device %d: expected fallback phyID=%d, got %d", i, i, d.phyID)
+		}
+	}
+}
+
+// TestEnsureDevicesPhyIDMultiChip: a multi-chip card (2 devices on one card)
+// gets per-chip phy ids from the API.
+func TestEnsureDevicesPhyIDMultiChip(t *testing.T) {
+	dcmi.SetProvider(&dcmi.MockProvider{
+		CardListVal: []int{4},
+		DevMax:      2,
+		PhyIDs: map[[2]int]int{
+			{4, 0}: 9,
+			{4, 1}: 11,
+		},
+	})
+	t.Cleanup(func() { dcmi.SetProvider(nil) })
+
+	c := New()
+	c.ensureDevices()
+	if len(c.devices) != 2 {
+		t.Fatalf("expected 2 devices, got %d", len(c.devices))
+	}
+	want := []int{9, 11}
+	for i, d := range c.devices {
+		if d.phyID != want[i] {
+			t.Errorf("chip %d: expected phyID=%d, got %d", i, want[i], d.phyID)
+		}
 	}
 }

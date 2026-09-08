@@ -23,13 +23,15 @@
 
    | 部件 | 指标数 | High | Medium | Low | 是否参与健康度 |
    |------|:---:|:---:|:---:|:---:|---|
-   | CPU | 40 | 4 | 12 | 24 | 是 |
-   | Memory | 20 | 4 | 8 | 8 | 是 |
+   | CPU | 39 | 4 | 21 | 14 | 是 |
+   | Memory | 20 | 4 | 11 | 5 | 是 |
    | Disk | 14 | 1 | 9 | 4 | 是 |
-   | GPU | 7 | 3 | 3 | 1 | 是 |
+   | GPU | 8 | 3 | 4 | 1 | 是 |
    | NPU | 123 | 11 | 91 | 21 | 是 |
    | Network | 7 | 1 | 5 | 1 | 是 |
    | Chassis | 5 | 2 | 2 | 1 | 是 |
+
+   > 合计 216 项；GPU 8 项中含 `memory_detail`（显存明细，Medium）。
 
 3. **等级划分**（既定，本模块直接采用）：
 
@@ -69,7 +71,7 @@ internal/config ─┘   (HealthConfig 留在 internal/config，不动)
 
 ### 2.3 上游消费方
 
-- `cmd/catmonitor`：`health` 子命令（一次性评估并表格输出）、`daemon`（周期性评估写入 snapshot）。
+- `cmd/catmonitor`：`health` 子命令（一次性评估并表格输出）、`daemon`（`snapshot.enabled` 时由 `snapshot.GlobalWriter` 按全局 cadence C_global 周期评估并写入 `snapshot.json` 的 health 字段，daemon 主循环自身不评估）。
 - `features/web`：读取 snapshot 中的 health 字段展示。
 - 调用契约：传入**一轮全量采集**的 `[]collector.Metric`，返回 `HealthScore`。
 
@@ -113,11 +115,12 @@ type Deduction struct {
      - ≥5 卡 → `Accelerated8CardScheme`
      - 3-4 卡 → `Accelerated4CardScheme`
      - 1-2 卡 → `Accelerated2CardScheme`
-   - 无 GPU/NPU → `CPUOnlyScheme`
-   - 配置可显式指定覆盖自动检测。
-3. **逐部件评估**：对每个存在的部件分组，调用 `evaluate<部件>(metrics, 满额)`，返回 `ComponentScore`（满额起步，逐条规则扣分，下限 0）。
-4. **多卡聚合**：GPU/NPU 多卡场景对每条规则取**最差卡**的值触发（worst across cards）。
-5. **汇总**：`Score` = Σ 部件 Score；`Grade` 由 §1.2 等级表映射。
+   - 无 GPU/NPU → 使用调用方传入的方案（`weight_scheme` 配置，默认 `auto` 解析为 `CPUOnlyScheme`）
+   - 检测到 GPU/NPU 指标时自动检测结果优先于传入方案（`Evaluate` 内部覆盖，保持幂等）。
+3. **无 BMC 权重转移**：采集不到机箱指标（无 BMC）时，`scheme.CPU += scheme.Chassis`、`scheme.Chassis = 0`——`cpu_only`/`accelerated_2card`/`accelerated_4card`/`accelerated_8card` 下 CPU 有效满额分别变为 35/30/25/25。
+4. **逐部件评估**：对每个存在的部件分组，调用 `evaluate<部件>(metrics, 满额)`，返回 `ComponentScore`（满额起步，逐条规则扣分，下限 0）。
+5. **多卡聚合**：GPU/NPU 多卡场景对每条规则取**最差卡**的值触发（worst across cards）。
+6. **汇总**：`Score` = Σ 部件 Score；`Grade` 由 §1.2 等级表映射。
 
 ### 4.2 文件结构
 
@@ -133,9 +136,13 @@ features/health/
 ├── network.go       # evaluateNetwork
 ├── chassis.go       # evaluateChassis
 ├── util.go          # findMetric / worstValue / hasAnyPositive 内部工具
+├── metrics.yaml     # 健康评估所需指标清单（155 条，覆盖 cpu/memory/disk/gpu/npu/network，无 chassis 段）
 ├── HEALTH_SPEC.md   # 本文件
+├── WEIGHT_SPEC.md   # 权重分配说明
 └── *_test.go        # 每部件每规则单测
 ```
+
+> `metrics.yaml`（155 条：cpu 39 / memory 20 / disk 8 / gpu 7 / npu 74 / network 7）由 `health` 子命令在评估前经 `metrics.LoadModuleOverride("features/health/metrics.yaml")` 加载（`cmd/catmonitor/main.go` 的 `runHealth`），合并进默认指标目录以限定健康评估的采集范围。
 
 ### 4.3 优雅降级
 
@@ -157,10 +164,10 @@ features/health/
 设计依据：
 - **CPU-only 场景**：CPU 与内存各 25，硬盘 30（最大故障面），网络/机箱各 10。
 - **加速场景**：NPU 卡数越多，NPU 权重越高（20→30→35），CPU/内存/硬盘相应降低。
-- **Network 与 Chassis**：所有方案均为 10，环境因素稳定不变。
+- **Network 与 Chassis**：所有方案均为 10，环境因素稳定不变；例外：无 BMC（采集不到机箱指标）时 Chassis 权重并入 CPU、Chassis 记 0（见 §4.1 步骤 3）。
 - GPU 与 NPU **共用** `GPU` 满额档（加速卡只算一类，不重复计权）。
-- `auto`（默认）= 运行时按 NPU 卡数自动选择。
-- 卡数统计：唯一 `npu_id` 标签值数量（chip0+chip1 共享同一 card_id = 1 张卡）；fallback 用 `npu_num/2`。
+- `auto`（默认）= 运行时按 GPU/NPU 指标自动选择：有 GPU → 8card，有 NPU 按 NPU 卡数选择。
+- 卡数统计：唯一 `npu_id` 标签值数量（chip0+chip1 共享同一 card_id = 1 张卡）；fallback 用 `npu_num/2`（结果为 0 时取 1）。
 
 ---
 

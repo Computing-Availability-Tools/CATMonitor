@@ -1,20 +1,20 @@
-# Complete CPU + NPU reliability-stress example.
+# Complete CPU + NPU Reliability Stress example.
 #
-# The benchmark executable paths, MPI/thread settings, fixed NPU container and
-# workload remain in the generated benchmark_check.sh host adapter. Generate
-# both this block and the adapter with scripts/stress/generate_stress_deployment.sh.
-# Keep the checked-in main config disabled because runtime assets are optional.
+# The daemon owns orchestration and uses docker exec to invoke fixed typed
+# plugins in the two workload containers. CLI and Web cannot edit commands,
+# executable paths, container bindings, or workload environment variables.
 stress:
   enabled: true
-  web_enabled: false
-  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  web_enabled: true
+  control_socket: /run/catmonitor/control.sock
   report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
   benchmarks:
-    stream: { enabled: true, timeout: 1m }
-    hpl: { enabled: true, timeout: 10m }
-    hpcg:
-      enabled: true
-      result_dir: /opt/catmonitor/stress/runtime/hpcg
-      timeout: 3m
-    npu_burn: { enabled: true, timeout: 30m }
+    stream: { enabled: true, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
+    hpl: { enabled: true, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 10m }
+    hpcg: { enabled: true, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
+    npu_burn: { enabled: true, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }

@@ -121,6 +121,7 @@ type 	FetchProvider interface {
 	// global
 	DriverVersion() (string, error)
 	DriverHealth() (uint, error)
+	DevicePhyID(card, dev int) (int, error)
 }
 
 // --- Source: what collectors call ---
@@ -157,6 +158,7 @@ type Source interface {
 	ResourceInfoFull(card, dev int) ([]uint, error)
 	DriverVersion() (string, error)
 	DriverHealth() (uint, error)
+	DevicePhyID(card, dev int) (int, error)
 }
 
 type defaultSource struct {
@@ -291,4 +293,8 @@ func (s *defaultSource) DriverVersion() (string, error) {
 func (s *defaultSource) DriverHealth() (uint, error) {
 	if s.provider == nil { return 0, s.notAvail() }
 	return s.provider.DriverHealth()
+}
+func (s *defaultSource) DevicePhyID(card, dev int) (int, error) {
+	if s.provider == nil { return 0, s.notAvail() }
+	return s.provider.DevicePhyID(card, dev)
 }

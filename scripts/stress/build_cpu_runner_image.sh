@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the optional self-contained CPU stress runner image. The image embeds
+# Build the optional self-contained CPU stress workload image. The image embeds
 # benchmark binaries and matching runtime libraries, but receives its fixed
 # node execution profile as a read-only adapter at deployment time.
 
@@ -17,7 +17,7 @@ HPL_SRC=
 HPL_DAT=
 HPCG_SRC=
 HPCG_DAT=
-BUILD_ROOT=/var/tmp/catmonitor-cpu-runner-build
+BUILD_ROOT=/var/tmp/catmonitor-cpu-workload-build
 BUILD_NETWORK=default
 DEBIAN_MIRROR=
 JOBS=16
@@ -31,7 +31,7 @@ usage() {
 Usage: build_cpu_runner_image.sh [OPTIONS]
 
 Required:
-  --image IMAGE             Output CPU runner image name and tag
+  --image IMAGE             Output CPU workload image name and tag
   --stream-src PATH         STREAM stream.c
   --hpl-src PATH            Stock HPL source tar archive
   --hpl-dat PATH            Administrator-approved HPL.dat
@@ -51,7 +51,7 @@ Build controls:
   -h, --help                Show this help
 
 The build uses Debian bookworm build/runtime stages so MPI, OpenBLAS and the
-benchmark binaries share one ABI. It does not create a runner container or run
+benchmark binaries share one ABI. It does not create a workload container or run
 HPL/HPCG/NPU workloads.
 EOF
 }
@@ -105,7 +105,7 @@ if [ -z "$DOCKER_BIN" ]; then DOCKER_BIN=$(command -v docker 2>/dev/null || true
 for tool in date install mktemp readlink sha256sum; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
 done
-[ -f "$DOCKERFILE" ] && [ -f "$ENTRYPOINT" ] || die "CPU runner image templates are unavailable"
+[ -f "$DOCKERFILE" ] && [ -f "$ENTRYPOINT" ] || die "CPU workload image templates are unavailable"
 
 canonical_file() {
     local option=$1 value=$2
@@ -122,7 +122,7 @@ case "$BUILD_ROOT" in /*) ;; *) die "--build-root must be absolute" ;; esac
 BUILD_ROOT=$(readlink -m -- "$BUILD_ROOT")
 case "$BUILD_ROOT" in /|/var|/var/tmp|/tmp|/opt|/opt/catmonitor) die "--build-root must be a dedicated child directory" ;; esac
 if [ -z "$MANIFEST_PATH" ]; then
-    MANIFEST_PATH="$BUILD_ROOT/manifests/cpu-runner-image-manifest.json"
+    MANIFEST_PATH="$BUILD_ROOT/manifests/cpu-workload-image-manifest.json"
 fi
 case "$MANIFEST_PATH" in /*) ;; *) die "--manifest must be absolute" ;; esac
 MANIFEST_PATH=$(readlink -m -- "$MANIFEST_PATH")
@@ -143,14 +143,18 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 install -d -m 0755 \
-    "$CONTEXT/features/stress/runnerapi" \
-    "$CONTEXT/features/stress/cmd/cpu-runner" \
+    "$CONTEXT/features/stress/workloadapi" \
+    "$CONTEXT/features/stress/resultparse" \
+    "$CONTEXT/features/stress/workloadplugin" \
+    "$CONTEXT/features/stress/cmd/workload-exec" \
     "$CONTEXT/scripts/stress/templates" \
     "$CONTEXT/docker/stress/cpu" \
     "$CONTEXT/inputs"
 install -m 0644 "$REPO_ROOT/go.mod" "$REPO_ROOT/go.sum" "$CONTEXT/"
-install -m 0644 "$REPO_ROOT/features/stress/runnerapi/"*.go "$CONTEXT/features/stress/runnerapi/"
-install -m 0644 "$REPO_ROOT/features/stress/cmd/cpu-runner/"*.go "$CONTEXT/features/stress/cmd/cpu-runner/"
+install -m 0644 "$REPO_ROOT/features/stress/workloadapi/"*.go "$CONTEXT/features/stress/workloadapi/"
+install -m 0644 "$REPO_ROOT/features/stress/resultparse/"*.go "$CONTEXT/features/stress/resultparse/"
+install -m 0644 "$REPO_ROOT/features/stress/workloadplugin/"*.go "$CONTEXT/features/stress/workloadplugin/"
+install -m 0644 "$REPO_ROOT/features/stress/cmd/workload-exec/"*.go "$CONTEXT/features/stress/cmd/workload-exec/"
 install -m 0755 "$REPO_ROOT/scripts/stress/build_cpu_benchmarks.sh" "$CONTEXT/scripts/stress/"
 install -m 0644 "$REPO_ROOT/scripts/stress/templates/Make.HPL.CATMonitor" "$CONTEXT/scripts/stress/templates/"
 install -m 0644 "$DOCKERFILE" "$CONTEXT/docker/stress/cpu/Dockerfile"
@@ -184,10 +188,10 @@ fi
 
 IMAGE_ID=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$TARGET_IMAGE")
 case "$IMAGE_ID" in sha256:*) ;; *) die "built image has an invalid image ID" ;; esac
-TEMP=$(mktemp "$(dirname -- "$MANIFEST_PATH")/.cpu-runner-image.XXXXXXXX")
+TEMP=$(mktemp "$(dirname -- "$MANIFEST_PATH")/.cpu-workload-image.XXXXXXXX")
 json_escape() { local value=${1-}; value=${value//\\/\\\\}; value=${value//\"/\\\"}; printf '%s' "$value"; }
 {
-    printf '{"schema_version":1,"feature":"stress_cpu_runner","generated_at_utc":"%s"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"schema_version":1,"feature":"stress_cpu_workload","generated_at_utc":"%s"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf ',"image":"%s","image_id":"%s"' "$(json_escape "$TARGET_IMAGE")" "$(json_escape "$IMAGE_ID")"
     if [ -n "$DEBIAN_MIRROR" ]; then
         printf ',"debian_mirror":"%s"' "$(json_escape "$DEBIAN_MIRROR")"
@@ -209,7 +213,7 @@ mv -f -- "$TEMP" "$MANIFEST_PATH"
 trap - EXIT HUP INT TERM
 cleanup
 
-printf 'CPU runner image: %s\n' "$TARGET_IMAGE"
+printf 'CPU workload image: %s\n' "$TARGET_IMAGE"
 printf 'Image ID: %s\n' "$IMAGE_ID"
 printf 'Manifest: %s\n' "$MANIFEST_PATH"
-printf 'No runner container or stress workload was started.\n'
+printf 'No workload container or stress workload was started.\n'

@@ -60,6 +60,12 @@ func (e *Evaluator) Evaluate(metrics []collector.Metric) HealthScore {
 		}
 	}
 
+	// Redistribute chassis weight to CPU when no BMC/chassis metrics.
+	if _, hasChassis := byComponent["chassis"]; !hasChassis {
+		scheme.CPU += scheme.Chassis
+		scheme.Chassis = 0
+	}
+
 	components := make(map[string]ComponentScore)
 	totalScore := 0
 

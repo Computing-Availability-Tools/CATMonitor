@@ -62,20 +62,26 @@ func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 		}
 	}
 
-	if collector.AnyWanted("disk", []string{"iops"}) {
-		if iopsMetrics, err := c.collectIOPS(now); err == nil {
-			metrics = append(metrics, iopsMetrics...)
+	if collector.AnyWanted("disk", []string{"iops", "throughput", "read_latency", "write_latency"}) {
+		current, err := c.filteredDiskStats()
+		if err == nil && c.hasPrevDiskStats {
+			elapsed := now.Sub(c.prevDiskTime).Seconds()
+			if elapsed <= 0 {
+				elapsed = 5.0
+			}
+			if collector.AnyWanted("disk", []string{"iops"}) {
+				metrics = append(metrics, c.computeIOPS(current, elapsed, now)...)
+			}
+			if collector.AnyWanted("disk", []string{"throughput"}) {
+				metrics = append(metrics, c.computeThroughput(current, elapsed, now)...)
+			}
+			if collector.AnyWanted("disk", []string{"read_latency", "write_latency"}) {
+				metrics = append(metrics, c.computeLatency(current, elapsed, now)...)
+			}
 		}
-	}
-	if collector.AnyWanted("disk", []string{"throughput"}) {
-		if throughputMetrics, err := c.collectThroughput(now); err == nil {
-			metrics = append(metrics, throughputMetrics...)
-		}
-	}
-	if collector.AnyWanted("disk", []string{"read_latency", "write_latency"}) {
-		if latencyMetrics, err := c.collectLatency(now); err == nil {
-			metrics = append(metrics, latencyMetrics...)
-		}
+		c.prevDiskStats = current
+		c.prevDiskTime = now
+		c.hasPrevDiskStats = true
 	}
 	if collector.AnyWanted("disk", []string{"io_wait"}) {
 		if ioWaitMetrics, err := c.collectIoWait(now); err == nil {
@@ -139,16 +145,12 @@ func (c *DiskCollector) filteredDiskStats() (map[string]proc.DiskStat, error) {
 	return result, nil
 }
 
-func (c *DiskCollector) collectIOPS(now time.Time) ([]collector.Metric, error) {
-	current, err := c.filteredDiskStats()
-	if err != nil {
-		return nil, err
-	}
+func (c *DiskCollector) computeIOPS(current map[string]proc.DiskStat, elapsed float64, now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	for dev, curr := range current {
 		if prev, ok := c.prevDiskStats[dev]; ok {
-			readIops := float64(curr.ReadsCompleted-prev.ReadsCompleted) / 5.0
-			writeIops := float64(curr.WritesCompleted-prev.WritesCompleted) / 5.0
+			readIops := float64(curr.ReadsCompleted-prev.ReadsCompleted) / elapsed
+			writeIops := float64(curr.WritesCompleted-prev.WritesCompleted) / elapsed
 			metrics = append(metrics, collector.Metric{
 				Component: "disk", Name: "iops", Value: roundFloat(readIops, 0), Unit: "次/s",
 				Labels: map[string]string{"device": dev, "direction": "read"}, Timestamp: now,
@@ -159,20 +161,15 @@ func (c *DiskCollector) collectIOPS(now time.Time) ([]collector.Metric, error) {
 			})
 		}
 	}
-	c.prevDiskStats = current
-	return metrics, nil
+	return metrics
 }
 
-func (c *DiskCollector) collectThroughput(now time.Time) ([]collector.Metric, error) {
-	current, err := c.filteredDiskStats()
-	if err != nil {
-		return nil, err
-	}
+func (c *DiskCollector) computeThroughput(current map[string]proc.DiskStat, elapsed float64, now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	for dev, curr := range current {
 		if prev, ok := c.prevDiskStats[dev]; ok {
-			readMB := float64(curr.SectorsRead-prev.SectorsRead) * 512 / (1024 * 1024) / 5.0
-			writeMB := float64(curr.SectorsWritten-prev.SectorsWritten) * 512 / (1024 * 1024) / 5.0
+			readMB := float64(curr.SectorsRead-prev.SectorsRead) * 512 / (1024 * 1024) / elapsed
+			writeMB := float64(curr.SectorsWritten-prev.SectorsWritten) * 512 / (1024 * 1024) / elapsed
 			metrics = append(metrics, collector.Metric{
 				Component: "disk", Name: "throughput", Value: roundFloat(readMB, 2), Unit: "MB/s",
 				Labels: map[string]string{"device": dev, "direction": "read"}, Timestamp: now,
@@ -183,19 +180,15 @@ func (c *DiskCollector) collectThroughput(now time.Time) ([]collector.Metric, er
 			})
 		}
 	}
-	return metrics, nil
+	return metrics
 }
 
-func (c *DiskCollector) collectLatency(now time.Time) ([]collector.Metric, error) {
-	current, err := c.filteredDiskStats()
-	if err != nil {
-		return nil, err
-	}
+func (c *DiskCollector) computeLatency(current map[string]proc.DiskStat, elapsed float64, now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	for dev, curr := range current {
 		if prev, ok := c.prevDiskStats[dev]; ok {
-			readLatency := float64(curr.ReadTime-prev.ReadTime) / 5.0
-			writeLatency := float64(curr.WriteTime-prev.WriteTime) / 5.0
+			readLatency := float64(curr.ReadTime-prev.ReadTime) / elapsed
+			writeLatency := float64(curr.WriteTime-prev.WriteTime) / elapsed
 			metrics = append(metrics, collector.Metric{
 				Component: "disk", Name: "read_latency", Value: roundFloat(readLatency, 2), Unit: "ms/s",
 				Labels: map[string]string{"device": dev}, Timestamp: now,
@@ -206,7 +199,7 @@ func (c *DiskCollector) collectLatency(now time.Time) ([]collector.Metric, error
 			})
 		}
 	}
-	return metrics, nil
+	return metrics
 }
 
 func (c *DiskCollector) collectIoWait(now time.Time) ([]collector.Metric, error) {

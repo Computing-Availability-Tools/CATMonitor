@@ -11,7 +11,73 @@ import (
 type npuDevice struct {
 	cardID int
 	devID  int
+	phyID  int
 }
+
+// statisticsMetricNames lists the hccn_tool statistics metrics (MAC/ROCE/NIC
+// packet counters, specs 5.75-6.19) that one `hccn_tool -i N -stat -g` run
+// produces. Used by collectDevice to gate the Statistics command. Keep in
+// sync with the "hccn_tool statistics" block in configs/metrics.yaml (npu
+// section, 48 entries) and hccn_tool's parseStatistics.
+var statisticsMetricNames = []string{
+	// MAC pause/PFC
+	"mac_tx_mac_pause_num", "mac_rx_mac_pause_num",
+	"mac_tx_pfc_pkt_num",
+	"mac_tx_pfc_pri0_pkt_num", "mac_tx_pfc_pri1_pkt_num", "mac_tx_pfc_pri2_pkt_num", "mac_tx_pfc_pri3_pkt_num",
+	"mac_tx_pfc_pri4_pkt_num", "mac_tx_pfc_pri5_pkt_num", "mac_tx_pfc_pri6_pkt_num", "mac_tx_pfc_pri7_pkt_num",
+	"mac_rx_pfc_pkt_num",
+	"mac_rx_pfc_pri0_pkt_num", "mac_rx_pfc_pri1_pkt_num", "mac_rx_pfc_pri2_pkt_num", "mac_rx_pfc_pri3_pkt_num",
+	"mac_rx_pfc_pri4_pkt_num", "mac_rx_pfc_pri5_pkt_num", "mac_rx_pfc_pri6_pkt_num", "mac_rx_pfc_pri7_pkt_num",
+	// MAC totals
+	"mac_tx_total_pkt_num", "mac_tx_total_oct_num", "mac_tx_bad_pkt_num", "mac_tx_bad_oct_num",
+	"mac_rx_total_pkt_num", "mac_rx_total_oct_num", "mac_rx_bad_pkt_num", "mac_rx_bad_oct_num",
+	"mac_rx_fcs_err_pkt_num",
+	// RoCE
+	"roce_rx_rc_pkt_num", "roce_rx_all_pkt_num", "roce_rx_err_pkt_num",
+	"roce_tx_rc_pkt_num", "roce_tx_all_pkt_num", "roce_tx_err_pkt_num",
+	"roce_cqe_num", "roce_rx_cnp_pkt_num", "roce_tx_cnp_pkt_num",
+	"roce_unexpected_ack_num", "roce_out_of_order_num", "roce_verification_err_num",
+	"roce_qp_status_err_num", "roce_new_pkt_rty_num", "roce_ecn_db_num",
+	// NIC
+	"nic_tx_all_pkg_num", "nic_tx_all_oct_num", "nic_rx_all_pkg_num", "nic_rx_all_oct_num",
+}
+
+// deviceMetricNames lists every per-device metric collectDevice (npu_linux.go)
+// can produce. Collect()'s Phase-2 gate uses it: if none is wanted, the whole
+// per-device collection is skipped. Keep in sync with collectDevice.
+var deviceMetricNames = append([]string{
+	// utilization & memory
+	"utilization", "memory_usage", "hbm_total_memory", "hbm_used_memory",
+	"npu_util", "aicpu_util", "ctrlcpu_util", "vector_core_util",
+	"hbm_bandwidth_util", "ddr_util", "ddr_bandwidth_util",
+	"vdec_util", "vpc_util", "venc_util", "jpege_util", "jpegd_util",
+	// temperature
+	"temperature", "hbm_temp", "cluster_temp", "peri_temp",
+	"aicore0_temp", "aicore1_temp",
+	"ntc1_temp", "ntc2_temp", "ntc3_temp", "ntc4_temp",
+	"soc_max_temp", "fp_max_temp", "ndie_temp", "hbm_max_temp",
+	// power, voltage, health
+	"power_draw", "voltage", "aicore_voltage", "hybrid_voltage",
+	"cpu_voltage", "ddr_voltage", "acg_count",
+	"health_status", "driver_health", "error_code", "card_drop",
+	// frequency
+	"aicore_freq", "aicore_rated_freq", "aicpu_freq", "ctrlcpu_freq",
+	"vector_core_freq", "hbm_freq", "ddr_freq",
+	// fan, process
+	"fan_speed", "process_info", "process_total",
+	// ECC (emitEccMetrics: devType ∈ {hbm, ddr})
+	"hbm_single_ecc", "hbm_double_ecc",
+	"hbm_single_ecc_isolated", "hbm_double_ecc_isolated",
+	"ddr_single_ecc", "ddr_double_ecc",
+	"ddr_single_ecc_isolated", "ddr_double_ecc_isolated",
+	// LLC
+	"llc_write_hit_rate", "llc_read_hit_rate", "llc_throughput",
+	// RoCE & bandwidth
+	"roce_link_status", "roce_speed_status", "roce_link_health",
+	"net_tx_bandwidth", "net_rx_bandwidth",
+	"pcie_tx_bandwidth", "pcie_rx_bandwidth",
+	"hccs_tx_bandwidth", "hccs_rx_bandwidth",
+}, statisticsMetricNames...)
 
 // NPUCollector collects metrics from Huawei Ascend NPUs via DCMI (CGo) and
 // npu-smi/hccn_tool commands. Collection is device-parallel: each NPU's
@@ -20,7 +86,7 @@ type NPUCollector struct {
 	mu              sync.Mutex
 	devices         []npuDevice    // populated at startup from CardList + DeviceNumInCard
 	devicesReady    bool
-	prevEcc         map[string]uint64 // key "dev:type:kind" → cumulative count for delta
+	prevEcc         map[string]uint64 // key "card:chip:type:kind" → cumulative count for delta
 	staticCollected bool              // topo, npu_num, driver_version, chip_type, comm_topo
 }
 
@@ -60,7 +126,7 @@ func (c *NPUCollector) Collect() ([]collector.Metric, error) {
 	}
 
 	// Phase 2: per-device metrics (parallel).
-	if len(c.devices) > 0 && collector.AnyWanted("npu", []string{"utilization", "memory_usage", "temperature", "power_draw", "voltage", "aicore_freq", "hbm_freq", "npu_util", "vector_core_util", "hbm_bandwidth_util", "ecc_errors", "fan_speed"}) {
+	if len(c.devices) > 0 && collector.AnyWanted("npu", deviceMetricNames) {
 		var wg sync.WaitGroup
 		results := make([][]collector.Metric, len(c.devices))
 		for i, d := range c.devices {

@@ -9,7 +9,7 @@ The repository audit checks only evidence owned by this feature:
 - NPU runtime-image license copy rule;
 - the machine-readable runtime package list;
 - optional CPU and NPU build manifest presence and schema.
-- the optional CPU runner image/deployment security boundary.
+- the optional CPU workload image/deployment security boundary.
 
 Run the repository audit with:
 
@@ -41,9 +41,9 @@ from the final delivered filesystem/image and package its exact third-party
 licenses and notices.
 
 `build_cpu_runner_image.sh` consumes administrator-provided CPU benchmark
-sources and creates a local image; the CATMonitor repository does not vendor
+sources and creates a local workload image; the CATMonitor repository does not vendor
 those CPU sources or publish the resulting image. If that image is distributed,
-its `cpu-runner-image-manifest.json` can be passed as `--cpu-manifest`, but the
+its image manifest can be passed as `--cpu-manifest`, but the
 release owner must still inventory Debian, MPI, OpenBLAS and benchmark licenses
 from the concrete final image.
 

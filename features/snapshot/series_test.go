@@ -44,10 +44,10 @@ func TestTrackedSeriesInvariants(t *testing.T) {
 		seen[s.key] = true
 	}
 	for _, want := range []string{
-		"cpu_temperature", "cpu_power", "cpu_avg_freq", "cpu_context_switches", "cpu_ce_errors",
-		"memory_saturation", "memory_fragmentation", "memory_swap_in", "memory_power",
+		"cpu_temperature", "cpu_avg_freq",
+		"memory_fragmentation", "memory_swap_in",
 		"disk_io_wait", "disk_iops", "disk_throughput",
-		"network_throughput", "network_packet_count", "network_error_count",
+		"network_throughput", "network_packet_count", "network_error_packets", "network_dropped_packets",
 	} {
 		if !seen[want] {
 			t.Errorf("v0.2.0 series %q missing from TrackedSeries", want)
@@ -102,31 +102,25 @@ func TestUpdateHistoryV02Metrics(t *testing.T) {
 		metric("disk", "space_usage", 95.0, map[string]string{"device": "155.25.78.151:/AIdata", "mount_point": "/AIdata"}),
 		metric("cpu", "temperature", 55.0, map[string]string{"cpu": "0"}),
 		metric("cpu", "temperature", 60.0, map[string]string{"cpu": "1"}),
-		metric("cpu", "power", 80.0, map[string]string{"cpu": "0"}),
-		metric("cpu", "power", 95.0, map[string]string{"cpu": "1"}),
 		metric("cpu", "avg_freq", 2400, nil),
-		metric("cpu", "context_switches", 1200, nil),
-		metric("cpu", "cpu_ce_errors", 2, map[string]string{"cpu": "0"}),
-		metric("cpu", "cpu_ce_errors", 5, map[string]string{"cpu": "1"}),
-		metric("memory", "saturation", 1.5, map[string]string{"interval": "avg10"}),
-		metric("memory", "saturation", 2.0, map[string]string{"interval": "avg60"}),
-		metric("memory", "saturation", 3.0, map[string]string{"interval": "avg300"}),
 		metric("memory", "fragmentation", 30.0, map[string]string{"node": "0", "zone": "Normal"}),
 		metric("memory", "fragmentation", 45.0, map[string]string{"node": "1", "zone": "Normal"}),
 		metric("memory", "swap_in", 10, nil),
-		metric("memory", "power", 5, map[string]string{"sensor": "MEM1 Pwr"}),
-		metric("memory", "power", 8, map[string]string{"sensor": "MEM2 Pwr"}),
 		metric("disk", "io_wait", 1.2, nil),
 		metric("disk", "iops", 100, map[string]string{"device": "sda", "direction": "read"}),
 		metric("disk", "iops", 150, map[string]string{"device": "sda", "direction": "write"}),
 		metric("disk", "throughput", 10.0, map[string]string{"device": "sda", "direction": "read"}),
 		metric("disk", "throughput", 20.0, map[string]string{"device": "sda", "direction": "write"}),
+		metric("npu", "power_draw", 6.5, map[string]string{"npu_id": "0"}),
+		metric("npu", "power_draw", 8.0, map[string]string{"npu_id": "1"}),
 		metric("network", "throughput", 5000, map[string]string{"interface": "eth0", "direction": "rx"}),
 		metric("network", "throughput", 3000, map[string]string{"interface": "eth0", "direction": "tx"}),
 		metric("network", "packet_count", 100, map[string]string{"interface": "eth0", "direction": "rx"}),
 		metric("network", "packet_count", 80, map[string]string{"interface": "eth0", "direction": "tx"}),
 		metric("network", "error_count", 1, map[string]string{"interface": "eth0", "type": "rx_err"}),
-		metric("network", "error_count", 3, map[string]string{"interface": "eth0", "type": "tx_drop"}),
+		metric("network", "error_count", 2, map[string]string{"interface": "eth0", "type": "tx_err"}),
+		metric("network", "error_count", 3, map[string]string{"interface": "eth0", "type": "rx_drop"}),
+		metric("network", "error_count", 5, map[string]string{"interface": "eth0", "type": "tx_drop"}),
 	}
 
 	hist := h.Update(metrics)
@@ -142,20 +136,17 @@ func TestUpdateHistoryV02Metrics(t *testing.T) {
 		{"memory_swap_usage", 0.0, false},
 		{"disk_space_usage", 80.0, true},
 		{"cpu_temperature", 60.0, true},
-		{"cpu_power", 95.0, true},
 		{"cpu_avg_freq", 2400, true},
-		{"cpu_context_switches", 1200, true},
-		{"cpu_ce_errors", 5, true},
-		{"memory_saturation", 1.5, true},
 		{"memory_fragmentation", 45.0, true},
 		{"memory_swap_in", 10, true},
-		{"memory_power", 8, true},
 		{"disk_io_wait", 1.2, true},
 		{"disk_iops", 150, true},
 		{"disk_throughput", 20.0, true},
+		{"npu_power_draw", 8.0, true},
 		{"network_throughput", 5000, true},
 		{"network_packet_count", 100, true},
-		{"network_error_count", 3, true},
+		{"network_error_packets", 2, true},
+		{"network_dropped_packets", 5, true},
 	}
 	for _, c := range cases {
 		arr, ok := hist[c.key]

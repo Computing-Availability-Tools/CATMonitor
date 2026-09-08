@@ -11,13 +11,14 @@ import (
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/snapshot"
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/collector"
+	"github.com/Computing-Availability-Tools/CATMonitor/internal/version"
 )
 
 // Handler serves the dfee energy-efficiency API and static SPA. It reads the
 // daemon-produced per-component snapshot files from Dir (concatenating metrics
 // across components) and the global snapshot for session/timestamp/refresh,
-// filters to the 74 efficiency metrics, derives 7 CPU utilization percentages
-// from 8 raw jiffies, and groups the result into 14 charts.
+// filters to the 78 efficiency metrics, derives 7 CPU utilization percentages
+// from 8 raw jiffies, and groups the result into 34 charts.
 type Handler struct {
 	dir string
 	mu  sync.Mutex
@@ -144,6 +145,7 @@ func (h *Handler) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	resp := EfficiencyResponse{
 		SessionID:       g.SessionID,
+		Version:         version.Version,
 		Timestamp:       g.Timestamp,
 		RefreshInterval: g.RefreshInterval,
 		Charts:          charts,

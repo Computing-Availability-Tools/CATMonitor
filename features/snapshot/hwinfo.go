@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"runtime"
@@ -140,7 +141,9 @@ func (c *hwCollector) gpuInfo(now time.Time) []collector.Metric {
 	if c.nvidiaMock != "" {
 		output = c.nvidiaMock
 	} else {
-		out, err := exec.Command(c.smiPath,
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, c.smiPath,
 			"--query-gpu=index,name,uuid,driver_version",
 			"--format=csv,noheader,nounits").Output()
 		if err != nil {
@@ -181,7 +184,9 @@ func (c *hwCollector) npuInfo(now time.Time) []collector.Metric {
 	if c.npuMock != "" {
 		output = c.npuMock
 	} else {
-		out, err := exec.Command(c.npuSmiPath, "info").Output()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, c.npuSmiPath, "info").Output()
 		if err != nil {
 			return nil
 		}

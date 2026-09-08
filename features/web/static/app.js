@@ -2,32 +2,33 @@
 const MANIFEST = {
   cpu: { title: 'CPU', headline: 'cpu_usage', headlineLabel: 'CPU 使用率 (%)',
          key: [ {name:'usage', prefer:{core:'total'}}, 'load_average', 'avg_freq',
-                'temperature', 'power', 'cpu_ce_errors', 'model_info' ] },
+                {name:'temperature', max:true}, {name:'power', max:true} ] },
   memory: { title: '内存', headline: 'memory_usage', headlineLabel: '内存使用率 (%)',
-            key: [ 'usage', 'swap_usage', 'saturation', 'fragmentation',
-                   'module_num', 'ecc_ce_errors', 'oom_count', 'page_faults' ] },
-  disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '分区空间使用率最高 (%)',
-          key: [ 'space_usage', 'throughput', 'iops', 'io_wait',
-                 'io_errors', 'smart_status' ] },
-  gpu: { title: 'GPU', headline: 'gpu_utilization', headlineLabel: 'GPU 使用率 (%)',
-         key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
-  npu: { title: 'NPU', headline: 'npu_utilization', headlineLabel: 'NPU 使用率 (%)',
-         key: [ 'utilization', 'memory_usage', 'temperature', 'power_draw' ] },
+            key: [ 'usage', 'swap_usage', {name:'fragmentation', max:true}, 'oom_count' ] },
+  disk: { title: '磁盘', headline: 'disk_space_usage', headlineLabel: '挂载点空间使用率最高 (%)',
+          key: [ 'space_usage', {name:'throughput', sum:true}, {name:'iops', sum:true} ] },
+  gpu: { title: 'GPU', headline: 'gpu_utilization', headlineLabel: 'GPU 使用率最高 (%)',
+         key: [ {name:'utilization', avg:true}, {name:'memory_usage', max:true},
+                {name:'temperature', max:true}, {name:'power_draw', max:true} ] },
+  npu: { title: 'NPU', headline: 'npu_utilization', headlineLabel: 'NPU 使用率最高 (%)',
+         key: [ {name:'utilization', avg:true}, {name:'memory_usage', max:true},
+                {name:'temperature', max:true}, {name:'power_draw', max:true} ] },
   network: { title: '网络', headline: null,
-             key: [ 'throughput', 'packet_count', 'error_count', 'connection_count' ] },
+             key: [ {name:'throughput', sum:true}, {name:'packet_count', sum:true},
+                    {name:'error_count', sum:true} ] },
   chassis: { title: '机箱', headline: null,
-             key: [ 'power', 'inlet_temp', 'outlet_temp', 'fan_speed', 'fan_power' ] },
+             key: [ 'power', 'inlet_temp', 'outlet_temp', {name:'fan_power', max:true} ] },
 };
 
 const METRIC_NAMES = {
   usage: '使用率', load_average: '负载', context_switches: '上下文切换',
   process_count: '进程数', model_info: '型号', temperature: '温度', frequency: '频率',
-  space_usage: '分区空间使用率', space_detail: '分区空间明细', throughput: '吞吐量',
+  space_usage: '挂载点空间使用率', space_detail: '挂载点空间明细', throughput: '吞吐量',
   io_wait: 'IO Wait', io_errors: 'IO 错误', iops: 'IOPS',
   smart_status: 'SMART 状态', smart_temperature: 'SMART 温度',
   memory_usage: '显存使用率', memory_detail: '明细',
   power_draw: '功耗', fan_speed: '风扇转速', ecc_errors: 'ECC 错误',
-  inlet_temp: '进风口温度', outlet_temp: '出风口温度', fan_power: '风扇功率',
+  inlet_temp: '进风口温度', outlet_temp: '出风口温度', fan_power: '风扇功耗',
   clock_frequency: '频率', utilization: '使用率', health_status: '健康状态',
   swap_usage: 'Swap 使用率', swap_detail: 'Swap 明细', oom_count: 'OOM 次数', page_faults: '页错误',
   rx_bytes_total: '接收字节', tx_bytes_total: '发送字节',
@@ -46,6 +47,8 @@ const METRIC_NAMES = {
   numa_order_num: 'NUMA 阶数', numa_info: 'NUMA 最高阶',
   cpu_ce_errors: 'CPU CE 错误', cpu_uce_errors: 'CPU UCE 错误',
   mem_temperature: '内存温度', power: '功耗',
+  // Component-specific overrides for shared metric names.
+  'chassis:power': '整机功耗',
   // v0.2.0 Memory source-layer metrics.
   swap_in: 'Swap 入', swap_out: 'Swap 出',
   saturation: '内存压力', fragmentation: '碎片化',
@@ -94,8 +97,8 @@ const RULE_TEXT = {
   'saturation>80%': '内存饱和度超过 80%',
   'fragmentation>80%': '内存碎片率超过 80%',
   // Disk
-  'space>90%':   '磁盘空间使用率超过 90%',
-  'space>80%':   '磁盘空间使用率超过 80%',
+  'space>90%':   '挂载点空间使用率超过 90%',
+  'space>80%':   '挂载点空间使用率超过 80%',
   'io_wait>20%': '磁盘 IO 等待超过 20%',
   'smart_failed': 'SMART 健康检查未通过',
   // GPU
@@ -148,18 +151,25 @@ const CPU_SPEC_ORDER = {
 const SERIES_LABELS = {
   cpu_usage: 'CPU 使用率 (%)', cpu_load_average: '系统负载 1m',
   memory_usage: '内存使用率 (%)', memory_swap_usage: 'Swap 使用率 (%)',
-  disk_space_usage: '分区空间使用率最高 (%)',
-  gpu_utilization: 'GPU 使用率 (%)', gpu_memory_usage: 'GPU 显存使用率 (%)', gpu_temperature: 'GPU 温度 (°C)',
-  npu_utilization: 'NPU 使用率 (%)', npu_memory_usage: 'NPU 显存使用率 (%)', npu_temperature: 'NPU 温度 (°C)',
+  disk_space_usage: '挂载点空间使用率最高 (%)',
+  gpu_utilization: 'GPU 使用率最高 (%)', gpu_memory_usage: 'GPU 显存使用率最高 (%)', gpu_temperature: 'GPU 最高温度 (°C)',
+  npu_utilization: 'NPU 使用率最高 (%)', npu_memory_usage: 'NPU 显存使用率最高 (%)', npu_temperature: 'NPU 最高温度 (°C)',   npu_power_draw: 'NPU 功耗最高 (W)',
   // v0.2.0 trends.
-  cpu_temperature: 'CPU 最高温度 (°C)', cpu_power: 'CPU 最高功耗 (W)',
-  cpu_avg_freq: 'CPU 平均频率 (MHz)', cpu_context_switches: '上下文切换 (次/s)',
-  cpu_ce_errors: 'CPU CE 错误最大值 (次)',
-  memory_saturation: '内存压力 (%)', memory_fragmentation: '内存碎片化最大 (%)',
-  memory_swap_in: 'Swap 入页 (次/s)', memory_power: '内存功耗 (W)',
+  cpu_temperature: 'CPU 最高温度 (°C)',
+  cpu_avg_freq: 'CPU 平均频率 (MHz)',
+  memory_swap_in: 'Swap 入页 (次/s)', memory_fragmentation: '内存碎片化最大 (%)',
   disk_io_wait: 'IO Wait (%)', disk_iops: '磁盘 IOPS 最大 (次/s)', disk_throughput: '磁盘吞吐最大 (MB/s)',
   network_throughput: '网络吞吐最大 (bytes/s)', network_packet_count: '网络包速率最大 (个/s)',
-  network_error_count: '网络错误最大 (次)',
+  network_error_packets: '网络错包最大 (次)', network_dropped_packets: '网络丢包最大 (次)',
+};
+
+const SERIES_ORDER = {
+  cpu_usage: 0, cpu_load_average: 1, cpu_temperature: 2, cpu_avg_freq: 3,
+  memory_usage: 0, memory_swap_usage: 1, memory_swap_in: 2, memory_fragmentation: 3,
+  disk_space_usage: 0, disk_io_wait: 1, disk_iops: 2, disk_throughput: 3,
+  gpu_utilization: 0, gpu_memory_usage: 1, gpu_temperature: 2,
+  npu_utilization: 0, npu_temperature: 1, npu_memory_usage: 2, npu_power_draw: 3,
+  network_throughput: 0, network_packet_count: 1, network_error_packets: 2, network_dropped_packets: 3,
 };
 
 const METRIC_DESCRIPTIONS = {
@@ -377,19 +387,33 @@ const METRIC_DESCRIPTIONS = {
   // Chassis
   inlet_temp: '进风口温度',
   outlet_temp: '出风口温度',
-  fan_power: '风扇功率',
+  fan_power: '风扇功耗',
 };
 
 const NAV_ORDER = ['cpu', 'memory', 'disk', 'gpu', 'npu', 'network'];
 
+const LABEL_PRIORITY = [
+  'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
+  'interface', 'device', 'mount_point', 'mc', 'locator', 'sensor',
+  'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
+  'kind', 'interval', 'state', 'status',
+];
+
+function sortedLabelEntries(labels) {
+  if (!labels) return [];
+  return Object.entries(labels).sort((a, b) => {
+    const ia = LABEL_PRIORITY.indexOf(a[0]);
+    const ib = LABEL_PRIORITY.indexOf(b[0]);
+    if (ia === -1 && ib === -1) return a[0] < b[0] ? -1 : 1;
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
 function metricSortCmp(a, b) {
   const la = a.labels || {}, lb = b.labels || {};
-  for (const key of [
-    'npu_id', 'chip_id', 'gpu_id', 'core', 'cpu', 'node', 'die', 'zone',
-    'interface', 'mount_point', 'device', 'mc', 'locator', 'sensor',
-    'fan', 'aicore', 'ntc', 'direction', 'type', 'field', 'device_type',
-    'kind', 'interval', 'state', 'status',
-  ]) {
+  for (const key of LABEL_PRIORITY) {
     const va = la[key], vb = lb[key];
     if (va === undefined && vb === undefined) continue;
     if (va === undefined) return 1;
@@ -492,12 +516,21 @@ function renderFanSpeedGroup(items) {
     byFan[fan][lb.direction || ''] = mt.value;
   }
   order.sort((a, b) => parseInt(a) - parseInt(b));
+  const dirs = [
+    {k: 'F', label: '前', cls: 'rw-read'},
+    {k: 'R', label: '后', cls: 'rw-write'},
+    {k: 'A', label: 'A', cls: 'rw-read'},
+    {k: 'B', label: 'B', cls: 'rw-write'},
+  ];
   const container = el('div');
   for (const fan of order) {
     const d = byFan[fan];
     const parts = [];
-    if (d.F !== undefined) parts.push('<span class="rw-read">前 ' + fmt(d.F) + '</span>');
-    if (d.R !== undefined) parts.push('<span class="rw-write">后 ' + fmt(d.R) + '</span>');
+    for (const dir of dirs) {
+      if (d[dir.k] !== undefined) {
+        parts.push('<span class="' + dir.cls + '">' + dir.label + ' ' + fmt(d[dir.k]) + '</span>');
+      }
+    }
     const row = el('div', 'metric-row rw-row');
     row.innerHTML = parts.join('') + '<span class="metric-labels">风扇 ' + fan + '</span>';
     container.appendChild(row);
@@ -591,10 +624,10 @@ function renderSpaceDetailGroup(items) {
   const container = el('div');
   for (const key of order) {
     const d = byMount[key];
-    const total = d.total ? fmtMB(d.total) : '--';
-    const used = d.used ? fmtMB(d.used) : '--';
-    const avail = d.available ? fmtMB(d.available) : '--';
-    const availPct = d.total > 0 ? (d.available / d.total * 100) : 100;
+    const total = d.total != null ? fmtMB(d.total) : '--';
+    const used = d.used != null ? fmtMB(d.used) : '--';
+    const avail = d.available != null ? fmtMB(d.available) : '--';
+    const availPct = (d.total != null && d.total > 0 && d.available != null) ? (d.available / d.total * 100) : 100;
     const availColor = availPct < 10 ? ' style="color:var(--crit)"' : '';
     const row = el('div', 'metric-row space-detail-row');
     row.innerHTML =
@@ -637,7 +670,7 @@ function renderNetworkCardGroup(specs) {
 
   var title = el('div', 'metric-group-head');
   title.style.cursor = 'default';
-  title.innerHTML = '<span class="metric-group-name">网络 (' + order.length + ')</span>';
+  title.innerHTML = '<span class="metric-group-name">网卡 (' + order.length + ')</span>';
   container.appendChild(title);
 
   var body = el('div', 'metric-group-body');
@@ -839,7 +872,7 @@ function renderNetworkStorageGroup(networkMetrics) {
     var m = spaceDetail[i];
     var lb = m.labels || {};
     var key = (lb.device || '') + '|' + (lb.mount_point || '');
-    if (!byMount[key]) { byMount[key] = { device: lb.device, mount: lb.mount_point, fstype: lb.fstype, total: 0, used: 0, avail: 0 }; order.push(key); }
+    if (!byMount[key]) { byMount[key] = { device: lb.device, mount: lb.mount_point, fstype: lb.fstype, total: null, used: null, avail: null }; order.push(key); }
     if (lb.field === 'total') byMount[key].total = m.value;
     if (lb.field === 'used') byMount[key].used = m.value;
     if (lb.field === 'available') byMount[key].avail = m.value;
@@ -876,10 +909,10 @@ function renderNetworkStorageGroup(networkMetrics) {
   var detailBody = el('div', 'metric-group-body');
   for (var i = 0; i < order.length; i++) {
     var d = byMount[order[i]];
-    var total = d.total > 0 ? fmtMB(d.total) : '--';
-    var used = d.total > 0 ? fmtMB(d.used) : '--';
-    var avail = d.avail > 0 ? fmtMB(d.avail) : '--';
-    var availPct = d.total > 0 ? (d.avail / d.total * 100) : 100;
+    var total = d.total != null ? fmtMB(d.total) : '--';
+    var used = d.used != null ? fmtMB(d.used) : '--';
+    var avail = d.avail != null ? fmtMB(d.avail) : '--';
+    var availPct = (d.total != null && d.total > 0 && d.avail != null) ? (d.avail / d.total * 100) : 100;
     var availColor = availPct < 10 ? ' style="color:var(--crit)"' : '';
     var row = el('div', 'metric-row space-detail-row');
     row.innerHTML = '<span class="metric-val">' + total + '</span>' +
@@ -1037,16 +1070,32 @@ function metricsFor(snap, compKey) { return (snap.metrics || []).filter(m => m.c
 function pickMetric(metrics, spec) {
   const name = typeof spec === 'string' ? spec : spec.name;
   const prefer = typeof spec === 'string' ? null : spec.prefer;
+  const wantMax = typeof spec === 'object' && spec.max;
+  const wantAvg = typeof spec === 'object' && spec.avg;
+  const wantSum = typeof spec === 'object' && spec.sum;
   let first = null;
+  let best = null, bestVal = -Infinity;
+  let sum = 0, count = 0;
   for (const m of metrics) {
     if (m.name !== name) continue;
     if (!first) first = m;
     if (prefer) {
       let match = true;
       for (const k in prefer) { if ((m.labels || {})[k] !== prefer[k]) { match = false; break; } }
-      if (match) return m;
+      if (match) {
+        if (!wantMax && !wantAvg && !wantSum) return m;
+        if (wantMax && m.value > bestVal) { bestVal = m.value; best = m; }
+        if (wantAvg) { sum += m.value; count++; }
+        if (wantSum) { sum += m.value; count++; }
+      }
+    } else {
+      if (wantMax && m.value > bestVal) { bestVal = m.value; best = m; }
+      if (wantAvg) { sum += m.value; count++; }
+      if (wantSum) { sum += m.value; count++; }
     }
   }
+  if (wantMax && best) return best;
+  if ((wantAvg || wantSum) && count > 0) { first = Object.assign({}, first, {value: wantSum ? sum : sum / count}); }
   return first;
 }
 
@@ -1077,6 +1126,11 @@ function componentSeries(compKey, history) {
       out.push({ key: k, label: seriesLabel(k), data: history[k] });
     }
   }
+  out.sort(function(a, b) {
+    var oa = SERIES_ORDER[a.key] !== undefined ? SERIES_ORDER[a.key] : 99;
+    var ob = SERIES_ORDER[b.key] !== undefined ? SERIES_ORDER[b.key] : 99;
+    return oa - ob;
+  });
   return out;
 }
 
@@ -1174,7 +1228,15 @@ function renderSpecs(snap) {
   if (disks.length) add('硬盘', disks.length + ' 块, 共 ' + fmtGB(disks.reduce((s, m) => s + m.value, 0)));
 
   const nets = specs.filter(m => m.name === 'net_info');
-  if (nets.length) add('网卡', nets.slice(0, 2).map(netStr).join(', ') + (nets.length > 2 ? ' …' : ''));
+  if (nets.length) {
+    var cardKeys = {};
+    for (var i = 0; i < nets.length; i++) {
+      var lb = nets[i].labels || {};
+      var key = lb.pci_addr ? parentPciAddr(lb.pci_addr) : (lb.interface || '');
+      cardKeys[key] = true;
+    }
+    add('网卡', Object.keys(cardKeys).length + ' 块');
+  }
 
   const gpus = specs.filter(m => m.name === 'gpu_info');
   if (gpus.length) add('GPU', (gpus[0].labels || {}).name + (gpus.length > 1 ? ' 等 ' + gpus.length + ' 卡' : ''));
@@ -1281,7 +1343,7 @@ function specsGroup(comp, arr) {
       primary = (m.value !== undefined && m.value !== null) ? (m.value + (m.unit ? ' ' + m.unit : '')) : '';
     }
     const rest = [];
-    for (const k in lb) {
+    for (const [k] of sortedLabelEntries(lb)) {
       if (k === def.primary) continue;
       rest.push((LABEL_NAMES[k] || k) + ': ' + lb[k]);
     }
@@ -1461,7 +1523,14 @@ function summaryCard(compKey, snap) {
       const mm = pickMetric(metrics, spec);
       if (!mm) continue;
       if (mm.name === headlineMetric) continue;
-      kv.appendChild(elText('div', 'k', METRIC_NAMES[mm.name] || mm.name));
+      const isMax = typeof spec === 'object' && spec.max;
+      const isAvg = typeof spec === 'object' && spec.avg;
+      const isSum = typeof spec === 'object' && spec.sum;
+      let label = METRIC_NAMES[compKey + ':' + mm.name] || METRIC_NAMES[mm.name] || mm.name;
+      if (isMax) label += /温度|功耗|使用率/.test(label) ? '最高' : '最大';
+      if (isAvg) label += '平均';
+      if (isSum) label += '合计';
+      kv.appendChild(elText('div', 'k', label));
       const v = el('div', 'v');
       if (mm.name === 'smart_status') {
         v.textContent = mm.value >= 1 ? 'PASSED' : 'FAILED';
@@ -1521,7 +1590,6 @@ function renderDetail(compKey, snap) {
     const dpanel = el('div', 'panel deductions-panel');
     const dph = el('div', 'panel-head');
     dph.appendChild(elText('span', '', '扣分项'));
-    dph.appendChild(elText('span', 'sub', compHealth.deductions.length + ' 条'));
     dpanel.appendChild(dph);
     const dbody = el('div', 'panel-body');
     const d = el('div', 'deductions-list');
@@ -1553,7 +1621,6 @@ function renderDetail(compKey, snap) {
     const spanel = el('div', 'panel');
     const sph = el('div', 'panel-head');
     sph.appendChild(elText('span', '', '硬件信息'));
-    sph.appendChild(elText('span', 'sub', compSpecs.length + ' 条'));
     spanel.appendChild(sph);
     const sbody = el('div', 'panel-body');
     if (compKey === 'memory') {
@@ -1577,7 +1644,6 @@ function renderDetail(compKey, snap) {
     const panel = el('div', 'panel');
     const ph = el('div', 'panel-head');
     ph.appendChild(elText('span', '', '趋势'));
-    ph.appendChild(elText('span', 'sub', '近 ' + (snap.history_points || 60) + ' 个采样点'));
     panel.appendChild(ph);
     const body = el('div', 'panel-body trend');
     for (const s of series) {
@@ -1595,9 +1661,8 @@ function renderDetail(compKey, snap) {
   // all metrics (grouped by name)
   const mpanel = el('div', 'panel');
   const mph = el('div', 'panel-head');
-  mph.appendChild(elText('span', '', '全部指标'));
-  mph.appendChild(elText('span', 'sub', metrics.length + ' 条'));
-  mpanel.appendChild(mph);
+    mph.appendChild(elText('span', '', '全部指标'));
+    mpanel.appendChild(mph);
   const mbody = el('div', 'panel-body');
   if (metrics.length === 0) {
     mbody.appendChild(elText('div', 'empty', '无数据（采集器不可用或无硬件）'));
@@ -1620,7 +1685,7 @@ function renderDetail(compKey, snap) {
     for (const name of order) {
       const items = groups[name];
       items.sort(metricSortCmp);
-      const dispName = METRIC_NAMES[name] || name;
+      const dispName = METRIC_NAMES[compKey + ':' + name] || METRIC_NAMES[name] || name;
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
       const gh = el('div', 'metric-group-head');
@@ -1652,7 +1717,7 @@ function renderDetail(compKey, snap) {
         gb.appendChild(renderErrorCountGroup(items));
       } else {
         for (const mt of items) {
-          const labels = mt.labels ? Object.entries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
+          const labels = mt.labels ? sortedLabelEntries(mt.labels).map(([k, v]) => k + '=' + v).join(', ') : '';
           const row = el('div', 'metric-row');
           let valStr;
           if (mt.name === 'health_status') {
@@ -1671,11 +1736,28 @@ function renderDetail(compKey, snap) {
               const codes = (mt.labels || {}).error_codes || '';
               valStr = '<span style="color:var(--crit);font-weight:600">' + codes + '</span>';
             }
+          } else if (mt.name === 'roce_link_status') {
+            valStr = mt.value === 0
+              ? '<span style="color:var(--crit);font-weight:600">down</span>'
+              : '<span style="color:var(--ok);font-weight:600">up</span>';
+          } else if (mt.name === 'roce_speed_status') {
+            valStr = (mt.labels || {}).roce_speed || '--';
+          } else if (mt.name === 'roce_link_health') {
+            valStr = (mt.labels || {}).roce_link || '--';
           } else {
             valStr = fmt(mt.value) + (mt.unit ? ' ' + mt.unit : '');
           }
-          const cleanLabels = mt.labels ? Object.entries(mt.labels)
-            .filter(([k]) => !(mt.name === 'error_code' && k === 'error_codes'))
+          const cleanLabels = mt.labels ? sortedLabelEntries(mt.labels)
+            .filter(([k]) => !(
+              (mt.name === 'error_code' && k === 'error_codes') ||
+              (mt.name === 'roce_speed_status' && k === 'roce_speed') ||
+              (mt.name === 'roce_link_health' && k === 'roce_link') ||
+              (mt.name === 'health_status' && k === 'status') ||
+              ((mt.name.endsWith('_ecc') || mt.name.endsWith('_ecc_isolated')) && (k === 'device_type' || k === 'kind')) ||
+              (mt.name.startsWith('aicore') && mt.name.endsWith('_temp') && k === 'aicore') ||
+              (mt.name.startsWith('ntc') && mt.name.endsWith('_temp') && k === 'ntc') ||
+              ((mt.name.endsWith('_tx_bandwidth') || mt.name.endsWith('_rx_bandwidth')) && k === 'direction')
+            ))
             .map(([k, v]) => k + '=' + v).join(', ') : '';
           row.innerHTML =
             '<span class="metric-val">' + valStr + '</span>' +

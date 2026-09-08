@@ -16,6 +16,7 @@ type seriesSpec struct {
 	labelKey    string // optional label filter ("" = any)
 	labelVal    string
 	labelPrefix string // if set + labelKey set, m.Labels[labelKey] must start with this
+	labelSuffix string // if set + labelKey set, m.Labels[labelKey] must end with this
 	key         string // must be "<component>_<suffix>" so detail pages can group it
 	mode        int    // 0 = first matching, 1 = max across matching
 }
@@ -28,30 +29,27 @@ var TrackedSeries = []seriesSpec{
 	{component: "memory", name: "usage", key: "memory_usage", mode: 0},
 	{component: "memory", name: "swap_usage", key: "memory_swap_usage", mode: 0},
 	{component: "disk", name: "space_usage", labelKey: "device", labelPrefix: "/dev/", key: "disk_space_usage", mode: 1},
-	{component: "gpu", name: "utilization", key: "gpu_utilization", mode: 0},
-	{component: "gpu", name: "memory_usage", key: "gpu_memory_usage", mode: 0},
-	{component: "gpu", name: "temperature", key: "gpu_temperature", mode: 0},
-	{component: "npu", name: "utilization", key: "npu_utilization", mode: 0},
-	{component: "npu", name: "memory_usage", key: "npu_memory_usage", mode: 0},
-	{component: "npu", name: "temperature", key: "npu_temperature", mode: 0},
+	{component: "gpu", name: "utilization", key: "gpu_utilization", mode: 1},
+	{component: "gpu", name: "memory_usage", key: "gpu_memory_usage", mode: 1},
+	{component: "gpu", name: "temperature", key: "gpu_temperature", mode: 1},
+	{component: "npu", name: "utilization", key: "npu_utilization", mode: 1},
+	{component: "npu", name: "temperature", key: "npu_temperature", mode: 1},
+	{component: "npu", name: "memory_usage", key: "npu_memory_usage", mode: 1},
+	{component: "npu", name: "power_draw", key: "npu_power_draw", mode: 1},
 	// v0.2.0 source-layer metrics. Hardware-dependent: a series only appears
 	// once its source produces a value (e.g. ipmi/mce/dmidecode absent => no
 	// data, never an error). Mode 1 = max across devices/sockets/zones.
 	{component: "cpu", name: "temperature", key: "cpu_temperature", mode: 1},
-	{component: "cpu", name: "power", key: "cpu_power", mode: 1},
 	{component: "cpu", name: "avg_freq", key: "cpu_avg_freq", mode: 0},
-	{component: "cpu", name: "context_switches", key: "cpu_context_switches", mode: 0},
-	{component: "cpu", name: "cpu_ce_errors", key: "cpu_ce_errors", mode: 1},
-	{component: "memory", name: "saturation", labelKey: "interval", labelVal: "avg10", key: "memory_saturation", mode: 0},
-	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1},
 	{component: "memory", name: "swap_in", key: "memory_swap_in", mode: 0},
-	{component: "memory", name: "power", key: "memory_power", mode: 1},
+	{component: "memory", name: "fragmentation", key: "memory_fragmentation", mode: 1},
 	{component: "disk", name: "io_wait", key: "disk_io_wait", mode: 0},
 	{component: "disk", name: "iops", key: "disk_iops", mode: 1},
 	{component: "disk", name: "throughput", key: "disk_throughput", mode: 1},
 	{component: "network", name: "throughput", key: "network_throughput", mode: 1},
 	{component: "network", name: "packet_count", key: "network_packet_count", mode: 1},
-	{component: "network", name: "error_count", key: "network_error_count", mode: 1},
+	{component: "network", name: "error_count", labelKey: "type", labelSuffix: "_err", key: "network_error_packets", mode: 1},
+	{component: "network", name: "error_count", labelKey: "type", labelSuffix: "_drop", key: "network_dropped_packets", mode: 1},
 }
 
 // StaticMetricNames is the set of metric names the collectors emit once at
@@ -122,6 +120,9 @@ func (h *History) Update(metrics []collector.Metric) map[string][]float64 {
 					continue
 				}
 				if spec.labelPrefix != "" && !strings.HasPrefix(v, spec.labelPrefix) {
+					continue
+				}
+				if spec.labelSuffix != "" && !strings.HasSuffix(v, spec.labelSuffix) {
 					continue
 				}
 			}

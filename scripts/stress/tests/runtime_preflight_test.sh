@@ -53,11 +53,19 @@ cat >"$TOOLS/python3" <<'EOF'
 set -euo pipefail
 cat >/dev/null
 [ "${FAKE_IMPORT_FAIL-}" != true ] || exit 7
+expected=${CATMONITOR_NPU_DEVICE_COUNT:-0}
+actual=${FAKE_DEVICE_COUNT:-2}
+case "$expected" in ''|*[!0-9]*|0) printf 'CATMONITOR_NPU_DEVICE_COUNT must be a positive integer\n' >&2; exit 6 ;; esac
+[ "$actual" = "$expected" ] || {
+    printf 'torch_npu device count %s does not match expected mapped count %s\n' "$actual" "$expected" >&2
+    exit 5
+}
 printf '%s\n' \
     'CATMONITOR_RUNTIME_IMPORT_TORCH=fixture' \
     'CATMONITOR_RUNTIME_IMPORT_TORCH_NPU=fixture' \
     'CATMONITOR_RUNTIME_IMPORT_ASCEND_NPU_BURN=fixture' \
-    'CATMONITOR_RUNTIME_IMPORT_ASCEND_NPU_BURN_CUSTOM_OPS_CUSTOM_OPS_LIB=fixture'
+    'CATMONITOR_RUNTIME_IMPORT_ASCEND_NPU_BURN_CUSTOM_OPS_CUSTOM_OPS_LIB=fixture' \
+    "CATMONITOR_RUNTIME_DEVICE_COUNT=$actual"
 EOF
 chmod 0755 "$TOOLS/lspci" "$TOOLS/python3"
 
@@ -65,12 +73,14 @@ run_preflight() {
     env \
         PATH="$TOOLS:/usr/bin:/bin" \
         CATMONITOR_ASCEND_ENV_HELPER="$TEST_ROOT/ascend_env.sh" \
+        CATMONITOR_NPU_DEVICE_COUNT="${CATMONITOR_NPU_DEVICE_COUNT:-2}" \
         bash "$PREFLIGHT"
 }
 
 run_preflight >"$TEST_ROOT/success.log"
 assert_contains "$TEST_ROOT/success.log" 'CATMONITOR_RUNTIME_CANN_VERSION=9.0.1'
 assert_contains "$TEST_ROOT/success.log" 'CATMONITOR_RUNTIME_TOPOLOGY_DEVICES=2'
+assert_contains "$TEST_ROOT/success.log" 'CATMONITOR_RUNTIME_DEVICE_COUNT=2'
 assert_contains "$TEST_ROOT/success.log" 'CATMONITOR_RUNTIME_PREFLIGHT=PASS'
 
 FAKE_TOPOLOGY_EMPTY=true assert_fails "$TEST_ROOT/topology.log" run_preflight
@@ -78,5 +88,7 @@ assert_contains "$TEST_ROOT/topology.log" 'no Ascend Processing accelerators wer
 
 FAKE_IMPORT_FAIL=true assert_fails "$TEST_ROOT/import.log" run_preflight
 FAKE_SOURCE_FAIL=true assert_fails "$TEST_ROOT/source.log" run_preflight
+CATMONITOR_NPU_DEVICE_COUNT=3 assert_fails "$TEST_ROOT/device-count.log" run_preflight
+assert_contains "$TEST_ROOT/device-count.log" 'torch_npu device count 2 does not match expected mapped count 3'
 
 printf 'PASS: NPU Burn fixed-container runtime preflight\n'

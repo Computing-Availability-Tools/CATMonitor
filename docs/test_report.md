@@ -1,4 +1,215 @@
-# CATMonitor 系统测试报告（无 NPU / 无 GPU）
+# CATMonitor 系统测试报告（v0.3.6 · Ascend 910B4 真机 · linux/arm64）
+
+> **项目**: CATMonitor (Computing Availability Tools Monitor)
+> **测试对象**: `develop` 分支 @ `5cc2095`（PR #13 refactor/unified-stress-platform 合并后 + v0.3.6 版本升级）
+> **测试日期**: 2026-09-08
+> **测试人**: opencode
+> **目标版本**: CATMonitor v0.3.6
+> **测试范围**: 全量自动化门禁（build/lint/test/coverage/stress 四层）+ 监控链路真机端到端（daemon/exporter/snapshot/web/dfee/faultsub/straggler/CLI）。**未运行真实压测**（STREAM/HPL/HPCG/NPU Burn——生产 vLLM 负载在跑，压测属显式硬件验收门禁）。
+
+---
+
+## 测试环境
+
+| 项 | 值 |
+|----|----|
+| OS | openEuler 20.03 LTS-SP3（kernel 4.19.90-2112.8.0.0131.oe1.aarch64） |
+| 架构 | **linux/arm64**（Kunpeng-920 ×2，TaiShan 200 Model 2280，128 核） |
+| Go | go1.23.4 linux/arm64（`/home/catmonitor/toolchains/go1.23.4`） |
+| NPU | **2 × Ascend 910B4**（`/dev/davinci2`、`/dev/davinci5`；npu-smi 25.5.0.b060；vLLM 生产负载运行中，HBM ~91.9%） |
+| GPU | 无（nvidia-smi 未安装，验证降级路径） |
+| BMC/IPMI | `ipmitool` 可用（TaiShan 200 传感器可读） |
+| CANN DCMI | 头文件 `/usr/local/Ascend/driver/include/dcmi_interface_api.h` 存在 → Makefile 自动加 `-tags dcmi` → **DCMI CGo 在 arm64 真机编译并通过运行验证** |
+| 外部命令 | `npu-smi`/`hccn_tool`/`ipmitool`/`smartctl`/`dmidecode`/`lspci` 全部可用 |
+| GCC | 7.3.0（CGo 编译可用；但 race 链接失败，见 §2 已知限制） |
+| 测试配置 | `features:[web,dfee,health]`，`min_priority=medium`，snapshot/straggler=on，faultsub 分两轮（on/off，见 §8），端口 19320-19323 + 9333，dir 指向 `/tmp/opencode/cm-v036/` |
+
+---
+
+## 硬门禁结果：**通过 ✅**
+
+---
+
+## 1. 构建与静态检查
+
+### 1.1 make all（三二进制，含 DCMI CGo）
+```
+$ make all
+build daemon (dcmi: on)                      ← 自动探测 CANN 头文件
+go build -tags dcmi -o bin/catmonitor ./cmd/catmonitor     → 成功 (10.2 MB)
+go build -o bin/catmonitor-web ./features/web              → 成功 (9.5 MB)
+go build -o bin/catmonitor-dfee ./features/dfee            → 成功 (8.4 MB)
+```
+**linux/arm64 全链路原生构建成功，含 `-tags dcmi` CGo 编译**（v0.3.5 报告已知限制 #5「DCMI CGo 未真机验证」在 v0.3.6 **已消除**）。
+
+### 1.2 go vet / go test / coverage
+```
+$ make lint                → go vet ./... exit 0（零告警）
+$ make test                → 34 个包 ok + 7 个 [no test files] = 41 包，0 FAIL
+$ make test-coverage       → 全绿（health 90.5% / npu collector 94.9% / faultsub 88.5%
+                             / snapshot 80.1% / exporter 81.1% / config 80.8% …）
+```
+
+### 1.3 stress 四层自动化套件（make test-stress）
+```
+monitoring-compat / stress-ut / stress-build（cpu+npu+deployment+audit）/ stress-e2e
+→ 84 项断言全 PASS，0 失败
+（含 NPU Burn 镜像构建 fixture 的 arm64 manifest 校验、A2 NUMA topology 解析、
+  统一 workload plugin describe/run/cancel E2E）
+```
+
+---
+
+## 2. 已知限制（环境）
+
+1. **`make test-stress-race` 链接失败**：系统 GCC 7.3.0 过旧，链接器不支持 Go race 运行时所需的 ARM64 LSE 原子内建（`undefined reference to __aarch64_ldadd8_acq_rel` 等），系统无更新 GCC。属工具链环境限制，非代码回归（与 v0.3.5 已知限制 #2 同源——需 GCC≥9 或交叉环境补测）。
+
+---
+
+## 3. daemon + exporter（真机数据）
+
+### 3.1 启动
+```
+level=INFO msg="CATMonitor daemon started" version=0.3.6
+level=INFO msg="derived per-component cadence from features" features="[web dfee health]" declared_components=7
+level=INFO msg="straggler_output enabled" ... / "faultsub enabled" rest_addr=:19321
+level=INFO msg="snapshot production enabled" dir=/tmp/opencode/cm-v036/snapshot refresh=1s
+level=INFO msg="exporter listening" addr=:19320
+level=INFO msg="hardware specs distributed to snapshot writers" count=11
+```
+daemon 全程 `grep -icE "error|warn|fatal|panic"` = **0**；`Ctrl-C` 优雅停止（逐 collector stopping 日志齐全）。
+
+### 3.2 exporter :19320/metrics（真机 NPU/BMC 数据）
+```
+$ curl -s http://localhost:19320/metrics   → 2185 行，87 个 TYPE，2011 条指标行
+$ curl /-/healthy → 200；/-/ready → 200；GET / → 404（仅 /metrics，符合设计）
+```
+| 组件 | 指标族数 | 说明 |
+|------|---------|------|
+| npu | **38** | **真实 910B4 数据**，全部带 `npu_id`+`chip_id` 双 label：`catmonitor_npu_utilization{chip_id="0",npu_id="2"}`、`memory_usage 91.93`（与 npu-smi 一致）、`roce_link_status=1`、`net_tx/rx_bandwidth`、hccn_tool RoCE/MAC/NIC 统计等 |
+| cpu | 21 | 128 核 Kunpeng-920，jiffies/利用率/频率/MCE |
+| memory | 10 | 含 swap_detail/碎片化 |
+| disk | 8 | 物理盘聚合 + LVM 过滤 + 累计 raw counters |
+| network | 6 | 虚拟接口过滤后 + rx/tx_bytes_total |
+| chassis | 4 | **真实 BMC 传感器**（ipmitool 可读） |
+
+---
+
+## 4. snapshot 统一生产（真机 7 文件全产）
+```
+snapshot.json (2.8 KB) + snapshot_{cpu,disk,memory,network,chassis,gpu?否,npu}.json
+snapshot_npu.json = 20.6 KB 真实 NPU 指标（v0.3.5 无硬件环境产不出）
+snapshot_chassis.json = 1.5 KB 真实 BMC 数据
+```
+global `snapshot.json` health：**score 98 / Excellent / server_type accelerated**，6 部件全评分（chassis 10/10、cpu 20/20、disk 18/20、memory 20/20、network 10/10、npu 20/20 → NPU 权重 20 = **accelerated_2card 方案**，与 2 卡 910B4 一致）。
+
+---
+
+## 5. web 只读消费者（:19322）
+```
+GET / → 200（SPA）；GET /stress/ → 200（统一 Stress SPA）；GET /api/snapshot → 200
+/api/snapshot keys: session_id, timestamp, refresh_interval_ms, history_points,
+                    health, metrics, history, specs
+metrics: 2011 条；health: 98 / accelerated（与 daemon snapshot 一致）
+```
+
+## 6. dfee 独立二进制（:19323 + :9333 exporter）
+```
+GET / → 200；GET /api/dfee → 200
+charts: 34 张（文档口径一致），其中 25 张有数据
+NPU 图表真数据: npu_aicore_freq / npu_hbm_freq / npu_power_draw / npu_voltage /
+               npu_npu_util / npu_utilization / npu_vector_core_util /
+               npu_hbm_bandwidth_util / npu_memory_usage / npu_pcie_tx_bw …
+```
+### 6.1 dfee 内置 exporter（:9333/metrics）
+```
+dsmi_aicore_utilization_percent{chip_id="0",npu_id="2"} 0
+dsmi_hbm_utilization_percent{chip_id="0",npu_id="2"} 91.93   ← 与 npu-smi 一致
+static_hardware_info{cpu_info="2*Kunpeng-920", npu_chip_name="910B4",
+  product_name="TaiShan 200 (Model 2280)", memory_info="12*DDR4 32 GB", ...} 1
+static_software_info{cann_version="CANN-7.0", npu_driver_version="25.5.0.b060",
+  os_version="openEuler 20.03 (LTS-SP3)", python_version="3.12.4", torch_version="2.2.0", ...} 1
+```
+静态信息真机全量识别（v0.3.5 仅验证降级路径）；静态采集启动耗时 ~16s（npu-smi/dmidecode/pip 等外部命令），属预期。
+
+---
+
+## 7. faultsub 故障订阅（:19321）
+```
+GET  /faultsub/events          → 200 []
+POST /faultsub/subscriptions   → 201 {"id":"sub-0001","delivery":"webhook","endpoint":"..."}
+GET  /faultsub/subscriptions   → 200 [sub-0001]
+```
+订阅 CRUD 正常；真机 NPU 健康（OK 状态）→ 无故障事件产生（符合设计）。
+
+---
+
+## 8. straggler KPI 输出（真机验证 + **新发现 bug**）
+
+### 8.1 单独开启（faultsub 关闭）：✅ 正常
+```
+/tmp/opencode/cm-v036/straggler/straggler_kpi_2026-09-08.jsonl
+{"ts":1788852278,"vals":{"2":{"aicore_freq":800,"aicore_util":0,
+  "hbm_bandwidth_util":0,"hbm_util":91.93,"power":90.4,"temp":67,"tx_bandwidth":0},
+ "5":{...power":91.1,"temp":66...}}}
+```
+per-chip device_id（2、5）× 7 字段与 npu-smi 实时输出吻合；`flush_interval` 生效；daemon 停止时 shutdown flush 正常。
+
+### 8.2 与 faultsub 同时开启：**曾发现 sink 覆盖 bug，已修复并回归验证 ✅**
+
+**发现**：修复前 `cmd/catmonitor/main.go` 的 `faultsub.NewFaultStorage(cacheStore, ...)` 直接包装 `cacheStore` 而非当前链头 `sink`，随后 `sink = fstore` 覆盖了 straggler 分支的 `sink = sstore`——两特性同开时调度器写入绕过 StragglerStorage，KPI 文件静默不再产出。
+
+**修复**：`NewFaultStorage(sink, det, disp, logger)` 包装当前链头（一行 + 注释），存储链变为线性 `PerCompWriter → FaultStorage → StragglerStorage → CachingStorage → JSONLStorage`。
+
+**修复后同开复测（真机，2026-09-08 07:31）**：
+```
+straggler_kpi_2026-09-08.jsonl 正常产出（10.1 KB，含 NPU vals + cpu_avg）
+  {"ts":1788852661,"vals":{"2":{"aicore_freq":800,...,"power":89.4,"temp":66}, "5":{...}}} ✓
+faultsub REST 正常（GET /faultsub/events → 200 []，subscriptions → 200）✓
+snapshot 7 文件全产 ✓；daemon 日志 error/warn/fatal/panic = 0 ✓
+修复后回归：make lint / make test（34 包）/ make test-stress（84 断言）全绿 ✓
+```
+
+---
+
+## 9. CLI 子命令（真机）
+```
+$ catmonitor version → CATMonitor v0.3.6 (Go 1.23+)
+$ catmonitor list    → 7 采集器全 enabled（Name/Component/Priority/Interval/Enabled）
+$ catmonitor health  → 98/100 Excellent, server_type=accelerated
+    CPU 20/20  MEMORY 20/20  DISK 18/20 (space>90% -2, 真实磁盘超 90% 扣分)
+    NPU 20/20（accelerated_2card）TOTAL 98/100
+```
+**server_type 判定一致性在真加速卡上验证通过**：CLI 与 snapshot global 同判 `accelerated/98`（v0.3.5 仅在无硬件环境验证过 `cpu_only` 一致）。
+
+---
+
+## 10. 测试结论
+
+| 门禁 | 结果 |
+|------|------|
+| `make all`（arm64 + DCMI CGo） | ✅ 三二进制全成功 |
+| `make lint` / `make test`（34 包） / `test-coverage` | ✅ 全绿 |
+| `make test-stress`（四层套件） | ✅ 84 断言全 PASS |
+| `make test-stress-race` | ⚠️ 环境限制（GCC 7.3 无 ARM64 LSE 支持） |
+| daemon + exporter（:19320，2185 行/87 TYPE/2011 指标） | ✅ 真机 NPU 38 族 + BMC 4 族 |
+| snapshot 统一生产 | ✅ 7 文件全产（含 20.6KB 真机 NPU） |
+| web（:19322 + /stress/ + /api/snapshot） | ✅ 2011 metrics，health 一致 |
+| dfee（:19323 34 charts + :9333 dsmi_*/static_*） | ✅ 真机全量识别 |
+| faultsub REST（:19321） | ✅ CRUD 200/201 |
+| straggler 单开 | ✅ per-chip KPI 与 npu-smi 吻合 |
+| **straggler + faultsub 同开** | ✅ **sink 覆盖 bug 修复后回归通过（发现→修复→复测，见 §8.2）** |
+| CLI version/list/health | ✅ v0.3.6 / 7 采集器 / 98 Excellent accelerated |
+
+**整体：自动化门禁全绿、真机监控链路端到端打通。测试中发现 1 个存储链装配 bug（straggler+faultsub 同开时 KPI 丢失），已当场修复并完成同开场景真机回归（§8.2）。**
+
+---
+
+# CATMonitor 系统测试报告（无 NPU / 无 GPU）【v0.3.5 历史】
+
+> **Historical V1 test report. Not current v0.3.6 deployment guidance.**
+> 本文仅保存 v0.3.5/V1 当时的测试证据，其中命令、容器、socket 与脚本名称可能已退役；
+> 当前用户必须使用 `docker/README*.md` 和 `features/stress/STRESS_USER_GUIDE.md`。
 
 > **项目**: CATMonitor (Computing Availability Tools Monitor) — CATHelper 底座
 > **测试对象**: 本地 `main` 分支 @ `243082c`（合并 `origin/develop` → main，no-ff，无冲突）

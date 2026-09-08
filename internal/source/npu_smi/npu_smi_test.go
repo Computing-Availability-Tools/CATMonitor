@@ -49,7 +49,7 @@ func TestHccsBandwidth(t *testing.T) {
 	SetMock(func(args ...string) (string, error) { return out, nil })
 	defer ResetFetcher()
 
-	bw, err := Default().HccsBandwidth(0)
+	bw, err := Default().HccsBandwidth(0, 0)
 	if err != nil {
 		t.Fatalf("HccsBandwidth failed: %v", err)
 	}

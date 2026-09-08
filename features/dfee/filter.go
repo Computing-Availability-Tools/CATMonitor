@@ -73,6 +73,17 @@ var efficiencySpecs = []efficiencySpec{
 	{"npu", "llc_write_hit_rate", "", nil},
 	{"npu", "llc_read_hit_rate", "", nil},
 	{"npu", "llc_throughput", "", nil},
+	// NPU: Bandwidth (4)
+	{"npu", "hccs_tx_bandwidth", "", nil},
+	{"npu", "hccs_rx_bandwidth", "", nil},
+	{"npu", "pcie_tx_bandwidth", "", nil},
+	{"npu", "pcie_rx_bandwidth", "", nil},
+	// GPU (5)
+	{"gpu", "power_draw", "", nil},
+	{"gpu", "utilization", "", nil},
+	{"gpu", "temperature", "", nil},
+	{"gpu", "memory_usage", "", nil},
+	{"gpu", "clock_frequency", "", nil},
 	// CPU: Time breakdown (8, core=total only) — filtered out by handler, replaced by derived
 	{"cpu", "user_time", "core", []string{"total"}},
 	{"cpu", "nice_time", "core", []string{"total"}},
@@ -140,6 +151,16 @@ var chartGroups = []chartGroup{
 	{"npu_vector_core_util", "Vector Core利用率", "npu", []string{"vector_core_util"}, "npu_id", "", "", ""},
 	{"npu_hbm_bandwidth_util", "HBM带宽利用率", "npu", []string{"hbm_bandwidth_util"}, "npu_id", "", "", ""},
 	{"npu_memory_usage", "HBM利用率", "npu", []string{"memory_usage"}, "npu_id", "", "", ""},
+	{"npu_hccs_tx_bw", "HCCS带宽(发送)", "npu", []string{"hccs_tx_bandwidth"}, "npu_id", "", "", ""},
+	{"npu_hccs_rx_bw", "HCCS带宽(接收)", "npu", []string{"hccs_rx_bandwidth"}, "npu_id", "", "", ""},
+	{"npu_pcie_tx_bw", "PCIe带宽(发送)", "npu", []string{"pcie_tx_bandwidth"}, "npu_id", "", "", ""},
+	{"npu_pcie_rx_bw", "PCIe带宽(接收)", "npu", []string{"pcie_rx_bandwidth"}, "npu_id", "", "", ""},
+	// GPU (5 charts, labelKey=gpu_id triggers "GPU 0" label)
+	{"gpu_power_draw", "GPU功耗", "gpu", []string{"power_draw"}, "gpu_id", "", "", ""},
+	{"gpu_utilization", "GPU利用率", "gpu", []string{"utilization"}, "gpu_id", "", "", ""},
+	{"gpu_temperature", "GPU温度", "gpu", []string{"temperature"}, "gpu_id", "", "", ""},
+	{"gpu_memory_usage", "GPU显存利用率", "gpu", []string{"memory_usage"}, "gpu_id", "", "", ""},
+	{"gpu_clock_frequency", "GPU频率", "gpu", []string{"clock_frequency"}, "gpu_id", "", "", ""},
 	// CPU (3 charts, 7 derived + 3 raw)
 	{"cpu_utilization", "CPU 利用率", "cpu", []string{"idle_util", "non_idle_util", "user_util", "system_util", "iowait_util", "irq_util", "steal_util"}, "", "", "", ""},
 	{"cpu_load", "CPU 负载", "cpu", []string{"load_average"}, "", "", "", ""},
@@ -158,7 +179,7 @@ var chartGroups = []chartGroup{
 	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", "", ""},
 	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", "", ""},
 	// Chassis (3 charts, split by unit)
-	{"chassis_power", "整机功耗", "chassis", []string{"power", "fan_power"}, "", "", "", ""},
+	{"chassis_power", "整机功耗", "chassis", []string{"power"}, "", "", "", ""},
 	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", "", "", ""},
 	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", "", "avg"},
 }
@@ -182,6 +203,7 @@ type chartData struct {
 
 type EfficiencyResponse struct {
 	SessionID       string      `json:"session_id"`
+	Version         string      `json:"version"`
 	Timestamp       time.Time   `json:"timestamp"`
 	RefreshInterval int         `json:"refresh_interval_ms"`
 	Charts          []chartData `json:"charts"`
@@ -241,6 +263,9 @@ func seriesID(m collector.Metric) string {
 		}
 		return npuID + "::" + m.Name + suffix
 	}
+	if v, ok := m.Labels["gpu_id"]; ok {
+		return v + ":" + m.Name + suffix
+	}
 	if v, ok := m.Labels["interface"]; ok {
 		return v + ":" + m.Name + suffix
 	}
@@ -292,6 +317,8 @@ var metricDisplayNames = map[string]string{
 	"npu:fan_speed": "风扇转速",
 	// NPU LLC
 	"npu:llc_write_hit_rate": "LLC写命中率", "npu:llc_read_hit_rate": "LLC读命中率", "npu:llc_throughput": "LLC吞吐量",
+	"npu:hccs_tx_bandwidth": "HCCS发送带宽", "npu:hccs_rx_bandwidth": "HCCS接收带宽",
+	"npu:pcie_tx_bandwidth": "PCIe发送带宽", "npu:pcie_rx_bandwidth": "PCIe接收带宽",
 	// CPU derived
 	"cpu:idle_util": "空闲", "cpu:non_idle_util": "非空闲", "cpu:user_util": "用户态",
 	"cpu:system_util": "内核态", "cpu:iowait_util": "IO等待", "cpu:irq_util": "中断", "cpu:steal_util": "Steal",
@@ -305,6 +332,9 @@ var metricDisplayNames = map[string]string{
 	"network:rx_bytes_total": "接收字节", "network:tx_bytes_total": "发送字节",
 	// Chassis
 	"chassis:power": "整机功耗", "chassis:inlet_temp": "进风口温度", "chassis:outlet_temp": "出风口温度", "chassis:fan_power": "风扇功耗",
+	// GPU
+	"gpu:power_draw": "GPU功耗", "gpu:utilization": "GPU利用率",
+	"gpu:temperature": "GPU温度", "gpu:memory_usage": "GPU显存利用率", "gpu:clock_frequency": "GPU频率",
 }
 
 // seriesLabel generates a human-readable label for a metric instance.
@@ -313,7 +343,7 @@ var metricDisplayNames = map[string]string{
 // series label shows only the device-identifying label value (e.g. "sda").
 func seriesLabel(m collector.Metric, cg chartGroup) string {
 	if cg.labelKey != "" {
-		for _, key := range []string{"npu_id", "interface", "device", "fan"} {
+		for _, key := range []string{"npu_id", "gpu_id", "interface", "device", "fan"} {
 			if v, ok := m.Labels[key]; ok {
 				if key == "npu_id" {
 					chipStr := ""
@@ -321,6 +351,9 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 						chipStr = " Chip " + cv
 					}
 					return "NPU " + v + chipStr
+				}
+				if key == "gpu_id" {
+					return "GPU " + v
 				}
 				return v
 			}
@@ -338,7 +371,7 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 	if v, ok := m.Labels["direction"]; ok {
 		dirStr = " " + v
 	}
-	for _, key := range []string{"npu_id", "interface", "device", "fan"} {
+	for _, key := range []string{"npu_id", "gpu_id", "interface", "device", "fan"} {
 		if v, ok := m.Labels[key]; ok {
 			prefix := key
 			suffix2 := ""
@@ -347,6 +380,9 @@ func seriesLabel(m collector.Metric, cg chartGroup) string {
 				if cv, ok := m.Labels["chip_id"]; ok {
 					suffix2 = " Chip " + cv
 				}
+			}
+			if key == "gpu_id" {
+				prefix = "GPU"
 			}
 			return display + dirStr + " [" + prefix + " " + v + suffix2 + "]"
 		}

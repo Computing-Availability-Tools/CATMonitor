@@ -36,7 +36,7 @@ type Sensor struct {
 const (
 	defaultCacheTTL    = 10 * time.Second
 	nameCacheTTL       = 24 * time.Hour
-	execTimeout        = 60 * time.Second
+	execTimeout        = 120 * time.Second
 	sensorGetTimeout   = 5 * time.Second
 	defaultCacheDir    = "/var/lib/catmonitor"
 	sensorMapFilename  = "ipmi_sensor_map.json"
@@ -257,15 +257,15 @@ func (s *defaultSource) PowerReading() (float64, error) {
 func isUsefulSensor(name string) bool {
 	l := strings.ToLower(name)
 	switch {
-	case l == "power":
+	case l == "power" || l == "chassispower":
 		return true
 	case l == "inlet temp":
 		return true
 	case l == "outlet temp":
 		return true
-	case strings.Contains(l, "fan") && strings.Contains(l, "speed"):
+	case strings.HasPrefix(l, "fan") && strings.Contains(l, "speed"):
 		return true
-	case strings.Contains(l, "fan") && strings.Contains(l, "power"):
+	case strings.HasPrefix(l, "fan") && strings.Contains(l, "power"):
 		return true
 	case strings.Contains(l, "cpu") && strings.Contains(l, "temp"):
 		return true

@@ -98,16 +98,14 @@ func TestCollectIOPS(t *testing.T) {
 	c := New()
 	now := time.Now()
 	// First call stores state, no IOPS metrics.
-	metrics1, err := c.collectIOPS(now)
-	if err != nil {
-		t.Fatalf("first collectIOPS failed: %v", err)
-	}
-	if len(metrics1) != 0 {
-		t.Errorf("expected 0 metrics on first call, got %d", len(metrics1))
-	}
+	current, _ := c.filteredDiskStats()
+	c.prevDiskStats = current
+	c.prevDiskTime = now
+	c.hasPrevDiskStats = true
 	// Second call computes delta (same data, delta=0).
-	metrics2, _ := c.collectIOPS(now)
-	for _, m := range metrics2 {
+	current2, _ := c.filteredDiskStats()
+	metrics := c.computeIOPS(current2, 5.0, now.Add(5*time.Second))
+	for _, m := range metrics {
 		if m.Name != "iops" {
 			t.Errorf("expected name 'iops', got '%s'", m.Name)
 		}
@@ -121,12 +119,12 @@ func TestCollectThroughput(t *testing.T) {
 	useTestdata(t)
 	c := New()
 	now := time.Now()
-	// Populate prevDiskStats via collectIOPS first.
-	c.collectIOPS(now)
-	metrics, err := c.collectThroughput(now)
-	if err != nil {
-		t.Fatalf("collectThroughput failed: %v", err)
-	}
+	current, _ := c.filteredDiskStats()
+	c.prevDiskStats = current
+	c.prevDiskTime = now
+	c.hasPrevDiskStats = true
+	current2, _ := c.filteredDiskStats()
+	metrics := c.computeThroughput(current2, 5.0, now.Add(5*time.Second))
 	for _, m := range metrics {
 		if m.Name != "throughput" || m.Unit != "MB/s" {
 			t.Errorf("expected throughput MB/s, got %s %s", m.Name, m.Unit)
@@ -138,13 +136,12 @@ func TestCollectLatency(t *testing.T) {
 	useTestdata(t)
 	c := New()
 	now := time.Now()
-	// First call stores prev state.
-	c.collectIOPS(now)
-	// Second call computes latency delta.
-	metrics, err := c.collectLatency(now)
-	if err != nil {
-		t.Fatalf("collectLatency failed: %v", err)
-	}
+	current, _ := c.filteredDiskStats()
+	c.prevDiskStats = current
+	c.prevDiskTime = now
+	c.hasPrevDiskStats = true
+	current2, _ := c.filteredDiskStats()
+	metrics := c.computeLatency(current2, 5.0, now.Add(5*time.Second))
 	// testdata has sda + sdb (ram0 filtered), each produces read_latency + write_latency.
 	if len(metrics) != 4 {
 		t.Fatalf("expected 4 latency metrics (2 devices × 2 directions), got %d", len(metrics))

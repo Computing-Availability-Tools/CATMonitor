@@ -1,0 +1,60 @@
+FROM golang:1.23 AS builder
+
+ARG GOPROXY
+ARG GOSUMDB
+ARG GOPRIVATE
+ARG GONOSUMDB
+
+WORKDIR /app
+COPY . .
+
+ENV CGO_ENABLED=0
+
+RUN go build -o /catmonitor ./cmd/catmonitor
+RUN go build -o /dfee ./features/dfee
+RUN go build -o /web ./features/web
+
+FROM debian:bookworm-slim
+
+ARG DEBIAN_MIRROR=""
+RUN if [ -n "${DEBIAN_MIRROR}" ]; then \
+      case "${DEBIAN_MIRROR}" in http://?*|https://?*) ;; *) echo "invalid DEBIAN_MIRROR" >&2; exit 2 ;; esac; \
+      authority="${DEBIAN_MIRROR#*://}"; \
+      case "${authority}" in ''|*/*|*[!A-Za-z0-9.:-]*) echo "invalid DEBIAN_MIRROR origin root" >&2; exit 2 ;; esac; \
+      root="${DEBIAN_MIRROR%/}"; \
+      for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do \
+        [ -f "${source_file}" ] || continue; \
+        sed -i \
+          -e "s#http://deb.debian.org/debian-security#${root}/debian-security#g" \
+          -e "s#https://deb.debian.org/debian-security#${root}/debian-security#g" \
+          -e "s#http://deb.debian.org/debian#${root}/debian#g" \
+          -e "s#https://deb.debian.org/debian#${root}/debian#g" \
+          "${source_file}"; \
+      done; \
+    fi \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    docker.io \
+    dmidecode \
+    ipmitool \
+    pciutils \
+    smartmontools \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /catmonitor /usr/local/bin/catmonitor
+COPY --from=builder /dfee /usr/local/bin/dfee
+COPY --from=builder /web /usr/local/bin/web
+COPY docker/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+COPY configs/metrics.yaml /etc/catmonitor/metrics.yaml
+COPY features/web/metrics.yaml /features/web/metrics.yaml
+COPY features/dfee/metrics.yaml /features/dfee/metrics.yaml
+COPY features/health/metrics.yaml /features/health/metrics.yaml
+COPY features/dfee/grafana-dashboard.json /features/dfee/grafana-dashboard.json
+COPY features/dfee/USAGE.md /features/dfee/USAGE.md
+
+RUN mkdir -p /opt/catmonitor/stress /var/lib/catmonitor/stress && \
+    chmod 0755 /opt/catmonitor/stress && \
+    chmod 0750 /var/lib/catmonitor/stress
+
+ENTRYPOINT ["/usr/local/bin/catmonitor", "daemon", "--config", "/etc/catmonitor/catmonitor.yaml"]

@@ -5,6 +5,7 @@ package dcmi
 type MockProvider struct {
 	Cards       int
 	CardListVal []int
+	DevMax      int // devices per card for DeviceIDInCard; 0 = 1
 	Temp       map[[2]int]int
 	Powers     map[[2]int]int
 	Volts      map[[2]int]uint
@@ -31,6 +32,7 @@ type MockProvider struct {
 	DriverHP   uint
 	DvppRatios map[[2]int]*DvppRatio
 	PidLists   map[[2]int][]uint
+	PhyIDs     map[[2]int]int // (card,dev) → physical NPU id; nil/absent = error
 }
 
 func (m *MockProvider) Init() error { return nil }
@@ -47,6 +49,9 @@ func (m *MockProvider) DeviceNumInCard(card int) (int, error) {
 }
 
 func (m *MockProvider) DeviceIDInCard(card int) (int, int, int, error) {
+	if m.DevMax > 0 {
+		return m.DevMax, -1, -1, nil
+	}
 	return 1, -1, -1, nil // 1 device, no MCU, no CPU
 }
 
@@ -227,4 +232,16 @@ func (m *MockProvider) ResourceInfoFull(card, dev int) ([]uint, error) {
 		return v, nil
 	}
 	return nil, errNotAvailable
+}
+
+// PhyIDs maps (card,dev) to physical NPU id; absent entries error so tests
+// can exercise the caller's fallback path.
+func (m *MockProvider) DevicePhyID(card, dev int) (int, error) {
+	if m.PhyIDs == nil {
+		return 0, errNotAvailable
+	}
+	if v, ok := m.PhyIDs[[2]int{card, dev}]; ok {
+		return v, nil
+	}
+	return 0, errNotAvailable
 }

@@ -134,7 +134,7 @@ func TestDdrUCE(t *testing.T) {
 func TestRoceLinkDown(t *testing.T) {
 	d := NewDetector(nil)
 	ev := d.Detect([]collector.Metric{
-		mkNPU("roce_link_status", 0, map[string]string{"npu_id": "5", "status": "down"}),
+		mkNPU("roce_link_status", 0, map[string]string{"npu_id": "5"}),
 	})
 	if !hasType(ev, FaultRoceLinkDown) {
 		t.Fatalf("expected roce_link_down, got %+v", ev)
@@ -144,7 +144,7 @@ func TestRoceLinkDown(t *testing.T) {
 func TestRoceLinkUpNoEvent(t *testing.T) {
 	d := NewDetector(nil)
 	ev := d.Detect([]collector.Metric{
-		mkNPU("roce_link_status", 1, map[string]string{"npu_id": "5", "status": "up"}),
+		mkNPU("roce_link_status", 1, map[string]string{"npu_id": "5"}),
 	})
 	if len(ev) != 0 {
 		t.Fatalf("expected no events for up link, got %+v", ev)

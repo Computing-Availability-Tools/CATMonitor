@@ -197,7 +197,7 @@ func (d *FaultDetector) Detect(metrics []collector.Metric) []FaultEvent {
 			down := false
 			detail := map[string]string{}
 			if st.roceStatus != nil {
-				if st.roceStatus.Value == 0 || st.roceStatus.Labels["status"] == "down" {
+				if st.roceStatus.Value == 0 {
 					down = true
 					detail["roce_link_status"] = "down"
 				}

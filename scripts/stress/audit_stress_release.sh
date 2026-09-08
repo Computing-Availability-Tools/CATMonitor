@@ -51,8 +51,9 @@ for path in \
     third_party/ascend_npu_burn/source/docs/LICENSE \
     docker/stress/cpu/Dockerfile \
     docker/stress/cpu/entrypoint.sh \
-    docker/docker-compose.config.yml \
-    scripts/catmonitor-install \
+    docker/docker-compose.yml \
+    docker/docker-compose.stress.yml \
+    scripts/stress/generate_stress_deployment.sh \
     scripts/stress/build_cpu_runner_image.sh \
     docker/stress/npu/runtime-packages.txt; do
     require_file "$path"
@@ -67,19 +68,24 @@ grep -Fq 'COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/LICENSE.md'
     die "NPU Burn runtime image no longer copies its license"
 
 grep -Fq 'build_cpu_benchmarks.sh' "$REPO_ROOT/docker/stress/cpu/Dockerfile" ||
-    die "CPU runner image no longer builds benchmarks in its controlled builder stage"
+    die "CPU workload image no longer builds benchmarks in its controlled builder stage"
+grep -Fq 'catmonitor-stress-exec' "$REPO_ROOT/docker/stress/cpu/Dockerfile" ||
+    die "CPU workload image no longer provides the common plugin entrypoint"
+grep -Fq 'catmonitor-stress-exec' "$REPO_ROOT/docker/stress/npu/Dockerfile" ||
+    die "NPU workload image no longer provides the common plugin entrypoint"
 grep -Fq 'network_mode: none' "$REPO_ROOT/docker/docker-compose.stress.yml" ||
-    die "CPU runner deployment no longer disables networking"
-if grep -Fq '/var/run/docker.sock' "$REPO_ROOT/docker/docker-compose.stress.yml"; then
-    die "CPU runner deployment must not receive the Docker socket"
+    die "CPU workload deployment no longer disables networking"
+grep -Fq '/var/run/docker.sock' "$REPO_ROOT/docker/docker-compose.stress.yml" ||
+    die "daemon Stress Controller no longer receives its configured Docker socket"
+if sed -n '/^  catmonitor-stress-cpu:/,$p' "$REPO_ROOT/docker/docker-compose.stress.yml" | \
+    grep -Fq '/var/run/docker.sock'; then
+    die "workload containers must not receive the Docker socket"
 fi
-grep -Fq -- '--acknowledge-root-docker-socket' "$REPO_ROOT/scripts/catmonitor-install" ||
-    die "unified installer no longer requires explicit NPU Docker socket acknowledgement"
-grep -Fq 'workload execution: none' "$REPO_ROOT/scripts/catmonitor-install" ||
-    die "unified installer no longer declares its no-workload boundary"
-if grep -Eq 'stress[[:space:]]+--bench|benchmark_check\.sh[[:space:]]+(stream|hpl|hpcg|npu_burn)' \
-    "$REPO_ROOT/scripts/catmonitor-install"; then
-    die "unified installer must not start a stress workload"
+if grep -Eq '^[[:space:]]{2}(web|dfee):' "$REPO_ROOT/docker/docker-compose.stress.yml"; then
+    die "Stress execution overlay must not grant Web or DFeE execution-plane mounts"
+fi
+if grep -Fq 'docker run' "$REPO_ROOT/scripts/stress/generate_stress_deployment.sh"; then
+    die "deployment generator must not create containers or start workloads"
 fi
 
 (

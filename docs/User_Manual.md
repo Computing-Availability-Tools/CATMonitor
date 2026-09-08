@@ -18,7 +18,7 @@ curl -s http://localhost:9333/metrics | head   # 抓取 node_exporter 风格指�
 ```
 
 > Web 仪表盘（可选）：`./bin/catmonitor-web -snapshot-dir /var/lib/catmonitor/snapshot`，浏览器打开 http://localhost:19322。
-> 容器化部署（可选）：`docker/docker/build.sh && docker compose -f docker/docker-compose.yml up -d`，详见 [§12](#12-容器化部署) 与 [docker/README.md](../docker/README.md)。
+> 容器化部署（可选）：`docker/build.sh && docker compose -f docker/docker-compose.yml up -d`，详见 [§12](#12-容器化部署) 与 [docker/README.md](../docker/README.md)。
 
 ## 目录
 
@@ -120,26 +120,29 @@ storage:
 
 health:
   enabled: true             # v0.3.3 起 daemon 不再周期评估（保留字段）
-  weight_scheme: auto      # 仅 `catmonitor health` CLI 使用：auto | cpu_only | accelerated_8card | accelerated_4card
+  weight_scheme: auto      # 仅 `catmonitor health` CLI 使用：auto | cpu_only | accelerated_2card | accelerated_4card | accelerated_8card
 
 stress:
   enabled: false
   web_enabled: false
-  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  control_socket: /run/catmonitor/control.sock
   report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
   benchmarks:
-    stream: { enabled: false, timeout: 1m }
-    hpl: { enabled: false, timeout: 2h }
-    hpcg: { enabled: false, result_dir: "", timeout: 3m }
-    npu_burn: { enabled: false, timeout: 30m }
-
+    stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
+    hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
+    hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
 collection:
   min_priority: medium     # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 
 features: [web, dfee, health] # feature-scope 白名单（各 feature metrics.yaml 并集；空 = 默认全集）；派生 per-comp cadence
 
-snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 on）
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（随仓 configs/catmonitor.yaml 默认开启；未配置该段时代码默认 off）
   enabled: true           # off 时 daemon 不写 snapshot；on 时 web/dfee 须以只读消费者运行
   dir: /var/lib/catmonitor/snapshot
 
@@ -188,7 +191,7 @@ straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详�
 | Linux | `/etc/catmonitor/catmonitor.yaml` | `/var/lib/catmonitor/data` |
 | Windows | `C:\ProgramData\catmonitor\catmonitor.yaml` | `C:\ProgramData\catmonitor\data` |
 
-普通 CLI 可用 `-config` 覆盖配置路径（现有短 flag `-c` 尚未接入普通命令）；stress CLI 同时支持 `-c/--config`。Web 默认读取同一平台路径，非标准部署可使用 `CATMONITOR_CONFIG` 或 `-config` 覆盖。指标采集目录 `metrics.yaml` 加载顺序：环境变量 `CATMONITOR_METRICS` → 配置目录下 `metrics.yaml` → 开发回退 `configs/metrics.yaml`。
+普通 CLI（daemon/collect/health）与 stress CLI 均可用 `-c/--config` 覆盖配置路径，也可用环境变量 `CATMONITOR_CONFIG`。Web 为只读 snapshot 消费者，不读取 CATMonitor 配置文件（`-config` 仅为旧命令兼容参数）。指标采集目录 `metrics.yaml` 加载顺序：环境变量 `CATMONITOR_METRICS` → 配置目录下 `metrics.yaml` → 开发回退 `configs/metrics.yaml`。
 
 ---
 
@@ -229,7 +232,7 @@ Flags:
 
 ```bash
 $ catmonitor version
-CATMonitor v0.3.5 (Go 1.23+)
+CATMonitor v0.3.6 (Go 1.23+)
 ```
 
 ### 3.2 list — 采集器注册表
@@ -276,29 +279,52 @@ catmonitor health            # 默认表格
 catmonitor health -o json    # JSON
 ```
 
-输出示例：
+输出示例（8 卡 NPU 服务器，auto 检测为 accelerated_8card）：
 
 ```
-Overall Score:  [██████████████████████████████]  90 / 100   [ Excellent ]
-Server Type:    cpu_only
-  CPU        25 / 25   OK
-  MEMORY     25 / 25   OK
-  DISK       30 / 30   OK
-  NETWORK    10 / 10   OK
-  TOTAL      90 / 100  Excellent
+
+CATMonitor Health Report
+======================================================================
+
+  Overall Score:  [████████████████████████████░░]  94 / 100   [ Good ]
+  Server Type:    accelerated
+  Check Time:     2026-09-08 14:30:00
+
+  ----------------------------------------------------------------------
+  Component        Score / Max    Status       Deductions
+  ----------------------------------------------------------------------
+  CPU                12 / 15       Good         temp>75C (-2)
+  MEMORY             15 / 15       OK           -
+  DISK               15 / 15       OK           -
+  NPU                32 / 35       OK           temp>80C (-3)
+  ----------------------------------------------------------------------
+  TOTAL              94 / 100      Good
+  ----------------------------------------------------------------------
+
+  [OK]    System is operating with minor issues.
+
 ```
+
+> 表格仅列出 cpu/memory/disk/gpu/npu 五个部件；network/chassis 同样参与评估并计入 TOTAL（各方案下均占 10 分），但不在表中单独列出。扣分明细格式为 `规则名 (-扣分)`，多条以 `;` 分隔；部件状态按 得分/满额 比例映射 OK(≥90%)/Good(≥75%)/Warning(≥60%)/Critical。
 
 ### 3.5 stress — 可靠性压测
 
 ```bash
 catmonitor stress --help
-catmonitor stress -o table                  # 运行 YAML 的 default_benchmarks
-catmonitor stress --bench stream -o table   # 覆盖本次运行项目
-catmonitor stress --bench npu_burn -o table # Ascend NPU Burn（需节点安装和脚本适配）
-catmonitor stress -o json                   # 回显完整 JSON 报告
+catmonitor stress doctor -o table
+catmonitor stress run --bench stream -o table
+catmonitor stress run --bench npu_burn -o table
+catmonitor stress status -o json
+catmonitor stress cancel --job JOB_ID
 ```
 
-stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 固定源码随仓库提供，管理员只需准备匹配的原生依赖或 CANN/torch_npu 基础镜像并构建运行环境；脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。日常启用与使用见 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，完整构建、适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+stress 只在用户显式请求时运行。daemon 是唯一 Stress Controller；CLI 与 Web 通过
+`/run/catmonitor/control.sock` 查看和控制同一作业，daemon 再用固定 Docker Executor
+调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置只声明
+启用项目、容器和最大运行窗口，MPI、线程、问题规模和 NPU logical ID 固化在 workload
+profile 中，不能由 Web 编辑。日常部署与使用见
+[STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，自动化与实机验收见
+[STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 3.6 daemon — 守护进程
 
@@ -321,7 +347,7 @@ daemon 启动后：
 
 ## 4. Web 仪表盘（catmonitor-web）
 
-独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标，不再自行采集。独立 stress feature 可按主配置额外挂载受保护的作业接口，但不会写 snapshot。
+独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标，不再自行采集。启用 Stress 时，Web 还可通过 daemon 的只读挂载 control socket 查询和控制作业；Web 自身不加载 CATMonitor YAML、不执行 workload，也不挂 Docker Socket。
 
 ### 4.1 启动
 
@@ -334,7 +360,8 @@ catmonitor daemon
 
 # 再启动 web 只读消费者（-snapshot-dir 须与 daemon snapshot.dir 一致）
 catmonitor-web -addr :19322 -snapshot-dir /var/lib/catmonitor/snapshot
-# 非标准主配置路径追加：-config /path/to/catmonitor.yaml
+# -control-socket 默认 /run/catmonitor/control.sock（与 daemon 配置 stress.control_socket 一致，总是创建客户端），仅当 daemon 使用非默认 socket 路径时才需显式指定
+# -config 仅为旧启动命令兼容参数，V2 Web 不读取该文件
 # 浏览器打开 http://<server-address>:19322（实际端口见启动日志 "web server starting"）
 ```
 
@@ -344,7 +371,7 @@ catmonitor-web -addr :19322 -snapshot-dir /var/lib/catmonitor/snapshot
 
 - **概览页**（`/`）：整体健康度（总分 + 进度条 + 等级）+ 设备规格面板（点击展开完整规格）+ 各部件状态 + 部件概览卡片（含趋势 sparkline）
 - **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（该部件全部历史序列 sparkline，数据来自 daemon 产出的 per-comp history）+ 全部指标表
-- **可靠性压测**（`/stress/`）：独立页面；默认只读展示配置和共享报告，只有 Linux、回环监听及 `stress.enabled/web_enabled` 均满足时才能提交作业
+- **可靠性压测**（`/stress/`）：同一 `:19322` listener 下的独立页面；daemon control socket 可达，且 `stress.enabled/web_enabled` 与项目预检均通过时可提交作业
 
 ### 4.3 REST API（只读）
 
@@ -466,14 +493,24 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 | `-exporter-port` | `9333` | exporter 监听端口（输出 `node_*`/`dsmi_*`/`ipmi_*`/`static_*`，见 §5.5） |
 | `-device` | 空（全部） | NPU 设备过滤（逗号分隔，如 `0,1`） |
 | `-docker-container` | 空 | docker 容器名，用于在容器内采集软件版本 |
+| `-csv` | `disabled` | CSV 落盘开关：`enabled`/`disabled` |
+| `-csv-dir` | `/var/lib/catmonitor/csv` | CSV 输出目录 |
+| `-csv-interval` | `10s` | CSV 写入周期（非法值回退 10s） |
+| `-max-runtime` | `0` | 最大运行时长（如 `10m`、`1h`），到时自动退出；`0` = 常驻 |
 
 ### 6.2 功能
 
-- **能效指标过滤**：从 snapshot 指标中过滤能效相关指标（NPU 频率/利用率/温度/电压/ECC/带宽、CPU 利用率推导、内存/磁盘/网络/机箱能效项），按部件分组展示
+- **能效指标过滤**：从 snapshot 指标中过滤能效相关指标，共 34 张图表（NPU 13 + GPU 5 + CPU 3 + 内存 2 + 磁盘 6 + 网络 2 + 机箱 3），按部件分组展示
+- **GPU 图表**：功耗/利用率/温度/显存利用率/频率 5 张图表（按 `gpu_id` 分系列）
+- **HCCS/PCIe 带宽**：发送/接收各 2 张共 4 张 NPU 互联带宽图表
+- **整机功耗图**：仅含 `power`，不含风扇功耗（`fan_power` 单独指标）
+- **自动隐藏**：无 NPU/GPU/机箱硬件（对应指标为空）时相关 section 自动隐藏
 - **CPU 利用率推导**：8 个原始 jiffies 累计值在后端推导为 7 项利用率百分比（有状态 delta）
 - **网络字节差值**：`rx/tx_bytes_total` 累计值转换为采集间增量
 - **交互**：图表卡片拖拽重排 + 右下角手柄缩放、虚线对齐辅助（3px 吸附）、多选下拉筛选（NPU/磁盘/网络）、模块折叠
 - **Prometheus exporter**：`-exporter=enabled` 时启动 `:9333/metrics`，将 snapshot 映射为 `node_*`/`dsmi_*`/`ipmi_*`/`static_*`（详见 §5.5），零外部库依赖
+- **CSV 落盘**：`-csv=enabled` 时按 `-csv-interval` 周期将 exporter 指标写入 `-csv-dir`
+- **Grafana dashboard**：`features/dfee/grafana-dashboard.json` 可直接导入 Grafana，配合 `:9333` exporter 使用
 - **静态信息采集**：启动时一次性采集硬件/软件身份（OS/NPU 驱动/CANN/Python/PyTorch/vLLM 等），无工具时优雅降级
 - **独立二进制**：`features/dfee` package main，只读 snapshot，不依赖 web 进程
 
@@ -485,12 +522,16 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 
 ### 7.1 权重方案
 
-| 场景 | CPU | Memory | Disk | GPU/NPU | 合计 |
-|------|-----|--------|------|---------|------|
-| 无 GPU/NPU（cpu_only） | 30 | 40 | 30 | — | 100 |
-| 有 GPU/NPU（accelerated） | 10 | 20 | 10 | 60 | 100 |
+| 方案（`weight_scheme`） | CPU | Memory | Disk | GPU/NPU | Network | Chassis | 合计 |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `cpu_only` | 25 | 25 | 30 | 0 | 10 | 10 | 100 |
+| `accelerated_2card` | 20 | 20 | 20 | 20 | 10 | 10 | 100 |
+| `accelerated_4card` | 15 | 15 | 20 | 30 | 10 | 10 | 100 |
+| `accelerated_8card` | 15 | 15 | 15 | 35 | 10 | 10 | 100 |
 
-自动检测：根据实际采集到的指标是否含 GPU/NPU 指标自动选择方案（非命令是否存在）。
+自动检测（`weight_scheme: auto`）：按实际采集到的指标（非命令是否存在）选择方案——有 GPU 指标 → `accelerated_8card`；有 NPU 指标时按卡数（唯一 `npu_id` 标签数，chip0+chip1 算一张卡）选择：1-2 卡 → `accelerated_2card`、3-4 卡 → `accelerated_4card`、5-8 卡 → `accelerated_8card`；无 GPU/NPU → `cpu_only`。
+
+> 无 BMC（采集不到机箱指标）时，Chassis 权重自动并入 CPU，Chassis 记 0——`cpu_only`/`accelerated_2card`/`accelerated_4card`/`accelerated_8card` 下 CPU 有效权重分别为 35/30/25/25。
 
 ### 7.2 等级
 
@@ -503,7 +544,7 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 
 ### 7.3 扣分
 
-各部件按 High/Medium 指标设定扣分阈值（CPU 使用率/温度/Load/MCE、内存 CE/UCE/Swap/饱和度/碎片化、硬盘 SMART/I/O、GPU/NPU 利用率/温度/显存/ECC/功耗），触发即按满额分百分比扣分；多卡场景取最差卡。规则与阈值见 [features/health/HEALTH_SPEC.md](../features/health/HEALTH_SPEC.md)。
+各部件按 High/Medium 指标设定扣分阈值（CPU 使用率/温度/Load/MCE、内存 CE/UCE/Swap/饱和度/碎片化、硬盘空间/I/O/SMART、GPU 利用率/温度/显存/ECC、NPU 利用率/温度/显存/ECC/掉卡/健康状态/错误码、网络错误包/TIME_WAIT/ESTABLISHED、机箱进/出风口温度），触发即按满额分百分比扣分；多卡场景取最差卡。规则与阈值见 [features/health/HEALTH_SPEC.md](../features/health/HEALTH_SPEC.md)。
 
 ---
 
@@ -556,9 +597,9 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 |------|-------------|
 | `catmonitor daemon -v` 直接退出 | `-v/--verbose` 未实现；移除该参数，日志级别见源码 `setupLogger` |
 | `catmonitor daemon --data-dir X` 退出 | `--data-dir` 未实现；数据目录改配置 `storage.data_dir` |
-| `:19320` 被占用 | exporter 端口固定 `:19320`，释放占用进程或修改 `features/exporter` 中 `ServeMetrics(":19320", ...)` |
+| `:19320` 被占用 | exporter 地址在 `cmd/catmonitor/main.go`（`runDaemon` 中 `exporter.ServeMetrics(":19320", ...)`）硬编码——`features/exporter.ServeMetrics` 本身接收地址参数；释放占用进程或修改该调用处 |
 | `:19322` 被占用 | web 自动 +1 回退到 `:19323` 等，看启动日志 `web server starting addr=...` |
-| `catmonitor-web` 报 `metrics catalog init failed` | web 须从仓库根目录运行（`metrics.Init` 加载相对路径 `configs/metrics.yaml`） |
+| `catmonitor-web` 页面无数据 | web 是纯 snapshot 消费者，不初始化指标目录（无 `metrics catalog init failed` 场景）；检查 `-snapshot-dir` 是否指向 daemon 的 `snapshot.dir`，且 daemon 配置已开启 `snapshot.enabled: true` |
 | collect / :19320 指标数量变少 | 检查 `collection.min_priority`：`medium` 跳过 Low、`high` 仅 High |
 | GPU/NPU/Chassis 无数据 | 对应命令（`nvidia-smi`/`npu-smi`/`ipmitool`）缺失即优雅降级返回空，非错误；`npu` 仍输出 `npu_num=0` |
 | health 评分与 web 不一致 | v0.3.5 已修复：CLI 与 snapshot 同 scope 下判定一致（无 NPU 硬件均判 `cpu_only`）；若仍不一致，检查 CLI 与 daemon 是否用同一 `features` 配置 |
@@ -573,22 +614,26 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 
 ## 12. 容器化部署
 
-CATMonitor 提供容器化方案，支持 NPU 与通用两种镜像。完整文档见 [docker/README.md](../docker/README.md)。
+CATMonitor 提供 Generic、NVIDIA GPU、Ascend NPU 三类 Control 镜像，以及按需启用的 CPU/NPU Stress workload 镜像。完整文档见 [docker/README.md](../docker/README.md)。
 
 ### 12.1 镜像类型
 
 | 镜像 | 适用环境 | 说明 |
 |------|---------|------|
-| `catmonitor-npu` | 有 Ascend NPU | Debian/glibc 两步构建（golang 容器挂载 driver 编译 + debian 运行时打包），链接 `libdcmi.so`，采集 120 项 NPU 指标 |
-| `catmonitor-generic` | 无 NPU（纯 CPU/GPU） | alpine 多阶段构建，纯 Go 编译，不依赖 NPU 驱动 |
+| `catmonitor-npu` | 有 Ascend NPU | Debian/glibc 两步构建（golang 容器挂载 driver 编译 + debian 运行时打包），链接 `libdcmi.so`，采集 123 项 NPU 指标 |
+| `catmonitor-gpu` | 有 NVIDIA GPU | NVIDIA Control 镜像；监控 GPU，CPU Stress 仍由独立 workload 镜像提供 |
+| `catmonitor-generic` | 无 GPU/NPU 的通用节点 | Alpine 多阶段构建，纯 Go 编译，不依赖硬件驱动 |
+| `catmonitor-stress-cpu` | 可选 CPU Stress | 包含 STREAM/HPL/HPCG、MPI/OpenBLAS 与 `catmonitor-stress-exec`，不包含 Control/Web |
+| `catmonitor-stress-npu` | 可选 Ascend NPU Stress | 包含 CANN/torch_npu/NPU Burn 与 `catmonitor-stress-exec`，仅在匹配的 Ascend 节点启用 |
 
 ### 12.2 构建与启动
 
 ```bash
 cd CATMonitor
-docker/docker/build.sh            # 自动检测 NPU driver（有则 npu，无则 generic）
-docker/docker/build.sh npu         # 强制 NPU 镜像
-docker/docker/build.sh generic    # 强制通用镜像
+docker/build.sh            # 自动检测 NPU driver（有则 npu，无则 generic）
+docker/build.sh npu         # 强制 NPU Control 镜像
+docker/build.sh gpu         # 强制 NVIDIA GPU Control 镜像
+docker/build.sh generic     # 强制 Generic Control 镜像
 
 # Docker Compose 一键启动 daemon + web + dfee 三服务
 docker compose -f docker/docker-compose.yml up -d
