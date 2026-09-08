@@ -1,9 +1,9 @@
-// Package cli implements the catmonitor stress command adapter.
+// Package cli implements the daemon-client catmonitor stress command.
 package cli
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,64 +19,165 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 )
 
-// Run parses and executes the top-level catmonitor stress command.
 func Run(args []string, logger *slog.Logger, stdout, stderr io.Writer) int {
+	_ = logger
 	mode := "run"
-	if len(args) > 0 && args[0] == "doctor" {
-		mode = "doctor"
-		args = args[1:]
+	if len(args) > 0 {
+		switch args[0] {
+		case "run", "doctor", "status", "cancel":
+			mode, args = args[0], args[1:]
+		}
 	}
 	if helpRequested(args) {
-		if mode == "doctor" {
-			printDoctorUsage(stdout)
-		} else {
-			printUsage(stdout)
-		}
+		printUsage(stdout, mode)
 		return 0
 	}
-	if mode == "doctor" {
-		return runDoctor(args, logger, stdout, stderr)
+	switch mode {
+	case "doctor":
+		return runDoctor(args, stdout, stderr)
+	case "status":
+		return runStatus(args, stdout, stderr)
+	case "cancel":
+		return runCancel(args, stdout, stderr)
+	default:
+		return runJob(args, stdout, stderr)
 	}
+}
 
-	configPath, names, output, err := parseArgs(args)
+func loadClient(configPath string) (*stress.ControlClient, error) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	return stress.NewControlClient(cfg.Stress.ControlSocket)
+}
+
+func runJob(args []string, stdout, stderr io.Writer) int {
+	configPath, names, output, timeout, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, "stress:", err)
 		return 2
 	}
-	cfg, err := config.Load(configPath)
+	client, err := loadClient(configPath)
 	if err != nil {
-		fmt.Fprintln(stderr, "stress: load config:", err)
+		fmt.Fprintln(stderr, "stress:", err)
 		return 1
 	}
-
-	manager := stress.NewManagerWithLogger(cfg.Stress, logger)
-	report, err := manager.StartWithOptions(names, stress.RunOptions{Initiator: stress.InitiatorCLI})
+	ctx := context.Background()
+	report, err := client.Start(ctx, stress.ControlStartRequest{Benchmarks: names, TimeoutSeconds: int64(timeout / time.Second), Initiator: stress.InitiatorCLI})
 	if err != nil {
-		if errors.Is(err, stress.ErrBusy) && report.JobID != "" {
-			fmt.Fprintf(stderr, "stress: %v (job_id=%s initiator=%s)\n", err, report.JobID, report.Initiator)
-			return 1
-		}
 		fmt.Fprintln(stderr, "stress:", err)
 		return 1
 	}
 	for report.Status == stress.StatusRunning {
-		time.Sleep(200 * time.Millisecond)
-		report, err = manager.Job(report.JobID)
+		time.Sleep(250 * time.Millisecond)
+		report, err = client.Job(ctx, report.JobID)
 		if err != nil {
 			fmt.Fprintln(stderr, "stress:", err)
 			return 1
 		}
 	}
-
-	if output == "table" {
-		printTable(stdout, report)
-	} else {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(stdout, string(data))
-	}
+	printReport(stdout, report, output)
 	if report.Status != stress.StatusHealthy {
 		return 1
 	}
+	return 0
+}
+
+func runDoctor(args []string, stdout, stderr io.Writer) int {
+	configPath, output, err := parseDoctorArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress doctor:", err)
+		return 2
+	}
+	client, err := loadClient(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress doctor:", err)
+		return 1
+	}
+	view, err := client.Config(context.Background())
+	if err != nil {
+		fmt.Fprintln(stderr, "stress doctor:", err)
+		return 1
+	}
+	result := doctorResult{Status: "pass", FeatureEnabled: view.FeatureEnabled, WebEnabled: view.WebEnabled}
+	enabled := 0
+	for _, benchmark := range view.Benchmarks {
+		item := doctorItem{
+			Name: benchmark.Name, Enabled: benchmark.Enabled, Available: benchmark.Available,
+			Status: stress.CheckFail, Message: benchmark.Message, Profile: benchmark.Profile,
+			ProfileError: benchmark.ProfileError,
+		}
+		if !benchmark.Enabled {
+			item.Status = stress.CheckUnsupported
+		} else {
+			enabled++
+			if benchmark.Available {
+				item.Status = stress.CheckPass
+				if benchmark.ProfileError != "" || (benchmark.Profile != nil && benchmark.Profile.Preflight.Status == stress.CheckWarn) {
+					item.Status = stress.CheckWarn
+				}
+			} else {
+				result.Status = "fail"
+			}
+		}
+		result.Benchmarks = append(result.Benchmarks, item)
+	}
+	if !view.FeatureEnabled || enabled == 0 {
+		result.Status = "fail"
+	}
+	if output == "table" {
+		printDoctorTable(stdout, result)
+	} else {
+		printJSON(stdout, result)
+	}
+	if result.Status != "pass" {
+		return 1
+	}
+	return 0
+}
+
+func runStatus(args []string, stdout, stderr io.Writer) int {
+	configPath, jobID, output, err := parseJobArgs("stress status", args, false)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress status:", err)
+		return 2
+	}
+	client, err := loadClient(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress status:", err)
+		return 1
+	}
+	var report stress.Report
+	if jobID == "" {
+		report, err = client.Latest(context.Background())
+	} else {
+		report, err = client.Job(context.Background(), jobID)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "stress status:", err)
+		return 1
+	}
+	printReport(stdout, report, output)
+	return 0
+}
+
+func runCancel(args []string, stdout, stderr io.Writer) int {
+	configPath, jobID, _, err := parseJobArgs("stress cancel", args, true)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress cancel:", err)
+		return 2
+	}
+	client, err := loadClient(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "stress cancel:", err)
+		return 1
+	}
+	if err := client.Cancel(context.Background(), jobID); err != nil {
+		fmt.Fprintln(stderr, "stress cancel:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Cancellation accepted for stress job %s\n", jobID)
 	return 0
 }
 
@@ -89,44 +190,30 @@ func helpRequested(args []string) bool {
 	return false
 }
 
-func printUsage(output io.Writer) {
+func printUsage(output io.Writer, mode string) {
+	if mode == "doctor" {
+		fmt.Fprintln(output, "Usage:\n  catmonitor stress doctor [-c config.yaml] [-o json|table]\n\nRead daemon-owned workload preflight; never starts a workload.")
+		return
+	}
+	if mode == "status" || mode == "cancel" {
+		fmt.Fprintf(output, "Usage:\n  catmonitor stress %s --job JOB_ID [-c config.yaml] [-o json|table]\n", mode)
+		return
+	}
 	fmt.Fprintln(output, `Usage:
-  catmonitor stress [--bench hpl,hpcg,stream,npu_burn] [-c config.yaml] [-o json|table]
+  catmonitor stress [run] [--bench hpl,hpcg,stream,npu_burn] [--timeout 30s] [-c config.yaml] [-o json|table]
   catmonitor stress doctor [-c config.yaml] [-o json|table]
+  catmonitor stress status [--job JOB_ID] [-c config.yaml] [-o json|table]
+  catmonitor stress cancel --job JOB_ID [-c config.yaml]
 
-Run explicitly enabled Linux stress benchmarks.
-Without --bench, run default_benchmarks from the CATMonitor configuration.
-Without --config, load CATMONITOR_CONFIG or the platform default path.
-
-Options:
-  -b, --bench       Comma-separated benchmark names
-  -c, --config      CATMonitor configuration file path
-  -o, --output      json (default) or table
-  -h, --help        Show this help`)
-}
-
-func printDoctorUsage(output io.Writer) {
-	fmt.Fprintln(output, `Usage:
-  catmonitor stress doctor [-c config.yaml] [-o json|table]
-
-Run read-only deployment checks for every configured stress benchmark.
-The command never starts a benchmark, container, or MPI workload.
-
-Options:
-  -c, --config      CATMonitor configuration file path
-  -o, --output      json (default) or table
-  -h, --help        Show this help`)
+The CLI is a client of the local catmonitor daemon Stress Controller.`)
 }
 
 type doctorResult struct {
 	Status         string       `json:"status"`
 	FeatureEnabled bool         `json:"feature_enabled"`
 	WebEnabled     bool         `json:"web_enabled"`
-	ScriptPath     string       `json:"script_path,omitempty"`
-	ReportPath     string       `json:"report_path,omitempty"`
 	Benchmarks     []doctorItem `json:"benchmarks"`
 }
-
 type doctorItem struct {
 	Name         string                   `json:"name"`
 	Enabled      bool                     `json:"enabled"`
@@ -137,83 +224,10 @@ type doctorItem struct {
 	ProfileError string                   `json:"profile_error,omitempty"`
 }
 
-func runDoctor(args []string, logger *slog.Logger, stdout, stderr io.Writer) int {
-	configPath, output, err := parseDoctorArgs(args)
-	if err != nil {
-		fmt.Fprintln(stderr, "stress doctor:", err)
-		return 2
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		fmt.Fprintln(stderr, "stress doctor: load config:", err)
-		return 1
-	}
-
-	manager := stress.NewManagerWithLogger(cfg.Stress, logger)
-	result := doctorResult{
-		Status:         "pass",
-		FeatureEnabled: cfg.Stress.Enabled,
-		WebEnabled:     cfg.Stress.WebEnabled,
-		ScriptPath:     cfg.Stress.ScriptPath,
-		ReportPath:     cfg.Stress.ReportPath,
-	}
-	names := make([]string, 0, len(cfg.Stress.Benchmarks))
-	for name := range cfg.Stress.Benchmarks {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	enabledCount := 0
-	for _, name := range names {
-		benchmark := cfg.Stress.Benchmarks[name]
-		available, message := manager.Availability(name)
-		item := doctorItem{
-			Name: name, Enabled: benchmark.Enabled, Available: available,
-			Status: stress.CheckFail, Message: message,
-		}
-		if !benchmark.Enabled {
-			item.Status = stress.CheckUnsupported
-		} else {
-			enabledCount++
-			if cfg.Stress.Enabled {
-				profile, profileErr := manager.Describe(name)
-				item.Profile = profile
-				if profileErr != nil {
-					item.ProfileError = profileErr.Error()
-				}
-				if available {
-					item.Status = stress.CheckPass
-					if profileErr != nil || (profile != nil && profile.Preflight.Status == stress.CheckWarn) {
-						item.Status = stress.CheckWarn
-					}
-				}
-			}
-			if !available {
-				result.Status = "fail"
-			}
-		}
-		result.Benchmarks = append(result.Benchmarks, item)
-	}
-	if !cfg.Stress.Enabled || enabledCount == 0 {
-		result.Status = "fail"
-	}
-
-	if output == "table" {
-		printDoctorTable(stdout, result)
-	} else {
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(stdout, string(data))
-	}
-	if result.Status != "pass" {
-		return 1
-	}
-	return 0
-}
-
 func parseDoctorArgs(args []string) (string, string, error) {
 	fs := flag.NewFlagSet("stress doctor", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := platform.ConfigPath()
-	output := "json"
+	configPath, output := platform.ConfigPath(), "json"
 	fs.StringVar(&configPath, "config", configPath, "CATMonitor configuration file")
 	fs.StringVar(&configPath, "c", configPath, "CATMonitor configuration file")
 	fs.StringVar(&output, "output", output, "json or table")
@@ -225,55 +239,94 @@ func parseDoctorArgs(args []string) (string, string, error) {
 		return "", "", fmt.Errorf("unknown argument %q", fs.Arg(0))
 	}
 	if output != "json" && output != "table" {
-		return "", "", fmt.Errorf("output must be json or table")
+		return "", "", errorsOutput()
 	}
 	return configPath, output, nil
 }
 
-func printDoctorTable(output io.Writer, result doctorResult) {
-	fmt.Fprintf(output, "\nCATMonitor Stress Doctor  %s\n", strings.ToUpper(result.Status))
-	w := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Benchmark\tEnabled\tAvailable\tPreflight\tMessage")
-	for _, item := range result.Benchmarks {
-		fmt.Fprintf(w, "%s\t%t\t%t\t%s\t%s\n",
-			item.Name, item.Enabled, item.Available, strings.ToUpper(string(item.Status)), item.Message)
-	}
-	_ = w.Flush()
-}
-
-func parseArgs(args []string) (string, []string, string, error) {
+func parseArgs(args []string) (string, []string, string, time.Duration, error) {
 	fs := flag.NewFlagSet("stress", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := platform.ConfigPath()
-	benchmarks := ""
-	output := "json"
+	configPath, benchmarks, output := platform.ConfigPath(), "", "json"
+	var timeout time.Duration
 	fs.StringVar(&configPath, "config", configPath, "CATMonitor configuration file")
 	fs.StringVar(&configPath, "c", configPath, "CATMonitor configuration file")
 	fs.StringVar(&benchmarks, "bench", benchmarks, "comma-separated benchmarks")
 	fs.StringVar(&benchmarks, "b", benchmarks, "comma-separated benchmarks")
 	fs.StringVar(&output, "output", output, "json or table")
 	fs.StringVar(&output, "o", output, "json or table")
+	fs.DurationVar(&timeout, "timeout", 0, "single-job timeout shorter than the configured maximum")
 	if err := fs.Parse(args); err != nil {
-		return "", nil, "", err
+		return "", nil, "", 0, err
 	}
 	if fs.NArg() != 0 {
-		return "", nil, "", fmt.Errorf("unknown argument %q", fs.Arg(0))
+		return "", nil, "", 0, fmt.Errorf("unknown argument %q", fs.Arg(0))
 	}
 	if output != "json" && output != "table" {
-		return "", nil, "", fmt.Errorf("output must be json or table")
+		return "", nil, "", 0, errorsOutput()
 	}
-
 	var names []string
 	if benchmarks != "" {
 		for _, name := range strings.Split(benchmarks, ",") {
 			name = strings.TrimSpace(name)
 			if name == "" {
-				return "", nil, "", fmt.Errorf("benchmark names cannot be empty")
+				return "", nil, "", 0, fmt.Errorf("benchmark names cannot be empty")
 			}
 			names = append(names, name)
 		}
 	}
-	return configPath, names, output, nil
+	if timeout < 0 || (timeout > 0 && timeout < time.Second) {
+		return "", nil, "", 0, fmt.Errorf("timeout must be zero or at least 1s")
+	}
+	return configPath, names, output, timeout, nil
+}
+
+func parseJobArgs(name string, args []string, requireJob bool) (string, string, string, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath, jobID, output := platform.ConfigPath(), "", "json"
+	fs.StringVar(&configPath, "config", configPath, "CATMonitor configuration file")
+	fs.StringVar(&configPath, "c", configPath, "CATMonitor configuration file")
+	fs.StringVar(&jobID, "job", jobID, "stress job id")
+	fs.StringVar(&output, "output", output, "json or table")
+	fs.StringVar(&output, "o", output, "json or table")
+	if err := fs.Parse(args); err != nil {
+		return "", "", "", err
+	}
+	if fs.NArg() != 0 {
+		return "", "", "", fmt.Errorf("unknown argument %q", fs.Arg(0))
+	}
+	if requireJob && jobID == "" {
+		return "", "", "", fmt.Errorf("--job is required")
+	}
+	if output != "json" && output != "table" {
+		return "", "", "", errorsOutput()
+	}
+	return configPath, jobID, output, nil
+}
+
+func errorsOutput() error { return fmt.Errorf("output must be json or table") }
+
+func printDoctorTable(output io.Writer, result doctorResult) {
+	fmt.Fprintf(output, "\nCATMonitor Stress Doctor  %s\n", strings.ToUpper(result.Status))
+	w := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Benchmark\tEnabled\tAvailable\tPreflight\tMessage")
+	for _, item := range result.Benchmarks {
+		fmt.Fprintf(w, "%s\t%t\t%t\t%s\t%s\n", item.Name, item.Enabled, item.Available, strings.ToUpper(string(item.Status)), item.Message)
+	}
+	_ = w.Flush()
+}
+
+func printReport(output io.Writer, report stress.Report, format string) {
+	if format == "table" {
+		printTable(output, report)
+	} else {
+		printJSON(output, report)
+	}
+}
+func printJSON(output io.Writer, value any) {
+	data, _ := json.MarshalIndent(value, "", "  ")
+	fmt.Fprintln(output, string(data))
 }
 
 func printTable(output io.Writer, report stress.Report) {
@@ -287,20 +340,15 @@ func printTable(output io.Writer, report stress.Report) {
 		}
 		sort.Strings(keys)
 		if len(keys) == 0 {
-			fmt.Fprintf(w, "%s\t%s\t%s\t-\t-\t%s\n",
-				result.Name, statusLabel(result.Status), formatDuration(result.DurationMS), result.Message)
+			fmt.Fprintf(w, "%s\t%s\t%s\t-\t-\t%s\n", result.Name, statusLabel(result.Status), formatDuration(result.DurationMS), result.Message)
 			continue
 		}
 		for i, key := range keys {
 			name, status, duration, message := "", "", "", ""
 			if i == 0 {
-				name = result.Name
-				status = statusLabel(result.Status)
-				duration = formatDuration(result.DurationMS)
-				message = result.Message
+				name, status, duration, message = result.Name, statusLabel(result.Status), formatDuration(result.DurationMS), result.Message
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				name, status, duration, key, formatValue(result.Values[key]), message)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name, status, duration, key, formatValue(result.Values[key]), message)
 		}
 	}
 	_ = w.Flush()
@@ -318,11 +366,9 @@ func statusLabel(status stress.Status) string {
 		return strings.ToUpper(string(status))
 	}
 }
-
 func formatDuration(milliseconds int64) string {
 	return (time.Duration(milliseconds) * time.Millisecond).String()
 }
-
 func formatValue(value float64) string {
 	if math.Trunc(value) == value {
 		return fmt.Sprintf("%.0f", value)

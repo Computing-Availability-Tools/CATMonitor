@@ -18,7 +18,7 @@ curl -s http://localhost:9333/metrics | head   # 抓取 node_exporter 风格指�
 ```
 
 > Web 仪表盘（可选）：`./bin/catmonitor-web -snapshot-dir /var/lib/catmonitor/snapshot`，浏览器打开 http://localhost:19322。
-> 容器化部署（可选）：`docker/docker/build.sh && docker compose -f docker/docker-compose.yml up -d`，详见 [§12](#12-容器化部署) 与 [docker/README.md](../docker/README.md)。
+> 容器化部署（可选）：`docker/build.sh && docker compose -f docker/docker-compose.yml up -d`，详见 [§12](#12-容器化部署) 与 [docker/README.md](../docker/README.md)。
 
 ## 目录
 
@@ -125,15 +125,18 @@ health:
 stress:
   enabled: false
   web_enabled: false
-  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  control_socket: /run/catmonitor/control.sock
   report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
   benchmarks:
-    stream: { enabled: false, timeout: 1m }
-    hpl: { enabled: false, timeout: 2h }
-    hpcg: { enabled: false, result_dir: "", timeout: 3m }
-    npu_burn: { enabled: false, timeout: 30m }
-
+    stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
+    hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
+    hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
 collection:
   min_priority: medium     # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 
@@ -292,13 +295,20 @@ Server Type:    cpu_only
 
 ```bash
 catmonitor stress --help
-catmonitor stress -o table                  # 运行 YAML 的 default_benchmarks
-catmonitor stress --bench stream -o table   # 覆盖本次运行项目
-catmonitor stress --bench npu_burn -o table # Ascend NPU Burn（需节点安装和脚本适配）
-catmonitor stress -o json                   # 回显完整 JSON 报告
+catmonitor stress doctor -o table
+catmonitor stress run --bench stream -o table
+catmonitor stress run --bench npu_burn -o table
+catmonitor stress status -o json
+catmonitor stress cancel --job JOB_ID
 ```
 
-stress 只在用户显式请求时运行。主配置只定义功能开关、共享报告、项目和最大运行窗口；benchmark 绝对路径、环境变量和 MPI/NUMA 参数由节点部署的 `benchmark_check.sh` 维护。Ascend NPU Burn 固定源码随仓库提供，管理员只需准备匹配的原生依赖或 CANN/torch_npu 基础镜像并构建运行环境；脚本校验其 `npu_burn_results.csv` 全部 PASS、无 SDC 错误且全局设备汇总无 FAIL。CLI 与 Web 共享报告和 Linux 文件锁，不能同时启动两组作业。日常启用与使用见 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，完整构建、适配、升级及验收见 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
+stress 只在用户显式请求时运行。daemon 是唯一 Stress Controller；CLI 与 Web 通过
+`/run/catmonitor/control.sock` 查看和控制同一作业，daemon 再用固定 Docker Executor
+调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置只声明
+启用项目、容器和最大运行窗口，MPI、线程、问题规模和 NPU logical ID 固化在 workload
+profile 中，不能由 Web 编辑。日常部署与使用见
+[STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，自动化与实机验收见
+[STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 3.6 daemon — 守护进程
 
@@ -321,7 +331,7 @@ daemon 启动后：
 
 ## 4. Web 仪表盘（catmonitor-web）
 
-独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标，不再自行采集。独立 stress feature 可按主配置额外挂载受保护的作业接口，但不会写 snapshot。
+独立二进制，**只读消费** daemon 产出的 snapshot（global `snapshot.json` + per-comp `snapshot_<comp>.json`），可视化单机健康度与各部件指标，不再自行采集。启用 Stress 时，Web 还可通过 daemon 的只读挂载 control socket 查询和控制作业；Web 自身不加载 CATMonitor YAML、不执行 workload，也不挂 Docker Socket。
 
 ### 4.1 启动
 
@@ -334,7 +344,8 @@ catmonitor daemon
 
 # 再启动 web 只读消费者（-snapshot-dir 须与 daemon snapshot.dir 一致）
 catmonitor-web -addr :19322 -snapshot-dir /var/lib/catmonitor/snapshot
-# 非标准主配置路径追加：-config /path/to/catmonitor.yaml
+# 启用 Stress 时追加：-control-socket /run/catmonitor/control.sock
+# -config 仅为旧启动命令兼容参数，V2 Web 不读取该文件
 # 浏览器打开 http://<server-address>:19322（实际端口见启动日志 "web server starting"）
 ```
 
@@ -344,7 +355,7 @@ catmonitor-web -addr :19322 -snapshot-dir /var/lib/catmonitor/snapshot
 
 - **概览页**（`/`）：整体健康度（总分 + 进度条 + 等级）+ 设备规格面板（点击展开完整规格）+ 各部件状态 + 部件概览卡片（含趋势 sparkline）
 - **部件详情页**（`#/<component>`，如 `#/cpu`）：部件得分/扣分项 + 趋势面板（该部件全部历史序列 sparkline，数据来自 daemon 产出的 per-comp history）+ 全部指标表
-- **可靠性压测**（`/stress/`）：独立页面；默认只读展示配置和共享报告，只有 Linux、回环监听及 `stress.enabled/web_enabled` 均满足时才能提交作业
+- **可靠性压测**（`/stress/`）：同一 `:19322` listener 下的独立页面；daemon control socket 可达，且 `stress.enabled/web_enabled` 与项目预检均通过时可提交作业
 
 ### 4.3 REST API（只读）
 
@@ -573,22 +584,26 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 
 ## 12. 容器化部署
 
-CATMonitor 提供容器化方案，支持 NPU 与通用两种镜像。完整文档见 [docker/README.md](../docker/README.md)。
+CATMonitor 提供 Generic、NVIDIA GPU、Ascend NPU 三类 Control 镜像，以及按需启用的 CPU/NPU Stress workload 镜像。完整文档见 [docker/README.md](../docker/README.md)。
 
 ### 12.1 镜像类型
 
 | 镜像 | 适用环境 | 说明 |
 |------|---------|------|
 | `catmonitor-npu` | 有 Ascend NPU | Debian/glibc 两步构建（golang 容器挂载 driver 编译 + debian 运行时打包），链接 `libdcmi.so`，采集 120 项 NPU 指标 |
-| `catmonitor-generic` | 无 NPU（纯 CPU/GPU） | alpine 多阶段构建，纯 Go 编译，不依赖 NPU 驱动 |
+| `catmonitor-gpu` | 有 NVIDIA GPU | NVIDIA Control 镜像；监控 GPU，CPU Stress 仍由独立 workload 镜像提供 |
+| `catmonitor-generic` | 无 GPU/NPU 的通用节点 | Alpine 多阶段构建，纯 Go 编译，不依赖硬件驱动 |
+| `catmonitor-stress-cpu` | 可选 CPU Stress | 包含 STREAM/HPL/HPCG、MPI/OpenBLAS 与 `catmonitor-stress-exec`，不包含 Control/Web |
+| `catmonitor-stress-npu` | 可选 Ascend NPU Stress | 包含 CANN/torch_npu/NPU Burn 与 `catmonitor-stress-exec`，仅在匹配的 Ascend 节点启用 |
 
 ### 12.2 构建与启动
 
 ```bash
 cd CATMonitor
-docker/docker/build.sh            # 自动检测 NPU driver（有则 npu，无则 generic）
-docker/docker/build.sh npu         # 强制 NPU 镜像
-docker/docker/build.sh generic    # 强制通用镜像
+docker/build.sh            # 自动检测 NPU driver（有则 npu，无则 generic）
+docker/build.sh npu         # 强制 NPU Control 镜像
+docker/build.sh gpu         # 强制 NVIDIA GPU Control 镜像
+docker/build.sh generic     # 强制 Generic Control 镜像
 
 # Docker Compose 一键启动 daemon + web + dfee 三服务
 docker compose -f docker/docker-compose.yml up -d

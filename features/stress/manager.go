@@ -1,6 +1,5 @@
 package stress
 
-// Manager implements the explicit benchmark job lifecycle.
 import (
 	"context"
 	"crypto/rand"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
 )
 
 var (
@@ -24,51 +25,17 @@ var (
 )
 
 const (
-	maxOutputBytes     = 16 * 1024
 	maxHistoryReports  = 100
 	defaultHistoryRead = 20
+	transportGrace     = 30 * time.Second
 )
 
-// boundedOutput keeps only the tail of combined stdout/stderr. HPL emits its
-// result row and residual summary near the end, while STREAM output is small
-// and HPCG is parsed from its result file. This bounds memory during execution
-// instead of collecting unbounded output and truncating only afterwards.
-type boundedOutput struct {
-	mu        sync.Mutex
-	data      []byte
-	truncated bool
-}
-
-func (b *boundedOutput) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	written := len(p)
-	if len(p) >= maxOutputBytes {
-		b.data = append(b.data[:0], p[len(p)-maxOutputBytes:]...)
-		b.truncated = true
-		return written, nil
-	}
-	if overflow := len(b.data) + len(p) - maxOutputBytes; overflow > 0 {
-		copy(b.data, b.data[overflow:])
-		b.data = b.data[:len(b.data)-overflow]
-		b.truncated = true
-	}
-	b.data = append(b.data, p...)
-	return written, nil
-}
-
-func (b *boundedOutput) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if !b.truncated {
-		return string(b.data)
-	}
-	return "… output truncated; showing tail\n" + string(b.data)
-}
-
+// Manager is the daemon-owned Stress Controller. CLI and Web use the daemon
+// control API and never construct an executing Manager.
 type Manager struct {
 	cfg         Config
 	logger      *slog.Logger
+	executor    Executor
 	writeReport func(Report) error
 
 	mu           sync.Mutex
@@ -79,24 +46,41 @@ type Manager struct {
 }
 
 type activeJob struct {
-	cancel      context.CancelFunc
-	done        chan struct{}
-	releaseLock func() error
-	report      Report
+	cancel context.CancelFunc
+	done   chan struct{}
+	report Report
 }
 
-func NewManager(cfg Config) *Manager {
-	return NewManagerWithLogger(cfg, nil)
-}
+func NewManager(cfg Config) *Manager { return NewManagerWithLogger(cfg, nil) }
 
 func NewManagerWithLogger(cfg Config, logger *slog.Logger) *Manager {
-	manager := &Manager{
-		cfg:          copyConfig(cfg),
-		logger:       logger,
+	executor, err := newConfiguredExecutor(cfg.Executor)
+	if err != nil {
+		executor = unavailableExecutor{err: fmt.Errorf("%w: %v", ErrExecutorUnavailable, err)}
+	}
+	return NewManagerWithExecutor(cfg, logger, executor)
+}
+
+func NewManagerWithExecutor(cfg Config, logger *slog.Logger, executor Executor) *Manager {
+	if executor == nil {
+		executor = unavailableExecutor{err: ErrExecutorUnavailable}
+	}
+	m := &Manager{
+		cfg: copyConfig(cfg), logger: logger, executor: executor,
 		profileCache: make(map[string]profileCacheEntry),
 	}
-	manager.writeReport = manager.writeReportFile
-	return manager
+	m.writeReport = m.writeReportFile
+	return m
+}
+
+func newConfiguredExecutor(cfg ExecutorConfig) (Executor, error) {
+	if cfg.Type == "" {
+		cfg.Type = "docker_exec"
+	}
+	if cfg.Type != "docker_exec" {
+		return nil, fmt.Errorf("unsupported executor type %q", cfg.Type)
+	}
+	return NewDockerExecExecutor(cfg)
 }
 
 func (m *Manager) Config() Config { return copyConfig(m.cfg) }
@@ -107,14 +91,17 @@ func (m *Manager) Start(names []string) (Report, error) {
 
 func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if !m.cfg.Enabled {
+		m.mu.Unlock()
 		return Report{}, ErrDisabled
 	}
 	if m.active != nil {
-		m.logWarn("stress job rejected because another job is running", "job_id", m.active.report.JobID)
-		return *copyReport(m.active.report), ErrBusy
+		active := *copyReport(m.active.report)
+		m.mu.Unlock()
+		return active, ErrBusy
 	}
+	m.mu.Unlock()
+
 	selected, err := m.selected(names)
 	if err != nil {
 		return Report{}, err
@@ -122,44 +109,35 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 	if err := m.validateTimeout(selected, options.Timeout); err != nil {
 		return Report{}, err
 	}
-	if runtime.GOOS == "linux" {
-		for _, name := range selected {
-			if available, message := m.Availability(name); !available {
-				return Report{}, fmt.Errorf("benchmark %q is unavailable: %s", name, message)
-			}
-		}
+	if runtime.GOOS != "linux" {
+		return Report{}, errors.New("stress execution is supported on Linux only")
 	}
+
+	// Describe may invoke an external workload container. Keep it outside the
+	// Manager lock so read-only control requests remain responsive.
 	profiles := make(map[string]*ExecutionProfile, len(selected))
 	for _, name := range selected {
-		profile, err := m.describeWithTimeout(name, options.Timeout)
-		if err != nil {
-			return Report{}, fmt.Errorf("benchmark %q describe/preflight failed: %w", name, err)
+		profile, describeErr := m.describeWithTimeout(name, options.Timeout)
+		if describeErr != nil {
+			return Report{}, fmt.Errorf("benchmark %q describe/preflight failed: %w", name, describeErr)
+		}
+		if profile.Preflight.Status == CheckFail {
+			return Report{}, fmt.Errorf("benchmark %q is unavailable: %s", name, failedPreflightMessage(profile))
 		}
 		profiles[name] = profile
 	}
-	releaseLock, err := acquireJobLock(m.cfg.ReportPath)
-	if errors.Is(err, ErrBusy) {
-		report, readErr := m.readReportFile()
-		if readErr == nil {
-			m.last = copyReport(report)
-			m.logWarn("stress job rejected because another process is running", "job_id", report.JobID, "initiator", report.Initiator)
-			return *copyReport(report), ErrBusy
-		}
-		m.logWarn("stress job rejected because another process is running", "report_error", readErr)
-		return Report{}, ErrBusy
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active != nil {
+		return *copyReport(m.active.report), ErrBusy
 	}
-	if err != nil {
-		return Report{}, fmt.Errorf("persist initial stress report coordination: %w", err)
-	}
+
 	now := time.Now()
 	report := Report{
-		JobID:               newJobID(),
-		Initiator:           options.Initiator,
-		Timestamp:           now,
-		StartedAt:           now,
-		Platform:            runtime.GOOS,
+		JobID: newJobID(), Initiator: options.Initiator, Timestamp: now,
+		StartedAt: now, Platform: runtime.GOOS, Status: StatusRunning,
 		TimeoutSeconds:      options.Timeout.Milliseconds() / 1000,
-		Status:              StatusRunning,
 		ConfigurationSHA256: aggregateConfigurationSHA256(selected, profiles),
 	}
 	for _, name := range selected {
@@ -168,18 +146,17 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 		})
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m.active = &activeJob{cancel: cancel, done: make(chan struct{}), releaseLock: releaseLock, report: report}
+	m.active = &activeJob{cancel: cancel, done: make(chan struct{}), report: report}
 	if err := m.persistReportLocked(&m.active.report); err != nil {
 		cancel()
-		_ = releaseLock()
 		m.active = nil
 		return Report{}, fmt.Errorf("persist initial stress report: %w", err)
 	}
 	m.last = copyReport(m.active.report)
-	startedReport := *copyReport(m.active.report)
-	m.logInfo("stress job started", "job_id", report.JobID, "initiator", report.Initiator, "benchmarks", selected, "timeout_seconds", report.TimeoutSeconds)
+	started := *copyReport(m.active.report)
+	m.logInfo("stress job started", "job_id", report.JobID, "initiator", report.Initiator, "benchmarks", selected)
 	go m.run(ctx, report.JobID, selected, options.Timeout, profiles)
-	return startedReport, nil
+	return started, nil
 }
 
 func (m *Manager) Latest() (Report, error) {
@@ -207,18 +184,6 @@ func (m *Manager) Latest() (Report, error) {
 	return *copyReport(report), nil
 }
 
-func (m *Manager) readReportFile() (Report, error) {
-	data, err := os.ReadFile(m.cfg.ReportPath)
-	if err != nil {
-		return Report{}, err
-	}
-	var report Report
-	if err := json.Unmarshal(data, &report); err != nil {
-		return Report{}, err
-	}
-	return report, nil
-}
-
 func (m *Manager) Job(id string) (Report, error) {
 	report, err := m.Latest()
 	if err != nil || report.JobID != id {
@@ -244,22 +209,15 @@ func (m *Manager) CanCancel(id string) bool {
 	return m.active != nil && m.active.report.JobID == id
 }
 
-// Shutdown cancels the job owned by this Manager and waits for its final report
-// and cross-process lock release. Jobs owned by another process are never
-// cancelled.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	if m.active == nil {
 		m.mu.Unlock()
 		return nil
 	}
-	jobID := m.active.report.JobID
-	cancel := m.active.cancel
-	done := m.active.done
-	m.logInfo("stress manager shutting down active job", "job_id", jobID)
+	jobID, cancel, done := m.active.report.JobID, m.active.cancel, m.active.done
 	cancel()
 	m.mu.Unlock()
-
 	select {
 	case <-done:
 		return nil
@@ -270,15 +228,17 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 func (m *Manager) run(ctx context.Context, jobID string, names []string, timeoutOverride time.Duration, profiles map[string]*ExecutionProfile) {
 	for _, name := range names {
+		if ctx.Err() != nil {
+			m.setBenchmark(name, StatusCancelled, "benchmark cancelled", nil, "", "", time.Now(), true)
+			continue
+		}
 		m.setBenchmark(name, StatusRunning, "", nil, "", "", time.Time{}, false)
-		m.logInfo("stress benchmark started", "job_id", jobID, "benchmark", name)
-		result := m.runBenchmark(ctx, name, timeoutOverride, profiles[name])
+		result := m.runBenchmark(ctx, jobID, name, timeoutOverride, profiles[name])
 		m.finishBenchmark(result)
-		m.logInfo("stress benchmark finished", "job_id", jobID, "benchmark", name, "status", result.Status, "duration_ms", result.DurationMS)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.active == nil {
+	if m.active == nil || m.active.report.JobID != jobID {
 		return
 	}
 	job := m.active
@@ -292,17 +252,157 @@ func (m *Manager) run(ctx context.Context, jobID string, names []string, timeout
 	}
 	m.last = copyReport(report)
 	m.active = nil
-	if err := job.releaseLock(); err != nil {
-		m.logError("stress job lock release failed", "job_id", report.JobID, "error", err)
-	}
 	close(job.done)
-	m.logInfo("stress job finished", "job_id", report.JobID, "initiator", report.Initiator, "status", report.Status, "duration_ms", report.FinishedAt.Sub(report.StartedAt).Milliseconds(), "report_error", report.ReportError)
+	m.logInfo("stress job finished", "job_id", report.JobID, "status", report.Status)
+}
+
+func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutOverride time.Duration, profile *ExecutionProfile) BenchmarkResult {
+	started := time.Now()
+	result := BenchmarkResult{Name: name, Status: StatusUnhealthy, StartedAt: started, Profile: copyExecutionProfile(profile)}
+	finish := func(status Status, message string) BenchmarkResult {
+		result.Status, result.Message, result.FinishedAt = status, message, time.Now()
+		result.DurationMS = result.FinishedAt.Sub(started).Milliseconds()
+		return result
+	}
+
+	benchmark, ok := m.cfg.Benchmarks[name]
+	if !ok || !benchmark.Enabled {
+		return finish(StatusUnavailable, "benchmark is not enabled in configuration")
+	}
+	timeout := effectiveTimeout(benchmark.Timeout)
+	if timeoutOverride > 0 && timeoutOverride < timeout {
+		timeout = timeoutOverride
+	}
+	binding := m.binding(name)
+	request := workloadapi.Request{
+		ProtocolVersion: workloadapi.ProtocolVersion, JobID: jobID,
+		Benchmark: name, TimeoutSeconds: int64(timeout / time.Second),
+		Options: map[string]json.RawMessage{},
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout+transportGrace)
+	defer cancel()
+	envelope, err := m.executor.Run(runCtx, binding, request)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return finish(StatusCancelled, "benchmark cancelled")
+	}
+	if err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return finish(StatusUnhealthy, "workload transport did not return after the configured time limit")
+		}
+		return finish(StatusUnhealthy, fmt.Sprintf("workload executor failed: %v", err))
+	}
+	result.Output, result.Source = envelope.Output, envelope.Source
+	result.Values = copyValues(envelope.Values)
+	status := Status(envelope.Status)
+	switch status {
+	case StatusCancelled:
+		return finish(StatusCancelled, envelope.Message)
+	case StatusUnavailable:
+		return finish(StatusUnavailable, envelope.Message)
+	case StatusUnhealthy:
+		return finish(StatusUnhealthy, envelope.Message)
+	case StatusTimeLimitReached:
+		if name == "npu_burn" {
+			return finish(StatusUnhealthy, "configured time limit reached before Ascend NPU Burn produced a complete validated result")
+		}
+		return finish(StatusTimeLimitReached, envelope.Message)
+	case StatusHealthy:
+	default:
+		return finish(StatusUnhealthy, "workload returned an invalid status")
+	}
+	if len(result.Values) == 0 || result.Source == "" {
+		return finish(StatusUnhealthy, "workload protocol returned no normalized result values")
+	}
+	message := envelope.Message
+	if message == "" {
+		message = "workload completed and required values parsed"
+	}
+	return finish(StatusHealthy, message)
+}
+
+func (m *Manager) binding(name string) Binding {
+	benchmark := m.cfg.Benchmarks[name]
+	plugin := benchmark.Plugin
+	if plugin == "" {
+		plugin = name
+	}
+	return Binding{Benchmark: name, Plugin: plugin, Container: benchmark.Container, User: benchmark.User}
+}
+
+func (m *Manager) Availability(name string) (bool, string) {
+	if runtime.GOOS != "linux" {
+		return false, "stress execution is supported on Linux only"
+	}
+	if !m.cfg.Enabled {
+		return false, "stress testing is disabled"
+	}
+	benchmark, ok := m.cfg.Benchmarks[name]
+	if !ok {
+		return false, "benchmark is not configured"
+	}
+	if !benchmark.Enabled {
+		return false, "benchmark is disabled in configuration"
+	}
+	if err := validateBinding(m.binding(name)); err != nil {
+		return false, err.Error()
+	}
+	profile, err := m.Describe(name)
+	if err != nil {
+		return false, "describe/preflight failed: " + err.Error()
+	}
+	if profile.Preflight.Status == CheckFail {
+		return false, failedPreflightMessage(profile)
+	}
+	if profile.Preflight.Status == CheckWarn {
+		return true, profile.Preflight.Message
+	}
+	return true, "deployment precheck passed"
+}
+
+func failedPreflightMessage(profile *ExecutionProfile) string {
+	if profile == nil {
+		return "deployment preflight failed"
+	}
+	reasons := make([]string, 0, len(profile.Assets)+1)
+	for _, asset := range profile.Assets {
+		if asset.Status == CheckFail {
+			reasons = append(reasons, asset.Name+": "+asset.Message)
+		}
+	}
+	if profile.MPI.Status == CheckFail {
+		reasons = append(reasons, "MPI: "+profile.MPI.Message)
+	}
+	if len(reasons) == 0 {
+		return profile.Preflight.Message
+	}
+	return "deployment preflight failed: " + strings.Join(reasons, "; ")
+}
+
+func (m *Manager) validateTimeout(selected []string, requested time.Duration) error {
+	if requested == 0 {
+		return nil
+	}
+	if requested < 0 {
+		return errors.New("requested timeout must be positive")
+	}
+	for _, name := range selected {
+		maximum := effectiveTimeout(m.cfg.Benchmarks[name].Timeout)
+		if requested > maximum {
+			return fmt.Errorf("requested timeout %s exceeds configured maximum %s for benchmark %q", requested, maximum, name)
+		}
+	}
+	return nil
+}
+
+func effectiveTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return time.Hour
+	}
+	return configured
 }
 
 func aggregateReportStatus(benchmarks []BenchmarkResult) Status {
-	allHealthy := len(benchmarks) > 0
-	hasCancelled := false
-	hasUnavailable, hasUnsupported := false, false
+	allHealthy, hasCancelled, hasUnavailable, hasUnsupported := len(benchmarks) > 0, false, false, false
 	for _, benchmark := range benchmarks {
 		switch benchmark.Status {
 		case StatusHealthy, StatusTimeLimitReached:
@@ -335,183 +435,6 @@ func aggregateReportStatus(benchmarks []BenchmarkResult) Status {
 	return StatusUnhealthy
 }
 
-func (m *Manager) runBenchmark(ctx context.Context, name string, timeoutOverride time.Duration, profile *ExecutionProfile) BenchmarkResult {
-	started := time.Now()
-	result := BenchmarkResult{
-		Name: name, Status: StatusUnhealthy, StartedAt: started,
-		Profile: copyExecutionProfile(profile),
-	}
-	finish := func(status Status, message string) BenchmarkResult {
-		result.Status = status
-		result.Message = message
-		result.FinishedAt = time.Now()
-		result.DurationMS = result.FinishedAt.Sub(started).Milliseconds()
-		return result
-	}
-	if runtime.GOOS != "linux" {
-		return finish(StatusUnsupported, "stress execution is supported on Linux only")
-	}
-	benchmark, ok := m.cfg.Benchmarks[name]
-	if !ok || !benchmark.Enabled {
-		return finish(StatusUnavailable, "benchmark is not enabled in configuration")
-	}
-	if m.cfg.ScriptPath == "" || !isRegularFile(m.cfg.ScriptPath) {
-		return finish(StatusUnavailable, "benchmark script is unavailable")
-	}
-	resultDir := benchmark.ResultDir
-	if name == "hpcg" && (resultDir == "" || !isDir(resultDir)) {
-		return finish(StatusUnavailable, "HPCG result directory is unavailable")
-	}
-	if resultDir == "" {
-		resultDir = filepath.Dir(m.cfg.ScriptPath)
-	}
-	var hpcgBefore map[string]fileSignature
-	if name == "hpcg" {
-		var err error
-		hpcgBefore, err = snapshotHPCGResults(resultDir)
-		if err != nil {
-			return finish(StatusUnavailable, err.Error())
-		}
-	}
-	timeout := effectiveTimeout(benchmark.Timeout)
-	if timeoutOverride > 0 && timeoutOverride < timeout {
-		timeout = timeoutOverride
-	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	args := []string{m.cfg.ScriptPath, name}
-	cmd := benchmarkCommand(runCtx, "bash", args...)
-	cmd.Dir = filepath.Dir(m.cfg.ScriptPath)
-	cmd.Env = os.Environ()
-	var output boundedOutput
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err := cmd.Run()
-	outputText := output.String()
-	result.Output = outputText
-	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-		if name == "npu_burn" {
-			return finish(StatusUnhealthy, "configured time limit reached before Ascend NPU Burn produced a complete validated result")
-		}
-		return finish(StatusTimeLimitReached, "configured time limit reached; benchmark stopped as planned (final performance values were not produced)")
-	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return finish(StatusCancelled, "benchmark cancelled")
-	}
-	if err != nil {
-		if name == "npu_burn" && strings.Contains(outputText, npuBurnSummaryToken) {
-			values, source, parseErr := parseNPUBurn(outputText)
-			if values != nil {
-				result.Values = values
-				result.Source = source
-			}
-			if parseErr != nil {
-				return finish(StatusUnhealthy, fmt.Sprintf("benchmark command failed: %v; %v", err, parseErr))
-			}
-		}
-		return finish(StatusUnhealthy, fmt.Sprintf("benchmark command failed: %v", err))
-	}
-	values, source, err := parseBenchmark(name, outputText, resultDir, hpcgBefore)
-	if err != nil {
-		if values != nil {
-			result.Values = values
-			result.Source = source
-		}
-		return finish(StatusUnhealthy, err.Error())
-	}
-	result.Values = values
-	result.Source = source
-	return finish(StatusHealthy, "command completed and required values parsed")
-}
-
-func (m *Manager) validateTimeout(selected []string, requested time.Duration) error {
-	if requested == 0 {
-		return nil
-	}
-	if requested < 0 {
-		return errors.New("requested timeout must be positive")
-	}
-	for _, name := range selected {
-		maximum := effectiveTimeout(m.cfg.Benchmarks[name].Timeout)
-		if requested > maximum {
-			return fmt.Errorf("requested timeout %s exceeds configured maximum %s for benchmark %q", requested, maximum, name)
-		}
-	}
-	return nil
-}
-
-func effectiveTimeout(configured time.Duration) time.Duration {
-	if configured <= 0 {
-		return time.Hour
-	}
-	return configured
-}
-
-// Availability combines the basic CATMonitor deployment checks with the
-// dispatcher's read-only describe/preflight protocol. A missing or invalid
-// describe response blocks execution because CATMonitor cannot safely verify
-// the effective workload and required assets.
-func (m *Manager) Availability(name string) (bool, string) {
-	if runtime.GOOS != "linux" {
-		return false, "stress execution is supported on Linux only"
-	}
-	if !m.cfg.Enabled {
-		return false, "stress testing is disabled"
-	}
-	if !supportedBenchmark(name) {
-		return false, "unsupported benchmark name"
-	}
-	benchmark, ok := m.cfg.Benchmarks[name]
-	if !ok {
-		return false, "benchmark is not configured"
-	}
-	if !benchmark.Enabled {
-		return false, "benchmark is disabled in configuration"
-	}
-	if m.cfg.ScriptPath == "" || !isRegularFile(m.cfg.ScriptPath) {
-		return false, "benchmark dispatcher script is unavailable"
-	}
-	if name == "hpcg" && (benchmark.ResultDir == "" || !isDir(benchmark.ResultDir)) {
-		return false, "HPCG result directory is unavailable"
-	}
-	profile, err := m.Describe(name)
-	if err != nil {
-		return false, "describe/preflight failed: " + err.Error()
-	}
-	switch profile.Preflight.Status {
-	case CheckFail:
-		return false, failedPreflightMessage(profile)
-	case CheckWarn:
-		return true, profile.Preflight.Message
-	default:
-		return true, "deployment precheck passed"
-	}
-}
-
-func failedPreflightMessage(profile *ExecutionProfile) string {
-	if profile == nil {
-		return "deployment preflight failed"
-	}
-	reasons := make([]string, 0, len(profile.Assets)+1)
-	for _, asset := range profile.Assets {
-		if asset.Status != CheckFail {
-			continue
-		}
-		label := asset.Name
-		if asset.Path != "" {
-			label += " (" + asset.Path + ")"
-		}
-		reasons = append(reasons, label+": "+asset.Message)
-	}
-	if profile.MPI.Status == CheckFail {
-		reasons = append(reasons, "MPI: "+profile.MPI.Message)
-	}
-	if len(reasons) == 0 {
-		return profile.Preflight.Message
-	}
-	return "deployment preflight failed: " + strings.Join(reasons, "; ")
-}
-
 func (m *Manager) setBenchmark(name string, status Status, message string, values map[string]float64, source, output string, finished time.Time, complete bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -519,17 +442,16 @@ func (m *Manager) setBenchmark(name string, status Status, message string, value
 		return
 	}
 	for i := range m.active.report.Benchmarks {
-		result := &m.active.report.Benchmarks[i]
-		if result.Name != name {
+		item := &m.active.report.Benchmarks[i]
+		if item.Name != name {
 			continue
 		}
-		result.Status, result.Message, result.Values, result.Source, result.Output = status, message, values, source, output
+		item.Status, item.Message, item.Values, item.Source, item.Output = status, message, values, source, output
 		if status == StatusRunning {
-			result.StartedAt = time.Now()
+			item.StartedAt = time.Now()
 		}
 		if complete {
-			result.FinishedAt = finished
-			result.DurationMS = finished.Sub(result.StartedAt).Milliseconds()
+			item.FinishedAt, item.DurationMS = finished, finished.Sub(item.StartedAt).Milliseconds()
 		}
 		break
 	}
@@ -561,7 +483,7 @@ func (m *Manager) selected(requested []string) ([]string, error) {
 	if len(names) == 0 {
 		return nil, errors.New("no stress benchmarks configured")
 	}
-	seen := make(map[string]bool, len(names))
+	seen := make(map[string]bool)
 	selected := make([]string, 0, len(names))
 	for _, raw := range names {
 		name := strings.ToLower(strings.TrimSpace(raw))
@@ -571,10 +493,11 @@ func (m *Manager) selected(requested []string) ([]string, error) {
 		if !supportedBenchmark(name) {
 			return nil, fmt.Errorf("benchmark %q is not supported", name)
 		}
-		if _, ok := m.cfg.Benchmarks[name]; !ok {
+		benchmark, ok := m.cfg.Benchmarks[name]
+		if !ok {
 			return nil, fmt.Errorf("benchmark %q is not configured", name)
 		}
-		if !m.cfg.Benchmarks[name].Enabled {
+		if !benchmark.Enabled {
 			return nil, fmt.Errorf("benchmark %q is disabled in configuration", name)
 		}
 		seen[name] = true
@@ -595,25 +518,6 @@ func supportedBenchmark(name string) bool {
 	}
 }
 
-func (m *Manager) persistReportLocked(report *Report) error {
-	report.ReportError = ""
-	if err := m.writeReport(*report); err != nil {
-		report.ReportError = err.Error()
-		m.logError("stress report persistence failed", "job_id", report.JobID, "status", report.Status, "error", err)
-		return err
-	}
-	return nil
-}
-
-func (m *Manager) writeReportFile(report Report) error {
-	if m.cfg.ReportPath == "" {
-		return nil
-	}
-	return writeJSONAtomic(m.cfg.ReportPath, report)
-}
-
-// History returns final reports ordered newest first. The latest report remains
-// the source of truth for running state; history is a bounded operational view.
 func (m *Manager) History(limit int) ([]Report, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -643,6 +547,34 @@ func (m *Manager) History(limit int) ([]Report, error) {
 	return result, nil
 }
 
+func (m *Manager) readReportFile() (Report, error) {
+	data, err := os.ReadFile(m.cfg.ReportPath)
+	if err != nil {
+		return Report{}, err
+	}
+	var report Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		return Report{}, err
+	}
+	return report, nil
+}
+
+func (m *Manager) persistReportLocked(report *Report) error {
+	report.ReportError = ""
+	if err := m.writeReport(*report); err != nil {
+		report.ReportError = err.Error()
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) writeReportFile(report Report) error {
+	if m.cfg.ReportPath == "" {
+		return nil
+	}
+	return writeJSONAtomic(m.cfg.ReportPath, report)
+}
+
 func (m *Manager) appendHistoryFile(report Report) error {
 	if m.cfg.ReportPath == "" {
 		return nil
@@ -654,12 +586,9 @@ func (m *Manager) appendHistoryFile(report Report) error {
 	archived := *copyReport(report)
 	archived.Cancellable = false
 	for i := range archived.Benchmarks {
-		// The bounded command tail is useful in the latest diagnostic report,
-		// but retaining it for every run would make history unnecessarily large.
 		archived.Benchmarks[i].Output = ""
 	}
-	filtered := make([]Report, 0, len(reports)+1)
-	filtered = append(filtered, archived)
+	filtered := []Report{archived}
 	for _, item := range reports {
 		if item.JobID != archived.JobID {
 			filtered = append(filtered, item)
@@ -687,8 +616,7 @@ func (m *Manager) readHistoryFile() ([]Report, error) {
 }
 
 func historyPath(reportPath string) string {
-	dir := filepath.Dir(reportPath)
-	ext := filepath.Ext(reportPath)
+	dir, ext := filepath.Dir(reportPath), filepath.Ext(reportPath)
 	if ext == "" {
 		ext = ".json"
 	}
@@ -706,7 +634,7 @@ func writeJSONAtomic(path string, value any) error {
 		return err
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".stress-*.tmp")
@@ -717,8 +645,7 @@ func writeJSONAtomic(path string, value any) error {
 	if _, err = tmp.Write(data); err == nil {
 		err = tmp.Sync()
 	}
-	closeErr := tmp.Close()
-	if err == nil {
+	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
 	if err == nil {
@@ -735,15 +662,20 @@ func copyReport(report Report) *Report {
 	copy.Benchmarks = append([]BenchmarkResult(nil), report.Benchmarks...)
 	for i := range copy.Benchmarks {
 		copy.Benchmarks[i].Profile = copyExecutionProfile(report.Benchmarks[i].Profile)
-		if report.Benchmarks[i].Values == nil {
-			continue
-		}
-		copy.Benchmarks[i].Values = make(map[string]float64, len(report.Benchmarks[i].Values))
-		for key, value := range report.Benchmarks[i].Values {
-			copy.Benchmarks[i].Values[key] = value
-		}
+		copy.Benchmarks[i].Values = copyValues(report.Benchmarks[i].Values)
 	}
 	return &copy
+}
+
+func copyValues(values map[string]float64) map[string]float64 {
+	if values == nil {
+		return nil
+	}
+	copy := make(map[string]float64, len(values))
+	for key, value := range values {
+		copy[key] = value
+	}
+	return copy
 }
 
 func copyConfig(cfg Config) Config {
@@ -758,34 +690,21 @@ func copyConfig(cfg Config) Config {
 	return copy
 }
 
+func newJobID() string {
+	var value [8]byte
+	if _, err := rand.Read(value[:]); err == nil {
+		return hex.EncodeToString(value[:])
+	}
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
 func (m *Manager) logInfo(message string, args ...any) {
 	if m.logger != nil {
 		m.logger.Info(message, args...)
 	}
 }
-
-func (m *Manager) logWarn(message string, args ...any) {
-	if m.logger != nil {
-		m.logger.Warn(message, args...)
-	}
-}
-
 func (m *Manager) logError(message string, args ...any) {
 	if m.logger != nil {
 		m.logger.Error(message, args...)
 	}
-}
-
-func isRegularFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
-}
-func isDir(path string) bool { info, err := os.Stat(path); return err == nil && info.IsDir() }
-
-func newJobID() string {
-	var bytes [8]byte
-	if _, err := rand.Read(bytes[:]); err == nil {
-		return hex.EncodeToString(bytes[:])
-	}
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }

@@ -42,19 +42,20 @@ health:
 stress:
   enabled: false
   web_enabled: false
-  script_path: /opt/catmonitor/stress/benchmark_check.sh
+  control_socket: /run/catmonitor/control.sock
   report_path: /var/lib/catmonitor/stress/stress-latest.json
   default_benchmarks: [stream]
+  executor:
+    type: docker_exec
+    docker_binary: /usr/bin/docker
+    docker_socket: /var/run/docker.sock
   benchmarks:
-    stream: { enabled: false, timeout: 1m }
-    hpl: { enabled: false, timeout: 2h }
-    # Directory where this host's HPCG writes HPCG-Benchmark*.txt.
-    hpcg: { enabled: false, result_dir: "", timeout: 3m }
-    # Ascend NPU Burn paths and workload parameters stay in benchmark_check.sh.
-    npu_burn: { enabled: false, timeout: 30m }
+    stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
+    hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
+    hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
 
-collection:
-  # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)
+collection:  # Minimum priority to collect: low (all) | medium (skip Low) | high (only High)
   min_priority: medium
 
 # Enabled features. For each name the daemon loads features/<name>/metrics.yaml

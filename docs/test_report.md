@@ -1,5 +1,9 @@
 # CATMonitor 系统测试报告（无 NPU / 无 GPU）
 
+> **Historical V1 test report. Not current v0.3.6 deployment guidance.**
+> 本文仅保存 v0.3.5/V1 当时的测试证据，其中命令、容器、socket 与脚本名称可能已退役；
+> 当前用户必须使用 `docker/README*.md` 和 `features/stress/STRESS_USER_GUIDE.md`。
+
 > **项目**: CATMonitor (Computing Availability Tools Monitor) — CATHelper 底座
 > **测试对象**: 本地 `main` 分支 @ `243082c`（合并 `origin/develop` → main，no-ff，无冲突）
 > **合并内容（本次合并新增/变更）**:

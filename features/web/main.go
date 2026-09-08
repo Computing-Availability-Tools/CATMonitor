@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,104 +15,97 @@ import (
 	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/config"
-	"github.com/Computing-Availability-Tools/CATMonitor/internal/platform"
 )
 
-// catmonitor-web is a standalone read-only binary that serves the CATMonitor
-// web dashboard + API. It reads daemon-produced snapshot files (snapshot.json +
-// snapshot_<comp>.json) from -snapshot-dir, which must match the daemon's
-// snapshot.dir (daemon must run with snapshot.enabled:true and features
-// including web). It does not collect metrics. The independently mounted
-// stress feature may execute only when explicitly enabled in the shared
-// CATMonitor config and the Web listener is loopback-only.
-func main() {
-	addr := flag.String("addr", ":19322", "listen address (port taken => auto +1)")
-	dir := flag.String("snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot dir (must match catmonitor.yaml snapshot.dir)")
-	configPath := flag.String("config", platform.ConfigPath(), "CATMonitor config path (default: platform path or CATMONITOR_CONFIG)")
-	flag.Parse()
-	configExplicit := os.Getenv("CATMONITOR_CONFIG") != ""
-	flag.Visit(func(current *flag.Flag) {
-		if current.Name == "config" {
-			configExplicit = true
-		}
-	})
+type webOptions struct {
+	addr          string
+	snapshotDir   string
+	controlSocket string
+	legacyConfig  string
+}
 
+func parseWebOptions(args []string) (webOptions, error) {
+	var options webOptions
+	flags := flag.NewFlagSet("catmonitor-web", flag.ContinueOnError)
+	flags.StringVar(&options.addr, "addr", ":19322", "listen address (port taken => auto +1)")
+	flags.StringVar(&options.snapshotDir, "snapshot-dir", "/var/lib/catmonitor/snapshot", "daemon snapshot directory")
+	flags.StringVar(&options.controlSocket, "control-socket", "/run/catmonitor/control.sock", "daemon Stress control socket")
+	flags.StringVar(&options.legacyConfig, "config", "", "deprecated compatibility flag; Web reads snapshots and the daemon control socket")
+	if err := flags.Parse(args); err != nil {
+		return webOptions{}, err
+	}
+	if flags.NArg() != 0 {
+		return webOptions{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	return options, nil
+}
+
+func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	stressCfg, configMissing, err := loadWebStressConfig(*configPath, !configExplicit)
+	options, err := parseWebOptions(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return
+	}
 	if err != nil {
-		logger.Error("failed to load CATMonitor config", "path", *configPath, "error", err)
+		logger.Error("invalid command line", "error", err)
+		os.Exit(2)
+	}
+	if options.legacyConfig != "" {
+		logger.Warn("-config is deprecated and ignored; Web reads daemon snapshots and the optional Stress control socket", "path", options.legacyConfig)
+	}
+	client, err := stress.NewControlClient(options.controlSocket)
+	if err != nil {
+		logger.Error("invalid stress control socket", "error", err)
 		os.Exit(1)
 	}
-	if configMissing {
-		logger.Warn("default CATMonitor config is absent; stress feature remains disabled", "path", *configPath)
-	}
-	stressManager := stress.NewManagerWithLogger(stressCfg, logger)
-
-	srv := NewServer(*dir, logger, stressManager, *addr)
-	httpServer := &http.Server{Handler: srv.Routes()}
-
-	ln, bound, err := listenWithFallback(*addr, logger)
+	listener, bound, err := listenWithFallback(options.addr, logger)
 	if err != nil {
 		logger.Error("failed to listen", "error", err)
 		os.Exit(1)
 	}
-
+	server := &http.Server{
+		Handler:           NewServer(options.snapshotDir, logger, client, bound).Routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	errorsCh := make(chan error, 1)
 	go func() {
-		logger.Info("web server starting (snapshot read-only consumer)", "addr", bound, "snapshot_dir", *dir, "config_path", *configPath)
-		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
-			logger.Error("http server error", "error", err)
-			cancel()
-		}
+		logger.Info("web server starting", "addr", bound, "snapshot_dir", options.snapshotDir)
+		errorsCh <- server.Serve(listener)
 	}()
-
-	<-ctx.Done()
-	logger.Info("shutting down", "signal", ctx.Err())
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutCancel()
-	_ = httpServer.Shutdown(shutCtx)
-	stressCtx, stressCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer stressCancel()
-	if err := stressManager.Shutdown(stressCtx); err != nil {
-		logger.Error("stress manager shutdown failed", "error", err)
+	select {
+	case <-ctx.Done():
+	case serveErr := <-errorsCh:
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			logger.Error("web server failed", "error", serveErr)
+		}
+		cancel()
 	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	_ = server.Shutdown(shutdownCtx)
 }
 
-func loadWebStressConfig(path string, allowMissing bool) (stress.Config, bool, error) {
-	catCfg, err := config.Load(path)
-	if err == nil {
-		return catCfg.Stress, false, nil
-	}
-	if allowMissing && errors.Is(err, os.ErrNotExist) {
-		return stress.Config{}, true, nil
-	}
-	return stress.Config{}, false, err
-}
-
-// listenWithFallback tries to listen on initialAddr; if the port is already in
-// use it increments the port until a free one is found, returning the listener
-// and the actual address bound.
 func listenWithFallback(initialAddr string, logger *slog.Logger) (net.Listener, string, error) {
-	host, portStr, err := net.SplitHostPort(initialAddr)
+	host, portString, err := net.SplitHostPort(initialAddr)
 	if err != nil {
-		ln, lerr := net.Listen("tcp", initialAddr)
-		return ln, initialAddr, lerr
+		listener, listenErr := net.Listen("tcp", initialAddr)
+		return listener, initialAddr, listenErr
 	}
-	port, err := strconv.Atoi(portStr)
+	port, err := strconv.Atoi(portString)
 	if err != nil {
-		ln, lerr := net.Listen("tcp", initialAddr)
-		return ln, initialAddr, lerr
+		listener, listenErr := net.Listen("tcp", initialAddr)
+		return listener, initialAddr, listenErr
 	}
 	addr := initialAddr
 	for {
-		ln, lerr := net.Listen("tcp", addr)
-		if lerr == nil {
-			return ln, addr, nil
+		listener, listenErr := net.Listen("tcp", addr)
+		if listenErr == nil {
+			return listener, addr, nil
 		}
-		if !errors.Is(lerr, syscall.EADDRINUSE) {
-			return nil, addr, lerr
+		if !errors.Is(listenErr, syscall.EADDRINUSE) {
+			return nil, addr, listenErr
 		}
 		logger.Warn("port in use, trying next", "addr", addr)
 		port++

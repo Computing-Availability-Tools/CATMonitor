@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build and install STREAM, HPL and HPCG runtime assets for CATMonitor.
 # This administrator-only build tool never edits CATMonitor configuration or
-# the deployed benchmark_check.sh host adapter, and never runs a full stress job.
+# the fixed workload-container plugin, and never runs a full stress job.
 
 set -euo pipefail
 
@@ -69,7 +69,7 @@ Selection and replacement:
   -h, --help                 Show this help
 
 The script performs a short STREAM validation run. It never runs full HPL or
-HPCG workloads. Runtime MPI/NUMA/thread profiles remain in benchmark_check.sh.
+HPCG workloads. Runtime MPI/NUMA/thread profiles are supplied as image-owned plugin environment.
 EOF
 }
 

@@ -2,7 +2,7 @@
 #
 # build_cpu_benchmarks.sh replaces only the six @...@ values below. Runtime
 # process counts, thread counts, binding and transport options do not belong in
-# this file; they remain in the deployed benchmark_check.sh host adapter.
+# this file; they remain in the fixed workload-container plugin.
 
 SHELL        = /bin/sh
 
