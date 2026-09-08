@@ -25,7 +25,7 @@ Scheduler → StragglerStorage.Write(npu metrics)
 
 - `vals` 的键是**全局设备号**（npu-smi 设备编号）。A3 双芯片平台上一卡两芯各占一个键（8 卡 × 2 芯 = 0..15），不再按卡折叠；A2 单芯片平台每卡一个键，等于卡号。
 - 设备号由本模块从采集标签自算，按固定卡槽公式 `device_id = npu_id × chips_per_card + chip_id`（`chips_per_card` 为全平台单卡最大芯片数，取历史所见最大 `chip_id` + 1，跨批次只增不减）：中间某卡掉卡时编号保持稳定、与 npu-smi 一致（保留空洞），不随存活卡数压缩。无需修改采集器。
-- 不带 `chip_id` 的卡级指标（hccn_tool 的 net_tx_bandwidth 等）回退按 `npu_id` 键控，与旧行为一致；显式携带 `device_id` 标签时优先采用。
+- 采集器输出的 NPU 指标（含 hccn_tool 的 `net_tx_bandwidth` 等网络指标）现已统一携带 `chip_id` 标签，因此全部 KPI 均按芯片键控（`device_id = npu_id × chips_per_card + chip_id`）；仅当指标既无 `chip_id` 也无显式 `device_id` 标签时才回退按 `npu_id` 键控（当前采集器已基本不产生此类指标）；显式携带 `device_id` 标签时优先采用。
 - 字段与 straggler `resource.CSVRow` 1:1 对应，straggler 的 JSON reader 直接重建 `TimeSeriesData`（按芯片维度）。
 
 ## 4. 指标映射
@@ -41,11 +41,11 @@ Scheduler → StragglerStorage.Write(npu metrics)
 | rx_pfc_pkt | mac_rx_pfc_pkt_num | npu (hccn_tool) |
 | roce_tx_err_pkt | roce_tx_err_pkt_num | npu (hccn_tool) |
 | roce_out_of_order | roce_out_of_order_num | npu (hccn_tool) |
-| roce_new_pkt_rty | roce_new_pkt_rty / roce_retrans_pkt_num (别名) | npu (hccn_tool)，真机字段名可能不同，别名兼容 |
+| roce_new_pkt_rty | roce_new_pkt_rty_num（主名；别名 roce_new_pkt_rty / roce_retrans_pkt_num / roce_rx_retrans_pkt_num） | npu (hccn_tool)，真机字段名可能不同，按序取第一个命中 |
 | cpu_avg | cpu/usage | 按 cpu 标签聚合，忽略 total |
 
 > 计数器写**原始累计值**（不做 delta），straggler 聚合时累加，语义对齐。
-> hccn_tool 的 `parseStatistics` 是通用 key:value 解析器，无需改代码即可捕获 `roce_new_pkt_rty`（仅 metrics.yaml 登记）。
+> hccn_tool 的 `parseStatistics` 是通用 key:value 解析器，无需改代码即可捕获 `roce_new_pkt_rty_num` 及其各别名（仅 metrics.yaml 登记）。
 
 ## 5. 配置
 

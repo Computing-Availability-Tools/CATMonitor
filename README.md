@@ -8,9 +8,9 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 
 | 项目 | 说明 |
 |------|------|
-| 版本号 | v0.3.6（候选） |
-| 发布时间 | 候选，未发布 |
-| 平台支持 | Linux (x86_64), Windows (x86_64) |
+| 版本号 | v0.3.6 |
+| 发布时间 | 2026-09-08 |
+| 平台支持 | Linux (x86_64, arm64), Windows (x86_64) |
 | 许可证 | Apache-2.0（见 [LICENSE](LICENSE)） |
 
 ## 功能特性
@@ -29,7 +29,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 - **故障订阅推送（faultsub）**：opt-in 特性，对采集到的 NPU 指标做故障判定（卡掉线/健康状态/错误码/HBM UCE/RoCE 链路等），经 **HTTP Webhook** 向已订阅的外部故障管理者推送 `FaultEvent`，并提供订阅注册/快照/事件回补 REST API（`:19321`）。零新依赖（`net/http`），默认关闭
 - **落后节点 KPI 输出（stragglerout）**：opt-in 特性，作为 daemon 的 Storage 插件，把每次采集到的 NPU KPI 指标（温度/功耗/AICore 频率与利用率/HBM 利用率/带宽/RoCE 错误等）按"每时刻×每卡"聚合追加写为日级 JSONL，供 straggler 慢节点检测器消费，替代其自带 `kpi_collect.sh`。默认关闭
 - **来源层架构**：`internal/source/`（15 包）抽象数据获取与解析，采集器不直接读文件/执行命令，无硬件时优雅降级
-- **跨平台**：Linux / Windows 双平台，构建标签隔离平台代码
+- **跨平台**：Linux (x86_64 / arm64) / Windows (x86_64)，构建标签隔离平台代码；纯 Go 构建无架构限制，Linux/arm64 可原生构建运行（NPU DCMI 经 `-tags dcmi` 在 arm64 原生编译，容器化镜像已提供 arm64 制品）
 - **易扩展**：新增部件采集器只需实现统一接口并注册，核心代码零修改
 
 > 各特性功能规格见 [SPEC.md](SPEC.md)，各特性的设计与规格见对应 `features/<feature>/*_SPEC.md`。
@@ -39,7 +39,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 | 项目 | 选型 |
 |------|------|
 | 语言 | Go 1.23.4+（以 `go.mod` 为准） |
-| 平台 | Linux / Windows |
+| 平台 | Linux (x86_64 / arm64) / Windows (x86_64) |
 | 输出 | 本地文件 (JSONL) + Prometheus 文本 (`/metrics`) |
 | 配置 | YAML |
 | 外部依赖 | Go 仅 `gopkg.in/yaml.v3`；GPU 经 `nvidia-smi`，NPU 采集经 `dcmi`(CGo, `-tags dcmi`)/`npu-smi`/`hccn_tool`；可选 NPU 压测源码按 Mulan PSL v2 固定在 `third_party/ascend_npu_burn`，管理员另行准备匹配的 CANN/torch_npu 环境或基础镜像 |
@@ -54,6 +54,9 @@ make all               # 或分别 make build / make web / make dfee
 
 # 节点存在多个 Go 版本时，显式指定已安装的新工具链
 make all GO=/opt/catmonitor/toolchains/go1.25.1/bin/go
+
+# 交叉编译 Linux/arm64 二进制（纯 Go，无 CGo；如在 x86_64 主机上构建）
+GOOS=linux GOARCH=arm64 go build -o bin/catmonitor-linux-arm64 ./cmd/catmonitor
 
 # 配置（Linux）：开启 snapshot 生产以供 web/dfee 只读消费
 cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
@@ -120,7 +123,7 @@ catmonitor stress cancel --job JOB_ID
 | [SPEC.md](SPEC.md) | 功能规格说明书（不含技术细节） |
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单（216 项） |
-| [docs/test_report.md](docs/test_report.md) | v0.3.5/V1 历史测试报告（当前 V2 范围见 Stress 测试指南） |
+| [docs/test_report.md](docs/test_report.md) | v0.3.6 真机测试报告（Ascend 910B4 / linux/arm64 端到端）+ v0.3.5/V1 历史报告 |
 | [docker/README.md](docker/README.md) | 三类 Control、可选 Stress workload、Compose 与手工部署入口 |
 | [docker/DEMO_GUIDE.md](docker/DEMO_GUIDE.md) | Generic Monitoring、CPU Stress、Ascend Full 三阶段交互演示 |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |

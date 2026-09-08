@@ -3,8 +3,8 @@
 适用于没有 NVIDIA GPU 或 Ascend NPU 的 Linux 节点。推荐部署 Monitoring，按需增加
 STREAM、HPL、HPCG CPU Stress。
 
-> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
-> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+> 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
+> `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
 
 ## 1. 前置条件
 
@@ -28,7 +28,7 @@ docker compose version 2>/dev/null || true
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout refactor/unified-stress-platform
+git checkout develop   # v0.3.6（Stress V2 已合并，PR #13）
 ```
 
 当前 Linux/ARM64 Stress 专用镜像如下：

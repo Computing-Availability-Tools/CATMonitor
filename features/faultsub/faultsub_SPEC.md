@@ -42,7 +42,7 @@ daemon (cmd/catmonitor/main.go)
   │                                   ├── webhook: go deliverWebhook → net/http POST
   │                                   └── poll: 已 record，无需动作
   │
-  └── REST :9101 (net/http)
+  └── REST :19321 (net/http)
         ├── POST   /faultsub/subscriptions        注册订阅（声明回调URL/类型/NPU/去抖）
         ├── GET    /faultsub/subscriptions         列出
         ├── GET    /faultsub/subscriptions/{id}    查看
@@ -100,7 +100,7 @@ func (s *FaultStorage) Write(metrics []collector.Metric) error {
 
 ### 3.2 FaultDetector（detector.go）
 
-消费 `[]collector.Metric`，仅处理 `component=="npu"`，按 `npu_id` 分组评估规则。
+消费 `[]collector.Metric`，仅处理 `component=="npu"`，按 `npu_id` 分组评估规则。NPU 指标现已统一携带 `chip_id` 标签，但判定与 `FaultEvent` 分组仍按卡（`npu_id`）进行（detector.go:76 按 `Labels["npu_id"]` 归组），同卡各芯片的指标合并为同一份卡级状态。
 
 **变迁驱动**：维护上一周期各 (npu,type) 的活跃集，仅当故障**新出现**或**恢复**时发事件；持续故障不重复发。事件语义清晰（"某状态改变"）。
 
@@ -172,7 +172,7 @@ Go 1.22+ `ServeMux` 模式路由（`GET /faultsub/subscriptions/{id}`）。见 �
 ```yaml
 faultsub:
   enabled: false            # 默认关闭
-  rest_addr: ":9101"
+  rest_addr: ":19321"
   webhook_timeout: 5s
   webhook_retry: 1
   event_buffer: 1024
@@ -188,6 +188,8 @@ faultsub:
     roce_link_down: true
     driver_unhealthy: false
 ```
+
+> 随发货配置（configs/catmonitor.yaml、docker/catmonitor.yaml）中 `rest_addr` 为 `:19321`；编译内置默认值仍为 `:9101`（internal/config/config.go:137），生产环境建议显式配置 `rest_addr`，避免未使用发货配置时落在旧默认端口。
 
 ---
 
@@ -208,7 +210,7 @@ if cfg.FaultSub.Enabled {
 scheduler := collector.NewScheduler(collector.DefaultRegistry, sink, logger)
 ```
 
-Storage 链路：`Scheduler → FaultStorage(若启用) → CachingStorage → JSONLStorage`。未启用时与现状完全一致。
+Storage 链路（main.go:219-250）：`Scheduler → snapshot.PerCompWriter（若 snapshot 启用）→ FaultStorage（若启用，包装当前链头 sink）→ StragglerStorage（若启用）→ CachingStorage → JSONLStorage`；两 tap 线性组合，同开时均收到写入。snapshot 的 `GlobalWriter` 则直接读 CachingStorage 缓存（不在写链路上）。faultsub 未启用时 sink 保持 CachingStorage（或 StragglerStorage），行为与现状完全一致。
 
 ---
 

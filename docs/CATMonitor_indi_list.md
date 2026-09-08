@@ -3,10 +3,10 @@
 > 本文档列出 CATMonitor 支持的全部服务器运行指标。
 > 每个指标包含：优先级、默认采集周期、默认是否采集、数据来源、采集方法、输出示例。
 >
-> **版本**: v0.3.5 ｜ **更新日期**: 2026-08-25 ｜ **指标总数**: 216（High 26 / Medium 143 / Low 47）
-> **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（15 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi + lspci）。
+> **版本**: v0.3.6 ｜ **更新日期**: 2026-09-08 ｜ **指标总数**: 216（High 26 / Medium 143 / Low 47）
+> **来源层**: 全部 7 个采集器（cpu/memory/disk/network/gpu/npu/chassis）已接入 `internal/source/` 来源层（14 包：proc/sys/ipmi/lscpu/mce/dmesg/dmidecode/statfs/smartctl + dcmi/npu_smi/hccn_tool/nvidia_smi + lspci）。
 > **指标采集目录**：`internal/metrics` + `configs/metrics.yaml`（默认目录）+ 模块自有 `metrics.yaml` 覆盖；High/Medium + 静态身份默认采、Low 诊断默认不采。v0.3.3 起 `collection.min_priority`（low/medium/high）按优先级阈值预过滤；v0.3.3 后续 `features` 配置 + `SetFeatureScope` 白名单（各 feature `metrics.yaml` 并集），非空时只采白名单内且 `priority ≥ min_priority` 指标，`AnyWanted` 跳过全 out-of-scope 子方法。
-> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:19322）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 25 张实时图表 + 内置 Prometheus exporter :9333/metrics + CSV 落盘 + Grafana Dashboard，只读消费 snapshot，:19323）+ `features/stress`（可靠性压测 STREAM/HPL/HPCG/NPU Burn，CLI/Web 共享报告与互斥锁，:19322/stress/）+ `features/exporter`（daemon 内置 Prometheus 导出 :19320/metrics）+ `features/faultsub`（故障订阅推送 :19321）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
+> **特性模块**：`features/snapshot`（snapshot 统一生产，daemon 唯一写者，供只读特性消费）+ `features/web`（独立二进制 `catmonitor-web`，只读消费 snapshot，:19322）+ `features/dfee`（独立二进制 `catmonitor-dfee`，能效监控 34 张实时图表 + 内置 Prometheus exporter :9333/metrics + CSV 落盘 + Grafana Dashboard，只读消费 snapshot，:19323）+ `features/stress`（可靠性压测 STREAM/HPL/HPCG/NPU Burn，CLI/Web 共享报告与互斥锁，:19322/stress/）+ `features/exporter`（daemon 内置 Prometheus 导出 :19320/metrics）+ `features/faultsub`（故障订阅推送 :19321）+ `features/stragglerout`（落后节点 KPI 文件输出，opt-in，供 straggler 慢节点检测器消费）。
 
 ---
 
@@ -24,14 +24,14 @@
 
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
-| CPU | 39 | 4 | 12 | 23 |
-| Memory | 20 | 4 | 7 | 9 |
+| CPU | 39 | 4 | 21 | 14 |
+| Memory | 20 | 4 | 11 | 5 |
 | Disk | 14 | 1 | 9 | 4 |
 | GPU | 8 | 3 | 4 | 1 |
-| NPU | 123 | 11 | 90 | 22 |
+| NPU | 123 | 11 | 91 | 21 |
 | Network | 7 | 1 | 5 | 1 |
-| Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **216** | **26** | **130** | **60** |
+| Chassis | 5 | 2 | 2 | 1 |
+| **合计** | **216** | **26** | **143** | **47** |
 
 ---
 
@@ -47,17 +47,17 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 1.2 | load_average | 系统负载 | High | 3s | 是 | - | /proc/loadavg |
 | 1.3 | temperature | CPU温度 | Medium | 10s | 是 | °C | ipmitool (SDR) |
 | 1.4 | frequency | CPU频率 | Medium | 10s | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq |
-| 1.5 | context_switches | 上下文切换次数 | Low | 10s | 否 | 次/s | /proc/stat (ctxt 行) |
+| 1.5 | context_switches | 上下文切换次数 | Medium | 10s | 否 | 次/s | /proc/stat (ctxt 行) |
 | 1.6 | process_count | 运行进程数 | Low | 10s | 否 | 个 | /proc/loadavg |
 | 1.7 | model_info | CPU型号信息 | Low | 启动时1次 | 是 | - | /proc/cpuinfo |
-| 1.8 | user_time | 用户态运行时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.9 | nice_time | 低优先级用户进程时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.10 | system_time | 内核态运行时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.11 | idle_time | 空闲时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.12 | iowait_time | 等待IO时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.13 | irq_time | 硬中断处理时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.14 | softirq_time | 软中断处理时间 | Low | 10s | 否 | jiffies | /proc/stat |
-| 1.15 | steal_time | 被窃取时间 | Low | 10s | 否 | jiffies | /proc/stat |
+| 1.8 | user_time | 用户态运行时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.9 | nice_time | 低优先级用户进程时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.10 | system_time | 内核态运行时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.11 | idle_time | 空闲时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.12 | iowait_time | 等待IO时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.13 | irq_time | 硬中断处理时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.14 | softirq_time | 软中断处理时间 | Medium | 10s | 否 | jiffies | /proc/stat |
+| 1.15 | steal_time | 被窃取时间 | Medium | 10s | 否 | jiffies | /proc/stat |
 | 1.16 | user_util | 用户态平均利用率 | Medium | 10s | 否 | % | /proc/stat |
 | 1.17 | system_util | 内核态平均利用率 | Medium | 10s | 否 | % | /proc/stat |
 | 1.18 | idle_util | 空闲状态占用率 | Medium | 10s | 否 | % | /proc/stat |
@@ -68,21 +68,20 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 1.23 | isolated_core_num | 核隔离数量 | Medium | 60s | 是 | 个 | /sys/devices/system/cpu/isolated |
 | 1.24 | mem_temperature | CPU内存区域温度 | Medium | 10s | 是 | °C | ipmitool (SDR) |
 | 1.25 | core_num | CPU核数量 | Low | 启动时1次 | 是 | 个 | lscpu |
-| 1.26 | die_core_num | 单个die核数量 | Low | 启动时1次 | 是 | 个 | lscpu |
-| 1.27 | numa_core_num | NUMA核数量 | Low | 启动时1次 | 是 | 个 | lscpu |
-| 1.28 | cpu_num | CPU个数 | Low | 启动时1次 | 是 | 个 | lscpu |
-| 1.29 | avg_freq | CPU平均频率 | Medium | 10s | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq |
-| 1.30 | min_freq | CPU最小频率 | Low | 启动时1次 | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_min_freq |
-| 1.31 | max_freq | CPU最大频率 | Low | 启动时1次 | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq |
-| 1.32 | cpu_ce_errors | CPU CE错误数量 | High | 30s | 是 | 次 | dmesg / /var/log/mcelog |
-| 1.33 | cpu_uce_errors | CPU UCE错误数量 | High | 30s | 是 | 次 | dmesg / /var/log/mcelog |
-| 1.34 | power | CPU功率 | Medium | 60s | 否 | W | ipmitool (SDR/DCMI) |
-| 1.35 | l1d_cache_size | L1d缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
-| 1.36 | l1i_cache_size | L1i缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
-| 1.37 | l2_cache_size | L2缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
-| 1.38 | l3_cache_size | L3缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
-| 1.39 | numa_order_num | NUMA节点buddy order数量 | Low | 60s | 否 | 个 | /proc/buddyinfo |
-| 1.40 | numa_info | NUMA节点内存碎片信息 | Low | 60s | 否 | order | /proc/buddyinfo |
+| 1.26 | numa_core_num | NUMA核数量 | Low | 启动时1次 | 是 | 个 | lscpu |
+| 1.27 | cpu_num | CPU个数 | Low | 启动时1次 | 是 | 个 | lscpu |
+| 1.28 | avg_freq | CPU平均频率 | Medium | 10s | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq |
+| 1.29 | min_freq | CPU最小频率 | Low | 启动时1次 | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_min_freq |
+| 1.30 | max_freq | CPU最大频率 | Low | 启动时1次 | 否 | MHz | /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq |
+| 1.31 | cpu_ce_errors | CPU CE错误数量 | High | 30s | 是 | 次 | dmesg / /var/log/mcelog |
+| 1.32 | cpu_uce_errors | CPU UCE错误数量 | High | 30s | 是 | 次 | dmesg / /var/log/mcelog |
+| 1.33 | power | CPU功率 | Medium | 60s | 否 | W | ipmitool (SDR/DCMI) |
+| 1.34 | l1d_cache_size | L1d缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
+| 1.35 | l1i_cache_size | L1i缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
+| 1.36 | l2_cache_size | L2缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
+| 1.37 | l3_cache_size | L3缓存大小 | Low | 启动时1次 | 否 | KB | /sys/devices/system/cpu/cpu*/cache/index*/size |
+| 1.38 | numa_order_num | NUMA节点buddy order数量 | Low | 60s | 否 | 个 | /proc/buddyinfo |
+| 1.39 | numa_info | NUMA节点内存碎片信息 | Low | 60s | 否 | order | /proc/buddyinfo |
 
 ### 指标详情
 
@@ -110,7 +109,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 #### 1.3 temperature（CPU温度）
 
 - **数据来源**：`ipmitool`（`ipmitool sdr`，筛选 CPU 相关温度传感器）
-- **采集方法**：调用 `ipmitool sdr` 读取主板传感器列表，筛选 CPU 相关温度项（如 "CPU1 Temp"），解析输出取温度值。来源层对 SDR 结果做 30s 缓存（一次拉取供 temperature/mem_temperature/power 共用）。需 ipmitool 已安装且有 BMC 访问权限；无 BMC 时该指标为空（优雅降级）
+- **采集方法**：调用 `ipmitool sensor` 读取主板传感器列表，筛选 CPU 相关温度项（如 "CPU1 Temp"），解析输出取温度值。来源层采用两级缓存：传感器结果缓存 10s（一次拉取供 temperature/mem_temperature/power 共用），传感器名称缓存 24h（名称缓存有效期内按名称逐个 `ipmitool sensor get`，过期后重新全量扫描）；命令执行超时 120s。需 ipmitool 已安装且有 BMC 访问权限；无 BMC 时该指标为空（优雅降级）
 - **Labels**：`cpu`（socket 编号）、`sensor`（传感器名）
 - **输出示例**：
 ```json
@@ -337,17 +336,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"core_num","value":28,"unit":"个","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.26 die_core_num（单个die核数量）
-
-- **数据来源**：`lscpu`（Cores per socket / Die(s) per socket）
-- **采集方法**：CoresPerSocket / DiesPerSocket
-- **Labels**：`die`（"0", "1", ...）
-- **输出示例**：
-```json
-{"component":"cpu","name":"die_core_num","value":14,"unit":"个","labels":{"die":"0"},"timestamp":"2026-07-10T10:30:00Z"}
-```
-
-#### 1.27 numa_core_num（NUMA核数量）
+#### 1.26 numa_core_num（NUMA核数量）
 
 - **数据来源**：`lscpu`
 - **采集方法**：Cores / NUMA 节点数（均匀分配假设）
@@ -357,7 +346,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"numa_core_num","value":14,"unit":"个","labels":{"node":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.28 cpu_num（CPU个数）
+#### 1.27 cpu_num（CPU个数）
 
 - **数据来源**：`lscpu`（Socket(s) 字段）
 - **采集方法**：解析物理 CPU 封装数
@@ -367,7 +356,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"cpu_num","value":2,"unit":"个","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.29 avg_freq（CPU平均频率）
+#### 1.28 avg_freq（CPU平均频率）
 
 - **数据来源**：`/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`
 - **采集方法**：所有在线核心当前频率的算术平均，kHz/1000 转 MHz
@@ -377,7 +366,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"avg_freq","value":2400,"unit":"MHz","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.30 min_freq（CPU最小频率）
+#### 1.29 min_freq（CPU最小频率）
 
 - **数据来源**：`/sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_min_freq`
 - **采集方法**：硬件最低频率。启动时采集一次
@@ -387,7 +376,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"min_freq","value":800,"unit":"MHz","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.31 max_freq（CPU最大频率）
+#### 1.30 max_freq（CPU最大频率）
 
 - **数据来源**：`/sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq`
 - **采集方法**：硬件最高频率。启动时采集一次
@@ -397,7 +386,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"max_freq","value":3500,"unit":"MHz","labels":{},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.32 cpu_ce_errors（CPU CE错误数量）
+#### 1.31 cpu_ce_errors（CPU CE错误数量）
 
 - **数据来源**：`dmesg` 或 `/var/log/mcelog`
 - **采集方法**：解析 MCE 记录统计 CE（已纠正硬件错误）数，差值得本周期新增。属 CPU 级 MCE，与 Memory 模块的 EDAC 内存 ECC 不同
@@ -407,7 +396,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"cpu_ce_errors","value":3,"unit":"次","labels":{"cpu":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.33 cpu_uce_errors（CPU UCE错误数量）
+#### 1.32 cpu_uce_errors（CPU UCE错误数量）
 
 - **数据来源**：`dmesg` 或 `/var/log/mcelog`
 - **采集方法**：解析 MCE 记录统计 UCE（不可纠正硬件错误）数
@@ -417,7 +406,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"cpu_uce_errors","value":0,"unit":"次","labels":{"cpu":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.34 power（CPU功率）
+#### 1.33 power（CPU功率）
 
 - **数据来源**：`ipmitool`（SDR 中 CPU 功率传感器 或 `dcmi power reading`）
 - **采集方法**：从缓存的 SDR 中筛选 "CPU* Pwr" 传感器取功率。无 BMC 时空
@@ -427,7 +416,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"power","value":125.5,"unit":"W","labels":{"cpu":"0","sensor":"CPU1 Pwr"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.35 l1d_cache_size（L1d缓存大小）
+#### 1.34 l1d_cache_size（L1d缓存大小）
 
 - **数据来源**：`/sys/devices/system/cpu/cpu*/cache/index*/size`（level=1、type=Data）
 - **采集方法**：解析 "32K" 为 KB。启动时采集一次
@@ -437,7 +426,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"l1d_cache_size","value":32,"unit":"KB","labels":{"core":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.36 l1i_cache_size（L1i缓存大小）
+#### 1.35 l1i_cache_size（L1i缓存大小）
 
 - **数据来源**：`/sys/.../cache/index*/size`（level=1、type=Instruction）
 - **采集方法**：同上
@@ -447,7 +436,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"l1i_cache_size","value":32,"unit":"KB","labels":{"core":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.37 l2_cache_size（L2缓存大小）
+#### 1.36 l2_cache_size（L2缓存大小）
 
 - **数据来源**：`/sys/.../cache/index*/size`（level=2）
 - **采集方法**：同上
@@ -457,7 +446,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"l2_cache_size","value":1024,"unit":"KB","labels":{"core":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.38 l3_cache_size（L3缓存大小）
+#### 1.37 l3_cache_size（L3缓存大小）
 
 - **数据来源**：`/sys/.../cache/index*/size`（level=3）
 - **采集方法**：同上
@@ -467,7 +456,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"l3_cache_size","value":35840,"unit":"KB","labels":{"core":"0"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.39 numa_order_num（NUMA节点buddy order数量）
+#### 1.38 numa_order_num（NUMA节点buddy order数量）
 
 - **数据来源**：`/proc/buddyinfo`
 - **采集方法**：解析每行（node,zone）的 order 列数
@@ -477,7 +466,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"cpu","name":"numa_order_num","value":11,"unit":"个","labels":{"node":"0","zone":"Normal"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 1.40 numa_info（NUMA节点内存碎片信息）
+#### 1.39 numa_info（NUMA节点内存碎片信息）
 
 - **数据来源**：`/proc/buddyinfo`
 - **采集方法**：取该 node/zone 可用最大连续 order（从高阶扫描首个空闲块数 >0 的 order），值越大碎片越少
@@ -512,9 +501,9 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 2.13 | isolated_anon_pages | 隔离匿名页数 | Low | 10s | 否 | 个 | /proc/vmstat (nr_isolated_anon) |
 | 2.14 | isolated_file_pages | 隔离文件页数 | Low | 10s | 否 | 个 | /proc/vmstat (nr_isolated_file) |
 | 2.15 | free_pages | 空闲页数 | Low | 10s | 否 | 个 | /proc/vmstat (nr_free_pages) |
-| 2.16 | module_num | 内存条数量 | Low | 启动时1次 | 是 | 个 | dmidecode --type 17 |
-| 2.17 | module_size | 内存条大小 | Low | 启动时1次 | 是 | MB | dmidecode --type 17 |
-| 2.18 | module_info | 内存条静态信息 | Low | 启动时1次 | 是 | - | dmidecode --type 17 |
+| 2.16 | module_num | 内存条数量 | Medium | 启动时1次 | 是 | 个 | dmidecode --type 17 |
+| 2.17 | module_size | 内存条大小 | Medium | 启动时1次 | 是 | MB | dmidecode --type 17 |
+| 2.18 | module_info | 内存条静态信息 | Medium | 启动时1次 | 是 | - | dmidecode --type 17 |
 | 2.19 | power | 内存功率 | Medium | 60s | 否 | W | ipmitool (SDR) |
 
 ### 指标详情
@@ -712,7 +701,7 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 #### 2.19 power（内存功率）
 
 - **数据来源**：`ipmitool`（SDR 中内存功率传感器，如 "MEM* Pwr"）
-- **采集方法**：从缓存的 SDR 中筛选内存功率传感器取功率值（W）。与 CPU 的 power 共用同一份 SDR 缓存（30s）。无 BMC 时为空
+- **采集方法**：从来源层缓存的传感器结果中筛选内存功率传感器取功率值（W）。与 CPU 的 power 共用同一份结果缓存（10s）。无 BMC 时为空
 - **Labels**：`sensor`
 - **输出示例**：
 ```json
@@ -730,8 +719,8 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 3.1 | space_usage | 磁盘空间使用率 | High | 5s | 是 | % | statfs syscall |
 | 3.2 | iops | 读写IOPS | Medium | 5s | 是 | 次/s | /proc/diskstats |
 | 3.3 | throughput | 读写吞吐量 | Medium | 5s | 是 | MB/s | /proc/diskstats |
-| 3.4 | read_latency | 读耗时 | Medium | 5s | 是 | ms/s | /proc/diskstats (field 7) |
-| 3.5 | write_latency | 写耗时 | Medium | 5s | 是 | ms/s | /proc/diskstats (field 11) |
+| 3.4 | read_latency | 读耗时 | Low | 5s | 是 | ms/s | /proc/diskstats (field 7) |
+| 3.5 | write_latency | 写耗时 | Low | 5s | 是 | ms/s | /proc/diskstats (field 11) |
 | 3.6 | io_wait | I/O等待占比 | Medium | 5s | 是 | % | /proc/stat |
 | 3.7 | smart_status | SMART健康状态 | Medium | 60s | 否 | - | smartctl -H |
 | 3.8 | smart_temperature | 硬盘温度 | Low | 60s | 否 | °C | smartctl -A |
@@ -996,7 +985,7 @@ nvidia-smi \
 NPU 采集器通过三类数据源获取华为昇腾 NPU 运行状态，且采用 **device 并行采集**（每块 NPU 一个 goroutine）：
 - **DCMI API**（CGo）：华为 CANN 的 C 库 `libdcmi.so`，通过 `dcmi_*` 函数调用。覆盖绝大多数指标。需 `-tags dcmi` 构建，无 CANN 环境时优雅降级。
 - **npu-smi 命令**：`npu-smi info -t <type>` 子命令（无 CGo）。覆盖通信拓扑、HCCS 带宽。
-- **hccn_tool 命令**：`hccn_tool -i <id> -<opt> -g`（无 CGo）。覆盖网口/PCIe 带宽、RoCE 速度/链路。
+- **hccn_tool 命令**：`hccn_tool -i <phy_id> -<opt> -g`（无 CGo）。覆盖网口/PCIe 带宽、RoCE 速度/链路及 RoCE/MAC/NIC 统计计数器（`-stat`）。`-i` 后跟设备 phy_id（物理 NPU ID，经 DCMI logic-id→phy-id 转换，失败时回退为枚举序号），输出指标仍以 `npu_id`/`chip_id` 作 label。
 
 > 注：所有 NPU 指标均为 Linux 专属；无 NPU 硬件时采集器整体跳过。DCMI 原始单位（mV/V、毫摄氏度/°C 等）待真机实测。
 
@@ -1067,20 +1056,23 @@ NPU 采集器通过三类数据源获取华为昇腾 NPU 运行状态，且采�
 | 5.63 | llc_write_hit_rate | NPU LLC写命中率 | Low | 30s | 否 | % | DCMI dcmi_get_device_llc_perf_para.wr_hit_rate |
 | 5.64 | llc_read_hit_rate | NPU LLC读命中率 | Low | 30s | 否 | % | DCMI dcmi_get_device_llc_perf_para.rd_hit_rate |
 | 5.65 | llc_throughput | NPU LLC吞吐量 | Low | 30s | 否 | MB/s | DCMI dcmi_get_device_llc_perf_para.throughput |
-| 5.66 | net_tx_bandwidth | NPU网口发送带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (TX) |
-| 5.67 | net_rx_bandwidth | NPU网口接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (RX) |
+| 5.66 | net_tx_bandwidth | NPU网口发送带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i <phy_id> -bandwidth -g (TX) |
+| 5.67 | net_rx_bandwidth | NPU网口接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i <phy_id> -bandwidth -g (RX) |
 | 5.68 | roce_link_status | NPU RoCE连接状态 | Medium | 10s | 是 | - | DCMI dcmi_get_device_network_health |
-| 5.69 | roce_speed_status | NPU RoCE连接速度 | Medium | 10s | 是 | - | hccn_tool -i N -speed -g |
-| 5.70 | roce_link_health | NPU RoCE Link状态 | Medium | 10s | 是 | - | hccn_tool -i N -link -g |
-| 5.71 | pcie_tx_bandwidth | NPU PCIe发送带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (PCIe TX) |
-| 5.72 | pcie_rx_bandwidth | NPU PCIe接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i N -bandwidth -g (PCIe RX) |
-| 5.73 | hccs_tx_bandwidth | NPU HCCS发送带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i N -c 0 -time 50 |
-| 5.74 | hccs_rx_bandwidth | NPU HCCS接收带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i N -c 0 -time 50 |
+| 5.69 | roce_speed_status | NPU RoCE连接速度 | Medium | 10s | 是 | - | hccn_tool -i <phy_id> -speed -g |
+| 5.70 | roce_link_health | NPU RoCE Link状态 | Medium | 10s | 是 | - | hccn_tool -i <phy_id> -link -g |
+| 5.71 | pcie_tx_bandwidth | NPU PCIe发送带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i <phy_id> -bandwidth -g (PCIe TX) |
+| 5.72 | pcie_rx_bandwidth | NPU PCIe接收带宽 | Medium | 5s | 是 | MB/s | hccn_tool -i <phy_id> -bandwidth -g (PCIe RX) |
+| 5.73 | hccs_tx_bandwidth | NPU HCCS发送带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i <npu_id> -c <chip_id> -time 50 |
+| 5.74 | hccs_rx_bandwidth | NPU HCCS接收带宽 | Medium | 5s | 是 | MB/s | npu-smi info -t hccs-bw -i <npu_id> -c <chip_id> -time 50 |
 | 5.75 | card_drop | NPU卡掉线状态 | High | 3s | 是 | - | DCMI dcmi_get_device_health（DeviceNotReadyErrCode -8012，经 CardDrop 包装） |
+
+> 注：除全局指标（`npu_num`/`comm_topo`/`driver_version`）外，所有 NPU 指标均同时携带 `npu_id` 与 `chip_id` 两个标签（下文各指标的 Labels 仅在二者基础上列出附加标签，输出示例从简）。
+> 注：hccn_tool RoCE/MAC/NIC 统计类指标（`mac_*`/`roce_*`/`nic_*` 计数器，共 48 项，即 123 项 NPU 指标中除上表 5.1-5.75 之外的部分）不在本节明细表中逐一展开，完整清单见附录B。
 
 ### 采集方法
 
-DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id, device_id)` 逐 NPU 查询，采用 device 并行采集（每 device 一个 goroutine）。关键 C 结构（来自 `dcmi_interface_api.h`）：`dcmi_hbm_info`、`dcmi_ecc_info`、`dcmi_llc_perf`、`dcmi_dvpp_ratio`、`dcmi_aicpu_info`。npu-smi 子命令：`-t topo`、`-t hccs-bw`。hccn_tool：`-bandwidth`、`-speed`、`-link`。
+DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id, device_id)` 逐 NPU 查询，采用 device 并行采集（每 device 一个 goroutine）。关键 C 结构（来自 `dcmi_interface_api.h`）：`dcmi_hbm_info`、`dcmi_ecc_info`、`dcmi_llc_perf`、`dcmi_dvpp_ratio`、`dcmi_aicpu_info`。npu-smi 子命令：`-t topo`、`-t hccs-bw`。hccn_tool：`-bandwidth`、`-speed`、`-link`、`-stat`（`-i` 后跟设备 phy_id，非 npu_id；hccn_tool 结果采用 stale-while-revalidate 缓存，TTL 6s）。
 
 ### 指标详情
 
@@ -1088,7 +1080,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_AICORE, &rate)`
 - **采集方法**：CGo 调 DCMI 取 AICore 利用率（0-100）。逐 NPU 采集
-- **Labels**：`npu_id`（"0","1",...）
+- **Labels**：`npu_id`、`chip_id`（"0","1",...）
 - **输出示例**：
 ```json
 {"component":"npu","name":"utilization","value":45,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1098,7 +1090,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)`
 - **采集方法**：取 `hbm_info.memory_usage / hbm_info.memory_size × 100`（HBM 显存使用率 %）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"memory_usage","value":32.5,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1108,7 +1100,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_temperature(card, dev, &temp)`
 - **采集方法**：取设备温度（°C，原始单位待实测）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"temperature","value":42,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1118,7 +1110,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_power_info(card, dev, &power)`
 - **采集方法**：取设备功耗（W）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"power_draw","value":65.0,"unit":"W","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1128,7 +1120,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_health(card, dev, &health)`
 - **采集方法**：取设备健康状态码。映射：OK=1, Warning=2, Alarm=3, Critical=4
-- **Labels**：`npu_id`、`status`（"OK"/"Warning"/"Alarm"/"Critical"）
+- **Labels**：`npu_id`、`chip_id`、`status`（"OK"/"Warning"/"Alarm"/"Critical"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"health_status","value":1,"unit":"","labels":{"npu_id":"0","status":"OK"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1148,7 +1140,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_chip_info(card, dev, ...)`
 - **采集方法**：取芯片型号字符串（如 Ascend910A）。字符串值放 `labels.chip_type`，`value` 填 0（对齐 CPU `model_info` 惯例）
-- **Labels**：`npu_id`、`chip_type`
+- **Labels**：`npu_id`、`chip_id`、`chip_type`
 - **输出示例**：
 ```json
 {"component":"npu","name":"chip_type","value":0,"unit":"","labels":{"npu_id":"0","chip_type":"Ascend910A"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1168,7 +1160,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_driver_health(card, dev, &health)`
 - **采集方法**：取驱动健康状态码，0=正常 非0=异常
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"driver_health","value":0,"unit":"","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1178,7 +1170,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_errorcode_v2(card, dev, &count, &codes[], n)`（经 `source/dcmi.ErrorCodeList` 包装）
 - **采集方法**：返回设备级**完整错误码列表**（hex 字符串，如 `0x40f84e00` 表示掉卡）；`value` 填错误码**数量**（向后兼容 Prometheus 计数器），完整 hex 列表放 `labels.error_codes`（逗号分隔），供 `features/faultsub` 故障检测器匹配特定错误码而非仅靠计数
-- **Labels**：`npu_id`、`error_codes`（逗号分隔的 hex 列表，如 `0x40f84e00,0x00000001`）
+- **Labels**：`npu_id`、`chip_id`、`error_codes`（逗号分隔的 hex 列表，如 `0x40f84e00,0x00000001`）
 - **优先级**：High（`configs/metrics.yaml`）
 - **输出示例**：
 ```json
@@ -1189,7 +1181,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_health(card, dev, &health)`（经 `source/dcmi.CardDrop` 包装）
 - **采集方法**：当 `dcmi_get_device_health` 返回 `DeviceNotReadyErrCode`（-8012，设备未就绪/掉卡）时判定为掉卡；`value`=1 表示掉卡，0 表示正常。显式 0/1 指标，使 `features/faultsub` 故障检测器无需解析错误码即可触发掉卡事件
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **优先级**：High（`configs/metrics.yaml`）
 - **输出示例**：
 ```json
@@ -1200,7 +1192,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_resource_info(card, dev, ...)`
 - **采集方法**：取占用 NPU 的进程 PID 列表，序列化放 `labels.process_pids`（如 "1234,5678"），`value` 填进程总数
-- **Labels**：`npu_id`、`process_pids`
+- **Labels**：`npu_id`、`chip_id`、`process_pids`
 - **输出示例**：
 ```json
 {"component":"npu","name":"process_info","value":3,"unit":"个","labels":{"npu_id":"0","process_pids":"1234,5678,9012"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1210,7 +1202,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_resource_info(card, dev, ...)`
 - **采集方法**：取占用 NPU 的进程总数
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"process_total","value":3,"unit":"个","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1230,7 +1222,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_voltage(card, dev, &voltage)`
 - **采集方法**：取设备主电压（V，原始单位待实测）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"voltage","value":0.8,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1240,7 +1232,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_AICORE_VOLTAGE_CURRENT, ...)`
 - **采集方法**：取 AICore 当前电压（V）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicore_voltage","value":0.8,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1250,7 +1242,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_HYBIRD_VOLTAGE_CURRENT, ...)`
 - **采集方法**：取 Hybrid 当前电压（V）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hybrid_voltage","value":0.7,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1260,7 +1252,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_TAISHAN_VOLTAGE_CURRENT, ...)`
 - **采集方法**：取 CPU（泰山）当前电压（V）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"cpu_voltage","value":1.0,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1270,7 +1262,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_DDR_VOLTAGE_CURRENT, ...)`
 - **采集方法**：取 DDR 当前电压（V）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_voltage","value":1.2,"unit":"V","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1280,7 +1272,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_LP, DCMI_LP_SUB_CMD_ACG, ...)`
 - **采集方法**：取 ACG 调频累计计数（次）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"acg_count","value":1234,"unit":"次","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1290,7 +1282,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_fan_count(card, dev, &count)` + `dcmi_get_device_fan_speed(card, dev, fan_id, &speed)`
 - **采集方法**：遍历每风扇，取转速占最大转速百分比（%）
-- **Labels**：`npu_id`、`fan`（"0","1",...）
+- **Labels**：`npu_id`、`chip_id`、`fan`（"0","1",...）
 - **输出示例**：
 ```json
 {"component":"npu","name":"fan_speed","value":65,"unit":"%","labels":{"npu_id":"0","fan":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1300,7 +1292,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)` → `hbm_info.temp`
 - **采集方法**：取 HBM 温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_temp","value":55,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1310,7 +1302,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_CLUSTER_TEMP_ID, ...)`
 - **采集方法**：取 Cluster 温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"cluster_temp","value":60,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1320,7 +1312,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_PERI_TEMP_ID, ...)`
 - **采集方法**：取 Peri（外设区）温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"peri_temp","value":58,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1330,7 +1322,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_AICORE0_TEMP_ID, ...)`
 - **采集方法**：取 AICORE0 温度（°C）
-- **Labels**：`npu_id`、`aicore`（"0"）
+- **Labels**：`npu_id`、`chip_id`、`aicore`（"0"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicore0_temp","value":62,"unit":"°C","labels":{"npu_id":"0","aicore":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1340,7 +1332,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_AICORE1_TEMP_ID, ...)`
 - **采集方法**：取 AICORE1 温度（°C）
-- **Labels**：`npu_id`、`aicore`（"1"）
+- **Labels**：`npu_id`、`chip_id`、`aicore`（"1"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicore1_temp","value":61,"unit":"°C","labels":{"npu_id":"0","aicore":"1"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1350,7 +1342,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[0]`
 - **采集方法**：取热敏电阻 1 温度（°C）
-- **Labels**：`npu_id`、`ntc`（"1"）
+- **Labels**：`npu_id`、`chip_id`、`ntc`（"1"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ntc1_temp","value":45,"unit":"°C","labels":{"npu_id":"0","ntc":"1"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1360,7 +1352,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[1]`
 - **采集方法**：取热敏电阻 2 温度（°C）
-- **Labels**：`npu_id`、`ntc`（"2"）
+- **Labels**：`npu_id`、`chip_id`、`ntc`（"2"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ntc2_temp","value":44,"unit":"°C","labels":{"npu_id":"0","ntc":"2"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1370,7 +1362,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[2]`
 - **采集方法**：取热敏电阻 3 温度（°C）
-- **Labels**：`npu_id`、`ntc`（"3"）
+- **Labels**：`npu_id`、`chip_id`、`ntc`（"3"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ntc3_temp","value":43,"unit":"°C","labels":{"npu_id":"0","ntc":"3"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1380,7 +1372,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_NTC_TEMP_ID, &ntc)` → `ntc.ntc_tmp[3]`
 - **采集方法**：取热敏电阻 4 温度（°C）
-- **Labels**：`npu_id`、`ntc`（"4"）
+- **Labels**：`npu_id`、`chip_id`、`ntc`（"4"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ntc4_temp","value":42,"unit":"°C","labels":{"npu_id":"0","ntc":"4"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1390,7 +1382,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_SOC_TEMP_ID, ...)`
 - **采集方法**：取 SOC 最高温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"soc_max_temp","value":65,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1400,7 +1392,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_FP_TEMP_ID, ...)`
 - **采集方法**：取光模块（FP）最高温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"fp_max_temp","value":50,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1410,7 +1402,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_N_DIE_TEMP_ID, ...)`
 - **采集方法**：取 NDie 温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ndie_temp","value":58,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1420,7 +1412,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_sensor_info(card, dev, DCMI_HBM_TEMP_ID, ...)`
 - **采集方法**：取 HBM 最高温度（°C）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_max_temp","value":55,"unit":"°C","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1430,7 +1422,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_aicpu_info(card, dev, ...)`
 - **采集方法**：取 AICPU 频率（MHz）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicpu_freq","value":1800,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1440,7 +1432,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_AICORE_MAX, &freq)`
 - **采集方法**：取 AICore 额定（最大）频率（MHz）。启动时采集一次（静态）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicore_rated_freq","value":2000,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1450,7 +1442,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_AICORE_CURRENT_, &freq)`
 - **采集方法**：取 AICore 当前频率（MHz）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicore_freq","value":1800,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1460,7 +1452,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_CTRLCPU, &freq)`
 - **采集方法**：取 CTRLCPU 频率（MHz）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ctrlcpu_freq","value":2400,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1470,7 +1462,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_VECTORCORE_CURRENT, &freq)`
 - **采集方法**：取 Vector Core 当前频率（MHz）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"vector_core_freq","value":1800,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1480,7 +1472,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_HBM, &freq)`
 - **采集方法**：取 HBM 频率（MHz）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_freq","value":1600,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1490,7 +1482,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_frequency(card, dev, DCMI_FREQ_DDR, &freq)`
 - **采集方法**：取 DDR 频率（MHz）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_freq","value":2400,"unit":"MHz","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1500,7 +1492,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_NPU, &rate)`
 - **采集方法**：取 NPU 整体利用率（0-100）。与 5.1（AICore 利用率）不同，是整体口径
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"npu_util","value":50,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1510,7 +1502,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_AICPU, &rate)`
 - **采集方法**：取 AICPU 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"aicpu_util","value":30,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1520,7 +1512,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_CTRLCPU, &rate)`
 - **采集方法**：取 CTRLCPU 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ctrlcpu_util","value":20,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1530,7 +1522,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_VECTORCORE, &rate)`
 - **采集方法**：取 Vector Core 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"vector_core_util","value":25,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1540,7 +1532,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_HBM_BANDWIDTH, &rate)`
 - **采集方法**：取 HBM 带宽利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_bandwidth_util","value":40,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1550,7 +1542,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_DDR, &rate)`
 - **采集方法**：取 DDR 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_util","value":15,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1560,7 +1552,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_utilization_rate(card, dev, DCMI_UTILIZATION_RATE_DDR_BANDWIDTH, &rate)`
 - **采集方法**：取 DDR 带宽利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_bandwidth_util","value":10,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1570,7 +1562,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_VDEC_RATE, ...)`
 - **采集方法**：取视频解码单元 VDEC 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"vdec_util","value":10,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1580,7 +1572,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_VPC_RATE, ...)`
 - **采集方法**：取视频处理单元 VPC 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"vpc_util","value":5,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1590,7 +1582,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_VENC_RATE, ...)`
 - **采集方法**：取视频编码单元 VENC 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"venc_util","value":8,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1600,7 +1592,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_JPEGE_RATE, ...)`
 - **采集方法**：取 JPEG 编码单元 JPEGE 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"jpege_util","value":3,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1610,7 +1602,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_info(card, dev, DCMI_MAIN_CMD_DVPP, DCMI_SUB_CMD_DVPP_JPEGD_RATE, ...)`
 - **采集方法**：取 JPEG 解码单元 JPEGD 利用率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"jpegd_util","value":2,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1620,7 +1612,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)` → `hbm_info.memory_size`
 - **采集方法**：取 HBM 总容量（MB）。启动时采集一次（静态）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_total_memory","value":32768,"unit":"MB","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1630,7 +1622,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_hbm_info(card, dev, &hbm_info)` → `hbm_info.memory_usage`
 - **采集方法**：取 HBM 已用容量（MB）。与 5.2 memory_usage(%) 互补
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_used_memory","value":16384,"unit":"MB","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1640,7 +1632,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.single_bit_error_cnt`
 - **采集方法**：取 HBM 单 bit（CE）累计错误数，差值得本周期新增
-- **Labels**：`npu_id`、`device_type`（"hbm"）、`kind`（"single"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"hbm"）、`kind`（"single"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_single_ecc","value":3,"unit":"次","labels":{"npu_id":"0","device_type":"hbm","kind":"single"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1650,7 +1642,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.double_bit_error_cnt`
 - **采集方法**：取 HBM 多 bit（UE）累计错误数，差值得本周期新增
-- **Labels**：`npu_id`、`device_type`（"hbm"）、`kind`（"double"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"hbm"）、`kind`（"double"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_double_ecc","value":0,"unit":"次","labels":{"npu_id":"0","device_type":"hbm","kind":"double"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1660,7 +1652,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.single_bit_isolated_pages_cnt`
 - **采集方法**：取 HBM 因单 bit 错误被隔离的页数（个）
-- **Labels**：`npu_id`、`device_type`（"hbm"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"hbm"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_single_ecc_isolated","value":2,"unit":"个","labels":{"npu_id":"0","device_type":"hbm"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1670,7 +1662,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_HBM, &ecc)` → `ecc.double_bit_isolated_pages_cnt`
 - **采集方法**：取 HBM 因多 bit 错误被隔离的页数（个）
-- **Labels**：`npu_id`、`device_type`（"hbm"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"hbm"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"hbm_double_ecc_isolated","value":0,"unit":"个","labels":{"npu_id":"0","device_type":"hbm"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1680,7 +1672,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.single_bit_error_cnt`
 - **采集方法**：取 DDR 单 bit（CE）累计错误数，差值得本周期新增
-- **Labels**：`npu_id`、`device_type`（"ddr"）、`kind`（"single"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"ddr"）、`kind`（"single"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_single_ecc","value":1,"unit":"次","labels":{"npu_id":"0","device_type":"ddr","kind":"single"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1690,7 +1682,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.double_bit_error_cnt`
 - **采集方法**：取 DDR 多 bit（UE）累计错误数，差值得本周期新增
-- **Labels**：`npu_id`、`device_type`（"ddr"）、`kind`（"double"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"ddr"）、`kind`（"double"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_double_ecc","value":0,"unit":"次","labels":{"npu_id":"0","device_type":"ddr","kind":"double"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1700,7 +1692,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.single_bit_isolated_pages_cnt`
 - **采集方法**：取 DDR 因单 bit 错误被隔离的页数（个）
-- **Labels**：`npu_id`、`device_type`（"ddr"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"ddr"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_single_ecc_isolated","value":1,"unit":"个","labels":{"npu_id":"0","device_type":"ddr"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1710,7 +1702,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_ecc_info(card, dev, DCMI_DEVICE_TYPE_DDR, &ecc)` → `ecc.double_bit_isolated_pages_cnt`
 - **采集方法**：取 DDR 因多 bit 错误被隔离的页数（个）
-- **Labels**：`npu_id`、`device_type`（"ddr"）
+- **Labels**：`npu_id`、`chip_id`、`device_type`（"ddr"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"ddr_double_ecc_isolated","value":0,"unit":"个","labels":{"npu_id":"0","device_type":"ddr"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1720,7 +1712,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_llc_perf_para(card, dev, &perf)` → `perf.wr_hit_rate`
 - **采集方法**：取 LLC 写命中率（%，原始 0-1 或 0-100 待实测）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"llc_write_hit_rate","value":85,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1730,7 +1722,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_llc_perf_para(card, dev, &perf)` → `perf.rd_hit_rate`
 - **采集方法**：取 LLC 读命中率（%）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"llc_read_hit_rate","value":90,"unit":"%","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1740,7 +1732,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_llc_perf_para(card, dev, &perf)` → `perf.throughput`
 - **采集方法**：取 LLC 吞吐量（MB/s，原始单位待实测）
-- **Labels**：`npu_id`
+- **Labels**：`npu_id`、`chip_id`
 - **输出示例**：
 ```json
 {"component":"npu","name":"llc_throughput","value":1250,"unit":"MB/s","labels":{"npu_id":"0"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1748,9 +1740,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.66 net_tx_bandwidth（NPU网口发送带宽）
 
-- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 Bandwidth TX）
+- **数据来源**：`hccn_tool -i <phy_id> -bandwidth -g`（解析 Bandwidth TX；`-i` 后跟设备 phy_id，`npu_id` 仅作为输出 label）
 - **采集方法**：取网口发送带宽（MB/s）
-- **Labels**：`npu_id`、`direction`（"tx"）
+- **Labels**：`npu_id`、`chip_id`、`direction`（"tx"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"net_tx_bandwidth","value":1250,"unit":"MB/s","labels":{"npu_id":"0","direction":"tx"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1758,9 +1750,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.67 net_rx_bandwidth（NPU网口接收带宽）
 
-- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 Bandwidth RX）
+- **数据来源**：`hccn_tool -i <phy_id> -bandwidth -g`（解析 Bandwidth RX；`-i` 后跟设备 phy_id，`npu_id` 仅作为输出 label）
 - **采集方法**：取网口接收带宽（MB/s）
-- **Labels**：`npu_id`、`direction`（"rx"）
+- **Labels**：`npu_id`、`chip_id`、`direction`（"rx"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"net_rx_bandwidth","value":980,"unit":"MB/s","labels":{"npu_id":"0","direction":"rx"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1770,7 +1762,7 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 - **数据来源**：DCMI `dcmi_get_device_network_health(card, dev, ...)`
 - **采集方法**：取 RoCE 连接状态，up=1 / down=0
-- **Labels**：`npu_id`、`status`（"up"/"down"）
+- **Labels**：`npu_id`、`chip_id`、`status`（"up"/"down"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"roce_link_status","value":1,"unit":"","labels":{"npu_id":"0","status":"up"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1778,9 +1770,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.69 roce_speed_status（NPU RoCE连接速度）
 
-- **数据来源**：`hccn_tool -i <npu_id> -speed -g`
+- **数据来源**：`hccn_tool -i <phy_id> -speed -g`（`-i` 后跟设备 phy_id，`npu_id` 仅作为输出 label）
 - **采集方法**：取 RoCE 速度字符串（如 "100Gbps"），放 `labels.roce_speed`，`value` 填 0
-- **Labels**：`npu_id`、`roce_speed`
+- **Labels**：`npu_id`、`chip_id`、`roce_speed`
 - **输出示例**：
 ```json
 {"component":"npu","name":"roce_speed_status","value":0,"unit":"","labels":{"npu_id":"0","roce_speed":"100Gbps"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1788,9 +1780,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.70 roce_link_health（NPU RoCE Link状态）
 
-- **数据来源**：`hccn_tool -i <npu_id> -link -g`
+- **数据来源**：`hccn_tool -i <phy_id> -link -g`（`-i` 后跟设备 phy_id，`npu_id` 仅作为输出 label）
 - **采集方法**：取 RoCE 链路状态字符串，放 `labels.roce_link`，`value` 填 0
-- **Labels**：`npu_id`、`roce_link`
+- **Labels**：`npu_id`、`chip_id`、`roce_link`
 - **输出示例**：
 ```json
 {"component":"npu","name":"roce_link_health","value":0,"unit":"","labels":{"npu_id":"0","roce_link":"ACTIVE"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1798,9 +1790,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.71 pcie_tx_bandwidth（NPU PCIe发送带宽）
 
-- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 PCIe TX）
+- **数据来源**：`hccn_tool -i <phy_id> -bandwidth -g`（解析 PCIe TX；`-i` 后跟设备 phy_id，`npu_id` 仅作为输出 label）
 - **采集方法**：取 PCIe 发送带宽（MB/s）
-- **Labels**：`npu_id`、`direction`（"tx"）
+- **Labels**：`npu_id`、`chip_id`、`direction`（"tx"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"pcie_tx_bandwidth","value":2500,"unit":"MB/s","labels":{"npu_id":"0","direction":"tx"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1808,9 +1800,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.72 pcie_rx_bandwidth（NPU PCIe接收带宽）
 
-- **数据来源**：`hccn_tool -i <npu_id> -bandwidth -g`（解析 PCIe RX）
+- **数据来源**：`hccn_tool -i <phy_id> -bandwidth -g`（解析 PCIe RX；`-i` 后跟设备 phy_id，`npu_id` 仅作为输出 label）
 - **采集方法**：取 PCIe 接收带宽（MB/s）
-- **Labels**：`npu_id`、`direction`（"rx"）
+- **Labels**：`npu_id`、`chip_id`、`direction`（"rx"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"pcie_rx_bandwidth","value":2100,"unit":"MB/s","labels":{"npu_id":"0","direction":"rx"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1818,9 +1810,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.73 hccs_tx_bandwidth（NPU HCCS发送带宽）
 
-- **数据来源**：`npu-smi info -t hccs-bw -i <npu_id> -c 0 -time 50`
+- **数据来源**：`npu-smi info -t hccs-bw -i <npu_id> -c <chip_id> -time 50`
 - **采集方法**：取 HCCS 发送带宽（MB/s）
-- **Labels**：`npu_id`、`direction`（"tx"）
+- **Labels**：`npu_id`、`chip_id`、`direction`（"tx"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"hccs_tx_bandwidth","value":300,"unit":"MB/s","labels":{"npu_id":"0","direction":"tx"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1828,9 +1820,9 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 
 #### 5.74 hccs_rx_bandwidth（NPU HCCS接收带宽）
 
-- **数据来源**：`npu-smi info -t hccs-bw -i <npu_id> -c 0 -time 50`
+- **数据来源**：`npu-smi info -t hccs-bw -i <npu_id> -c <chip_id> -time 50`
 - **采集方法**：取 HCCS 接收带宽（MB/s）
-- **Labels**：`npu_id`、`direction`（"rx"）
+- **Labels**：`npu_id`、`chip_id`、`direction`（"rx"）
 - **输出示例**：
 ```json
 {"component":"npu","name":"hccs_rx_bandwidth","value":280,"unit":"MB/s","labels":{"npu_id":"0","direction":"rx"},"timestamp":"2026-07-10T10:30:00Z"}
@@ -1849,6 +1841,8 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 | 6.3 | error_count | 错误包计数 | Medium | 5s | 是 | 次 | /proc/net/dev |
 | 6.4 | interface_status | 网卡接口状态 | Medium | 10s | 是 | - | /sys/class/net/*/operstate |
 | 6.5 | connection_count | 网络连接数 | Low | 10s | 否 | 个 | /proc/net/tcp, /proc/net/tcp6 |
+| 6.6 | rx_bytes_total | 接收字节 | Medium | 3s | 是 | bytes | /proc/net/dev |
+| 6.7 | tx_bytes_total | 发送字节 | Medium | 3s | 是 | bytes | /proc/net/dev |
 
 ### 指标详情
 
@@ -1906,11 +1900,31 @@ DCMI 类指标通过 CGo 调用 `libdcmi.so` 的 `dcmi_*` 函数，按 `(card_id
 {"component":"network","name":"connection_count","value":34,"unit":"个","labels":{"state":"TIME_WAIT"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
+#### 6.6 rx_bytes_total（接收字节）
+
+- **数据来源**：`/proc/net/dev`
+- **采集方法**：读取各网卡的接收字节累计值（counter，原始值不差分），供 Prometheus `rate()` 等计算吞吐。与差分指标不同，首次采集即产出。过滤虚拟接口（含 `lo` 回环）
+- **Labels**：`interface`（"eth0", "ens33", ...）
+- **输出示例**：
+```json
+{"component":"network","name":"rx_bytes_total","value":123456789012,"unit":"bytes","labels":{"interface":"eth0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
+#### 6.7 tx_bytes_total（发送字节）
+
+- **数据来源**：`/proc/net/dev`
+- **采集方法**：读取各网卡的发送字节累计值（counter，原始值不差分），供 Prometheus `rate()` 等计算吞吐。首次采集即产出。过滤虚拟接口（含 `lo` 回环）
+- **Labels**：`interface`（"eth0", "ens33", ...）
+- **输出示例**：
+```json
+{"component":"network","name":"tx_bytes_total","value":98765432109,"unit":"bytes","labels":{"interface":"eth0"},"timestamp":"2026-07-10T10:30:00Z"}
+```
+
 ---
 
 ## 7. Chassis 采集指标（机箱环境）
 
-Chassis 采集器通过 `ipmitool sdr` 获取服务器整机级环境指标（整机功耗、进/出风口温度、机箱风扇转速）。与 CPU/Memory collector 共享同一份 30s SDR 缓存。
+Chassis 采集器通过 `ipmitool sensor` 获取服务器整机级环境指标（整机功耗、进/出风口温度、机箱风扇转速）。与 CPU/Memory collector 共享同一份来源层 ipmi 缓存（传感器结果缓存 10s，传感器名称缓存 24h，命令超时 120s）。
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 默认周期 | 默认采集 | 单位 | 数据来源 |
 |------|----------|----------|--------|----------|----------|------|----------|
@@ -1918,11 +1932,11 @@ Chassis 采集器通过 `ipmitool sdr` 获取服务器整机级环境指标（�
 | 7.2 | inlet_temp | 进风口温度 | High | 10s | 是 | °C | ipmitool SDR "Inlet Temp" |
 | 7.3 | outlet_temp | 出风口温度 | Medium | 10s | 是 | °C | ipmitool SDR "Outlet Temp" |
 | 7.4 | fan_speed | 风扇转速 | Medium | 10s | 是 | RPM | ipmitool SDR "FAN* Speed" |
-| 7.5 | fan_power | 风扇功率 | Medium | 10s | 是 | W | ipmitool SDR "FAN* Power" |
+| 7.5 | fan_power | 风扇功率 | Low | 10s | 是 | W | ipmitool SDR "FAN* Power" |
 
 ### 采集方法
 
-从缓存的 `ipmitool sdr` 输出（30s 缓存，与 cpu/memory collector 共享）中按传感器名筛选：
+从来源层缓存的 `ipmitool sensor` 输出（结果缓存 10s，与 cpu/memory collector 共享）中按传感器名筛选：
 - `power`：筛选 name 含 "Power" 且不含 "CPU"/"MEM"/"NPU" 的功率传感器
 - `inlet_temp`：筛选 name 含 "Inlet" + "Temp" 的温度传感器
 - `outlet_temp`：筛选 name 含 "Outlet" + "Temp" 的温度传感器
@@ -2010,9 +2024,9 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 
 ## 附录B：已实现采集指标清单
 
-> 以下 216 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 39、Memory 20、Disk 14（含累计 raw counters + `space_detail`）、GPU 8（含 `memory_detail`）、NPU 123 个指标（含 `card_drop` 掉卡检测 + `process_info`/`process_total` 进程信息 + `npu_util` 整体利用率），Network 7（含 `rx/tx_bytes_total`），Chassis 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer，15 包含 lspci)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
+> 以下 216 个指标均已实现并通过测试，按部件分类汇总。其中 CPU 39、Memory 20、Disk 14（含累计 raw counters + `space_detail`）、GPU 8（含 `memory_detail`）、NPU 123 个指标（含 `card_drop` 掉卡检测 + `process_info`/`process_total` 进程信息 + `npu_util` 整体利用率），Network 7（含 `rx/tx_bytes_total`），Chassis 5 个指标，且全部 7 个采集器（chassis/cpu/memory/disk/network/gpu/npu）已接入来源层(source layer，14 包含 lspci)。NPU 采用 device 并行采集，DCMI 指标通过 CGo（`-tags dcmi`）调用 libdcmi.so。
 
-### CPU（40 个）
+### CPU（39 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2020,17 +2034,17 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 2 | load_average | 系统负载 | High | - |
 | 3 | temperature | CPU温度 | Medium | °C |
 | 4 | frequency | CPU频率 | Medium | MHz |
-| 5 | context_switches | 上下文切换次数 | Low | 次/s |
+| 5 | context_switches | 上下文切换次数 | Medium | 次/s |
 | 6 | process_count | 运行进程数 | Low | 个 |
 | 7 | model_info | CPU型号信息 | Low | - |
-| 8 | user_time | 用户态运行时间 | Low | jiffies |
-| 9 | nice_time | 低优先级用户进程时间 | Low | jiffies |
-| 10 | system_time | 内核态运行时间 | Low | jiffies |
-| 11 | idle_time | 空闲时间 | Low | jiffies |
-| 12 | iowait_time | 等待IO时间 | Low | jiffies |
-| 13 | irq_time | 硬中断处理时间 | Low | jiffies |
-| 14 | softirq_time | 软中断处理时间 | Low | jiffies |
-| 15 | steal_time | 被窃取时间 | Low | jiffies |
+| 8 | user_time | 用户态运行时间 | Medium | jiffies |
+| 9 | nice_time | 低优先级用户进程时间 | Medium | jiffies |
+| 10 | system_time | 内核态运行时间 | Medium | jiffies |
+| 11 | idle_time | 空闲时间 | Medium | jiffies |
+| 12 | iowait_time | 等待IO时间 | Medium | jiffies |
+| 13 | irq_time | 硬中断处理时间 | Medium | jiffies |
+| 14 | softirq_time | 软中断处理时间 | Medium | jiffies |
+| 15 | steal_time | 被窃取时间 | Medium | jiffies |
 | 16 | user_util | 用户态平均利用率 | Medium | % |
 | 17 | system_util | 内核态平均利用率 | Medium | % |
 | 18 | idle_util | 空闲状态占用率 | Medium | % |
@@ -2041,23 +2055,22 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 23 | isolated_core_num | 核隔离数量 | Medium | 个 |
 | 24 | mem_temperature | CPU内存区域温度 | Medium | °C |
 | 25 | core_num | CPU核数量 | Low | 个 |
-| 26 | die_core_num | 单个die核数量 | Low | 个 |
-| 27 | numa_core_num | NUMA核数量 | Low | 个 |
-| 28 | cpu_num | CPU个数 | Low | 个 |
-| 29 | avg_freq | CPU平均频率 | Medium | MHz |
-| 30 | min_freq | CPU最小频率 | Low | MHz |
-| 31 | max_freq | CPU最大频率 | Low | MHz |
-| 32 | cpu_ce_errors | CPU CE错误数量 | High | 次 |
-| 33 | cpu_uce_errors | CPU UCE错误数量 | High | 次 |
-| 34 | power | CPU功率 | Medium | W |
-| 35 | l1d_cache_size | L1d缓存大小 | Low | KB |
-| 36 | l1i_cache_size | L1i缓存大小 | Low | KB |
-| 37 | l2_cache_size | L2缓存大小 | Low | KB |
-| 38 | l3_cache_size | L3缓存大小 | Low | KB |
-| 39 | numa_order_num | NUMA节点buddy order数量 | Low | 个 |
-| 40 | numa_info | NUMA节点内存碎片信息 | Low | order |
+| 26 | numa_core_num | NUMA核数量 | Low | 个 |
+| 27 | cpu_num | CPU个数 | Low | 个 |
+| 28 | avg_freq | CPU平均频率 | Medium | MHz |
+| 29 | min_freq | CPU最小频率 | Low | MHz |
+| 30 | max_freq | CPU最大频率 | Low | MHz |
+| 31 | cpu_ce_errors | CPU CE错误数量 | High | 次 |
+| 32 | cpu_uce_errors | CPU UCE错误数量 | High | 次 |
+| 33 | power | CPU功率 | Medium | W |
+| 34 | l1d_cache_size | L1d缓存大小 | Low | KB |
+| 35 | l1i_cache_size | L1i缓存大小 | Low | KB |
+| 36 | l2_cache_size | L2缓存大小 | Low | KB |
+| 37 | l3_cache_size | L3缓存大小 | Low | KB |
+| 38 | numa_order_num | NUMA节点buddy order数量 | Low | 个 |
+| 39 | numa_info | NUMA节点内存碎片信息 | Low | order |
 
-### Memory（19 个）
+### Memory（20 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2076,28 +2089,30 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 13 | isolated_anon_pages | 隔离匿名页数 | Low | 个 |
 | 14 | isolated_file_pages | 隔离文件页数 | Low | 个 |
 | 15 | free_pages | 空闲页数 | Low | 个 |
-| 16 | module_num | 内存条数量 | Low | 个 |
-| 17 | module_size | 内存条大小 | Low | MB |
-| 18 | module_info | 内存条静态信息 | Low | - |
+| 16 | module_num | 内存条数量 | Medium | 个 |
+| 17 | module_size | 内存条大小 | Medium | MB |
+| 18 | module_info | 内存条静态信息 | Medium | - |
 | 19 | power | 内存功率 | Medium | W |
+| 20 | usage_detail | 内存明细 | Medium | MB |
 
-### Disk（13 个）
+### Disk（14 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
 | 1 | space_usage | 磁盘空间使用率 | High | % |
 | 2 | iops | 读写IOPS | Medium | 次/s |
 | 3 | throughput | 读写吞吐量 | Medium | MB/s |
-| 4 | read_latency | 读耗时 | Medium | ms/s |
-| 5 | write_latency | 写耗时 | Medium | ms/s |
+| 4 | read_latency | 读耗时 | Low | ms/s |
+| 5 | write_latency | 写耗时 | Low | ms/s |
 | 6 | io_wait | I/O等待占比 | Medium | % |
 | 7 | smart_status | SMART健康状态 | Medium | - |
 | 8 | smart_temperature | 硬盘温度 | Low | °C |
 | 9 | io_errors | I/O错误计数 | Low | 次 |
-| 10 | read_sectors_total | 磁盘读扇区总数 | Medium | - |
-| 11 | written_sectors_total | 磁盘写扇区总数 | Medium | - |
-| 12 | read_time_total | 磁盘读耗时总计 | Medium | ms |
-| 13 | write_time_total | 磁盘写耗时总计 | Medium | ms |
+| 10 | space_detail | 空间明细 | Medium | MB |
+| 11 | read_sectors_total | 磁盘读扇区总数 | Medium | - |
+| 12 | written_sectors_total | 磁盘写扇区总数 | Medium | - |
+| 13 | read_time_total | 磁盘读耗时总计 | Medium | ms |
+| 14 | write_time_total | 磁盘写耗时总计 | Medium | ms |
 
 ### GPU（8 个）
 
@@ -2112,7 +2127,7 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 7 | clock_frequency | 时钟频率 | Low | MHz |
 | 8 | memory_detail | 显存明细 | Medium | MB |
 
-### NPU（120 个）
+### NPU（123 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2231,13 +2246,16 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 113 | roce_out_of_order_num | ROCE接收乱序或重复PSN报文数 | Medium | 个 |
 | 114 | roce_verification_err_num | ROCE接收校验错误报文数 | Medium | 个 |
 | 115 | roce_qp_status_err_num | ROCE接收QP状态异常报文数 | Medium | 个 |
-| 116 | nic_tx_all_pkg_num | NIC发送总报文数 | Medium | 个 |
-| 117 | nic_tx_all_oct_num | NIC发送总报文字节数 | Medium | bytes |
-| 118 | nic_rx_all_pkg_num | NIC接收总报文数 | Medium | 个 |
-| 119 | nic_rx_all_oct_num | NIC接收总报文字节数 | Medium | bytes |
-| 120 | card_drop | NPU卡掉线状态 | High | - |
+| 116 | roce_new_pkt_rty_num | ROCE重传报文数 | Medium | 个 |
+| 117 | mac_rx_fcs_err_pkt_num | MAC层FCS校验错误包数 | Medium | 个 |
+| 118 | roce_ecn_db_num | RoCE ECN标记丢弃计数 | Medium | 个 |
+| 119 | nic_tx_all_pkg_num | NIC发送总报文数 | Medium | 个 |
+| 120 | nic_tx_all_oct_num | NIC发送总报文字节数 | Medium | bytes |
+| 121 | nic_rx_all_pkg_num | NIC接收总报文数 | Medium | 个 |
+| 122 | nic_rx_all_oct_num | NIC接收总报文字节数 | Medium | bytes |
+| 123 | card_drop | NPU卡掉线状态 | High | - |
 
-### Network（5 个）
+### Network（7 个）
 
 | 序号 | 指标名称 | 中文名称 | 优先级 | 单位 |
 |------|----------|----------|--------|------|
@@ -2246,6 +2264,8 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 3 | error_count | 错误包计数 | Medium | 次 |
 | 4 | interface_status | 网卡接口状态 | Medium | - |
 | 5 | connection_count | 网络连接数 | Low | 个 |
+| 6 | rx_bytes_total | 接收字节 | Medium | bytes |
+| 7 | tx_bytes_total | 发送字节 | Medium | bytes |
 
 ### Chassis（5 个）
 
@@ -2255,17 +2275,19 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 2 | inlet_temp | 进风口温度 | High | °C |
 | 3 | outlet_temp | 出风口温度 | Medium | °C |
 | 4 | fan_speed | 风扇转速 | Medium | RPM |
-| 5 | fan_power | 风扇功率 | Medium | W |
+| 5 | fan_power | 风扇功率 | Low | W |
+
+### 统计汇总
+
+全部 7 个部件共 216 项指标（High 26 / Medium 143 / Low 47），与文档开头「汇总统计」一致：
 
 | 部件 | 指标数 | High | Medium | Low |
 |------|--------|------|--------|-----|
-| CPU | 39 | 4 | 12 | 23 |
-| Memory | 20 | 4 | 7 | 9 |
+| CPU | 39 | 4 | 21 | 14 |
+| Memory | 20 | 4 | 11 | 5 |
 | Disk | 14 | 1 | 9 | 4 |
 | GPU | 8 | 3 | 4 | 1 |
-| NPU | 123 | 11 | 90 | 22 |
+| NPU | 123 | 11 | 91 | 21 |
 | Network | 7 | 1 | 5 | 1 |
-| Chassis | 5 | 2 | 3 | 0 |
-| **合计** | **216** | **26** | **130** | **60** |
-
-### 统计汇总
+| Chassis | 5 | 2 | 2 | 1 |
+| **合计** | **216** | **26** | **143** | **47** |

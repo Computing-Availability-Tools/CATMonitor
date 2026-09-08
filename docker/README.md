@@ -4,8 +4,8 @@
 `docker run` 是各节点指南均已写明的手工兼容入口，两种方式使用相同的镜像、配置和
 运行契约。文档契约完整不等于每种硬件镜像都已经实机执行，验证范围见第 7 节。
 
-> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
-> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+> 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
+> `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
 >
 > 该标签明确表示 Linux/ARM64 Stress 专用构建，不是通用 `v0.3.5` 或最终
 > `v0.3.6` 镜像；源码提交、Image ID 与 registry digest 仍须单独记录。
@@ -53,7 +53,7 @@ STREAM/HPL/HPCG；NPU workload 镜像包含 CANN/torch_npu/NPU Burn 运行环境
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout refactor/unified-stress-platform
+git checkout develop   # v0.3.6（Stress V2 已合并，PR #13）
 ```
 
 设置当前 pre-release registry namespace：

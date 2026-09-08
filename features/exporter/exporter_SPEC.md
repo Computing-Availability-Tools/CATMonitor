@@ -34,7 +34,7 @@ daemon (cmd/catmonitor/main.go)
   │                       ├── 1. 按组件分组更新内存缓存（原子替换）
   │                       └── 2. 委托 JSONLStorage.Write(metrics)（历史落盘）
   │
-  └── HTTP server (:9100)
+  └── HTTP server (:19320)
         ├── GET /metrics      → CachingStorage.AllMetrics() → Prometheus 文本
         ├── GET /-/healthy    → 200 OK
         └── GET /-/ready      → 缓存非空则 200，否则 503
@@ -168,8 +168,8 @@ func isCounter(name string) bool {
 直接从 `metric.Labels` 映射为 Prometheus labels，key 和 value 都做 `strconv.Quote` 转义：
 
 ```go
-// metric.Labels = {"npu_id":"0","aicore":"1"}
-// → {npu_id="0",aicore="1"}
+// metric.Labels = {"npu_id":"0","chip_id":"1"}
+// → {npu_id="0",chip_id="1"}
 ```
 
 ### 4.4 编码器
@@ -181,28 +181,28 @@ func Encode(metrics []collector.Metric) []byte
 输出格式（按指标名分组，同名的多条数据共享一组 HELP/TYPE）：
 
 ```
-# HELP catmonitor_cpu_usage CPU usage percentage
+# HELP catmonitor_cpu_usage cpu/usage
 # TYPE catmonitor_cpu_usage gauge
 catmonitor_cpu_usage{core="total"} 12.3
 catmonitor_cpu_usage{core="0"} 15.0
 
-# HELP catmonitor_cpu_user_time Cumulative user-mode CPU time in jiffies
+# HELP catmonitor_cpu_user_time cpu/user_time
 # TYPE catmonitor_cpu_user_time counter
 catmonitor_cpu_user_time{core="total"} 3357
 
-# HELP catmonitor_npu_temperature NPU temperature in degrees Celsius
+# HELP catmonitor_npu_temperature npu/temperature
 # TYPE catmonitor_npu_temperature gauge
-catmonitor_npu_temperature{npu_id="0"} 55
-catmonitor_npu_temperature{npu_id="1"} 60
+catmonitor_npu_temperature{npu_id="0",chip_id="0"} 55
+catmonitor_npu_temperature{npu_id="1",chip_id="0"} 60
 
-# HELP catmonitor_network_rx_bytes_total Cumulative received bytes
+# HELP catmonitor_network_rx_bytes_total network/rx_bytes_total
 # TYPE catmonitor_network_rx_bytes_total counter
 catmonitor_network_rx_bytes_total{interface="eth0"} 21227412
 ```
 
 **编码规则**：
 - 按 `catmonitor_{component}_{name}` 分组，每组输出一次 `# HELP` + `# TYPE`
-- HELP 文本取自 `metricDisplayNames` 映射或 fallback 到指标名
+- HELP 文本即 `component/name` 原文（如 `cpu/usage`），无独立描述映射（prometheus.go:81）
 - 同组内按 labels 排序输出多条数据行
 - 值用 `strconv.FormatFloat(v, 'f', -1, 64)` 格式化
 - 空缓存返回空响应（200 + 空体）
@@ -236,29 +236,37 @@ func ServeMetrics(addr string, store *CachingStorage, logger *slog.Logger) {
 
 ## 5. daemon 集成
 
-### 5.1 改动（cmd/catmonitor/main.go，~5 行）
+### 5.1 集成（cmd/catmonitor/main.go）
 
 ```go
 import "github.com/Computing-Availability-Tools/CATMonitor/features/exporter"
 
 func runDaemon() {
     // ...
-    // 改前：
-    // store, _ := storage.New(cfg.Storage.DataDir)
-    // scheduler := collector.NewScheduler(collector.DefaultRegistry, store, logger)
+    store, _ := storage.New(cfg.Storage.DataDir)        // JSONLStorage（历史落盘）
+    cacheStore := exporter.NewCachingStorage(store)      // 缓存 + 委托落盘
+    defer store.Close()
 
-    // 改后：
-    jsonlStore, _ := storage.New(cfg.Storage.DataDir)
-    cacheStore := exporter.NewCachingStorage(jsonlStore)
-    scheduler := collector.NewScheduler(collector.DefaultRegistry, cacheStore, logger)
-    defer jsonlStore.Close()
+    var sink collector.Storage = cacheStore
+    if cfg.StragglerOutput.Enabled {
+        sink = stragglerout.NewStragglerStorage(cacheStore, ...)  // 可选：KPI tap
+    }
+    if cfg.FaultSub.Enabled {
+        sink = faultsub.NewFaultStorage(cacheStore, det, disp, logger) // 可选：故障 tap
+    }
+    if cfg.Snapshot.Enabled {
+        sink = snapshot.NewPerCompWriter(sink, ...)               // 可选：per-component snapshot 写者
+    }
+    scheduler := collector.NewScheduler(collector.DefaultRegistry, sink, logger)
 
-    // 启动 Prometheus 端点
-    go exporter.ServeMetrics(":9100", cacheStore, logger)
+    // 启动 Prometheus 端点（main.go:311，地址硬编码 :19320）
+    go exporter.ServeMetrics(":19320", cacheStore, logger)
 
     // ... 其余不变 ...
 }
 ```
+
+完整 Storage 链路（main.go:219-250）：`Scheduler → snapshot.PerCompWriter（可选）→ FaultStorage（可选，包装当前链头）→ StragglerStorage（可选）→ CachingStorage → JSONLStorage`；两 tap 线性组合。CachingStorage 始终是 `/metrics` 的数据源；snapshot 的 `GlobalWriter` 也直接读 CachingStorage 缓存（不在写链路上）。全部可选特性关闭时 sink 即 CachingStorage，daemon 行为与集成前一致（仅多一层内存缓存）。
 
 ### 5.2 不影响的文件
 
@@ -271,15 +279,7 @@ func runDaemon() {
 
 ## 6. 配置
 
-exporter 端口可通过环境变量或 daemon config 扩展：
-
-```yaml
-# configs/catmonitor.yaml（可选扩展）
-exporter:
-  addr: ":9100"  # 默认 :9100
-```
-
-当前阶段先用硬编码 `:9100`，后续可加配置项。
+当前 `internal/config` 中不存在 `exporter` 配置段；监听地址硬编码为 `:19320`（cmd/catmonitor/main.go:311：`go exporter.ServeMetrics(":19320", cacheStore, logger)`）。后续如需可配置化，可在 daemon config 增加 `exporter.addr` 字段。
 
 ---
 
@@ -319,7 +319,7 @@ scrape_configs:
   - job_name: 'catmonitor'
     scrape_interval: 15s
     static_configs:
-      - targets: ['localhost:9100']
+      - targets: ['localhost:19320']
     metrics_path: '/metrics'
 ```
 
@@ -359,7 +359,7 @@ catmonitor_memory_usage_detail{field="total"}
 | 缓存粒度 | 按 component 分组 | Scheduler per-collector 调用 Write，按组件独立缓存避免互相覆盖 |
 | 指标前缀 | `catmonitor_` | 与项目名一致，避免与系统其他 exporter 冲突 |
 | counter 判定 | 命名约定（`_time`/`_total` 后缀） | 零侵入，不改 metrics.yaml 结构 |
-| 端口 | 9100 | Prometheus exporter 常用端口 |
+| 端口 | 19320 | 项目统一端口段 19320-19323，避免与常用 exporter 端口冲突 |
 | 指标覆盖范围 | 全部 High/Medium 指标 | 经过 metrics.Filter 后的指标集，与 JSONL 落盘一致 |
 | 健康探针 | `/-/healthy` + `/-/ready` | 标准 Prometheus exporter 惯例 |
 
@@ -370,7 +370,7 @@ catmonitor_memory_usage_detail{field="total"}
 1. **采集间隔 ≠ 拉取间隔**：daemon 按 per-collector 间隔采集（CPU 3s、Disk 5s），Prometheus 按 scrape_interval 拉取（如 15s）。缓存中是各组件最近一次采集值，不是同一时刻的全局快照。对监控无影响（指标是瞬时值）。
 2. **counter 单调性**：CPU 时间 jiffies 和网络字节在重启后会重置（counter reset），Prometheus 的 `rate()` 能自动处理 counter reset。
 3. **无 TLS / 认证**：当前不提供 TLS 或 basic auth。如需安全，可通过 reverse proxy（nginx）提供。
-4. **无独立配置文件**：端口暂用硬编码。后续可扩展 daemon config 加 `exporter.addr` 字段。
+4. **无独立配置文件**：端口暂用硬编码 `:19320`（main.go:311）。后续可扩展 daemon config 加 `exporter.addr` 字段。
 5. **dfee 不受影响**：dfee 读 snapshot.json，不经过 CachingStorage，两条管道完全独立。
 
 ---

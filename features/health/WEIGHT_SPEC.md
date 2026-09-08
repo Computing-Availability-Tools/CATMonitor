@@ -51,11 +51,11 @@ NPU 卡数越多，单卡故障对整体算力的影响越大，权重相应提�
 ### 2.4 Network 与 Chassis 固定 10
 
 - **Network**：网络异常（丢包/TIME_WAIT/连接数）是环境性问题，与加速卡数量无关，所有方案固定 10。
-- **Chassis**：进风口/出风口温度是机房环境指标，与加速卡数量无关，所有方案固定 10。
+- **Chassis**：进风口/出风口温度是机房环境指标，与加速卡数量无关，所有方案固定 10。**例外**：无 BMC（采集不到机箱指标）时 Chassis 权重并入 CPU、Chassis 记 0（`health.go` Evaluate 中 `scheme.CPU += scheme.Chassis`），`cpu_only`/`accelerated_2card`/`accelerated_4card`/`accelerated_8card` 下 CPU 有效满额分别变为 35/30/25/25。
 
 ## 3. 自动方案选择
 
-运行时按 NPU 唯一 `npu_id` 标签数（= 物理卡数）自动选择：
+`weight_scheme: auto`（默认）时运行时自动选择：存在 GPU 指标 → `accelerated_8card`；存在 NPU 指标时按 NPU 唯一 `npu_id` 标签数（= 物理卡数）选择：
 
 | NPU 卡数 | 自动选择方案 |
 |:--------:|------------|
@@ -64,9 +64,9 @@ NPU 卡数越多，单卡故障对整体算力的影响越大，权重相应提�
 | 3-4 | `accelerated_4card` |
 | 5-8 | `accelerated_8card` |
 
-也可在 `catmonitor.yaml` 中显式指定 `weight_scheme` 覆盖自动检测。
+也可在 `catmonitor.yaml` 中显式指定 `weight_scheme`；传入方案仅在无 GPU/NPU 指标时生效，检测到 GPU/NPU 指标时 `Evaluate` 以自动检测为准（见 `health.go`）。
 
-> 卡数统计：`npu_id` 标签的唯一值数量。chip0 和 chip1 共享同一 `npu_id`（= card_id），因此 2 个 chip = 1 张卡。Fallback：当无 `npu_id` 标签时用 `npu_num / 2`。
+> 卡数统计：`npu_id` 标签的唯一值数量。chip0 和 chip1 共享同一 `npu_id`（= card_id），因此 2 个 chip = 1 张卡。Fallback：当无任何 `npu_id` 标签时用 `npu_num / 2`（结果为 0 时取 1，如 `npu_num=1`）。
 
 ## 4. 各部件扣分规则（关注点预算制）
 

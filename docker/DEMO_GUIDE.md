@@ -13,7 +13,8 @@
 > 三个阶段使用正式容器名，因此必须串行执行。开始前若发现同名正式容器或端口已被
 > 占用，应停止演示并先确认维护窗口，不能直接删除未知容器。
 
-当前演示镜像是 Linux/ARM64 Stress pre-release，不是最终 v0.3.6：
+当前演示镜像是 Linux/ARM64 Stress pre-release（`arm64-v0.3.5-stress`，基于
+v0.3.5 时期代码构建），不是正式 `v0.3.6` 镜像：
 
 ```text
 ghcr.io/spike677/catmonitor-generic:arm64-v0.3.5-stress

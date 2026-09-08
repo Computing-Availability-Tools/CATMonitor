@@ -46,7 +46,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 模块 | 功能 | 规格 |
 |------|------|------|
-| 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（15 包） + 指标采集目录（含 feature-scope 白名单） | [DESIGN.md](DESIGN.md) §1-2 |
+| 采集核心 | Collector 接口 + Registry 注册表 + Scheduler 调度，7 个部件采集器 + 来源层（14 包） + 指标采集目录（含 feature-scope 白名单） | [DESIGN.md](DESIGN.md) §1-2 |
 | `features/health` | 健康度评估：消费采集指标，按部件评估器 + 权重自适应，输出总分/等级/扣分明细 | [HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) |
 | `features/snapshot` | Snapshot 统一生产：daemon 唯一生产 per-component `snapshot_<comp>.json` + 全局 `snapshot.json`（health/collectors/intervals/system_specs），只读特性消费快照 | [DESIGN.md](DESIGN.md) §6 |
 | `features/web` | Web 仪表盘二进制：**只读消费** snapshot，概览页 + 部件详情页 + 趋势 + 设备规格；同一 `:19322` listener 的 `/stress/` 页面通过 daemon control socket 查询/控制可靠性压测 | [Web_SPEC.md](features/web/Web_SPEC.md) |
@@ -54,6 +54,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 | `features/exporter` | Prometheus 导出：CachingStorage 包装存储 + `/metrics` 端点 + 健康端点 | [exporter_SPEC.md](features/exporter/exporter_SPEC.md) |
 | `features/faultsub` | 故障订阅推送：NPU 故障判定（卡掉线/健康状态/错误码/HBM UCE/RoCE 链路） + HTTP Webhook 推送 + 订阅/快照/事件 REST API | [faultsub_SPEC.md](features/faultsub/faultsub_SPEC.md) |
 | `features/stragglerout` | 落后节点 KPI 输出：NPU KPI 时序按"每时刻×每卡"聚合追加写日级 JSONL，供 straggler 慢节点检测器消费 | [stragglerout_SPEC.md](features/stragglerout/stragglerout_SPEC.md) |
+| `features/stress` | 可靠性压测：daemon 唯一作业 Controller（`/run/catmonitor/control.sock`），经 Docker Executor 调用 workload 容器内 STREAM/HPL/HPCG/NPU Burn 插件；CLI/Web 查询、启动与取消；结果不计入健康总分 | [STRESS_SPEC.md](features/stress/STRESS_SPEC.md) |
 
 ---
 
@@ -61,12 +62,14 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 ### 3.1 权重方案
 
-| 场景 | CPU | Memory | Disk | GPU/NPU | 合计 |
-|------|-----|--------|------|---------|------|
-| 无 GPU/NPU（cpu_only） | 30 | 40 | 30 | — | 100 |
-| 有 GPU/NPU（accelerated） | 10 | 20 | 10 | 60 | 100 |
+| 场景 | CPU | Memory | Disk | GPU/NPU | Network | Chassis | 合计 |
+|------|-----|--------|------|---------|---------|---------|------|
+| 无 GPU/NPU（cpu_only） | 25 | 25 | 30 | — | 10 | 10 | 100 |
+| 加速卡 1-2 卡（accelerated_2card） | 20 | 20 | 20 | 20 | 10 | 10 | 100 |
+| 加速卡 3-4 卡（accelerated_4card） | 15 | 15 | 20 | 30 | 10 | 10 | 100 |
+| 加速卡 5-8 卡（accelerated_8card） | 15 | 15 | 15 | 35 | 10 | 10 | 100 |
 
-> 自动检测：根据实际采集到的指标是否含 GPU/NPU 指标自动选择方案（非命令是否存在），无硬件或采集失败时均能正确选择。4 卡与 8 卡暂用同一权重，后续可差异化。
+> 自动检测：根据实际采集到的指标是否含 GPU/NPU 指标自动选择方案（非命令是否存在），无硬件或采集失败时均能正确选择。有 GPU 指标时按 5-8 卡方案；NPU 按唯一 `npu_id` 计数选卡数档（5-8 卡→8 卡、3-4 卡→4 卡、1-2 卡→2 卡，无 per-device 指标时回退 `npu_num/2`）。无 BMC（无 chassis 指标）时 Chassis 权重并入 CPU。
 
 ### 3.2 等级
 
@@ -84,6 +87,8 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 - **内存**：使用率、CE/UCE 错误、Swap、饱和度、碎片化
 - **硬盘**：使用率、SMART、I/O Error、I/O Wait
 - **GPU/NPU**：使用率、温度、显存、ECC、功耗、错误码
+- **网络**：error_count（错误/丢包累计）、TIME_WAIT / ESTABLISHED 连接数
+- **机箱**：进风口 / 出风口温度
 
 > 规则与阈值详见 [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md)。
 
@@ -105,14 +110,14 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 部件 | 指标数 | High | Medium | Low | Linux | Windows |
 |------|--------|------|--------|-----|:-----:|:-------:|
-| CPU | 39 | 4 | 12 | 23 | ✅ | ✅（基础指标，扩展指标 Linux 专有） |
-| Memory | 20 | 4 | 7 | 9 | ✅ | ✅（同上） |
+| CPU | 39 | 4 | 21 | 14 | ✅ | ✅（基础指标，扩展指标 Linux 专有） |
+| Memory | 20 | 4 | 11 | 5 | ✅ | ✅（同上） |
 | Disk | 14 | 1 | 9 | 4 | ✅ | ✅（2/9） |
 | GPU | 8 | 3 | 4 | 1 | ✅ | ✅（7/7） |
-| NPU | 123 | 11 | 90 | 22 | ✅ | ✗（Linux 专有；DCMI 走 CGo `-tags dcmi`，Windows no-op 降级） |
+| NPU | 123 | 11 | 91 | 21 | ✅ | ✗（Linux 专有；DCMI 走 CGo `-tags dcmi`，Windows no-op 降级） |
 | Network | 7 | 1 | 5 | 1 | ✅ | ✅（5/5） |
-| Chassis | 5 | 2 | 3 | 0 | ✅ | ✗（Linux 专有，依赖 ipmitool） |
-| **合计** | **216** | **26** | **130** | **60** | | |
+| Chassis | 5 | 2 | 2 | 1 | ✅ | ✅（无平台构建标签、跨平台编译；运行时无 ipmitool/BMC 时空采集优雅降级） |
+| **合计** | **216** | **26** | **143** | **47** | | |
 
 > v0.3.2 NPU 指标 74→119（新增 45 项 `hccn_tool` 网络统计指标，Medium），指标总数 159→204。v0.3.3 新增 NPU `card_drop`（掉卡检测，High）并将 `error_code` 升级为 High，指标总数 204→205。v0.3.3 后续合并 `feature/wyx/add-metrics`：Disk 新增 4 项累计 raw counters + GPU 新增 `memory_detail`，指标总数 205→210。v0.3.5 合并 `origin/develop`：CPU 删 `die_core_num`（40→39）、Memory 新增 `swap_detail`（19→20）、Disk 新增 `space_detail`（13→14）、NPU 新增 `process_info`/`process_total`/`npu_util`（120→123）、Network 新增 `rx_bytes_total`/`tx_bytes_total`（5→7），指标总数 210→216。
 
@@ -128,7 +133,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 | 子命令 | 功能 |
 |--------|------|
-| `daemon` | 启动守护进程：持续采集 + Prometheus 导出（默认）。健康度评估改由 `health` 子命令按需执行 |
+| `daemon` | 启动守护进程：持续采集 + Prometheus 导出（默认）。`snapshot.enabled` 时经 snapshot GlobalWriter 按全局 cadence 周期评估健康度并写入 `snapshot.json`；`health` 子命令另可按需评估 |
 | `collect` | 单次采集所有指标，输出 JSON 或表格 |
 | `health` | 基于当前指标执行一次健康检查，输出评估报告 |
 | `stress` | 显式运行 Linux 可靠性压测（STREAM/HPL/HPCG/NPU Burn，结果不计入健康总分） |
@@ -154,7 +159,7 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 - **概览页**：整体健康度 + 设备规格面板 + 各部件状态 + 部件概览卡片（趋势 sparkline）
 - **部件详情页**：部件得分/扣分项 + 趋势面板 + 全部指标表
 - **REST API**（只读）：`GET /api/snapshot`（组装 global+per-comp）、`GET /api/collectors`、`GET /api/config`
-- **启动参数**：`-addr`（默认 `:19322`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）、`-control-socket`（可选 daemon Stress control plane）；`-config` 仅为旧命令兼容的 deprecated no-op
+- **启动参数**：`-addr`（默认 `:19322`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）、`-control-socket`（daemon Stress control plane，默认 `/run/catmonitor/control.sock`；控制客户端始终构造、`/stress/` 页面始终挂载）；`-config` 仅为旧命令兼容的 deprecated no-op
 - **端口回退**：`:19322` 被占用时自动 +1 递增
 
 > 详见 [features/web/Web_SPEC.md](features/web/Web_SPEC.md)。
@@ -163,14 +168,16 @@ CATMonitor 由采集核心与特性层组成。特性层各模块独立成包，
 
 独立二进制 `catmonitor-dfee`（默认端口 `:19323`），**只读消费** daemon 产出的 snapshot，渲染 `/dfee/` SPA 展示能效相关指标的实时图表。
 
-- **能效指标过滤**：从 snapshot 指标过滤能效项，按部件分组
+- **能效指标过滤**：从 snapshot 指标过滤能效项（78 个 efficiency spec），按部件分组
+- **图表**：34 张实时图表——NPU 13（含 HCCS/PCIe 带宽收发 4 项）+ GPU 5（功耗/利用率/温度/显存利用率/频率）+ CPU 3 + 内存 2 + 磁盘 6 + 网络 2 + 机箱 3；无对应硬件的部件分组（NPU/GPU 等）自动隐藏；整机功耗图仅含整机 `power`（不含 `fan_power`）
 - **CPU 利用率推导**：8 个原始 jiffies → 7 项利用率百分比（后端有状态 delta）
 - **网络字节差值**：累计值 → 采集间增量
 - **交互**：卡片拖拽重排 + 手柄缩放 + 虚线对齐辅助、多选下拉筛选、模块折叠
+- **CSV 落盘**：`-csv=enabled` 时按 `-csv-interval` 周期写标准 CSV 到 `-csv-dir`，并附 Grafana Dashboard 模板（`grafana-dashboard.json`）
 - **Prometheus exporter**：`-exporter=enabled` 时启动独立 `/metrics` 端点（`:9333`），将 snapshot 映射为 `node_*`（CPU/内存/网络/磁盘 raw counters）/ `dsmi_*`（NPU）/ `ipmi_*`（机箱）/ `static_hardware_info`+`static_software_info`（启动时一次性采集的硬件/软件身份）格式；`supplementDiskStats` 直接读 `/proc/diskstats` 补 snapshot 未覆盖的设备。零外部 prometheus 库依赖（自实现文本 exposition）
 - **静态信息采集**：启动时通过 `ipmitool`/`lscpu`/`dmidecode`/`lsblk`/`npu-smi`/`nvidia-smi`/`nvcc`/`pip` 等命令采集硬件与软件版本（OS/NPU 驱动/CANN/Python/PyTorch/vLLM 等），无对应工具或权限时优雅降级为空
 - **解耦**：独立二进制（`features/dfee` package main），只读 snapshot，不修改 web 业务代码
-- **启动参数**：`-addr`（默认 `:19323`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）、`-exporter`（`enabled`|`disabled`，默认 disabled）、`-exporter-port`（默认 `9333`）、`-device`（NPU 设备过滤，逗号分隔，空=全部）、`-docker-container`（容器名，用于软件版本采集）
+- **启动参数**：`-addr`（默认 `:19323`）、`-snapshot-dir`（须与 daemon `snapshot.dir` 一致）、`-exporter`（`enabled`|`disabled`，默认 disabled）、`-exporter-port`（默认 `9333`）、`-device`（NPU 设备过滤，逗号分隔，空=全部）、`-docker-container`（容器名，用于软件版本采集）、`-csv`（`enabled`|`disabled`，默认 disabled）、`-csv-dir`（默认 `/var/lib/catmonitor/csv`）、`-csv-interval`（默认 `10s`）、`-max-runtime`（最长运行时长如 `10m`/`1h`，`0` = 常驻）
 
 > 详见 [features/dfee/dfee_SPEC.md](features/dfee/dfee_SPEC.md)。
 
@@ -216,7 +223,7 @@ storage:
 
 health:
   enabled: true
-  weight_scheme: auto     # auto | cpu_only | accelerated_8card | accelerated_4card
+  weight_scheme: auto     # auto | cpu_only | accelerated_2card | accelerated_4card | accelerated_8card
 
 collection:
   min_priority: medium   # low (全采) | medium (跳过 Low) | high (仅 High)
@@ -239,8 +246,8 @@ stress:                    # 可靠性压测（默认 off，显式启用）；�
     hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
     hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
     npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
-snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费（默认 on）
-  enabled: true           # off 时 daemon 不写 snapshot 文件，行为同前
+snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费
+  enabled: true           # 代码默认 off（config.Default()），随仓 configs/catmonitor.yaml 设为 true；off 时 daemon 不写 snapshot 文件，行为同前
   dir: /var/lib/catmonitor/snapshot   # snapshot_<comp>.json + snapshot.json 目录
 
 faultsub:                 # 故障订阅推送（默认 off）；详见 features/faultsub/faultsub_SPEC.md
@@ -297,8 +304,8 @@ straggler_output:         # 落后节点 KPI 文件输出（默认 off）；详�
 
 | 版本 | 主要内容 |
 |------|----------|
-| v0.3.6 候选 | Unified Stress V2：daemon 成为唯一 Controller；CLI/Web 通过 `/run/catmonitor/control.sock` 访问同一作业；daemon 用 Docker Executor 调用 CPU/NPU workload 容器中的 typed plugin；统一 Web listener `:19322`；Monitoring-only 仍保持三容器且不要求 Docker Socket/control socket；旧 Monitoring YAML 兼容，旧 Stress V1 YAML 不兼容 |
-| v0.3.5 | 合并 `origin/develop`：新增第一版 `features/stress` 可靠性压测模块及 STREAM/HPL/HPCG/NPU Burn、历史 V1 Web/adapter/安装工具链；dfee CSV 落盘 + Grafana Dashboard；健康评估新增 chassis/network 部件 + 4 套权重方案 + server_type 判定一致性修复；collectors 改进；新增 `internal/source/lspci`；stragglerout KPI 扩展；端口统一 19320-19323；指标总数 210→216。该行是历史记录，当前部署以 v0.3.6 候选文档为准 |
+| v0.3.6 | Unified Stress V2：daemon 成为唯一 Controller；CLI/Web 通过 `/run/catmonitor/control.sock` 访问同一作业；daemon 用 Docker Executor 调用 CPU/NPU workload 容器中的 typed plugin；统一 Web listener `:19322`；Monitoring-only 仍保持三容器且不要求 Docker Socket/control socket；旧 Monitoring YAML 兼容，旧 Stress V1 YAML 不兼容 |
+| v0.3.5 | 合并 `origin/develop`：新增第一版 `features/stress` 可靠性压测模块及 STREAM/HPL/HPCG/NPU Burn、历史 V1 Web/adapter/安装工具链；dfee CSV 落盘 + Grafana Dashboard；健康评估新增 chassis/network 部件 + 4 套权重方案 + server_type 判定一致性修复；collectors 改进；新增 `internal/source/lspci`；stragglerout KPI 扩展；端口统一 19320-19323；指标总数 210→216。该行是历史记录，当前部署以 v0.3.6 文档为准 |
 | v0.3.3 后续 | 合并 `feature/wyx/add-metrics`：dfee 新增 Prometheus exporter（`:9333/metrics`，`node_*`/`dsmi_*`/`ipmi_*`/`static_*`）+ 静态软硬件信息采集；Disk 新增 4 项累计 raw counters；GPU 新增 `memory_detail`；`LoadFeatureOverrides` higher-priority-wins 合并替代逐个 `LoadModuleOverride`；NPU `power_draw` 单位修正（DCMI 返回 0.1W → W）；faultsub `/-/ready` 改用 `written` 标志（健康 NPU 不再误报 503）；IPMI `cacheDir` 改绝对路径；新增 `docker/` 容器化方案（NPU/generic 镜像 + compose 编排） |
 | v0.3.3 | 采集粒度控制（`collection.min_priority` + `AnyWanted` DI 预过滤）；daemon 移除周期健康检查（改由 `health` 子命令）；web 退出清 snapshot；修复 npu 非 linux 桩签名致 Windows 交叉编译失败 |
 | v0.3.2 | 新增 Prometheus exporter（`:9100/metrics`）；NPU 新增 45 项 `hccn_tool` 网络统计（74→119）；IPMI 来源层重构（`sdr→sensor`、定向采集、两级缓存、降级回退）；dfee 能效监控增强（卡片拖拽缩放、多选下拉筛选、模块折叠）；`--help` 解析后退出 |

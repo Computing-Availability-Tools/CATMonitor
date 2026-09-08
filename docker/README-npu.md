@@ -7,8 +7,8 @@ NPU Burn。当前 Stress 镜像只声明已完成 A2/Ascend910B4、CANN 8.3、`r
 Docker Compose 是推荐入口；本页同时给出完整的 `docker run` 入口。两种入口使用
 相同镜像、generator 配置、挂载、权限和 3/4/4/5 容器模型。
 
-> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
-> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+> 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
+> `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
 
 ## 1. 前置条件
 
@@ -38,7 +38,7 @@ generator 会动态发现实际存在的 `/dev/davinciN`。设备号不要求从
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout refactor/unified-stress-platform
+git checkout develop   # v0.3.6（Stress V2 已合并，PR #13）
 
 export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
 export CATMONITOR_REGISTRY='ghcr.io/spike677'

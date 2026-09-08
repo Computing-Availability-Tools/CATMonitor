@@ -2,7 +2,7 @@
 
 ## 1. 设计状态
 
-本文描述面向 `v0.3.6` 候选的 Stress Architecture V2。此前 A2-r2 的
+本文描述面向 `v0.3.6` 的 Stress Architecture V2。此前 A2-r2 的
 CPU Unix Runner、NPU `docker exec` 节点适配器和独立 Stress Web 只作为
 回归基线，不再是新架构的正式执行路径。
 

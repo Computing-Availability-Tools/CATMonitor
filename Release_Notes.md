@@ -4,7 +4,15 @@
 
 ---
 
-## v0.3.6（候选，未发布）
+## v0.3.6
+
+| 项目 | 说明 |
+|------|------|
+| 版本号 | v0.3.6 |
+| 发布时间 | 2026-09-08 |
+| 发布人 | sunnytao |
+| 平台支持 | Linux (x86_64, arm64), Windows (x86_64) |
+| 合并来源 | origin/develop（含 PR #13 refactor/unified-stress-platform 等） |
 
 ### Stress Architecture V2
 
@@ -15,15 +23,26 @@
 - Web/DFeE 不再获得 Docker Socket；V2 暂时仅 daemon 获得该高权限 socket；
 - CPU/NPU 结果在 workload 容器内归一化，HPCG 拒绝历史结果文件；
 - canonical Compose 使用 `stress-cpu`、`stress-npu` profiles，NPU device override 由 generator 生成；
-- 保留 A2 已有 workload 证据作为回归基线；发布前必须重新完成 V2 自动化与 A2 实机闭环；
-- 当前候选不创建 Git tag、不发布 GHCR 镜像。
+- 保留 A2 已有 workload 证据作为回归基线；发布前必须重新完成 V2 自动化与 A2 实机闭环。
+
+### 平台支持
+
+- 官方声明 Linux (x86_64, **arm64**) / Windows (x86_64)；daemon/web/dfee 三个纯 Go 二进制均可在 Linux/arm64 原生构建与运行（无 GOARCH 限制，NPU DCMI 经 `-tags dcmi` 在 arm64 原生编译）；
+- A2（Ascend ARM）实机完成 Stress NUMA topology / offline CPU 适配验证；容器化 Generic/GPU/NPU Control 与 CPU/NPU workload 镜像提供 arm64 制品（`arm64-v0.3.5-stress` tag）。
+
+### 已知限制与发布内修复（v0.3.6 发布时）
+
+1. **straggler_output 与 faultsub 同开时 straggler KPI 静默丢失（真机测试发现，发布前已修复）**：`cmd/catmonitor/main.go` 中 `faultsub.NewFaultStorage` 曾直接包装 `CachingStorage` 并覆盖 sink，绕过 StragglerStorage。修复为包装当前链头 `sink`，存储链变为线性 `PerCompWriter → FaultStorage → StragglerStorage → CachingStorage → JSONLStorage`；已在 910B4 真机完成同开场景回归（KPI 落盘 + faultsub REST + snapshot 均正常，见 [test_report.md](docs/test_report.md) §8.2）。
+2. **`-race` 需较新 GCC**：Go race 运行时需要 ARM64 LSE 原子内建支持（GCC ≥ 9），openEuler 20.03 自带 GCC 7.3 无法链接（环境限制，非代码回归）。
+3. **DCMI CGo 已在 arm64 真机验证**（v0.3.5 已知限制 #5 消除）；straggler KPI、dfee `dsmi_*`/`ipmi_*`、chassis BMC 采集已在 910B4 真机验证。
+4. 真实压测执行（STREAM/HPL/HPCG/NPU Burn）仍为显式硬件验收门禁，未随本次发布自动化。
 
 ---
 
 ## v0.3.5
 
 > 以下 Stress 内容是 v0.3.5 发布时的历史 V1 记录，不是 v0.3.6 当前部署指导。
-> 当前架构与命令以顶部 v0.3.6 候选说明及 `features/stress/` 文档为准。
+> 当前架构与命令以顶部 v0.3.6 说明及 `features/stress/` 文档为准。
 
 | 项目 | 说明 |
 |------|------|
@@ -36,7 +55,7 @@
 ### 变更摘要
 
 - **可靠性压测模块 `features/stress`（核心新增）**：通过 `catmonitor stress` 显式运行 STREAM / HPL / HPCG / Ascend NPU Burn；普通 health 和 daemon 不自动触发。CLI/Web 共享原子报告、最近 100 次历史和 Linux 跨进程锁；支持单次缩短超时、作业取消、进程组回收及 profile、资产和配置哈希追溯。第一版只支持 Linux 单机执行；Windows 保证构建并返回 `unsupported`，暂不支持 OSU 和多节点 MPI。
-- **历史 Stress Web（V1，已退休）**：提供 `/stress/` 与 `/api/stress/*`，当时以 loopback 与 `web_enabled` 限制写操作；该实现已由 v0.3.6 候选的 daemon Controller、统一 `:19322` listener 与 control socket 架构替代。
+- **历史 Stress Web（V1，已退休）**：提供 `/stress/` 与 `/api/stress/*`，当时以 loopback 与 `web_enabled` 限制写操作；该实现已由 v0.3.6 的 daemon Controller、统一 `:19322` listener 与 control socket 架构替代。
 - **stress 管理员工具链**：`scripts/stress/` 提供 CPU benchmark 构建器（STREAM/HPL/HPCG，从任意位置构建、显式选择 GCC/MPI/OpenBLAS、精确应用 HPCG OpenMP 兼容补丁、输出含工具链与资产哈希的 build manifest）、Ascend NPU Burn 镜像构建器（固定上游源码 + Mulan PSL v2 + 逐文件 SHA256、显式 source CANN 环境、HAL/torch/torch_npu/TBE 预检、离线强制重装 wheel、pciutils/lspci 依赖闭包）、固定容器创建器（动态 identity-map 全部 `/dev/davinciN`、`unless-stopped` 策略、交叉检查容器设备节点与 upstream `lspci` logical topology）、部署生成器与统一 `catmonitor-install` 安装器；`third_party/ascend_npu_burn/` 随仓提供固定 revision 源码。构建、节点适配和运行保持分离。
 - **dfee CSV 落盘 + Grafana Dashboard**：`features/dfee/csv_writer.go` 标准 CSV 落盘（按启动时间命名、value 格式规则）；`features/dfee/grafana-dashboard.json`（24 面板 6 行）。
 - **健康评估增强**：新增 `features/health/chassis.go`（机箱部件纳入评估：进/出风口温度）、`network.go`（网络部件纳入评估）、`WEIGHT_SPEC.md`（4 套权重方案）；`cpu_only` scheme 新增 network 权重；disk 健康评估改为「按物理盘聚合空间使用率」，无 SMART 数据时不判 `smart_failed`。

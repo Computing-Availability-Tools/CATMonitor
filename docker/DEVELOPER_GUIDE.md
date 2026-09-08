@@ -7,9 +7,9 @@ Control 与 Stress workload 镜像。节点管理员如果只需要拉取镜像�
 构建镜像不会自动部署 CATMonitor，也不会执行 HPL、HPCG 或 NPU Burn 真实负载。
 运行参数、设备映射和资源规模仍由部署阶段负责。
 
-当前程序内部版本是 `0.3.5`，Linux/ARM64 Stress pre-release 标签是
-`arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。pre-release 标签不能被描述为正式
-`v0.3.6`。
+当前程序内部版本是 `0.3.6`，已发布的 Linux/ARM64 Stress pre-release 标签是
+`arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建）。pre-release 标签不能被描述为
+正式 `v0.3.6` 镜像。
 
 ## 1. 镜像矩阵与职责
 
@@ -364,7 +364,7 @@ arm64-v0.3.5-stress
 
 ```text
 arm64   = Linux/ARM64 构建
-v0.3.5 = 当前 owner 版本
+v0.3.5 = 构建该镜像时的 owner 版本
 stress  = Stress 集成候选，不是通用 0.3.5 镜像
 ```
 

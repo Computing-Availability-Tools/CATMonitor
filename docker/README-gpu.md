@@ -3,8 +3,8 @@
 适用于带 NVIDIA GPU 的 Linux 节点。当前提供 NVIDIA Monitoring 和可选 CPU Stress，
 不提供 GPU workload 压测插件。
 
-> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
-> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+> 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
+> `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
 >
 > GPU pre-release 镜像当前为 Private，拉取前需要完成 GHCR 身份认证。
 
@@ -26,7 +26,7 @@ docker compose version
 ```bash
 git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
 cd CATMonitor
-git checkout refactor/unified-stress-platform
+git checkout develop   # v0.3.6（Stress V2 已合并，PR #13）
 
 export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
 export CATMONITOR_REGISTRY='ghcr.io/spike677'
