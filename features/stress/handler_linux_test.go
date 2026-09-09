@@ -29,6 +29,11 @@ func startControlFixture(t *testing.T, manager *Manager) (*ControlClient, contex
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := manager.Shutdown(shutdownCtx); err != nil {
+			t.Errorf("stress manager shutdown: %v", err)
+		}
+		shutdownCancel()
 		cancel()
 		select {
 		case err := <-done:

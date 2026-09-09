@@ -95,7 +95,7 @@ test-stress-build-npu:
 	python3 scripts/stress/tests/npu_operator_parameters_test.py
 	python3 scripts/stress/tests/npu_model_sdc_test.py
 	bash scripts/stress/tests/npu_portable_test.sh
-	bash scripts/stress/tests/npu_native_topology_test.sh
+	GO_BIN="$(GO)" bash scripts/stress/tests/npu_native_topology_test.sh
 	bash scripts/stress/tests/ascend_env_test.sh
 	bash scripts/stress/tests/build_npu_burn_image_test.sh
 	bash scripts/stress/tests/runtime_preflight_test.sh
