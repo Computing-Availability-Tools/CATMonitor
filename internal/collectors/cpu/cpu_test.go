@@ -38,6 +38,7 @@ func useTestdata(t *testing.T) {
 	sys.SetRoot(testdataSys)
 	lscpu.SetMock(readFile(t, "../../../tests/testdata/lscpu-output.txt"))
 	ipmi.SetMockSDR(readFile(t, "../../../tests/testdata/ipmitool-sdr-output.txt"))
+	ipmi.SetCacheDir("") // keep saveNameCache() from writing mocked names to /var/lib/catmonitor
 	mce.SetMock(readFile(t, "../../../tests/testdata/dmesg-mce-sample.txt"))
 	t.Cleanup(func() {
 		proc.SetRoot("/proc")

@@ -93,11 +93,26 @@ var defaultSrc = &defaultSource{
 
 func Default() Source { return defaultSrc }
 
-func SetCacheTTL(d time.Duration) { defaultSrc.cacheTTL = d }
+// SetCacheTTL, SetCacheDir and the mock/reset hooks below take defaultSrc.mu:
+// every field of defaultSource is guarded by it (SDR/targetedFetch/discovery
+// already hold it), and the setters must not be the exception — matching
+// hccn_tool's SetMock discipline.
 
-func SetCacheDir(dir string) { defaultSrc.cacheDir = dir }
+func SetCacheTTL(d time.Duration) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
+	defaultSrc.cacheTTL = d
+}
+
+func SetCacheDir(dir string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
+	defaultSrc.cacheDir = dir
+}
 
 func SetMockSDR(s string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
 	defaultSrc.fetchSDR = func() (string, error) { return s, nil }
 	defaultSrc.fetchSensorGet = nil
 	defaultSrc.cached = nil
@@ -107,6 +122,8 @@ func SetMockSDR(s string) {
 }
 
 func SetMockSensorGet(m map[string]string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
 	defaultSrc.fetchSensorGet = func(name string) (string, error) {
 		if out, ok := m[name]; ok {
 			return out, nil
@@ -116,6 +133,8 @@ func SetMockSensorGet(m map[string]string) {
 }
 
 func ResetFetcher() {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
 	defaultSrc.fetchSDR = realFetchSDR
 	defaultSrc.fetchSensorGet = realFetchSensorGet
 	defaultSrc.cached = nil
@@ -124,7 +143,11 @@ func ResetFetcher() {
 	defaultSrc.nameCacheAt = time.Time{}
 }
 
-func SetMockPower(s string) { defaultSrc.mockPower = s }
+func SetMockPower(s string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
+	defaultSrc.mockPower = s
+}
 
 func (s *defaultSource) Available() bool {
 	_, err := exec.LookPath("ipmitool")
@@ -239,7 +262,10 @@ func (s *defaultSource) loadNameCache() {
 }
 
 func (s *defaultSource) PowerReading() (float64, error) {
+	// mockPower is guarded by s.mu (SetMockPower takes the same lock).
+	s.mu.Lock()
 	text := s.mockPower
+	s.mu.Unlock()
 	if text == "" {
 		ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
 		defer cancel()

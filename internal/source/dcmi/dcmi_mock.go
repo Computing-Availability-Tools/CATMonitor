@@ -2,6 +2,12 @@ package dcmi
 
 // MockProvider implements FetchProvider with canned values for testing.
 // Set fields to control return values; zero-value fields return errors.
+
+// Compile-time check: MockProvider must always satisfy the full
+// FetchProvider interface, so a future interface method fails the build here
+// instead of at some far-away SetProvider call site.
+var _ FetchProvider = (*MockProvider)(nil)
+
 type MockProvider struct {
 	Cards       int
 	CardListVal []int

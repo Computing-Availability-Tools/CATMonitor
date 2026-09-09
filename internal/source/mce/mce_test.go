@@ -64,6 +64,7 @@ func TestParseMCENoSocketDefaultsToZero(t *testing.T) {
 
 func TestEventsMockInject(t *testing.T) {
 	SetMock(readMock(t, "../../../tests/testdata/dmesg-mce-sample.txt"))
+	t.Cleanup(func() { SetMock("") })
 	events, err := Default().Events()
 	if err != nil {
 		t.Fatalf("Events with mock failed: %v", err)
