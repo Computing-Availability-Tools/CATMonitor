@@ -1,0 +1,32 @@
+# typos spell-checker configuration for CATMonitor
+# Domain-specific terms that are NOT typos:
+#   CANN  — Huawei Compute Architecture for Neural Networks (昇腾 CANN)
+#   TBE   — Tensor Base Engine (昇腾张量引擎)
+#   UE    — Uncorrectable Error (EDAC/MCE terminology)
+#   HYBIRD — upstream DCMI C header constant (Huawei's own naming, must match)
+#   inh   — setpriv --inh-caps flag (inherit capabilities)
+#   nd    — network devices (Go variable name)
+#   pn    — Prometheus name (Go variable name)
+[default]
+extend-ignore-identifiers-re = [
+    "CANN.*", "cann.*",
+    "TBE.*", "tbe.*",
+    ".*UE.*", ".*ue_count.*",
+    ".*HYBIRD.*",
+    ".*inh.*",
+    ".*nd.*",
+    ".*pn.*",
+    ".*uncatalogued.*",
+    ".*Uncatalogued.*",
+    ".*uncorrect.*",
+    ".*Uncorrect.*",
+    ".*bandwith.*",
+]
+
+[files]
+extend-exclude = [
+    "third_party/*",
+    "tests/testdata/*",
+    "*.xmind",
+    "*.xlsx",
+]

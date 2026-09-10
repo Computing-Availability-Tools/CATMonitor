@@ -1,9 +1,8 @@
 # CATMonitor pre-commit configuration
 #
 # Local usage:
-#   pip install pre-commit
 #   pre-commit install          # install git hook
-#   pre-commit run --all-files # manual full run
+#   pre-commit run --all-files  # manual full run
 #
 # CI usage (GitHub Actions):
 #   .github/workflows/_pre_commit.yaml calls `pre-commit run --all-files`
@@ -11,18 +10,15 @@
 # Excluded paths:
 #   - third_party/ : pinned upstream source (per-file SHA256, do not modify)
 #   - tests/testdata/ : test fixtures with intentionally preserved formatting
-#
-# Note: pre-commit-hooks v4.6.0 (not v5.0.0) because the local Python 3.7
-# environment caps pre-commit at 2.21, which doesn't support v5 syntax.
-# CI runners (Python 3.12+) handle this version fine.
-default_stages: [commit]
+minimum_pre_commit_version: "3.2.0"
+default_install_hook_types: [pre-commit]
 
 exclude: '^(third_party|tests/testdata)/.*'
 
 repos:
-  # Basic file hygiene
+  # Basic file hygiene (same version and config as DemonCAT)
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -32,9 +28,9 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
 
-  # Spell checking
+  # Spell checking (same as DemonCAT)
   - repo: https://github.com/crate-ci/typos
-    rev: v1.21.0
+    rev: v1.43.5
     hooks:
       - id: typos
         args: [--force-exclude]
