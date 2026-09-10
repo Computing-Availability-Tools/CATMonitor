@@ -16,11 +16,11 @@ import (
 // startup hardware identity like gpu_info/npu_info/disk_info/net_info).
 // Health and cross-component data live in the global snapshot.
 type CompSnapshot struct {
-	Component string             `json:"component"`
-	Timestamp time.Time          `json:"timestamp"`
-	Metrics   []collector.Metric `json:"metrics"`
+	Component string               `json:"component"`
+	Timestamp time.Time            `json:"timestamp"`
+	Metrics   []collector.Metric   `json:"metrics"`
 	History   map[string][]float64 `json:"history"`
-	Specs     []collector.Metric `json:"specs,omitempty"`
+	Specs     []collector.Metric   `json:"specs,omitempty"`
 }
 
 // PerCompWriter is a collector.Storage decorator: it delegates each per-batch
@@ -30,18 +30,18 @@ type CompSnapshot struct {
 // written right after each collect). One instance handles all components,
 // keeping independent per-component history rings + spec stashes.
 type PerCompWriter struct {
-	inner       collector.Storage
-	dir         string
-	historyCap  int
-	logger      *slog.Logger
-	mu          sync.Mutex
-	states      map[string]*compState
-	hwSpecs     map[string][]collector.Metric // comp -> startup identity specs (gpu_info, ...)
+	inner      collector.Storage
+	dir        string
+	historyCap int
+	logger     *slog.Logger
+	mu         sync.Mutex
+	states     map[string]*compState
+	hwSpecs    map[string][]collector.Metric // comp -> startup identity specs (gpu_info, ...)
 }
 
 type compState struct {
-	hist         *History
-	staticStash  []collector.Metric
+	hist        *History
+	staticStash []collector.Metric
 }
 
 // NewPerCompWriter wraps inner so every per-collector batch also produces a

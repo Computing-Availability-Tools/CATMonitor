@@ -10,11 +10,11 @@ import (
 )
 
 type DiskCollector struct {
-	prevDiskStats   map[string]proc.DiskStat
-	prevDiskTime    time.Time
+	prevDiskStats    map[string]proc.DiskStat
+	prevDiskTime     time.Time
 	hasPrevDiskStats bool
-	prevCPU         proc.CPUStat
-	hasPrevCPU      bool
+	prevCPU          proc.CPUStat
+	hasPrevCPU       bool
 }
 
 func New() *DiskCollector {

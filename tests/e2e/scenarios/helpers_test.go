@@ -3,9 +3,9 @@
 package scenarios
 
 import (
+	"io"
 	"net"
 	"net/http"
-	"io"
 	"time"
 )
 

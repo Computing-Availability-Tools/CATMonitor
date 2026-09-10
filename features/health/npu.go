@@ -19,7 +19,8 @@ var npuTempNames = map[string]bool{
 
 // evaluateNPU evaluates NPU health and returns the component score.
 // Budget: card_drop 20%, temperature 15%, health 15%, HBM ECC 15%, DDR ECC 15%,
-//         memory 8%, utilization 5%, error_code 7%.
+//
+//	memory 8%, utilization 5%, error_code 7%.
 func evaluateNPU(metrics []collector.Metric, maxScore int) ComponentScore {
 	score := float64(maxScore)
 	var deductions []Deduction

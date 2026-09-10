@@ -22,11 +22,11 @@ func joinStrings(parts []string, sep string) string {
 // 待实测 per Q4 decision.
 const (
 	// dcmi_freq_type
-	freqDDR             = 1
-	freqCTRLCPU         = 2
-	freqHBM             = 6
-	freqAICoreCurrent   = 7
-	freqAICoreMax       = 9
+	freqDDR               = 1
+	freqCTRLCPU           = 2
+	freqHBM               = 6
+	freqAICoreCurrent     = 7
+	freqAICoreMax         = 9
 	freqVectorCoreCurrent = 12
 
 	// dcmi_utilization_rate
@@ -34,9 +34,9 @@ const (
 	rateAICore       uint = 2
 	rateAICPU        uint = 3
 	rateCTRLCPU      uint = 4
-	rateDDRBandwidth  uint = 5
+	rateDDRBandwidth uint = 5
 	rateHBM          uint = 6
-	rateHBMBandwidth  uint = 10
+	rateHBMBandwidth uint = 10
 	rateVectorCore   uint = 12
 	rateNPU          uint = 13
 
@@ -45,15 +45,15 @@ const (
 	devTypeHBM = 2
 
 	// dcmi_manager_sensor_id
-	sensorCluster  = 0
-	sensorPeri     = 1
-	sensorAICore0  = 2
-	sensorAICore1  = 3
-	sensorNTC      = 10
-	sensorSOC      = 11
-	sensorFP       = 12
-	sensorNDie     = 13
-	sensorHBM      = 14
+	sensorCluster = 0
+	sensorPeri    = 1
+	sensorAICore0 = 2
+	sensorAICore1 = 3
+	sensorNTC     = 10
+	sensorSOC     = 11
+	sensorFP      = 12
+	sensorNDie    = 13
+	sensorHBM     = 14
 
 	// dcmi_main_cmd
 	mainCmdDVPP = 0
@@ -62,8 +62,8 @@ const (
 	// dcmi_lp_sub_cmd
 	lpSubAICoreVoltage = 0
 	lpSubHybridVoltage = 1
-	lpSubCpuVoltage   = 2
-	lpSubDdrVoltage   = 3
+	lpSubCpuVoltage    = 2
+	lpSubDdrVoltage    = 3
 	lpSubACG           = 4
 )
 
@@ -138,7 +138,7 @@ func (c *NPUCollector) collectStatic(now time.Time) ([]collector.Metric, error) 
 		if chip, err := src.ChipInfo(d.cardID, d.devID); err == nil && chip != nil {
 			metrics = append(metrics, collector.Metric{
 				Component: "npu", Name: "chip_type", Value: 0, Unit: "",
-				Labels: map[string]string{"npu_id": strconv.Itoa(d.cardID), "chip_id": strconv.Itoa(d.devID), "chip_type": chip.ChipType},
+				Labels:    map[string]string{"npu_id": strconv.Itoa(d.cardID), "chip_id": strconv.Itoa(d.devID), "chip_type": chip.ChipType},
 				Timestamp: now,
 			})
 		}

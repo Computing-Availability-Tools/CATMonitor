@@ -13,12 +13,12 @@ type fakeCollector struct {
 	interval time.Duration
 }
 
-func (f *fakeCollector) Name() string            { return f.name }
-func (f *fakeCollector) Component() string        { return f.comp }
-func (f *fakeCollector) Collect() ([]Metric, error) { return nil, nil }
-func (f *fakeCollector) Priority() Priority       { return PriorityMedium }
+func (f *fakeCollector) Name() string                   { return f.name }
+func (f *fakeCollector) Component() string              { return f.comp }
+func (f *fakeCollector) Collect() ([]Metric, error)     { return nil, nil }
+func (f *fakeCollector) Priority() Priority             { return PriorityMedium }
 func (f *fakeCollector) DefaultInterval() time.Duration { return f.interval }
-func (f *fakeCollector) DefaultEnabled() bool     { return f.enabled }
+func (f *fakeCollector) DefaultEnabled() bool           { return f.enabled }
 
 func TestRegistryEmpty(t *testing.T) {
 	r := NewRegistry()

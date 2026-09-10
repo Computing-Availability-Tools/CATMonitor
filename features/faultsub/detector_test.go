@@ -282,7 +282,7 @@ func TestConcurrentDetect(t *testing.T) {
 	go func() {
 		for i := 0; i < 200; i++ {
 			d.Detect([]collector.Metric{
-				mkNPU("card_drop", float64(i % 2), map[string]string{"npu_id": "0"}),
+				mkNPU("card_drop", float64(i%2), map[string]string{"npu_id": "0"}),
 			})
 		}
 		close(done)

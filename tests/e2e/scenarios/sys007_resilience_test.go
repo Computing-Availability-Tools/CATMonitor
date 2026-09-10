@@ -78,7 +78,7 @@ func TestSYS007_027_DiskFull(t *testing.T) {
 	root := e2e.RepoRoot(t)
 	d := e2e.StartProcSpec(t, e2e.ProcSpec{
 		Name: "daemon", LogPath: filepath.Join(ws.Dir, "daemon.log"), Dir: root,
-		Env: []string{"CATMONITOR_METRICS=" + filepath.Join(root, "configs", "metrics.yaml")},
+		Env:  []string{"CATMONITOR_METRICS=" + filepath.Join(root, "configs", "metrics.yaml")},
 		Argv: []string{bins.Daemon, "daemon", "-config", cfgPath},
 	})
 	e2e.WaitGlobalSnapshot(t, snapDir, 30*time.Second)

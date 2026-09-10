@@ -57,13 +57,13 @@ func NewDetector(rules RuleConfig) *FaultDetector {
 func (d *FaultDetector) Detect(metrics []collector.Metric) []FaultEvent {
 	// Group the relevant metrics by npu_id.
 	type devState struct {
-		health      *collector.Metric
-		errorCode   *collector.Metric
-		cardDrop    *collector.Metric
-		hbmDouble   *collector.Metric
-		ddrDouble   *collector.Metric
-		roceStatus  *collector.Metric
-		roceHealth  *collector.Metric
+		health       *collector.Metric
+		errorCode    *collector.Metric
+		cardDrop     *collector.Metric
+		hbmDouble    *collector.Metric
+		ddrDouble    *collector.Metric
+		roceStatus   *collector.Metric
+		roceHealth   *collector.Metric
 		driverHealth *collector.Metric
 	}
 	devs := make(map[string]*devState)

@@ -145,7 +145,7 @@ func TestFanPower(t *testing.T) {
 
 func TestParseFanName(t *testing.T) {
 	cases := []struct {
-		in            string
+		in               string
 		wantFan, wantDir string
 	}{
 		{"FAN1 F Speed", "1", "F"},

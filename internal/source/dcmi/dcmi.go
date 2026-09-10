@@ -41,19 +41,19 @@ type ChipInfo struct {
 }
 
 type HbmInfo struct {
-	MemorySize      uint64 // MB
-	Freq            uint   // MHz
-	MemoryUsage     uint64 // MB
-	Temp            int    // °C
-	BandwidthUtilRate uint  // %
+	MemorySize        uint64 // MB
+	Freq              uint   // MHz
+	MemoryUsage       uint64 // MB
+	Temp              int    // °C
+	BandwidthUtilRate uint   // %
 }
 
 type EccInfo struct {
-	EnableFlag            uint
-	SingleBitErrorCnt     uint
-	DoubleBitErrorCnt     uint
-	TotalSingleBitErrorCnt uint
-	TotalDoubleBitErrorCnt uint
+	EnableFlag                uint
+	SingleBitErrorCnt         uint
+	DoubleBitErrorCnt         uint
+	TotalSingleBitErrorCnt    uint
+	TotalDoubleBitErrorCnt    uint
 	SingleBitIsolatedPagesCnt uint
 	DoubleBitIsolatedPagesCnt uint
 }
@@ -65,8 +65,8 @@ type LlcPerf struct {
 }
 
 type AicpuInfo struct {
-	MaxFreq   uint   // MHz
-	CurFreq   uint   // MHz
+	MaxFreq   uint // MHz
+	CurFreq   uint // MHz
 	AicpuNum  uint
 	UtilRates []uint // per-core %
 }
@@ -89,7 +89,7 @@ type DvppRatio struct {
 
 // FetchProvider mirrors the DCMI C calls, returning Go types. The CGo binding
 // (dcmi_cgo.go) implements this; tests use MockProvider.
-type 	FetchProvider interface {
+type FetchProvider interface {
 	Init() error
 	CardList() (cardNum int, cardList []int, err error)
 	DeviceNumInCard(card int) (int, error)
@@ -178,123 +178,183 @@ func (s *defaultSource) notAvail() error { return errNotAvailable }
 // --- Delegation methods ---
 
 func (s *defaultSource) Init() error {
-	if s.provider == nil { return s.notAvail() }
+	if s.provider == nil {
+		return s.notAvail()
+	}
 	return s.provider.Init()
 }
 
 func (s *defaultSource) CardList() (int, []int, error) {
-	if s.provider == nil { return 0, nil, s.notAvail() }
+	if s.provider == nil {
+		return 0, nil, s.notAvail()
+	}
 	return s.provider.CardList()
 }
 func (s *defaultSource) DeviceNumInCard(card int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.DeviceNumInCard(card)
 }
 func (s *defaultSource) DeviceIDInCard(card int) (int, int, int, error) {
-	if s.provider == nil { return 0, 0, 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, 0, 0, s.notAvail()
+	}
 	return s.provider.DeviceIDInCard(card)
 }
 func (s *defaultSource) Temperature(card, dev int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.Temperature(card, dev)
 }
 func (s *defaultSource) Power(card, dev int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.Power(card, dev)
 }
 func (s *defaultSource) Voltage(card, dev int) (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.Voltage(card, dev)
 }
 func (s *defaultSource) Health(card, dev int) (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.Health(card, dev)
 }
 func (s *defaultSource) ChipInfo(card, dev int) (*ChipInfo, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.ChipInfo(card, dev)
 }
 func (s *defaultSource) ErrorCodeV2(card, dev int) (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.ErrorCodeV2(card, dev)
 }
 func (s *defaultSource) ErrorCodeList(card, dev int) (*DeviceErrors, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.ErrorCodeList(card, dev)
 }
 func (s *defaultSource) CardDrop(card, dev int) (bool, error) {
-	if s.provider == nil { return false, s.notAvail() }
+	if s.provider == nil {
+		return false, s.notAvail()
+	}
 	return s.provider.CardDrop(card, dev)
 }
 func (s *defaultSource) ResourceInfo(card, dev int) (*ResourceInfo, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.ResourceInfo(card, dev)
 }
 func (s *defaultSource) HbmInfo(card, dev int) (*HbmInfo, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.HbmInfo(card, dev)
 }
 func (s *defaultSource) Frequency(card, dev int, freqType int) (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.Frequency(card, dev, freqType)
 }
 func (s *defaultSource) UtilizationRate(card, dev int, rateType uint) (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.UtilizationRate(card, dev, rateType)
 }
 func (s *defaultSource) EccInfo(card, dev int, deviceType int) (*EccInfo, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.EccInfo(card, dev, deviceType)
 }
 func (s *defaultSource) LlcPerf(card, dev int) (*LlcPerf, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.LlcPerf(card, dev)
 }
 func (s *defaultSource) SensorInfo(card, dev int, sensorID int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.SensorInfo(card, dev, sensorID)
 }
 func (s *defaultSource) SensorNTC(card, dev int) ([4]int, error) {
-	if s.provider == nil { return [4]int{}, s.notAvail() }
+	if s.provider == nil {
+		return [4]int{}, s.notAvail()
+	}
 	return s.provider.SensorNTC(card, dev)
 }
 func (s *defaultSource) DeviceInfo(card, dev int, mainCmd int, subCmd uint) (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.DeviceInfo(card, dev, mainCmd, subCmd)
 }
 func (s *defaultSource) NetworkHealth(card, dev int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.NetworkHealth(card, dev)
 }
 func (s *defaultSource) FanCount(card, dev int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.FanCount(card, dev)
 }
 func (s *defaultSource) FanSpeed(card, dev int, fanID int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.FanSpeed(card, dev, fanID)
 }
 func (s *defaultSource) AicpuInfo(card, dev int) (*AicpuInfo, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.AicpuInfo(card, dev)
 }
 func (s *defaultSource) DvppRatio(card, dev int) (*DvppRatio, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.DvppRatio(card, dev)
 }
 func (s *defaultSource) ResourceInfoFull(card, dev int) ([]uint, error) {
-	if s.provider == nil { return nil, s.notAvail() }
+	if s.provider == nil {
+		return nil, s.notAvail()
+	}
 	return s.provider.ResourceInfoFull(card, dev)
 }
 func (s *defaultSource) DriverVersion() (string, error) {
-	if s.provider == nil { return "", s.notAvail() }
+	if s.provider == nil {
+		return "", s.notAvail()
+	}
 	return s.provider.DriverVersion()
 }
 func (s *defaultSource) DriverHealth() (uint, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.DriverHealth()
 }
 func (s *defaultSource) DevicePhyID(card, dev int) (int, error) {
-	if s.provider == nil { return 0, s.notAvail() }
+	if s.provider == nil {
+		return 0, s.notAvail()
+	}
 	return s.provider.DevicePhyID(card, dev)
 }

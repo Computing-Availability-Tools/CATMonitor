@@ -61,7 +61,7 @@ func TestPruneThrottledWithinOneHour(t *testing.T) {
 	old := t0.Add(-48 * time.Hour)
 	writeDatedFile(t, dir, "straggler_kpi_2020-01-01.jsonl", old)
 
-	w.Prune(t0)            // primes lastPrune
+	w.Prune(t0)                  // primes lastPrune
 	w.Prune(t0.Add(time.Minute)) // 1min later: throttled, no scan
 
 	if got := listNames(t, dir); !got["straggler_kpi_2020-01-01.jsonl"] {
@@ -83,7 +83,7 @@ func TestPruneRemovesExpiredFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w.Prune(t0)       // prime
+	w.Prune(t0)        // prime
 	w.Prune(pruneTime) // past throttle: real scan
 
 	got := listNames(t, dir)
@@ -102,7 +102,7 @@ func TestPruneRemovesExpiredFiles(t *testing.T) {
 func TestPruneMissingDirNoPanic(t *testing.T) {
 	w := NewKPIWriter(filepath.Join(t.TempDir(), "gone"), time.Hour, quietLogger())
 	t0 := time.Now()
-	w.Prune(t0)                  // prime
+	w.Prune(t0)                    // prime
 	w.Prune(t0.Add(2 * time.Hour)) // dir absent: ReadDir fails -> logged, returns
 }
 
@@ -116,7 +116,7 @@ func TestPruneCutoffRespectsRetention(t *testing.T) {
 	writeDatedFile(t, dir, "straggler_kpi_2024-01-01.jsonl", t0.Add(-24*time.Hour)) // inside retention
 	writeDatedFile(t, dir, "straggler_kpi_2020-01-01.jsonl", t0.Add(-72*time.Hour)) // past retention
 
-	w.Prune(t0)                  // prime
+	w.Prune(t0)                    // prime
 	w.Prune(t0.Add(2 * time.Hour)) // real scan; cutoff = t0-46h
 
 	got := listNames(t, dir)

@@ -106,7 +106,7 @@ func (c *CPUCollector) collectLoadAverage(now time.Time) ([]collector.Metric, er
 	for _, iv := range intervals {
 		metrics = append(metrics, collector.Metric{
 			Component: "cpu", Name: "load_average", Value: roundFloat(iv.val, 2), Unit: "",
-			Labels:    map[string]string{"interval": iv.name}, Timestamp: now,
+			Labels: map[string]string{"interval": iv.name}, Timestamp: now,
 		})
 	}
 	return metrics, nil

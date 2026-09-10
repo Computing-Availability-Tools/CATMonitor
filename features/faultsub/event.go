@@ -20,13 +20,13 @@ import (
 type FaultType string
 
 const (
-	FaultCardDrop        FaultType = "card_drop"         // NPU card offline / device not ready
-	FaultHealthState     FaultType = "npu_health"        // health_status non-OK (Alarm/Critical)
-	FaultErrorCode       FaultType = "npu_error_code"   // device reports error codes
-	FaultHbmUCE          FaultType = "hbm_uce"           // HBM double-bit (uncorrectable) ECC
-	FaultDdrUCE          FaultType = "ddr_uce"           // DDR double-bit ECC
-	FaultRoceLinkDown    FaultType = "roce_link_down"    // RoCE link down / unhealthy
-	FaultDriverUnhealthy FaultType = "driver_unhealthy" // NPU driver health non-zero
+	FaultCardDrop          FaultType = "card_drop"          // NPU card offline / device not ready
+	FaultHealthState       FaultType = "npu_health"         // health_status non-OK (Alarm/Critical)
+	FaultErrorCode         FaultType = "npu_error_code"     // device reports error codes
+	FaultHbmUCE            FaultType = "hbm_uce"            // HBM double-bit (uncorrectable) ECC
+	FaultDdrUCE            FaultType = "ddr_uce"            // DDR double-bit ECC
+	FaultRoceLinkDown      FaultType = "roce_link_down"     // RoCE link down / unhealthy
+	FaultDriverUnhealthy   FaultType = "driver_unhealthy"   // NPU driver health non-zero
 	FaultStragglerDetected FaultType = "straggler_detected" // slow-node (straggler) detection hit (ingested from external detector)
 )
 

@@ -6,9 +6,9 @@ import "testing"
 // topology, voltage/health/error codes/card-drop/resource/sensor lookups.
 func TestMockProviderExtraMethods(t *testing.T) {
 	mock := &MockProvider{
-		DevMax: 2,
-		Volts:  map[[2]int]uint{{0, 0}: 780},
-		Healths: map[[2]int]uint{{0, 0}: 0}, // 0 = healthy
+		DevMax:         2,
+		Volts:          map[[2]int]uint{{0, 0}: 780},
+		Healths:        map[[2]int]uint{{0, 0}: 0}, // 0 = healthy
 		ErrorCodes:     map[[2]int]uint{{0, 0}: 0x40f84e00},
 		ErrorCodeLists: map[[2]int]*DeviceErrors{{0, 0}: {Count: 2, Codes: []string{"0x40f84e00", "0x00000001"}}},
 		CardDrops:      map[[2]int]bool{{0, 0}: true},

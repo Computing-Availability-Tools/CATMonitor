@@ -51,7 +51,7 @@ func (c *FaultSub) CreateSubscription(t *testing.T, sub faultsub.Subscription) f
 // ListSubscriptions returns all live subscriptions.
 func (c *FaultSub) ListSubscriptions(t *testing.T) []faultsub.Subscription {
 	t.Helper()
-	resp, err := http.Get(c.base+"/faultsub/subscriptions")
+	resp, err := http.Get(c.base + "/faultsub/subscriptions")
 	if err != nil {
 		t.Fatalf("list subscriptions: %v", err)
 	}

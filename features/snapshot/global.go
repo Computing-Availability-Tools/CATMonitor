@@ -36,13 +36,13 @@ type MetricSource interface {
 // cross-component system specs (device_model / os_info). Per-component metrics
 // + history live in the per-component files, NOT here.
 type GlobalSnapshot struct {
-	SessionID        string             `json:"session_id"`
-	Timestamp        time.Time          `json:"timestamp"`
-	RefreshInterval  int                `json:"refresh_interval_ms"`
-	Intervals        map[string]int     `json:"intervals_ms,omitempty"`
-	Health           health.HealthScore `json:"health"`
-	Collectors       []CollectorInfo    `json:"collectors"`
-	SystemSpecs      []collector.Metric `json:"system_specs,omitempty"`
+	SessionID       string             `json:"session_id"`
+	Timestamp       time.Time          `json:"timestamp"`
+	RefreshInterval int                `json:"refresh_interval_ms"`
+	Intervals       map[string]int     `json:"intervals_ms,omitempty"`
+	Health          health.HealthScore `json:"health"`
+	Collectors      []CollectorInfo    `json:"collectors"`
+	SystemSpecs     []collector.Metric `json:"system_specs,omitempty"`
 }
 
 // GlobalWriter periodically reads a MetricSource, evaluates health on the full

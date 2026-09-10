@@ -22,7 +22,7 @@ type WebProc struct {
 type WebSpec struct {
 	SnapshotDir   string
 	ControlSocket string // "" uses /run/catmonitor/control.sock
-	RunAsUser     string  // "" = current user; requires root to set
+	RunAsUser     string // "" = current user; requires root to set
 }
 
 // StartWeb launches web on 127.0.0.1:19322 consuming snapshotDir.

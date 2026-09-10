@@ -43,9 +43,9 @@ func TestRenderScoreBar(t *testing.T) {
 		{100, 100, 30},
 		{0, 100, 0},
 		{50, 100, 15},
-		{15, 100, 4},  // 4.5 truncated to 4
+		{15, 100, 4},   // 4.5 truncated to 4
 		{150, 100, 30}, // capped at width
-		{10, 0, 0},    // zero max -> empty bar, no divide-by-zero
+		{10, 0, 0},     // zero max -> empty bar, no divide-by-zero
 	}
 	for _, tc := range cases {
 		bar := renderScoreBar(tc.score, tc.max)

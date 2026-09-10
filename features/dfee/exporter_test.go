@@ -246,10 +246,10 @@ func TestMapDSMIMetrics(t *testing.T) {
 		mkSnapMetric("npu", "power_draw", 310, map[string]string{"npu_id": "0", "chip_id": "1"}),
 		mkSnapMetric("npu", "aicore_freq", 1.9e9, map[string]string{"npu_id": "1"}),
 		mkSnapMetric("npu", "utilization", 42, map[string]string{"npu_id": "1"}),
-		mkSnapMetric("npu", "memory_usage", 55, map[string]string{"npu_id": "bad"}),   // non-numeric id
-		mkSnapMetric("npu", "voltage", 1, nil),                                        // no npu_id
-		mkSnapMetric("npu", "unknown_metric", 1, map[string]string{"npu_id": "0"}),   // unknown name
-		mkSnapMetric("cpu", "usage", 1, map[string]string{"npu_id": "0"}),            // not npu
+		mkSnapMetric("npu", "memory_usage", 55, map[string]string{"npu_id": "bad"}), // non-numeric id
+		mkSnapMetric("npu", "voltage", 1, nil),                                      // no npu_id
+		mkSnapMetric("npu", "unknown_metric", 1, map[string]string{"npu_id": "0"}),  // unknown name
+		mkSnapMetric("cpu", "usage", 1, map[string]string{"npu_id": "0"}),           // not npu
 	}
 	// No filter: all valid npu metrics.
 	got := mapDSMIMetrics(in, nil)

@@ -84,7 +84,7 @@ var deviceMetricNames = append([]string{
 // metrics are collected in a separate goroutine, so 8-card latency ≈ 1-card.
 type NPUCollector struct {
 	mu              sync.Mutex
-	devices         []npuDevice    // populated at startup from CardList + DeviceNumInCard
+	devices         []npuDevice // populated at startup from CardList + DeviceNumInCard
 	devicesReady    bool
 	prevEcc         map[string]uint64 // key "card:chip:type:kind" → cumulative count for delta
 	staticCollected bool              // topo, npu_num, driver_version, chip_type, comm_topo

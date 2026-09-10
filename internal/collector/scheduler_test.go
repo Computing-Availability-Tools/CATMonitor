@@ -26,7 +26,7 @@ type countingCollector struct {
 	err      error
 }
 
-func (f *countingCollector) Name() string     { return f.name }
+func (f *countingCollector) Name() string      { return f.name }
 func (f *countingCollector) Component() string { return f.comp }
 func (f *countingCollector) Collect() ([]Metric, error) {
 	f.mu.Lock()
@@ -42,9 +42,9 @@ func (f *countingCollector) callsCount() int {
 	defer f.mu.Unlock()
 	return f.calls
 }
-func (f *countingCollector) Priority() Priority        { return PriorityHigh }
+func (f *countingCollector) Priority() Priority             { return PriorityHigh }
 func (f *countingCollector) DefaultInterval() time.Duration { return f.interval }
-func (f *countingCollector) DefaultEnabled() bool      { return f.enabled }
+func (f *countingCollector) DefaultEnabled() bool           { return f.enabled }
 
 // recordingStorage records every written batch; optionally fails writes.
 type recordingStorage struct {

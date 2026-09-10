@@ -68,14 +68,14 @@ func realInfoFetch(dev string) (string, error) {
 }
 
 type defaultSource struct {
-	mu          sync.Mutex
-	cache       map[string]string
-	cachedAt    map[string]time.Time
-	infoCache   map[string]string
+	mu           sync.Mutex
+	cache        map[string]string
+	cachedAt     map[string]time.Time
+	infoCache    map[string]string
 	infoCachedAt map[string]time.Time
-	cacheTTL    time.Duration
-	fetch       fetcher
-	infoFetch   fetcher
+	cacheTTL     time.Duration
+	fetch        fetcher
+	infoFetch    fetcher
 }
 
 var defaultSrc = &defaultSource{

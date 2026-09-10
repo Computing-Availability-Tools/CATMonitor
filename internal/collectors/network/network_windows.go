@@ -15,15 +15,15 @@ import (
 )
 
 type winNetAdapterStat struct {
-	Name               string  `json:"Name"`
-	ReceivedBytes      float64 `json:"ReceivedBytes"`
-	SentBytes          float64 `json:"SentBytes"`
-	ReceivedPackets    float64 `json:"ReceivedUnicastPackets"`
-	SentPackets        float64 `json:"SentUnicastPackets"`
-	ReceivedErrors     float64 `json:"ReceivedPacketErrors"`
-	SentErrors         float64 `json:"SentPacketErrors"`
-	ReceivedDiscards   float64 `json:"ReceivedDiscardedPackets"`
-	SentDiscards       float64 `json:"SentDiscardedPackets"`
+	Name             string  `json:"Name"`
+	ReceivedBytes    float64 `json:"ReceivedBytes"`
+	SentBytes        float64 `json:"SentBytes"`
+	ReceivedPackets  float64 `json:"ReceivedUnicastPackets"`
+	SentPackets      float64 `json:"SentUnicastPackets"`
+	ReceivedErrors   float64 `json:"ReceivedPacketErrors"`
+	SentErrors       float64 `json:"SentPacketErrors"`
+	ReceivedDiscards float64 `json:"ReceivedDiscardedPackets"`
+	SentDiscards     float64 `json:"SentDiscardedPackets"`
 }
 
 type winNetAdapterStatus struct {
