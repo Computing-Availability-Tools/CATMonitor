@@ -1,4 +1,4 @@
-.PHONY: all build test test-verbose test-coverage test-stress test-stress-ut \
+.PHONY: all build test test-verbose test-coverage test-e2e test-stress test-stress-ut \
 	test-monitoring-compat \
 	test-stress-race test-stress-e2e test-stress-build \
 	test-stress-container-e2e \
@@ -42,6 +42,14 @@ test-verbose:
 
 test-coverage:
 	$(GO) test -cover ./...
+
+# Black-box e2e scenarios (Go, build-tag gated). Compiles the three
+# production binaries and drives them through their HTTP/process/file
+# boundaries. Requires :19320/:19322/:19323 free. The default `make test`
+# does NOT compile these (see tests/e2e/framework/doc.go).
+test-e2e:
+	$(GO) vet -tags=e2e ./tests/e2e/...
+	$(GO) test -tags=e2e ./tests/e2e/... -count=1 -p 1 -v
 
 # Stress has three intentionally separate automated test layers:
 # package-local Go unit/component tests, hermetic build/deployment fixtures,
