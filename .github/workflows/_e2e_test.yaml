@@ -1,0 +1,43 @@
+name: E2E Test
+
+# Reusable e2e workflow (called by pr_test.yaml).
+# Runs make test-e2e (41 test cases / 25 test functions, black-box Go).
+#
+# Known limitations on hosted runners (non-root):
+#   - TC-027 (disk-full tmpfs mount) skips: requires root
+#   - TC-031 RunAsUser part skips: requires root
+#   The remaining 23 test functions run normally (graceful degradation:
+#   no ipmitool/nvidia-smi on the runner means those collectors degrade,
+#   which the framework's data-ready gates handle).
+# For full coverage including root scenarios, run make test-e2e locally.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to checkout; empty = event default"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e (41 test cases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run e2e scenarios
+        run: make test-e2e

@@ -1,0 +1,43 @@
+name: CI
+
+# Single entry point: one push/PR only triggers this one workflow.
+# Calls three reusable workflows (lint / unit test / e2e) in parallel.
+# Architecture matches DemonCAT's pr_test.yaml (hub-and-spoke pattern).
+#
+# Job summary:
+#   lint  — pre-commit (gofmt / go vet / hygiene / typos) + PR title check
+#   test  — go test ./... (536 functions / 39 packages)
+#   e2e   — make test-e2e (41 test cases / 25 functions, black-box)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited  # re-validate PR title after edits
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint:
+    name: Lint
+    uses: ./.github/workflows/_pre_commit.yaml
+
+  test:
+    name: Test
+    uses: ./.github/workflows/_unit_test.yaml
+
+  e2e:
+    name: E2E
+    uses: ./.github/workflows/_e2e_test.yaml

@@ -1,0 +1,56 @@
+# CATMonitor pre-commit configuration
+#
+# Local usage:
+#   pip install pre-commit
+#   pre-commit install          # install git hook
+#   pre-commit run --all-files # manual full run
+#
+# CI usage (GitHub Actions):
+#   .github/workflows/_pre_commit.yaml calls `pre-commit run --all-files`
+#
+# Excluded paths:
+#   - third_party/ : pinned upstream source (per-file SHA256, do not modify)
+#   - tests/testdata/ : test fixtures with intentionally preserved formatting
+#
+# Note: pre-commit-hooks v4.6.0 (not v5.0.0) because the local Python 3.7
+# environment caps pre-commit at 2.21, which doesn't support v5 syntax.
+# CI runners (Python 3.12+) handle this version fine.
+default_stages: [commit]
+
+exclude: '^(third_party|tests/testdata)/.*'
+
+repos:
+  # Basic file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Spell checking
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.21.0
+    hooks:
+      - id: typos
+        args: [--force-exclude]
+
+  # Go-specific hooks (replaces DemonCAT's clang-format/shellcheck)
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (Go formatting)
+        entry: gofmt -l -w
+        language: system
+        files: '\.go$'
+        exclude: 'third_party/.*'
+
+      - id: go-vet
+        name: go vet (static analysis)
+        entry: go vet ./...
+        language: system
+        pass_filenames: false

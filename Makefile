@@ -3,7 +3,7 @@
 	test-stress-race test-stress-e2e test-stress-build \
 	test-stress-container-e2e \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
-	test-stress-audit audit-stress-release install-stress-resources lint clean web dfee
+	test-stress-audit audit-stress-release install-stress-resources lint check format clean web dfee
 
 GO ?= go
 BIN=bin/catmonitor
@@ -99,6 +99,19 @@ audit-stress-release:
 
 lint:
 	$(GO) vet ./...
+
+# Full local gate: gofmt check + go vet + go test (same scope as CI).
+# Quick feedback loop before pushing — CI runs this plus e2e and hygiene.
+check:
+	@unformatted=$$(gofmt -l . 2>/dev/null); \
+	if [ -n "$$unformatted" ]; then \
+		echo "Files need gofmt (run make format):"; echo "$$unformatted"; exit 1; fi
+	$(GO) vet ./...
+	$(GO) test ./...
+
+# One-time Go code formatting.
+format:
+	gofmt -w .
 
 clean:
 	rm -rf bin/
