@@ -1,13 +1,17 @@
 name: CI
 
 # Single entry point: one push/PR only triggers this one workflow.
-# Calls three reusable workflows (lint / unit test / e2e) in parallel.
-# Architecture matches DemonCAT's pr_test.yaml (hub-and-spoke pattern).
+# Calls reusable workflows (hub-and-spoke, same pattern as DemonCAT).
 #
-# Job summary:
-#   lint  — pre-commit (gofmt / go vet / hygiene / typos) + PR title check
-#   test  — go test ./... (536 functions / 39 packages)
-#   e2e   — make test-e2e (41 test cases / 25 functions, black-box)
+# Light layer (every push/PR, GitHub-hosted ubuntu):
+#   lint    — pre-commit (gofmt / go vet / hygiene / typos) + PR title check
+#   test    — go test ./... (536 functions / 39 packages)
+#   e2e     — make test-e2e (41 test cases, no-hardware degradation;
+#             TC-027/TC-031 skip on non-root runners)
+#
+# Full NPU layer (only on the home repo, gated by PR 'ready' label or push):
+#   e2e-npu — make test-e2e on the self-hosted 910B4 runner (all 41 cases
+#             incl. root scenarios + real NPU/BMC data) + dcmi CGo build check.
 
 on:
   push:
@@ -19,6 +23,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - labeled
       - edited  # re-validate PR title after edits
 
 concurrency:
@@ -41,3 +46,20 @@ jobs:
   e2e:
     name: E2E
     uses: ./.github/workflows/_e2e_test.yaml
+
+  # Full NPU coverage: only on the home repository (self-hosted runner is
+  # private infrastructure — fork PRs must not execute code on it) and only
+  # when explicitly requested (push to develop/main, or PR labeled ready).
+  e2e-npu:
+    name: E2E NPU (self-hosted 910B4)
+    needs: lint
+    if: >-
+      ${{ always() && needs.lint.result == 'success'
+          && github.repository == 'ggboom12138/CATMonitor'
+          && (github.event_name == 'push'
+              || contains(github.event.pull_request.labels.*.name, 'ready')) }}
+    uses: ./.github/workflows/_e2e_test.yaml
+    with:
+      runner: '["self-hosted", "npu-server", "ARM64"]'
+      dcmi-build: true
+      timeout-minutes: 30
