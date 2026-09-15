@@ -4,3 +4,11 @@ MEM1 Temp        | 42.000 degrees C      | ok
 MEM1 Pwr         | 12.500 Watts          | na
 CPU1 Pwr         | 125.500 Watts         | na
 CPU2 Pwr         | 118.300 Watts         | na
+CPU1 Core Rem    | 62.000 degrees C      | ok
+CPU2 Core Rem    | 64.000 degrees C      | ok
+CPU1 MEM Temp    | 40.000 degrees C      | ok
+CPU2 MEM Temp    | 41.000 degrees C      | ok
+CPU1 VRD Temp    | 72.000 degrees C      | ok
+CPU2 VRD Temp    | 73.000 degrees C      | ok
+CPU1 VDDQ Temp   | 55.000 degrees C      | ok
+CPU2 VDDQ Temp   | 56.000 degrees C      | ok

@@ -267,7 +267,14 @@ func isUsefulSensor(name string) bool {
 		return true
 	case strings.HasPrefix(l, "fan") && strings.Contains(l, "power"):
 		return true
-	case strings.Contains(l, "cpu") && strings.Contains(l, "temp"):
+	case strings.Contains(l, "cpu") && strings.Contains(l, "temp") &&
+		!strings.Contains(l, "vrd") && !strings.Contains(l, "vddq") && !strings.Contains(l, "vrm"):
+		// CPU temps, excluding voltage regulator temps (VRD/VDDQ/VRM) —
+		// they are not core temps and no collector wants them.
+		return true
+	case strings.Contains(l, "cpu") && strings.Contains(l, "core"):
+		// "CPU1 Core Rem" — core temp naming on BMCs that omit "Temp"
+		// from the sensor name.
 		return true
 	case strings.Contains(l, "mem") && strings.Contains(l, "temp"):
 		return true

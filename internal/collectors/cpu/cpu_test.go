@@ -67,6 +67,19 @@ func findMetric(metrics []collector.Metric, name, labelKey, labelVal string) *co
 	return nil
 }
 
+// findMetricBySensor finds the metric with the given name whose "sensor"
+// label matches exactly (distinguishes multiple instances like CPU1 Temp vs
+// CPU1 Core Rem that share the same cpu label).
+func findMetricBySensor(metrics []collector.Metric, name, sensor string) *collector.Metric {
+	for i := range metrics {
+		m := &metrics[i]
+		if m.Name == name && m.Labels["sensor"] == sensor {
+			return m
+		}
+	}
+	return nil
+}
+
 func TestCalculateUsage(t *testing.T) {
 	prev := proc.CPUStat{User: 100, System: 100, Idle: 800}
 	curr := proc.CPUStat{User: 200, System: 200, Idle: 1600}
@@ -391,9 +404,11 @@ func TestCollectIpmiMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectIpmiMetrics failed: %v", err)
 	}
-	// 2 temperature + 1 mem_temperature + 2 power = 5
-	if len(metrics) != 5 {
-		t.Fatalf("expected 5 metrics, got %d", len(metrics))
+	// 4 temperature (CPU1/CPU2 Temp + CPU1/CPU2 Core Rem)
+	// + 3 mem_temperature (MEM1 Temp + CPU1/CPU2 MEM Temp)
+	// + 2 power = 9. VRD/VDDQ temps are dropped.
+	if len(metrics) != 9 {
+		t.Fatalf("expected 9 metrics, got %d", len(metrics))
 	}
 	if m := findMetric(metrics, "temperature", "cpu", "1"); m == nil || m.Value != 65.0 {
 		t.Errorf("temperature cpu1: expected 65.0, got %v", m)
@@ -401,8 +416,29 @@ func TestCollectIpmiMetrics(t *testing.T) {
 	if m := findMetric(metrics, "temperature", "cpu", "2"); m == nil || m.Value != 63.0 {
 		t.Errorf("temperature cpu2: expected 63.0, got %v", m)
 	}
-	if m := findMetric(metrics, "mem_temperature", "cpu", "1"); m == nil || m.Value != 42.0 {
-		t.Errorf("mem_temperature cpu1: expected 42.0, got %v", m)
+	// "CPU<n> Core Rem" — core temp naming without "Temp" in the sensor name.
+	if m := findMetricBySensor(metrics, "temperature", "CPU1 Core Rem"); m == nil || m.Value != 62.0 {
+		t.Errorf("temperature CPU1 Core Rem: expected 62.0, got %v", m)
+	}
+	if m := findMetricBySensor(metrics, "temperature", "CPU2 Core Rem"); m == nil || m.Value != 64.0 {
+		t.Errorf("temperature CPU2 Core Rem: expected 64.0, got %v", m)
+	}
+	// "CPU<n> MEM Temp" maps to mem_temperature (mem+temp wins over cpu+temp).
+	if m := findMetricBySensor(metrics, "mem_temperature", "MEM1 Temp"); m == nil || m.Value != 42.0 {
+		t.Errorf("mem_temperature MEM1 Temp: expected 42.0, got %v", m)
+	}
+	if m := findMetricBySensor(metrics, "mem_temperature", "CPU1 MEM Temp"); m == nil || m.Value != 40.0 {
+		t.Errorf("mem_temperature CPU1 MEM Temp: expected 40.0, got %v", m)
+	}
+	if m := findMetricBySensor(metrics, "mem_temperature", "CPU2 MEM Temp"); m == nil || m.Value != 41.0 {
+		t.Errorf("mem_temperature CPU2 MEM Temp: expected 41.0, got %v", m)
+	}
+	// VRD/VDDQ must not leak into any metric.
+	for _, m := range metrics {
+		n := strings.ToLower(m.Labels["sensor"])
+		if strings.Contains(n, "vrd") || strings.Contains(n, "vddq") || strings.Contains(n, "vrm") {
+			t.Errorf("voltage regulator temp leaked: %s (%s)", m.Name, m.Labels["sensor"])
+		}
 	}
 	if m := findMetric(metrics, "power", "cpu", "1"); m == nil || m.Value != 125.5 {
 		t.Errorf("power cpu1: expected 125.5, got %v", m)

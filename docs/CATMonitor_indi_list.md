@@ -108,12 +108,13 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 
 #### 1.3 temperature（CPU温度）
 
-- **数据来源**：`ipmitool`（`ipmitool sdr`，筛选 CPU 相关温度传感器）
-- **采集方法**：调用 `ipmitool sensor` 读取主板传感器列表，筛选 CPU 相关温度项（如 "CPU1 Temp"），解析输出取温度值。来源层采用两级缓存：传感器结果缓存 10s（一次拉取供 temperature/mem_temperature/power 共用），传感器名称缓存 24h（名称缓存有效期内按名称逐个 `ipmitool sensor get`，过期后重新全量扫描）；命令执行超时 120s。需 ipmitool 已安装且有 BMC 访问权限；无 BMC 时该指标为空（优雅降级）
+- **数据来源**：`ipmitool`（`ipmitool sdr`，筛选 CPU 核心温度传感器）
+- **采集方法**：调用 `ipmitool sensor` 读取主板传感器列表，按以下规则筛选 CPU 核心温度（每个命中的传感器输出一条指标，靠 `sensor` 标签区分）：① 通用命名 `CPU<n> Temp`；② 部分 BMC 的核心温度命名为 `CPU<n> Core Rem`（名字不含 "Temp"，按 `cpu+core` 匹配）。供电模块温度（`CPU<n> VRD Temp`、`CPU<n> VDDQ Temp`、`CPU<n> VRM Temp`）被排除——它们不是核心温度，且通常比核心更热，混入会拉高健康分与"CPU 最高温度"。来源层采用两级缓存：传感器结果缓存 10s（一次拉取供 temperature/mem_temperature/power 共用），传感器名称缓存 24h（名称缓存有效期内按名称逐个 `ipmitool sensor get`，过期后重新全量扫描；供电温度传感器不进名字缓存，稳态下不查询）；命令执行超时 120s。需 ipmitool 已安装且有 BMC 访问权限；无 BMC 时该指标为空（优雅降级）
 - **Labels**：`cpu`（socket 编号）、`sensor`（传感器名）
 - **输出示例**：
 ```json
 {"component":"cpu","name":"temperature","value":65.0,"unit":"°C","labels":{"cpu":"0","sensor":"CPU1 Temp"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"cpu","name":"temperature","value":62.0,"unit":"°C","labels":{"cpu":"1","sensor":"CPU1 Core Rem"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
 #### 1.4 frequency（CPU频率）
@@ -319,11 +320,12 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 #### 1.24 mem_temperature（CPU内存区域温度）
 
 - **数据来源**：`ipmitool`（SDR，筛选内存区域温度传感器）
-- **采集方法**：从缓存的 SDR 中筛选 "MEM* Temp" 传感器取温度。无 BMC 时空
+- **采集方法**：从缓存的 SDR 中筛选含 "MEM"+"Temp" 的传感器取温度，包括 `MEM<n> Temp` 通用命名与部分 BMC 的 `CPU<n> MEM Temp` 命名（带 CPU 前缀的内存区域温度，同样归入本指标而非 temperature）。无 BMC 时空
 - **Labels**：`cpu`、`sensor`
 - **输出示例**：
 ```json
 {"component":"cpu","name":"mem_temperature","value":42.0,"unit":"°C","labels":{"cpu":"0","sensor":"MEM1 Temp"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"cpu","name":"mem_temperature","value":40.0,"unit":"°C","labels":{"cpu":"0","sensor":"CPU1 MEM Temp"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
 #### 1.25 core_num（CPU核数量）

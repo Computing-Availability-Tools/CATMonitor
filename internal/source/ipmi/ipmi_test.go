@@ -19,8 +19,8 @@ func TestParseSDR(t *testing.T) {
 	out := readMock(t, "../../../tests/testdata/ipmitool-sdr-output.txt")
 	sensors := parseSDR(out)
 
-	if len(sensors) != 6 {
-		t.Fatalf("expected 6 sensors, got %d", len(sensors))
+	if len(sensors) != 14 {
+		t.Fatalf("expected 14 sensors, got %d", len(sensors))
 	}
 	first := sensors[0]
 	if first.Name != "CPU1 Temp" {
@@ -61,8 +61,8 @@ func TestSDRWithMock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SDR with mock failed: %v", err)
 	}
-	if len(sensors) != 6 {
-		t.Fatalf("expected 6 sensors, got %d", len(sensors))
+	if len(sensors) != 14 {
+		t.Fatalf("expected 14 sensors, got %d", len(sensors))
 	}
 }
 
@@ -233,6 +233,7 @@ func TestIsUsefulSensor(t *testing.T) {
 		"Power", "Inlet Temp", "Outlet Temp",
 		"FAN1 F Speed", "FAN1 R Speed", "FAN8 Speed",
 		"CPU1 Temp", "CPU1 MEM Temp", "CPU1 Pwr", "MEM1 Pwr",
+		"CPU1 Core Rem", "CPU2 Core Rem",
 	}
 	for _, name := range useful {
 		if !isUsefulSensor(name) {
@@ -240,8 +241,9 @@ func TestIsUsefulSensor(t *testing.T) {
 		}
 	}
 	notUseful := []string{
-		"Power Supply 1", "System Fan", "CPU1 Core Rem",
+		"Power Supply 1", "System Fan",
 		"Chassis", "PSU1 Status", "random sensor",
+		"CPU1 VRD Temp", "CPU2 VDDQ Temp", "CPU1 VRM Temp",
 	}
 	for _, name := range notUseful {
 		if isUsefulSensor(name) {
