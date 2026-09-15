@@ -136,7 +136,7 @@ func (c *MemoryCollector) collectModuleInfo(now time.Time) ([]collector.Metric, 
 }
 
 // collectPower emits memory power (W) from a cached ipmitool SDR call,
-// filtering "MEM* Pwr" sensors. Shares the 30s SDR cache with the CPU
+// filtering "MEM* Pwr" sensors. Shares the 10s SDR cache with the CPU
 // collector's ipmi metrics.
 func (c *MemoryCollector) collectPower(now time.Time) ([]collector.Metric, error) {
 	sensors, err := ipmi.Default().SDR()
