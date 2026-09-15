@@ -16,7 +16,7 @@ const SECTIONS = [
 ];
 
 // ---- state ----
-let refreshIntervalMs = 5000;
+let refreshIntervalMs = 3000;
 let pollTimer = null;
 let buffers = {};
 let chartDefs = {};
@@ -670,8 +670,6 @@ async function fetchData() {
 async function pollTick() {
   const data = await fetchData();
   if (!data) return;
-  refreshIntervalMs = data.refresh_interval_ms || refreshIntervalMs;
-  document.getElementById('intervalDisplay').textContent = (refreshIntervalMs / 1000) + 's';
   if (data.version) {
     const el = document.querySelector('.brand .subtitle');
     if (el) el.textContent = 'v' + data.version + ' · 能效监控';
@@ -729,6 +727,14 @@ function startPolling() {
   pollTick();
 }
 
+function applyInterval() {
+  const sec = parseInt(document.getElementById('intervalInput').value, 10);
+  if (!sec || sec < 1) { showBanner('请输入有效的刷新间隔（秒）', true); return; }
+  refreshIntervalMs = sec * 1000;
+  startPolling();
+  showBanner('刷新间隔已更新为 ' + sec + ' 秒', false);
+}
+
 async function manualRefresh() {
   try { await fetch('/api/refresh', { method: 'POST' }); } catch (e) { /* ignore */ }
   setTimeout(pollTick, 400);
@@ -736,6 +742,10 @@ async function manualRefresh() {
 
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+document.getElementById('applyBtn').addEventListener('click', applyInterval);
+document.getElementById('intervalInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') applyInterval();
+});
 document.getElementById('resetLayoutBtn').addEventListener('click', function() {
   localStorage.removeItem('dfee-card-order');
   localStorage.removeItem('dfee-card-size');
