@@ -72,7 +72,10 @@ function isLegendVisible(chart, series) {
       if (set1 && !set1.has(parts[sec.filterSegment || 0])) return false;
       if (sec.filterKey2) {
         const set2 = filterSets[sec.filterKey2];
-        if (set2 && !set2.has(parts[sec.filterSegment2 || 1])) return false;
+        const seg2 = parts[sec.filterSegment2 || 1];
+        // Empty chip segment = card-level series (deduped by npu_id), so it
+        // is immune to the chip filter.
+        if (set2 && seg2 !== '' && !set2.has(seg2)) return false;
       }
     }
   }

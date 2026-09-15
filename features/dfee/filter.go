@@ -184,6 +184,14 @@ var chartGroups = []chartGroup{
 	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", "", "avg"},
 }
 
+// cardLevelCharts lists charts whose metric is measured per NPU card: on
+// multi-chip boards every chip of one card reports the same value (e.g. DCMI
+// power is card-scoped), so these charts dedupe to one series per npu_id
+// instead of one per chip.
+var cardLevelCharts = map[string]bool{
+	"npu_power_draw": true,
+}
+
 // ---- API response types ----
 
 type seriesItem struct {
@@ -410,11 +418,26 @@ func groupForChart(metrics []collector.Metric, cg chartGroup) []seriesItem {
 		nameSet[n] = true
 	}
 	var items []seriesItem
+	seenCard := map[string]bool{} // cardLevelCharts: npu_id → already emitted
 	for _, m := range metrics {
 		if m.Component != cg.component || !nameSet[m.Name] {
 			continue
 		}
 		if cg.labelKey != "" && cg.labelVal != "" && m.Labels[cg.labelKey] != cg.labelVal {
+			continue
+		}
+		if cardLevelCharts[cg.id] {
+			id := m.Labels["npu_id"]
+			if id == "" || seenCard[id] {
+				continue
+			}
+			seenCard[id] = true
+			items = append(items, seriesItem{
+				ID:    id + "::" + m.Name,
+				Label: "NPU " + id,
+				Value: m.Value,
+				Unit:  m.Unit,
+			})
 			continue
 		}
 		items = append(items, seriesItem{
