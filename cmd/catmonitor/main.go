@@ -144,7 +144,7 @@ func runDaemon() {
 	metrics.SetCollectionThreshold(cfg.Collection.MinPriority)
 	collector.SetWantedChecker(metrics.AnyWanted)
 
-	store, err := storage.New(cfg.Storage.DataDir)
+	store, err := storage.New(cfg.Storage.DataDir, cfg.Storage.MaxFileAge)
 	if err != nil {
 		logger.Error("failed to create storage", "error", err)
 		os.Exit(1)
