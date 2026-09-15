@@ -1,16 +1,19 @@
 // Package ipmi provides a data source that queries an external `ipmitool`
 // command for sensor readings (SDR) and instantaneous power (DCMI).
 //
-// Two-level cache strategy:
-//   - Result cache (10s TTL): avoids any ipmitool calls on every poll tick.
-//   - Name cache (24h TTL): discovered sensor names from a full `ipmitool sensor`
-//     scan. When valid, subsequent calls use `ipmitool sensor get "name"` per
-//     sensor (<1s each) instead of the full scan (~40s).
+// Caching is stale-while-revalidate (SWR) with a 10s TTL: expired reads
+// return the stale value immediately and trigger a single background
+// refresh, so callers (the chassis, cpu and memory collectors poll every
+// few seconds) never block on an ipmitool exec after the initial cold
+// start. A failed refresh keeps the stale value; the next expired read
+// retries. Safe for concurrent use: the mutex only guards the cache
+// fields; execs run outside the lock.
 //
-// On first run (or name cache expired): full `ipmitool sensor` → parse →
-// filter useful sensors → cache names → persist to disk.
-// On subsequent runs: `ipmitool sensor get "name"` per cached name.
-// If any targeted query fails: fall back to full scan and refresh names.
+// Fetch strategy: a name cache (24h TTL, persisted to disk) holds the
+// useful sensor names discovered by one full `ipmitool sensor` scan.
+// While valid, refreshes use one `ipmitool sensor get "name"` per sensor
+// (skipping individual failures); a full discovery scan runs only when
+// the name cache is empty or every targeted get failed.
 package ipmi
 
 import (
@@ -37,7 +40,10 @@ const (
 	defaultCacheTTL    = 10 * time.Second
 	nameCacheTTL       = 24 * time.Hour
 	execTimeout        = 120 * time.Second
-	sensorGetTimeout   = 5 * time.Second
+	// sensorGetTimeout bounds one `ipmitool sensor get` call. Slow BMCs can
+	// take 5-7s per sensor (measured on a 910B4 host under load); 5s killed
+	// healthy sensors and forced a full-scan fallback every cycle.
+	sensorGetTimeout   = 15 * time.Second
 	defaultCacheDir    = "/var/lib/catmonitor"
 	sensorMapFilename  = "ipmi_sensor_map.json"
 )
@@ -82,6 +88,10 @@ type defaultSource struct {
 	nameCacheAt    time.Time
 	cacheDir       string
 	mockPower      string
+
+	inflight bool         // a background refresh or cold-start fetch is running
+	coldDone chan struct{} // closed when the in-flight cold start finishes
+	gen      uint64       // bumped on reset; in-flight fetches discard their writes
 }
 
 var defaultSrc = &defaultSource{
@@ -93,20 +103,29 @@ var defaultSrc = &defaultSource{
 
 func Default() Source { return defaultSrc }
 
-func SetCacheTTL(d time.Duration) { defaultSrc.cacheTTL = d }
+func SetCacheTTL(d time.Duration) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
+	defaultSrc.cacheTTL = d
+}
 
-func SetCacheDir(dir string) { defaultSrc.cacheDir = dir }
+func SetCacheDir(dir string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
+	defaultSrc.cacheDir = dir
+}
 
 func SetMockSDR(s string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
 	defaultSrc.fetchSDR = func() (string, error) { return s, nil }
 	defaultSrc.fetchSensorGet = nil
-	defaultSrc.cached = nil
-	defaultSrc.cachedAt = time.Time{}
-	defaultSrc.nameCache = nil
-	defaultSrc.nameCacheAt = time.Time{}
+	defaultSrc.resetLocked()
 }
 
 func SetMockSensorGet(m map[string]string) {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
 	defaultSrc.fetchSensorGet = func(name string) (string, error) {
 		if out, ok := m[name]; ok {
 			return out, nil
@@ -116,12 +135,24 @@ func SetMockSensorGet(m map[string]string) {
 }
 
 func ResetFetcher() {
+	defaultSrc.mu.Lock()
+	defer defaultSrc.mu.Unlock()
 	defaultSrc.fetchSDR = realFetchSDR
 	defaultSrc.fetchSensorGet = realFetchSensorGet
-	defaultSrc.cached = nil
-	defaultSrc.cachedAt = time.Time{}
-	defaultSrc.nameCache = nil
-	defaultSrc.nameCacheAt = time.Time{}
+	defaultSrc.resetLocked()
+}
+
+// resetLocked swaps the cache state and invalidates fetches still in flight
+// (they check gen on completion and discard their writes). Callers must hold
+// s.mu.
+func (s *defaultSource) resetLocked() {
+	s.gen++
+	s.cached = nil
+	s.cachedAt = time.Time{}
+	s.nameCache = nil
+	s.nameCacheAt = time.Time{}
+	s.inflight = false
+	s.coldDone = nil
 }
 
 func SetMockPower(s string) { defaultSrc.mockPower = s }
@@ -131,82 +162,146 @@ func (s *defaultSource) Available() bool {
 	return err == nil
 }
 
+// SDR returns the current sensor readings. Fresh cache hits return
+// immediately. Expired entries are served stale while a single background
+// refresh runs (stale-while-revalidate), so callers never block on an
+// ipmitool exec after the initial cold start. Cold starts (nothing cached
+// yet) fetch synchronously, single-flight: concurrent first callers share
+// one fetch instead of racing N ipmitool scans. A cold-start failure caches
+// an empty result for one TTL (graceful, like the pre-SWR behaviour).
 func (s *defaultSource) SDR() ([]Sensor, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 1. Result cache valid → return immediately
-	if !s.cachedAt.IsZero() && time.Since(s.cachedAt) < s.cacheTTL {
+	if !s.cachedAt.IsZero() {
+		if time.Since(s.cachedAt) < s.cacheTTL {
+			sensors := s.cached
+			s.mu.Unlock()
+			return sensors, nil
+		}
+		// Expired (SWR): serve the stale value now; one background refresh.
+		if !s.inflight {
+			s.inflight = true
+			gen := s.gen
+			s.mu.Unlock()
+			go s.refresh(gen)
+		} else {
+			s.mu.Unlock()
+		}
 		return s.cached, nil
 	}
 
-	// 2. Name cache valid → targeted fetch
-	if !s.nameCacheAt.IsZero() && time.Since(s.nameCacheAt) < nameCacheTTL && len(s.nameCache) > 0 {
-		sensors := s.targetedFetch()
-		if sensors != nil {
-			s.cached = sensors
-			s.cachedAt = time.Now()
-			return s.cached, nil
-		}
-		// Targeted failed → fall through to discovery
+	// Cold start: nothing to serve — single-flight synchronous fetch.
+	if s.inflight {
+		ch := s.coldDone
+		s.mu.Unlock()
+		<-ch
+		s.mu.Lock()
+		sensors := s.cached
+		s.mu.Unlock()
+		return sensors, nil
 	}
+	s.inflight = true
+	ch := make(chan struct{})
+	s.coldDone = ch
+	gen := s.gen
+	s.mu.Unlock()
 
-	// 3. Full discovery
-	return s.discovery()
+	sensors := s.fetchFresh()
+
+	s.mu.Lock()
+	if gen == s.gen {
+		s.cached = sensors // nil on total failure: cached for one TTL
+		s.cachedAt = time.Now()
+		s.inflight = false
+		s.coldDone = nil
+	}
+	close(ch) // always release cold-start waiters
+	s.mu.Unlock()
+	return sensors, nil
 }
 
-func (s *defaultSource) targetedFetch() []Sensor {
-	if s.fetchSensorGet == nil {
+// refresh performs one background SWR refresh. At most one refresh runs at
+// a time (guarded by s.inflight). A failed refresh keeps the stale value;
+// the next expired read retries.
+func (s *defaultSource) refresh(gen uint64) {
+	sensors := s.fetchFresh()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen != s.gen {
+		return // source was reset mid-flight: discard the write
+	}
+	if sensors != nil {
+		s.cached = sensors
+		s.cachedAt = time.Now()
+	}
+	s.inflight = false
+}
+
+// fetchFresh performs an uncached read: per-sensor `sensor get` calls while
+// the name cache is valid (skipping individual failures), falling back to a
+// full discovery scan when the name cache is empty or every get failed.
+// Discovery refreshes and persists the name cache. Callers must NOT hold
+// s.mu; the lock is taken only to read/write shared fields, never across
+// exec or file I/O.
+func (s *defaultSource) fetchFresh() []Sensor {
+	s.mu.Lock()
+	names := append([]string(nil), s.nameCache...)
+	namesValid := !s.nameCacheAt.IsZero() && time.Since(s.nameCacheAt) < nameCacheTTL && len(names) > 0
+	get, full := s.fetchSensorGet, s.fetchSDR
+	s.mu.Unlock()
+
+	if namesValid && get != nil {
+		sensors := make([]Sensor, 0, len(names))
+		for _, name := range names {
+			out, err := get(name)
+			if err != nil {
+				continue // skip the failed sensor; the rest still serve
+			}
+			sensors = append(sensors, parseSensorGet(name, out))
+		}
+		if len(sensors) > 0 {
+			return sensors
+		}
+		// Every get failed (BMC reset? renamed sensors?) → full discovery.
+	}
+
+	out, err := full()
+	if err != nil {
 		return nil
 	}
-	sensors := make([]Sensor, 0, len(s.nameCache))
-	for _, name := range s.nameCache {
-		out, err := s.fetchSensorGet(name)
-		if err != nil {
-			s.nameCache = nil
-			s.nameCacheAt = time.Time{}
-			return nil
-		}
-		sensors = append(sensors, parseSensorGet(name, out))
-	}
-	return sensors
-}
-
-func (s *defaultSource) discovery() ([]Sensor, error) {
-	out, err := s.fetchSDR()
-	s.cachedAt = time.Now()
-	if err != nil {
-		s.cached = nil
-		return nil, nil
-	}
 	all := parseSDR(out)
-	s.cached = all
 
-	var names []string
+	var useful []string
 	for _, sensor := range all {
 		if isUsefulSensor(sensor.Name) {
-			names = append(names, sensor.Name)
+			useful = append(useful, sensor.Name)
 		}
 	}
-	s.nameCache = names
-	s.nameCacheAt = time.Now()
-	s.saveNameCache()
+	at := time.Now()
 
-	return s.cached, nil
+	s.mu.Lock()
+	s.nameCache = useful
+	s.nameCacheAt = at
+	dir := s.cacheDir
+	s.mu.Unlock()
+	s.saveNameCache(dir, useful, at)
+
+	return all
 }
 
-func (s *defaultSource) saveNameCache() {
-	if s.cacheDir == "" || len(s.nameCache) == 0 {
+// saveNameCache persists the name cache to disk. It must be called without
+// s.mu held (file I/O).
+func (s *defaultSource) saveNameCache(dir string, names []string, at time.Time) {
+	if dir == "" || len(names) == 0 {
 		return
 	}
-	path := filepath.Join(s.cacheDir, sensorMapFilename)
-	_ = os.MkdirAll(s.cacheDir, 0o755)
+	path := filepath.Join(dir, sensorMapFilename)
+	_ = os.MkdirAll(dir, 0o755)
 	m := struct {
 		Updated string   `json:"updated"`
 		Names   []string `json:"names"`
 	}{
-		Updated: s.nameCacheAt.Format(time.RFC3339),
-		Names:   s.nameCache,
+		Updated: at.Format(time.RFC3339),
+		Names:   names,
 	}
 	data, _ := json.MarshalIndent(m, "", "  ")
 	_ = os.WriteFile(path, data, 0o644)

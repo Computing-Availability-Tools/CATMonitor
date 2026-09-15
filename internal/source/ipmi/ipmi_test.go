@@ -1,7 +1,9 @@
 package ipmi
 
 import (
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,22 +97,33 @@ func TestSDRCacheHitsWithinTTL(t *testing.T) {
 }
 
 func TestSDRCacheMissAfterTTL(t *testing.T) {
-	SetCacheTTL(0)
+	SetCacheTTL(0) // force expiry: every read is stale-while-revalidate
 	defer SetCacheTTL(defaultCacheTTL)
 	defer ResetFetcher()
 
+	var mu sync.Mutex
 	calls := 0
 	defaultSrc.fetchSDR = func() (string, error) {
+		mu.Lock()
 		calls++
+		mu.Unlock()
 		return readMock(t, "../../../tests/testdata/ipmitool-sdr-output.txt"), nil
 	}
 	defaultSrc.fetchSensorGet = nil
 
-	Default().SDR()
-	Default().SDR()
-	if calls != 2 {
-		t.Errorf("with TTL=0 each call should re-fetch, expected 2 calls, got %d", calls)
+	Default().SDR() // cold start: synchronous fetch
+	Default().SDR() // expired: serves stale immediately, refresh runs in background
+
+	// The background refresh must land.
+	if !waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls >= 2
+	}) {
+		t.Errorf("background refresh should re-fetch after TTL=0, calls=%d", calls)
 	}
+	// No goroutine may outlive the test: wait for inflight to drain.
+	drainInflight(t)
 }
 
 func TestSDRCachesFailure(t *testing.T) {
@@ -284,15 +297,43 @@ func TestSDRTargetedFetch(t *testing.T) {
 		}
 	}
 
+	// TTL=0: expired read serves the stale (discovery) value immediately and
+	// refreshes via targeted gets in the background.
 	sensors, err := Default().SDR()
 	if err != nil {
-		t.Fatalf("targeted SDR failed: %v", err)
+		t.Fatalf("expired SDR failed: %v", err)
 	}
+	if sensors[0].Value != 1800 {
+		t.Fatalf("expired read should serve the stale value 1800, got %v", sensors[0].Value)
+	}
+
+	// Wait for the background targeted refresh to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		defaultSrc.mu.Lock()
+		val := defaultSrc.cached[0].Value
+		done := !defaultSrc.inflight && val == 1824
+		defaultSrc.mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background targeted refresh never landed (value=%v)", val)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	if getCalls != 2 {
 		t.Errorf("expected 2 sensor get calls, got %d", getCalls)
 	}
 	if discoveryCalls != 1 {
 		t.Errorf("discovery should not be called again, got %d", discoveryCalls)
+	}
+
+	// Next read serves the refreshed targeted values.
+	sensors, err = Default().SDR()
+	if err != nil {
+		t.Fatalf("post-refresh SDR failed: %v", err)
 	}
 	if len(sensors) != 2 {
 		t.Fatalf("expected 2 sensors, got %d", len(sensors))
@@ -324,17 +365,266 @@ func TestSDRFallbackOnSensorGetFailure(t *testing.T) {
 		return "", &testErr{"sensor not found"}
 	}
 
+	// TTL=0: expired read serves the stale value, the background refresh
+	// falls back from all-failed targeted gets to discovery.
 	sensors, err := Default().SDR()
 	if err != nil {
 		t.Fatalf("fallback SDR failed: %v", err)
 	}
+	if sensors[0].Value != 1800 {
+		t.Fatalf("expired read should serve stale value 1800, got %v", sensors[0].Value)
+	}
+
+	// Wait for the background refresh (targeted all-fail → discovery) to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		defaultSrc.mu.Lock()
+		val := defaultSrc.cached[0].Value
+		done := !defaultSrc.inflight && val == 1900
+		defaultSrc.mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background fallback refresh never landed (value=%v)", val)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if discoveryCalls != 1 {
 		t.Errorf("fallback should trigger discovery once, got %d", discoveryCalls)
 	}
-	if len(sensors) != 1 {
-		t.Fatalf("expected 1 sensor from fallback, got %d", len(sensors))
+}
+
+// --- SWR (stale-while-revalidate) behaviour ---
+
+// waitFor polls until cond holds or the deadline passes. cond must manage
+// its own locking (the source mutex is NOT reentrant). Returns false on
+// timeout.
+func waitFor(t *testing.T, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if sensors[0].Value != 1900 {
-		t.Errorf("expected updated value 1900, got %v", sensors[0].Value)
+	return false
+}
+
+func drainInflight(t *testing.T) {
+	t.Helper()
+	if !waitFor(t, func() bool {
+		defaultSrc.mu.Lock()
+		defer defaultSrc.mu.Unlock()
+		return !defaultSrc.inflight
+	}) {
+		t.Fatal("background refresh never finished")
+	}
+}
+
+// TestSDRStaleWhileRevalidate: an expired read returns the stale value
+// immediately (not blocked on the fetch) and a single background refresh
+// eventually updates the cache.
+func TestSDRStaleWhileRevalidate(t *testing.T) {
+	SetCacheTTL(1 * time.Hour)
+	defer SetCacheTTL(defaultCacheTTL)
+	defer ResetFetcher()
+
+	var mu sync.Mutex
+	calls := 0
+	defaultSrc.fetchSDR = func() (string, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		return fmt.Sprintf("Power | %d | Watts | ok\n", 1700+n), nil
+	}
+	defaultSrc.fetchSensorGet = nil
+
+	// Cold start: synchronous, first value (1701).
+	if _, err := Default().SDR(); err != nil {
+		t.Fatalf("cold start: %v", err)
+	}
+
+	// Force expiry.
+	defaultSrc.mu.Lock()
+	defaultSrc.cachedAt = time.Now().Add(-time.Hour)
+	defaultSrc.mu.Unlock()
+
+	// Expired read must return the stale value WITHOUT blocking on the
+	// 150ms fetch.
+	start := time.Now()
+	sensors, err := Default().SDR()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expired read failed: %v", err)
+	}
+	if elapsed >= 100*time.Millisecond {
+		t.Errorf("expired read blocked on fetch: %v (want <100ms)", elapsed)
+	}
+	if sensors[0].Value != 1701 {
+		t.Errorf("expired read: expected stale 1701, got %v", sensors[0].Value)
+	}
+
+	// The background refresh must land with the next value (1702).
+	if !waitFor(t, func() bool {
+		defaultSrc.mu.Lock()
+		defer defaultSrc.mu.Unlock()
+		return len(defaultSrc.cached) > 0 && defaultSrc.cached[0].Value == 1702
+	}) {
+		t.Fatal("background refresh never landed")
+	}
+	drainInflight(t)
+}
+
+// TestSDRInflightDedup: while a slow refresh is in flight, further expired
+// reads must not spawn additional refreshes.
+func TestSDRInflightDedup(t *testing.T) {
+	SetCacheTTL(0) // every read is expired
+	defer SetCacheTTL(defaultCacheTTL)
+	defer ResetFetcher()
+
+	var mu sync.Mutex
+	calls := 0
+	release := make(chan struct{})
+	defaultSrc.fetchSDR = func() (string, error) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if !first {
+			<-release // only the background refresh blocks
+		}
+		return "Power | 1800 | Watts | ok\n", nil
+	}
+	defaultSrc.fetchSensorGet = nil
+
+	if _, err := Default().SDR(); err != nil {
+		t.Fatalf("cold start: %v", err)
+	}
+
+	// Several expired reads while the first background refresh is running.
+	for i := 0; i < 5; i++ {
+		Default().SDR()
+	}
+
+	// Wait for the one background refresh to actually start, then verify no
+	// extra fetches were spawned by the other expired reads.
+	if !waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls >= 2
+	}) {
+		mu.Lock()
+		n := calls
+		mu.Unlock()
+		t.Fatalf("background refresh never started, calls=%d", n)
+	}
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 2 { // cold start + exactly one background refresh
+		t.Errorf("expected 2 fetches (cold + 1 refresh), got %d", n)
+	}
+
+	close(release)
+	drainInflight(t)
+}
+
+// TestSDRColdStartSingleFlight: concurrent cold starts share ONE fetch.
+func TestSDRColdStartSingleFlight(t *testing.T) {
+	defer ResetFetcher()
+
+	var mu sync.Mutex
+	calls := 0
+	defaultSrc.fetchSDR = func() (string, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		return "Power | 1800 | Watts | ok\n", nil
+	}
+	defaultSrc.fetchSensorGet = nil
+
+	const n = 8
+	var wg sync.WaitGroup
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sensors, err := Default().SDR()
+			if err != nil {
+				t.Errorf("cold start SDR: %v", err)
+			}
+			if len(sensors) != 1 {
+				t.Errorf("expected 1 sensor, got %d", len(sensors))
+			}
+		}()
+	}
+	wg.Wait()
+	// One 150ms fetch shared by 8 callers: total well under 8×150ms.
+	if elapsed := time.Since(start); elapsed >= 500*time.Millisecond {
+		t.Errorf("cold starts serialized: %v", elapsed)
+	}
+
+	mu.Lock()
+	fetches := calls
+	mu.Unlock()
+	if fetches != 1 {
+		t.Errorf("expected exactly 1 fetch for %d concurrent cold starts, got %d", n, fetches)
+	}
+}
+
+// TestSDRPartialSensorGetFailure: a single failing sensor get is skipped —
+// the rest of the sensors still serve and no discovery fallback runs.
+func TestSDRPartialSensorGetFailure(t *testing.T) {
+	SetCacheTTL(0)
+	defer SetCacheTTL(defaultCacheTTL)
+	defer ResetFetcher()
+
+	// Discovery populates the name cache with two sensors.
+	defaultSrc.fetchSDR = func() (string, error) {
+		return "Power | 1800 | Watts | ok\nInlet Temp | 28 | degrees C | ok\n", nil
+	}
+	defaultSrc.fetchSensorGet = nil
+	Default().SDR()
+
+	// Targeted fetch: one of the two sensors fails.
+	discoveryCalls := 0
+	defaultSrc.fetchSDR = func() (string, error) {
+		discoveryCalls++
+		return "Power | 9999 | Watts | ok\n", nil
+	}
+	defaultSrc.fetchSensorGet = func(name string) (string, error) {
+		if name == "Power" {
+			return "Sensor Reading         : 1824 (+/- 0) Watts\nStatus                 : ok\n", nil
+		}
+		return "", &testErr{"timeout"}
+	}
+
+	// Expired read: stale first, then the partial refresh lands.
+	Default().SDR()
+	if !waitFor(t, func() bool {
+		defaultSrc.mu.Lock()
+		defer defaultSrc.mu.Unlock()
+		return len(defaultSrc.cached) == 1 && defaultSrc.cached[0].Value == 1824
+	}) {
+		t.Fatal("partial refresh never landed")
+	}
+	drainInflight(t)
+
+	if discoveryCalls != 0 {
+		t.Errorf("one failed sensor must not trigger discovery fallback, got %d calls", discoveryCalls)
+	}
+
+	// The name cache must stay intact (not wiped by the single failure).
+	defaultSrc.mu.Lock()
+	names := len(defaultSrc.nameCache)
+	defaultSrc.mu.Unlock()
+	if names != 2 {
+		t.Errorf("name cache should keep both sensors, got %d", names)
 	}
 }
