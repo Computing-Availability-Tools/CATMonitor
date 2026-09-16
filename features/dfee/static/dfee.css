@@ -285,5 +285,9 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
 .chart-card.compact .legend { display: none; }
 
 @media (max-width: 500px) {
-  .chart-grid { grid-template-columns: 1fr; }
+  /* !important beats the inline repeat(N,1fr) set by dfee.js; the card
+     rule neutralizes spans so a span-3 card cannot create implicit
+     columns in the single-column grid. */
+  .chart-grid { grid-template-columns: 1fr !important; }
+  .chart-grid > .chart-card { grid-column: auto !important; }
 }

@@ -19,12 +19,12 @@ function currentPalette() {
 
 const SECTIONS = [
   { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_hccs_tx_bw', 'npu_hccs_rx_bw', 'npu_pcie_tx_bw', 'npu_pcie_rx_bw'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3, 'npu_hccs_tx_bw': 3, 'npu_hccs_rx_bw': 3, 'npu_pcie_tx_bw': 3, 'npu_pcie_rx_bw': 3 }, filterLabel: 'NPU ID', filterKey: 'npu_', filterPrefix: 'NPU ', filterSegment: 0, filterLabel2: 'CHIP ID', filterKey2: 'npu_chip_', filterPrefix2: 'Chip ', filterSegment2: 1 },
-  { title: 'GPU', accent: '#ca8a04', ids: ['gpu_power_draw', 'gpu_utilization', 'gpu_temperature', 'gpu_memory_usage', 'gpu_clock_frequency'], gridCols: 3, filterLabel: 'GPU ID', filterKey: 'gpu_', filterPrefix: 'GPU ', filterSegment: 0 },
-  { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
-  { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
-  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
-  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2, filterLabel: 'NIC', filterKey: 'network_' },
-  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 3 },
+  { title: 'GPU', accent: '#ca8a04', ids: ['gpu_power_draw', 'gpu_utilization', 'gpu_temperature', 'gpu_memory_usage', 'gpu_clock_frequency'], gridCols: 6, spans: { 'gpu_power_draw': 3, 'gpu_utilization': 3, 'gpu_temperature': 2, 'gpu_memory_usage': 2, 'gpu_clock_frequency': 2 }, filterLabel: 'GPU ID', filterKey: 'gpu_', filterPrefix: 'GPU ', filterSegment: 0 },
+  { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'], gridCols: 6, spans: { 'cpu_utilization': 2, 'cpu_load': 2, 'cpu_power': 2 } },
+  { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'], gridCols: 6, spans: { 'memory_pool': 3, 'memory_swap': 3 } },
+  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 6, spans: { 'disk_throughput_read': 3, 'disk_throughput_write': 3, 'disk_iops_read': 3, 'disk_iops_write': 3, 'disk_read_latency': 3, 'disk_write_latency': 3 }, filterLabel: 'DISK', filterKey: 'disk_' },
+  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 6, spans: { 'network_rx': 3, 'network_tx': 3 }, filterLabel: 'NIC', filterKey: 'network_' },
+  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 6, spans: { 'chassis_power': 2, 'chassis_temp': 2, 'chassis_fan': 2 } },
 ];
 
 // ---- state ----
