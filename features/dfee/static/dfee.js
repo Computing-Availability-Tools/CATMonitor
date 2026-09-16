@@ -3,6 +3,7 @@ const HISTORY_POINTS = 60;
 const PALETTE = [
   '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#9333ea', '#0891b2',
   '#ca8a04', '#db2777', '#4f46e5', '#059669', '#b45309', '#6b7280',
+  '#c026d3', '#0284c7', '#65a30d', '#334155',
 ];
 
 const SECTIONS = [
