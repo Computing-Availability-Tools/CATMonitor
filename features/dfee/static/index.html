@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 能效监控</title>
+  <script>
+    // Set data-theme before the stylesheet loads to avoid a flash of the
+    // wrong theme. Manual choice (localStorage) wins; otherwise follow the
+    // OS preference.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('theme'); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') {
+        t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="stylesheet" href="/dfee/static/dfee.css">
 </head>
 <body>
@@ -18,6 +31,7 @@
       <button id="applyBtn" class="btn">应用</button>
       <button id="resetLayoutBtn" class="btn">重置布局</button>
       <button id="refreshBtn" class="btn btn-primary">立即刷新</button>
+      <button id="themeBtn" class="btn" title="切换深浅主题">🌙</button>
     </div>
   </header>
 

@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 设备健康度</title>
+  <script>
+    // Set data-theme before the stylesheet loads to avoid a flash of the
+    // wrong theme. Manual choice (localStorage) wins; otherwise follow the
+    // OS preference.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('theme'); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') {
+        t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -23,6 +36,7 @@
         <label>刷新间隔 <input type="number" id="intervalInput" min="1" step="1" value="5"> 秒</label>
         <button id="applyBtn" class="btn">应用</button>
         <button id="refreshBtn" class="btn btn-primary">立即刷新</button>
+        <button id="themeBtn" class="btn" title="切换深浅主题">🌙</button>
         <label class="auto"><input type="checkbox" id="autoToggle" checked> 自动</label>
       </div>
     </div>

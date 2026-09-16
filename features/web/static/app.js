@@ -943,18 +943,18 @@ function compTitle(key) { return (MANIFEST[key] || {}).title || key.toUpperCase(
 function navOrder(key) { const i = NAV_ORDER.indexOf(key); return i < 0 ? 999 : i; }
 
 function statusOf(score, max) {
-  if (!max) return { label: 'N/A', color: '#9ca3af' };
+  if (!max) return { label: 'N/A', color: 'var(--muted)' };
   const r = score / max;
-  if (r >= 0.9) return { label: 'OK', color: '#2e7d32' };
-  if (r >= 0.75) return { label: 'Good', color: '#689f38' };
-  if (r >= 0.6) return { label: 'Warning', color: '#f57c00' };
-  return { label: 'Critical', color: '#c62828' };
+  if (r >= 0.9) return { label: 'OK', color: 'var(--ok)' };
+  if (r >= 0.75) return { label: 'Good', color: 'var(--good)' };
+  if (r >= 0.6) return { label: 'Warning', color: 'var(--warn)' };
+  return { label: 'Critical', color: 'var(--crit)' };
 }
 function gradeColor(grade) {
-  if (grade === 'Excellent') return '#2e7d32';
-  if (grade === 'Good') return '#689f38';
-  if (grade === 'Warning') return '#f57c00';
-  return '#c62828';
+  if (grade === 'Excellent') return 'var(--ok)';
+  if (grade === 'Good') return 'var(--good)';
+  if (grade === 'Warning') return 'var(--warn)';
+  return 'var(--crit)';
 }
 function fmt(v) {
   if (v === null || v === undefined) return '-';
@@ -981,7 +981,7 @@ function meanLine(y) {
   const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   l.setAttribute('x1', 0); l.setAttribute('x2', 100);
   l.setAttribute('y1', y); l.setAttribute('y2', y);
-  l.setAttribute('stroke', '#9ca3af');
+  l.style.stroke = 'var(--axis-mid)';
   l.setAttribute('stroke-width', '1');
   l.setAttribute('stroke-dasharray', '3,2');
   l.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -1004,7 +1004,7 @@ function sparkline(series, color) {
   const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
   poly.setAttribute('points', pts);
   poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke', color);
+  poly.style.stroke = color;
   poly.setAttribute('stroke-width', '1.5');
   poly.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.appendChild(poly);
@@ -1044,7 +1044,7 @@ function renderChart(series, color, snap) {
   const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
   poly.setAttribute('points', pts);
   poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke', color);
+  poly.style.stroke = color;
   poly.setAttribute('stroke-width', '1.5');
   poly.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.appendChild(poly);
@@ -1449,7 +1449,7 @@ function renderOverview(snap) {
     const chips = el('div', 'hero-components');
     for (const c of comps) {
       const ch = (h.components || {})[c.component];
-      const color = ch ? statusOf(ch.score, ch.max).color : '#9ca3af';
+      const color = ch ? statusOf(ch.score, ch.max).color : 'var(--muted)';
       const chip = el('div', 'comp-chip');
       chip.style.cursor = 'pointer';
       chip.innerHTML = '<span class="dot" style="background:' + color + '"></span>' + compTitle(c.component);
@@ -1880,14 +1880,27 @@ function showBanner(msg, isError) {
   const b = document.getElementById('banner');
   b.textContent = msg;
   b.classList.remove('hidden');
-  b.style.background = isError ? '#fee2e2' : '#dcfce7';
-  b.style.color = isError ? '#991b1b' : '#166534';
+  b.style.background = isError ? 'var(--banner-err-bg)' : 'var(--banner-ok-bg)';
+  b.style.color = isError ? 'var(--banner-err-text)' : 'var(--banner-ok-text)';
 }
 function hideBanner() { document.getElementById('banner').classList.add('hidden'); }
 
 // ---- wiring ----
 document.getElementById('applyBtn').addEventListener('click', applyInterval);
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+
+// ---- theme toggle ----
+function applyThemeIcon() {
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+}
+document.getElementById('themeBtn').addEventListener('click', function () {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('theme', cur); } catch (e) {}
+  applyThemeIcon();
+});
+applyThemeIcon();
 document.getElementById('autoToggle').addEventListener('change', (e) => {
   autoOn = e.target.checked;
   if (autoOn) startPolling(); else stopPolling();

@@ -1,10 +1,21 @@
 // ---- config ----
 const HISTORY_POINTS = 60;
-const PALETTE = [
+// Chart series palette. Dark mode swaps two colors that are too dark on a
+// dark background (#334155 dark slate, #b45309 brown) for lightened
+// equivalents; the other 14 read fine on both themes.
+const PALETTE_LIGHT = [
   '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#9333ea', '#0891b2',
   '#ca8a04', '#db2777', '#4f46e5', '#059669', '#b45309', '#6b7280',
   '#c026d3', '#0284c7', '#65a30d', '#334155',
 ];
+const PALETTE_DARK = [
+  '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#9333ea', '#0891b2',
+  '#ca8a04', '#db2777', '#4f46e5', '#059669', '#f59e0b', '#6b7280',
+  '#c026d3', '#0284c7', '#65a30d', '#94a3b8',
+];
+function currentPalette() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? PALETTE_DARK : PALETTE_LIGHT;
+}
 
 const SECTIONS = [
   { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_hccs_tx_bw', 'npu_hccs_rx_bw', 'npu_pcie_tx_bw', 'npu_pcie_rx_bw'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3, 'npu_hccs_tx_bw': 3, 'npu_hccs_rx_bw': 3, 'npu_pcie_tx_bw': 3, 'npu_pcie_rx_bw': 3 }, filterLabel: 'NPU ID', filterKey: 'npu_', filterPrefix: 'NPU ', filterSegment: 0, filterLabel2: 'CHIP ID', filterKey2: 'npu_chip_', filterPrefix2: 'Chip ', filterSegment2: 1 },
@@ -198,8 +209,8 @@ function showBanner(msg, isError) {
   const b = document.getElementById('banner');
   b.textContent = msg;
   b.classList.remove('hidden');
-  b.style.background = isError ? '#fee2e2' : '#dcfce7';
-  b.style.color = isError ? '#991b1b' : '#166534';
+  b.style.background = isError ? 'var(--banner-err-bg)' : 'var(--banner-ok-bg)';
+  b.style.color = isError ? 'var(--banner-err-text)' : 'var(--banner-ok-text)';
 }
 function hideBanner() {
   document.getElementById('banner').classList.add('hidden');
@@ -495,10 +506,11 @@ function updateBuffers(data) {
 }
 
 function buildColorMap(chart) {
+  const palette = currentPalette();
   const allWithData = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isLegendVisible(chart, s));
   const map = {};
   for (let i = 0; i < allWithData.length; i++) {
-    map[allWithData[i].id] = PALETTE[i % PALETTE.length];
+    map[allWithData[i].id] = palette[i % palette.length];
   }
   return map;
 }
@@ -577,9 +589,10 @@ function renderChart(canvas, chart) {
   const plotW = cw - padL - padR;
   const plotH = ch - padT - padB;
 
-  // grid + Y labels
-  ctx.strokeStyle = '#f1f3f5';
-  ctx.fillStyle = '#9ca3af';
+  // grid + Y labels (colors follow the active theme via CSS variables)
+  const cssVars = getComputedStyle(document.documentElement);
+  ctx.strokeStyle = cssVars.getPropertyValue('--grid-line').trim();
+  ctx.fillStyle = cssVars.getPropertyValue('--axis-text').trim();
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -747,6 +760,23 @@ document.getElementById('applyBtn').addEventListener('click', applyInterval);
 document.getElementById('intervalInput').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') applyInterval();
 });
+
+// ---- theme toggle ----
+function applyThemeIcon() {
+  document.getElementById('themeBtn').textContent =
+    document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+}
+document.getElementById('themeBtn').addEventListener('click', function() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('theme', cur); } catch (e) {}
+  applyThemeIcon();
+  // renderAllCharts rebuilds legends (palette-dependent dots) and redraws
+  // canvases (grid/axis colors are read from CSS variables each draw).
+  renderAllCharts();
+});
+applyThemeIcon();
+
 document.getElementById('resetLayoutBtn').addEventListener('click', function() {
   localStorage.removeItem('dfee-card-order');
   localStorage.removeItem('dfee-card-size');
