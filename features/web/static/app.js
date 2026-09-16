@@ -1683,8 +1683,21 @@ function renderDetail(compKey, snap) {
       groups[mt.name].push(mt);
     }
     for (const name of order) {
-      const items = groups[name];
+      let items = groups[name];
       items.sort(metricSortCmp);
+      // NPU 功耗是卡级测量：同卡各 chip 返回相同值，一卡一行。排序后
+      // 同卡 chip 0 在前，取每卡首条——等价于只显示 chip_id=0，且在
+      // chip 0 恰好缺席的边缘情况下该卡仍能显示。
+      if (compKey === 'npu' && name === 'power_draw') {
+        const seenNpu = new Set();
+        items = items.filter(mt => {
+          const id = (mt.labels || {}).npu_id;
+          if (id === undefined) return true;
+          if (seenNpu.has(id)) return false;
+          seenNpu.add(id);
+          return true;
+        });
+      }
       const dispName = METRIC_NAMES[compKey + ':' + name] || METRIC_NAMES[name] || name;
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
@@ -1753,6 +1766,7 @@ function renderDetail(compKey, snap) {
               (mt.name === 'roce_speed_status' && k === 'roce_speed') ||
               (mt.name === 'roce_link_health' && k === 'roce_link') ||
               (mt.name === 'health_status' && k === 'status') ||
+              (compKey === 'npu' && mt.name === 'power_draw' && k === 'chip_id') ||
               ((mt.name.endsWith('_ecc') || mt.name.endsWith('_ecc_isolated')) && (k === 'device_type' || k === 'kind')) ||
               (mt.name.startsWith('aicore') && mt.name.endsWith('_temp') && k === 'aicore') ||
               (mt.name.startsWith('ntc') && mt.name.endsWith('_temp') && k === 'ntc') ||
