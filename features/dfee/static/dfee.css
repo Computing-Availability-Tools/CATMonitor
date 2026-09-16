@@ -20,27 +20,27 @@
   --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
 }
 
-/* Dark theme: slate palette; grid-line/axis-text feed the canvas chart
-   renderer (read via getComputedStyle in dfee.js). */
+/* Dark theme: neutral gray-black palette; grid-line/axis-text feed the
+   canvas chart renderer (read via getComputedStyle in dfee.js). */
 [data-theme="dark"] {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --border: #334155;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
+  --bg: #171717;
+  --card: #212121;
+  --border: #383838;
+  --text: #e5e5e5;
+  --muted: #a3a3a3;
   --accent: #3b82f6;
   --accent-hover: #60a5fa;
-  --hover: #263449;
-  --table-line: #2a3850;
+  --hover: #262626;
+  --table-line: #303030;
   --warn-bg: #3f2d10;
   --warn-text: #fbbf24;
   --banner-ok-bg: #14321f;
   --banner-ok-text: #4ade80;
   --banner-err-bg: #3b1518;
   --banner-err-text: #f87171;
-  --badge-na: #64748b;
-  --grid-line: #2a3850;
-  --axis-text: #64748b;
+  --badge-na: #737373;
+  --grid-line: #303030;
+  --axis-text: #737373;
   --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
   color-scheme: dark;
 }
