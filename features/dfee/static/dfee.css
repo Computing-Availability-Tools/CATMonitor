@@ -247,8 +247,6 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
 .chart-card.compact .chart-body { display: none; }
 .chart-card.compact .legend { display: none; }
 
-.foot { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
-
 @media (max-width: 500px) {
   .chart-grid { grid-template-columns: 1fr; }
 }
