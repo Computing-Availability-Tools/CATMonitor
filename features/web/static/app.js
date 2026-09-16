@@ -945,7 +945,7 @@ function navOrder(key) { const i = NAV_ORDER.indexOf(key); return i < 0 ? 999 : 
 function statusOf(score, max) {
   if (!max) return { label: 'N/A', color: 'var(--muted)' };
   const r = score / max;
-  if (r >= 0.9) return { label: 'OK', color: 'var(--ok)' };
+  if (r >= 0.9) return { label: 'Excellent', color: 'var(--ok)' };
   if (r >= 0.75) return { label: 'Good', color: 'var(--good)' };
   if (r >= 0.6) return { label: 'Warning', color: 'var(--warn)' };
   return { label: 'Critical', color: 'var(--crit)' };
