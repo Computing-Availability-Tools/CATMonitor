@@ -63,4 +63,9 @@ jobs:
             pre-commit-${{ runner.os }}-
 
       - name: Run pre-commit
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: |
+          # Register problem matchers so actionlint/shellcheck findings become
+          # clickable file:line annotations on the PR (same as DemonCAT).
+          echo "::add-matcher::.github/workflows/matchers/actionlint.json"
+          echo "::add-matcher::.github/workflows/matchers/shellcheck.json"
+          pre-commit run --all-files --show-diff-on-failure

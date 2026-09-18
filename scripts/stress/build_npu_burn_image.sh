@@ -18,13 +18,13 @@ BUNDLED_METADATA="$REPO_ROOT/third_party/ascend_npu_burn/UPSTREAM"
 RUNTIME_PACKAGES_TEMPLATE="$REPO_ROOT/docker/stress/npu/runtime-packages.txt"
 
 SOURCE_ROOT="$BUNDLED_SOURCE"
-SOURCE_ORIGIN=bundled
+SOURCE_ORIGIN="bundled"
 SOURCE_METADATA_PATH="$BUNDLED_METADATA"
 SOURCE_METADATA_EXPLICIT=false
 LEGACY_BASE_IMAGE=
 BUILDER_BASE_IMAGE=
 RUNTIME_BASE_IMAGE=
-BASE_MODE=split
+BASE_MODE="split"
 TARGET_IMAGE=
 DOCKER_BIN=
 LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE=${ASCEND_ENV_SCRIPT:-}
@@ -647,15 +647,15 @@ PACKAGE_FILE=$(build_marker CATMONITOR_PACKAGE_FILE) || \
     die "Docker build did not report an executable NPU Burn entrypoint"
 [ "$(build_marker CATMONITOR_RUNTIME_ABI)" = PASS ] || \
     die "Docker build did not validate the slim runtime ABI"
-BUILDER_PYTHON_ABI=$(build_marker CATMONITOR_BUILDER_PYTHON_SOABI) || \
+build_marker CATMONITOR_BUILDER_PYTHON_SOABI >/dev/null || \
     die "Docker build did not report the builder Python ABI"
 RUNTIME_PYTHON_ABI=$(build_marker CATMONITOR_RUNTIME_PYTHON_SOABI) || \
     die "Docker build did not report the runtime Python ABI"
-BUILDER_TORCH_VERSION=$(build_marker CATMONITOR_BUILDER_TORCH_VERSION) || \
+build_marker CATMONITOR_BUILDER_TORCH_VERSION >/dev/null || \
     die "Docker build did not report the builder torch version"
 RUNTIME_TORCH_VERSION=$(build_marker CATMONITOR_RUNTIME_TORCH_VERSION) || \
     die "Docker build did not report the runtime torch version"
-BUILDER_TORCH_NPU_VERSION=$(build_marker CATMONITOR_BUILDER_TORCH_NPU_VERSION) || \
+build_marker CATMONITOR_BUILDER_TORCH_NPU_VERSION >/dev/null || \
     die "Docker build did not report the builder torch_npu version"
 RUNTIME_TORCH_NPU_VERSION=$(build_marker CATMONITOR_RUNTIME_TORCH_NPU_VERSION) || \
     die "Docker build did not report the runtime torch_npu version"
