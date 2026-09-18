@@ -1,0 +1,45 @@
+# Dependabot: automated dependency-update PRs (platform-side, no CI minutes
+# consumed by the checks themselves).
+#
+# github-actions: keeps the `uses:` references in .github/workflows/ current
+#   (checkout x6 / setup-go x3 / setup-python / cache). Old action majors
+#   eventually break on runtime deprecations. Each bump arrives as one PR
+#   titled "ci: bump actions/..." — which passes the Conventional Commits
+#   PR-title check — and goes through the full light CI before merge.
+#   Dependabot PRs carry no 'ready' label, so they never touch the
+#   self-hosted 910B4 runner unless explicitly labeled.
+#
+# pre-commit: keeps the pinned hook revisions in .pre-commit-config.yaml
+#   current (typos ships releases regularly). Bump PRs are validated by the
+#   pre-commit job itself.
+#
+# gomod intentionally omitted: yaml.v3 is the only dependency and is stable.
+#
+# Note: Dependabot reads this file only from the DEFAULT branch — it starts
+# working after this file is merged into main.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "pre-commit"
