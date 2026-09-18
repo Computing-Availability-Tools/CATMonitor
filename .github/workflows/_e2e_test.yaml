@@ -14,6 +14,12 @@ name: E2E Test
 #
 # Self-hosted checkout retry: NPU runner networks can be flaky to
 # github.com:443 (same mitigation as DemonCAT's _e2e_test.yaml).
+#
+# Failure diagnostics: full output is teed to e2e_run.log; failed cases are
+# re-echoed as ::error:: annotations (visible directly on the PR Checks UI),
+# counts go to the step summary, and the log is uploaded as an artifact only
+# on failure (web logs on self-hosted runners can be truncated by
+# disconnects — the artifact is the durable copy).
 
 on:
   workflow_call:
@@ -82,4 +88,48 @@ jobs:
           go build -tags dcmi -o /dev/null ./cmd/catmonitor
 
       - name: Run e2e scenarios
-        run: make test-e2e
+        run: |
+          set -o pipefail
+          make test-e2e 2>&1 | tee e2e_run.log
+
+      - name: Annotate failed test cases
+        if: failure()
+        run: |
+          # GHA only parses ::error:: commands from real-time step stdout;
+          # the go test output went through tee, re-echo failed cases here
+          # so they show up directly on the PR Checks UI.
+          grep -- '--- FAIL:' e2e_run.log 2>/dev/null | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+
+      - name: E2E summary
+        if: always()
+        run: |
+          PASS_CNT=$(grep -c '^--- PASS:' e2e_run.log 2>/dev/null || true)
+          FAIL_CNT=$(grep -c '^--- FAIL:' e2e_run.log 2>/dev/null || true)
+          SKIP_CNT=$(grep -c '^--- SKIP:' e2e_run.log 2>/dev/null || true)
+          TOTAL=$((PASS_CNT + FAIL_CNT + SKIP_CNT))
+          {
+            echo "## E2E Summary"
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "_No test results found — the job failed before reaching the test stage (checkout / vet / compile)._"
+            else
+              echo "| Result | Count |"
+              echo "|---|---|"
+              echo "| Passed | ${PASS_CNT} |"
+              echo "| Failed | ${FAIL_CNT} |"
+              echo "| Skipped | ${SKIP_CNT} |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload e2e log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          # Both e2e and e2e-npu (pr_test.yaml) call this reusable workflow
+          # within the same run — derive distinct artifact names from the
+          # runner labels instead of adding an input callers must pass.
+          name: ${{ contains(inputs.runner, 'self-hosted') && 'e2e-npu-log' || 'e2e-log' }}
+          path: e2e_run.log
+          if-no-files-found: ignore
+          retention-days: 7
