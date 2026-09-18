@@ -8,6 +8,7 @@ name: Nightly_Test
 #   - schedule + workflow_dispatch only (no push trigger — pr_test.yaml
 #     already runs the light layer on every push, avoid double-spending)
 #   - cancel-in-progress: false (long NPU jobs must not be cancelled)
+#   - ci-gate gives one aggregated red/green verdict over all jobs
 
 on:
   schedule:
@@ -48,3 +49,33 @@ jobs:
       runner: '["self-hosted", "npu-server", "ARM64"]'
       dcmi-build: true
       timeout-minutes: 30
+
+  # Simplified Nightly Gate (same pattern as DemonCAT): all jobs here are
+  # unconditional, so each must simply succeed. One red/green conclusion
+  # for notifications and a quick morning check.
+  ci-gate:
+    name: Nightly Gate
+    needs: [lint, test, e2e-npu]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check required jobs
+        env:
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          E2EN: ${{ needs.e2e-npu.result }}
+        run: |
+          set -eu
+          echo "=== Nightly Gate Summary ==="
+          echo "lint:     ${LINT}"
+          echo "test:     ${TEST}"
+          echo "e2e-npu:  ${E2EN}"
+          # All nightly jobs are unconditional: skipped/failure both block
+          for r in "${LINT}" "${TEST}" "${E2EN}"; do
+            case "$r" in
+              success) ;;
+              *) echo "::error::Required job did not succeed: ${r}"; exit 1 ;;
+            esac
+          done
+          echo "=== Nightly Gate: PASSED ==="

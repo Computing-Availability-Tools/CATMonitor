@@ -12,6 +12,10 @@ name: CI
 # Full NPU layer (only on the home repo, gated by PR 'ready' label or push):
 #   e2e-npu — make test-e2e on the self-hosted 910B4 runner (all 41 cases
 #             incl. root scenarios + real NPU/BMC data) + dcmi CGo build check.
+#
+# ci-gate aggregates every job into one verdict: lint/test/e2e must succeed;
+# e2e-npu must succeed when it runs (skipped is fine). When enabling branch
+# protection, mark ONLY the "CI Gate" check as required.
 
 on:
   push:
@@ -63,3 +67,41 @@ jobs:
       runner: '["self-hosted", "npu-server", "ARM64"]'
       dcmi-build: true
       timeout-minutes: 30
+
+  # Single aggregated verdict for branch protection: mark only "CI Gate" as
+  # the required check (marking the conditional e2e-npu required would leave
+  # unlabeled PRs stuck in "expected" forever). if: always() so a verdict is
+  # reported even when dependencies failed or were skipped.
+  ci-gate:
+    name: CI Gate
+    needs: [lint, test, e2e, e2e-npu]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check required jobs
+        env:
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          E2E: ${{ needs.e2e.result }}
+          E2EN: ${{ needs.e2e-npu.result }}
+        run: |
+          set -eu
+          echo "=== CI Gate Summary ==="
+          echo "lint:    ${LINT}"
+          echo "test:    ${TEST}"
+          echo "e2e:     ${E2E}"
+          echo "e2e-npu: ${E2EN}"
+          # lint/test/e2e: must succeed (skipped allowed for future guards)
+          for r in "${LINT}" "${TEST}" "${E2E}"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::Required job did not succeed: ${r}"; exit 1 ;;
+            esac
+          done
+          # e2e-npu: must succeed when it runs; not triggered (skipped) is fine
+          case "${E2EN}" in
+            success|skipped) ;;
+            *) echo "::error::E2E NPU did not succeed: ${E2EN}"; exit 1 ;;
+          esac
+          echo "=== CI Gate: PASSED ==="
