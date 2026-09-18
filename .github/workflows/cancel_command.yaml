@@ -1,0 +1,164 @@
+name: Cancel Command
+
+# PR comment "/cancel" → authorize (PR author or triage+) → force-cancel every
+# in-progress workflow run on that PR's head SHA (skipping itself) → reply with
+# the cancelled runs and react +1 on the triggering comment.
+#
+# Companion to pr_close_cancel_job.yaml (auto-cancel on PR close): this one is
+# for "keep the PR open, just stop its CI" — e.g. stopping a wasteful ~30min
+# e2e-npu run on the self-hosted 910B4 runner after a bad push.
+#
+# GITHUB_TOKEN with actions:write is enough to force-cancel here: the
+# issue_comment event carries a writable GITHUB_TOKEN (unlike label-based
+# triggers, which GitHub suppresses and would need a PAT). No secrets.
+# Never checks out PR code (REST API only) — no fork-PR pwn risk.
+# Note: issue_comment workflows fire only from the DEFAULT branch — this file
+# must be merged into main before /cancel becomes usable.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: cancel-command-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    if: ${{ github.event.issue.pull_request != null && github.event.comment.user.type == 'User' && startsWith(github.event.comment.body, '/cancel') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve PR (head sha + author)
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          PR_JSON=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUM}")
+          HEAD_SHA=$(echo "$PR_JSON" | jq -r '.head.sha')
+          PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login')
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "pr_author=${PR_AUTHOR}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check commenter authorization
+        id: auth
+        env:
+          ACTOR: ${{ github.event.comment.user.login }}
+          PR_AUTHOR: ${{ steps.pr.outputs.pr_author }}
+          ASSOC: ${{ github.event.comment.author_association }}
+        run: |
+          set -eu
+          # PR author (case-insensitive) or OWNER/MEMBER/COLLABORATOR (triage+).
+          # Uses the webhook-provided author_association — no extra API call
+          # (collaborators/permission needs admin and would reject maintainers).
+          if [ "${ACTOR,,}" = "${PR_AUTHOR,,}" ]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$ASSOC" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "authorized=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "authorized=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Reject unauthorized
+        if: steps.auth.conclusion == 'success' && steps.auth.outputs.authorized != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" --body "/cancel 拒绝 — 仅 PR 作者或 triage+ 权限可触发。"
+          exit 0
+
+      - name: Force-cancel workflow runs
+        id: cancel
+        if: steps.auth.outputs.authorized == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_SHA: ${{ steps.pr.outputs.head_sha }}
+          REPO: ${{ github.repository }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -eu
+          RUNS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/actions/runs?head_sha=$PR_SHA&per_page=100")
+          echo "$RUNS" | jq -e '.workflow_runs | type == "array"' >/dev/null 2>&1 || {
+            echo "::error::API error fetching runs for $PR_SHA: $(echo "$RUNS" | jq -r '.message // "unknown"')"
+            exit 1
+          }
+          CANDIDATES=$(echo "$RUNS" | jq -r --arg self "$SELF_RUN_ID" \
+            '[.workflow_runs[]? | select(.status != "completed" and ((.id | tostring) != $self))] | .[].id' 2>/dev/null || true)
+          if [ -z "$CANDIDATES" ]; then
+            {
+              echo "cancel_count=0"
+              echo "comment_body=/cancel 完成 — 该提交没有进行中的工作流可取消。"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CANCELLED=""
+          FAILED=""
+          CANCEL_COUNT=0
+          while IFS= read -r RUN_ID; do
+            [ -z "$RUN_ID" ] && continue
+            echo "force-cancelling run $RUN_ID..."
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/force-cancel" || echo "000")
+            case "$HTTP_CODE" in
+              202)
+                echo "  -> cancelled"
+                CANCELLED="${CANCELLED}https://github.com/$REPO/actions/runs/$RUN_ID"$'\n'
+                CANCEL_COUNT=$((CANCEL_COUNT + 1))
+                ;;
+              409|410)
+                echo "  -> already terminal ($HTTP_CODE), skip"
+                ;;
+              *)
+                echo "  -> failed (HTTP $HTTP_CODE)"
+                FAILED="${FAILED}https://github.com/$REPO/actions/runs/$RUN_ID (HTTP $HTTP_CODE)"$'\n'
+                ;;
+            esac
+          done <<< "$CANDIDATES"
+          {
+            echo "cancel_count=$CANCEL_COUNT"
+            echo "comment_body<<CMTEOF"
+            if [ -n "$CANCELLED" ]; then
+              echo "/cancel 完成 — 已取消 $CANCEL_COUNT 个运行:"
+              echo ""
+              echo "$CANCELLED"
+            fi
+            if [ -n "$FAILED" ]; then
+              echo "**取消失败:**"
+              echo ""
+              echo "$FAILED"
+            fi
+            if [ -z "$CANCELLED" ] && [ -z "$FAILED" ]; then
+              echo "/cancel 完成 — 没有进行中的工作流可取消(均为终态)。"
+            fi
+            echo "CMTEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment result + react
+        if: steps.auth.outputs.authorized == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          BODY: ${{ steps.cancel.outputs.comment_body }}
+        run: |
+          set -eu
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" --body "$BODY"
+          gh api --method POST "/repos/${{ github.repository }}/issues/comments/$COMMENT_ID/reactions" -f content=+1 || true
