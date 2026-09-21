@@ -2,13 +2,14 @@ name: Nightly_Test
 
 # Nightly full-coverage test on the self-hosted NPU runner (910B4):
 # lint + unit tests + full e2e (root scenarios + real NPU/BMC data) +
-# dcmi CGo build verification. Guards the develop branch.
+# dcmi CGo build verification + coverage report. Guards the develop branch.
 #
 # Same pattern as DemonCAT's schedule_nightly_test.yaml:
 #   - schedule + workflow_dispatch only (no push trigger — pr_test.yaml
 #     already runs the light layer on every push, avoid double-spending)
 #   - cancel-in-progress: false (long NPU jobs must not be cancelled)
 #   - ci-gate gives one aggregated red/green verdict over all jobs
+#     (coverage is advisory — reported, never blocks)
 
 on:
   schedule:
@@ -50,12 +51,22 @@ jobs:
       dcmi-build: true
       timeout-minutes: 30
 
+  # Daily coverage snapshot (merged profile + HTML report artifact; total in
+  # the step summary). Advisory — the Nightly Gate reports but never blocks.
+  coverage:
+    name: Coverage (${{ inputs.ref || 'develop' }})
+    needs: lint
+    uses: ./.github/workflows/_unit_test.yaml
+    with:
+      ref: ${{ inputs.ref || 'develop' }}
+      coverage: true
+
   # Simplified Nightly Gate (same pattern as DemonCAT): all jobs here are
   # unconditional, so each must simply succeed. One red/green conclusion
   # for notifications and a quick morning check.
   ci-gate:
     name: Nightly Gate
-    needs: [lint, test, e2e-npu]
+    needs: [lint, test, e2e-npu, coverage]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -65,12 +76,14 @@ jobs:
           LINT: ${{ needs.lint.result }}
           TEST: ${{ needs.test.result }}
           E2EN: ${{ needs.e2e-npu.result }}
+          COV: ${{ needs.coverage.result }}
         run: |
           set -eu
           echo "=== Nightly Gate Summary ==="
           echo "lint:     ${LINT}"
           echo "test:     ${TEST}"
           echo "e2e-npu:  ${E2EN}"
+          echo "coverage: ${COV} (advisory)"
           # All nightly jobs are unconditional: skipped/failure both block
           for r in "${LINT}" "${TEST}" "${E2EN}"; do
             case "$r" in
@@ -78,4 +91,5 @@ jobs:
               *) echo "::error::Required job did not succeed: ${r}"; exit 1 ;;
             esac
           done
+          # coverage: advisory only — reported, never blocks
           echo "=== Nightly Gate: PASSED ==="

@@ -13,9 +13,14 @@ name: CI
 #   e2e-npu — make test-e2e on the self-hosted 910B4 runner (all 41 cases
 #             incl. root scenarios + real NPU/BMC data) + dcmi CGo build check.
 #
+# Coverage layer (same gating as the NPU layer):
+#   coverage — go test -coverprofile + total in the step summary + clickable
+#              HTML report artifact (Go toolchain built-ins, no external
+#              service). Advisory: ci-gate reports it but does not block.
+#
 # ci-gate aggregates every job into one verdict: lint/test/e2e must succeed;
-# e2e-npu must succeed when it runs (skipped is fine). When enabling branch
-# protection, mark ONLY the "CI Gate" check as required.
+# e2e-npu must succeed when it runs (skipped is fine); coverage is advisory.
+# When enabling branch protection, mark ONLY the "CI Gate" check as required.
 
 on:
   push:
@@ -68,13 +73,28 @@ jobs:
       dcmi-build: true
       timeout-minutes: 30
 
+  # Coverage on the full layer only (same gating as e2e-npu): the plain PR
+  # path already runs the tests; this re-runs them instrumented to produce
+  # the merged profile + HTML report. Advisory — never blocks the gate.
+  coverage:
+    name: Coverage
+    needs: lint
+    if: >-
+      ${{ always() && needs.lint.result == 'success'
+          && github.repository == 'ggboom12138/CATMonitor'
+          && (github.event_name == 'push'
+              || contains(github.event.pull_request.labels.*.name, 'ready')) }}
+    uses: ./.github/workflows/_unit_test.yaml
+    with:
+      coverage: true
+
   # Single aggregated verdict for branch protection: mark only "CI Gate" as
   # the required check (marking the conditional e2e-npu required would leave
   # unlabeled PRs stuck in "expected" forever). if: always() so a verdict is
   # reported even when dependencies failed or were skipped.
   ci-gate:
     name: CI Gate
-    needs: [lint, test, e2e, e2e-npu]
+    needs: [lint, test, e2e, e2e-npu, coverage]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -85,13 +105,15 @@ jobs:
           TEST: ${{ needs.test.result }}
           E2E: ${{ needs.e2e.result }}
           E2EN: ${{ needs.e2e-npu.result }}
+          COV: ${{ needs.coverage.result }}
         run: |
           set -eu
           echo "=== CI Gate Summary ==="
-          echo "lint:    ${LINT}"
-          echo "test:    ${TEST}"
-          echo "e2e:     ${E2E}"
-          echo "e2e-npu: ${E2EN}"
+          echo "lint:     ${LINT}"
+          echo "test:     ${TEST}"
+          echo "e2e:      ${E2E}"
+          echo "e2e-npu:  ${E2EN}"
+          echo "coverage: ${COV} (advisory)"
           # lint/test/e2e: must succeed (skipped allowed for future guards)
           for r in "${LINT}" "${TEST}" "${E2E}"; do
             case "$r" in
@@ -104,4 +126,5 @@ jobs:
             success|skipped) ;;
             *) echo "::error::E2E NPU did not succeed: ${E2EN}"; exit 1 ;;
           esac
+          # coverage: advisory only — reported, never blocks
           echo "=== CI Gate: PASSED ==="

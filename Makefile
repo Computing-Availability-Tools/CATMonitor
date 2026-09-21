@@ -40,8 +40,13 @@ test:
 test-verbose:
 	$(GO) test -v ./...
 
+# Coverage report: merged profile (coverage.out) + total + single-file HTML
+# report (coverage.html) — same artifacts the CI coverage job produces.
 test-coverage:
-	$(GO) test -cover ./...
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -func=coverage.out | tail -1
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "HTML report: coverage.html"
 
 # Black-box e2e scenarios (Go, build-tag gated). Compiles the three
 # production binaries and drives them through their HTTP/process/file
