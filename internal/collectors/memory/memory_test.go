@@ -411,3 +411,28 @@ func TestCollectorInterface(t *testing.T) {
 		t.Error("expected default enabled true")
 	}
 }
+
+// TestPageCounterGateCoverage is a regression test for the gate-list drift
+// class of bugs: every metric name collectPageCounters produces must appear
+// in its AnyWanted gate list. With the old 2-name list, a config wanting
+// only isolated_anon_pages/isolated_file_pages silently skipped the whole
+// sub-method (same bug class as the NPU deviceMetricNames fix).
+func TestPageCounterGateCoverage(t *testing.T) {
+	useTestdata(t)
+	c := New()
+	now := time.Now()
+
+	metrics, err := c.collectPageCounters(now)
+	if err != nil {
+		t.Fatalf("collectPageCounters failed: %v", err)
+	}
+	gateSet := map[string]bool{
+		"isolated_pages": true, "isolated_anon_pages": true,
+		"isolated_file_pages": true, "free_pages": true,
+	}
+	for _, m := range metrics {
+		if !gateSet[m.Name] {
+			t.Errorf("collectPageCounters produces %q but it is missing from the AnyWanted gate list (memory.go)", m.Name)
+		}
+	}
+}
