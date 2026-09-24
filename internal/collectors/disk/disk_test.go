@@ -136,26 +136,62 @@ func TestCollectLatency(t *testing.T) {
 	useTestdata(t)
 	c := New()
 	now := time.Now()
-	current, _ := c.filteredDiskStats()
-	c.prevDiskStats = current
+	// prev = fixture snapshot; current = copy with progressed counters.
+	prev, _ := c.filteredDiskStats()
+	c.prevDiskStats = prev
 	c.prevDiskTime = now
 	c.hasPrevDiskStats = true
-	current2, _ := c.filteredDiskStats()
-	metrics := c.computeLatency(current2, 5.0, now.Add(5*time.Second))
-	// testdata has sda + sdb (ram0 filtered), each produces read_latency + write_latency.
-	if len(metrics) != 4 {
-		t.Fatalf("expected 4 latency metrics (2 devices × 2 directions), got %d", len(metrics))
+
+	current := make(map[string]proc.DiskStat)
+	for dev, s := range prev {
+		current[dev] = s
 	}
+	// sda: both directions progressed → read 100ms/200ops = 0.5ms,
+	// write 250ms/100ops = 2.5ms.
+	sda := current["sda"]
+	sda.ReadsCompleted += 200
+	sda.ReadTime += 100
+	sda.WritesCompleted += 100
+	sda.WriteTime += 250
+	current["sda"] = sda
+	// sdb: only reads progressed → read_latency only (write skipped, zero ops).
+	sdb := current["sdb"]
+	sdb.ReadsCompleted += 50
+	sdb.ReadTime += 25
+	current["sdb"] = sdb
+
+	metrics := c.computeLatency(current, now.Add(5*time.Second))
+	// sda read+write + sdb read = 3 metrics.
+	if len(metrics) != 3 {
+		t.Fatalf("expected 3 latency metrics, got %d", len(metrics))
+	}
+	byDevice := map[string]map[string]float64{}
 	for _, m := range metrics {
 		if m.Name != "read_latency" && m.Name != "write_latency" {
 			t.Errorf("expected read/write_latency, got %s", m.Name)
 		}
-		if m.Unit != "ms/s" {
-			t.Errorf("expected unit ms/s, got %s", m.Unit)
+		if m.Unit != "ms" {
+			t.Errorf("expected unit ms, got %s", m.Unit)
 		}
 		if m.Labels["device"] == "" {
 			t.Error("device label should not be empty")
 		}
+		if byDevice[m.Labels["device"]] == nil {
+			byDevice[m.Labels["device"]] = map[string]float64{}
+		}
+		byDevice[m.Labels["device"]][m.Name] = m.Value
+	}
+	if v := byDevice["sda"]["read_latency"]; v != 0.5 {
+		t.Errorf("sda read_latency: expected 0.5 (100ms/200ops), got %v", v)
+	}
+	if v := byDevice["sda"]["write_latency"]; v != 2.5 {
+		t.Errorf("sda write_latency: expected 2.5 (250ms/100ops), got %v", v)
+	}
+	if v := byDevice["sdb"]["read_latency"]; v != 0.5 {
+		t.Errorf("sdb read_latency: expected 0.5 (25ms/50ops), got %v", v)
+	}
+	if _, ok := byDevice["sdb"]["write_latency"]; ok {
+		t.Error("sdb write_latency must be skipped (zero write ops in interval)")
 	}
 }
 

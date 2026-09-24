@@ -173,8 +173,8 @@ var chartGroups = []chartGroup{
 	{"disk_throughput_write", "磁盘吞吐量(写)", "disk", []string{"throughput"}, "direction", "write", "", ""},
 	{"disk_iops_read", "IOPS(读)", "disk", []string{"iops"}, "direction", "read", "", ""},
 	{"disk_iops_write", "IOPS(写)", "disk", []string{"iops"}, "direction", "write", "", ""},
-	{"disk_read_latency", "磁盘读耗时", "disk", []string{"read_latency"}, "device", "", "", ""},
-	{"disk_write_latency", "磁盘写耗时", "disk", []string{"write_latency"}, "device", "", "", ""},
+	{"disk_read_latency", "磁盘读延迟", "disk", []string{"read_latency"}, "device", "", "", ""},
+	{"disk_write_latency", "磁盘写延迟", "disk", []string{"write_latency"}, "device", "", "", ""},
 	// Network (2 charts, labelKey=interface triggers simplified label)
 	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", "", ""},
 	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", "", ""},
@@ -335,7 +335,7 @@ var metricDisplayNames = map[string]string{
 	// Memory
 	"memory:usage_detail": "内存", "memory:swap_detail": "Swap",
 	// Disk
-	"disk:throughput": "吞吐量", "disk:read_latency": "读耗时", "disk:write_latency": "写耗时", "disk:iops": "IOPS",
+	"disk:throughput": "吞吐量", "disk:read_latency": "读延迟", "disk:write_latency": "写延迟", "disk:iops": "IOPS",
 	// Network
 	"network:rx_bytes_total": "接收字节", "network:tx_bytes_total": "发送字节",
 	// Chassis
