@@ -135,8 +135,8 @@
 | 指标序号 | 指标名称 | 中文名称 | 单位 | 数据来源 | 说明 |
 |:--------:|---------|---------|:----:|---------|------|
 | 3.3 | throughput | 读写吞吐量(含 sectors read/written) | MB/s | /proc/diskstats fields 6,10 | sectors read/written 是中间值，通过 throughput 指标以 MB/s 输出 |
-| 3.4 | read_latency | 读耗时(time spent reading) | ms/s | /proc/diskstats field 7 | 两次差值除以间隔 |
-| 3.5 | write_latency | 写耗时(time spent writing) | ms/s | /proc/diskstats field 11 | 两次差值除以间隔 |
+| 3.4 | read_latency | 读延迟(平均单次读耗时) | ms | /proc/diskstats fields 4,7 | 两次差值相除：Δread time ÷ Δreads completed（同 iostat r_await） |
+| 3.5 | write_latency | 写延迟(平均单次写耗时) | ms | /proc/diskstats fields 8,11 | 两次差值相除：Δwrite time ÷ Δwrites completed（同 iostat w_await） |
 | 3.2 | iops | 读写IOPS | 次/s | /proc/diskstats fields 4,8 | 读写完成次数差值 |
 
 > 注：`sectors read` 和 `sectors written` 是 /proc/diskstats 的原始字段（fields 6 和 10），代码内部读取后用于计算 throughput（MB/s），未作为独立指标输出。如需原始扇区数，可从 throughput 反推或后续新增独立指标。
