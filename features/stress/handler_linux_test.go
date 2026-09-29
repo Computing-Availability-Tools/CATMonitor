@@ -71,6 +71,17 @@ func TestUnifiedWebListenerProvidesReadAndMutationRoutes(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("POST status=%d body=%s", response.Code, response.Body.String())
 	}
+	var started Report
+	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.JobID == "" {
+		t.Fatalf("accepted run returned no job id: %s", response.Body.String())
+	}
+	// The accepted run executes asynchronously; wait for a terminal state so
+	// the manager's report write cannot race t.TempDir() cleanup (flaky
+	// "directory not empty" on TempDir RemoveAll).
+	waitForTerminal(t, manager, started.JobID)
 }
 
 func TestUnifiedWebListenerRejectsCrossOriginMutation(t *testing.T) {
