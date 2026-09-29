@@ -64,7 +64,7 @@ jobs:
     needs: lint
     if: >-
       ${{ always() && needs.lint.result == 'success'
-          && github.repository == 'ggboom12138/CATMonitor'
+          && github.repository == 'Computing-Availability-Tools/CATMonitor'
           && (github.event_name == 'push'
               || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     uses: ./.github/workflows/_e2e_test.yaml
@@ -81,7 +81,7 @@ jobs:
     needs: lint
     if: >-
       ${{ always() && needs.lint.result == 'success'
-          && github.repository == 'ggboom12138/CATMonitor'
+          && github.repository == 'Computing-Availability-Tools/CATMonitor'
           && (github.event_name == 'push'
               || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     uses: ./.github/workflows/_unit_test.yaml
