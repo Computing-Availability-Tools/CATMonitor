@@ -14,6 +14,15 @@ func emetric(component, name string, value float64, labels map[string]string) co
 	}
 }
 
+func findChartGroup(id string) *chartGroup {
+	for i := range chartGroups {
+		if chartGroups[i].id == id {
+			return &chartGroups[i]
+		}
+	}
+	return nil
+}
+
 // TestEfficiencySpecInvariants guards the filter set against structural errors.
 func TestEfficiencySpecInvariants(t *testing.T) {
 	seen := map[string]bool{}
@@ -187,5 +196,47 @@ func TestDominantUnit(t *testing.T) {
 func TestChartGroupCount(t *testing.T) {
 	if len(chartGroups) != 34 {
 		t.Errorf("expected 34 chart groups, got %d", len(chartGroups))
+	}
+}
+
+// TestCardLevelChartDedupe verifies npu_power_draw groups by npu_id only:
+// chips of one card report identical values, so the chart emits one series
+// per card (not per chip). Chip-level charts (e.g. temperature) stay per-chip.
+func TestCardLevelChartDedupe(t *testing.T) {
+	metrics := []collector.Metric{
+		emetric("npu", "power_draw", 350, map[string]string{"npu_id": "0", "chip_id": "0"}),
+		emetric("npu", "power_draw", 350, map[string]string{"npu_id": "0", "chip_id": "1"}),
+		emetric("npu", "power_draw", 410, map[string]string{"npu_id": "1", "chip_id": "0"}),
+		emetric("npu", "power_draw", 410, map[string]string{"npu_id": "1", "chip_id": "1"}),
+		emetric("npu", "voltage", 0.8, map[string]string{"npu_id": "0", "chip_id": "0"}),
+		emetric("npu", "voltage", 0.9, map[string]string{"npu_id": "0", "chip_id": "1"}),
+		emetric("npu", "voltage", 1.0, map[string]string{"npu_id": "1", "chip_id": "0"}),
+		emetric("npu", "voltage", 1.1, map[string]string{"npu_id": "1", "chip_id": "1"}),
+	}
+
+	powCG := findChartGroup("npu_power_draw")
+	if powCG == nil {
+		t.Fatal("npu_power_draw chart not found")
+	}
+	items := groupForChart(metrics, *powCG)
+	if len(items) != 2 {
+		t.Fatalf("power: expected 2 series (card-level), got %d", len(items))
+	}
+	for _, s := range items {
+		if s.ID != "0::power_draw" && s.ID != "1::power_draw" {
+			t.Errorf("power: unexpected ID %q", s.ID)
+		}
+		if s.Label != "NPU 0" && s.Label != "NPU 1" {
+			t.Errorf("power: unexpected label %q", s.Label)
+		}
+	}
+
+	volCG := findChartGroup("npu_voltage")
+	if volCG == nil {
+		t.Fatal("npu_voltage chart not found")
+	}
+	items = groupForChart(metrics, *volCG)
+	if len(items) != 4 {
+		t.Fatalf("voltage: expected 4 series (chip-level), got %d", len(items))
 	}
 }

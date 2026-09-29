@@ -181,6 +181,15 @@ func (c *CPUCollector) collectMCEErrors(now time.Time) ([]collector.Metric, erro
 // collectIpmiMetrics emits CPU temperature, memory-region temperature and CPU
 // power from a single cached ipmi SDR call. Replaces the old thermal-zone
 // collectTemperature (decision E: temperature source switched to ipmi).
+//
+// Sensor matching order matters:
+//   - VRD/VDDQ/VRM (voltage regulator temps) are dropped first: they shadow
+//     the generic cpu+temp rule and pollute temperature/power-based health
+//     with hotter regulator readings.
+//   - mem+temp runs before cpu+temp so "CPU1 MEM Temp" (memory-region temp
+//     carrying a CPU prefix) maps to mem_temperature, not temperature.
+//   - cpu+core covers "CPU1 Core Rem" (core temp naming used by some BMCs);
+//     cpu+temp covers the generic "CPU1 Temp" naming.
 func (c *CPUCollector) collectIpmiMetrics(now time.Time) ([]collector.Metric, error) {
 	sensors, err := ipmi.Default().SDR()
 	if err != nil {
@@ -190,14 +199,21 @@ func (c *CPUCollector) collectIpmiMetrics(now time.Time) ([]collector.Metric, er
 	for _, s := range sensors {
 		name := strings.ToLower(s.Name)
 		switch {
-		case strings.Contains(name, "cpu") && strings.Contains(name, "temp"):
+		case strings.Contains(name, "vrd") || strings.Contains(name, "vddq") || strings.Contains(name, "vrm"):
+			// Voltage regulator temperature — not a CPU core temp; drop.
+		case strings.Contains(name, "mem") && strings.Contains(name, "temp"):
+			metrics = append(metrics, collector.Metric{
+				Component: "cpu", Name: "mem_temperature", Value: roundFloat(s.Value, 1), Unit: "°C",
+				Labels: map[string]string{"cpu": extractCPUNum(s.Name), "sensor": s.Name}, Timestamp: now,
+			})
+		case strings.Contains(name, "cpu") && strings.Contains(name, "core"):
 			metrics = append(metrics, collector.Metric{
 				Component: "cpu", Name: "temperature", Value: roundFloat(s.Value, 1), Unit: "°C",
 				Labels: map[string]string{"cpu": extractCPUNum(s.Name), "sensor": s.Name}, Timestamp: now,
 			})
-		case strings.Contains(name, "mem") && strings.Contains(name, "temp"):
+		case strings.Contains(name, "cpu") && strings.Contains(name, "temp"):
 			metrics = append(metrics, collector.Metric{
-				Component: "cpu", Name: "mem_temperature", Value: roundFloat(s.Value, 1), Unit: "°C",
+				Component: "cpu", Name: "temperature", Value: roundFloat(s.Value, 1), Unit: "°C",
 				Labels: map[string]string{"cpu": extractCPUNum(s.Name), "sensor": s.Name}, Timestamp: now,
 			})
 		case strings.Contains(name, "cpu") && strings.Contains(name, "pwr"):

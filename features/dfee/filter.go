@@ -173,8 +173,8 @@ var chartGroups = []chartGroup{
 	{"disk_throughput_write", "磁盘吞吐量(写)", "disk", []string{"throughput"}, "direction", "write", "", ""},
 	{"disk_iops_read", "IOPS(读)", "disk", []string{"iops"}, "direction", "read", "", ""},
 	{"disk_iops_write", "IOPS(写)", "disk", []string{"iops"}, "direction", "write", "", ""},
-	{"disk_read_latency", "磁盘读耗时", "disk", []string{"read_latency"}, "device", "", "", ""},
-	{"disk_write_latency", "磁盘写耗时", "disk", []string{"write_latency"}, "device", "", "", ""},
+	{"disk_read_latency", "磁盘读延迟", "disk", []string{"read_latency"}, "device", "", "", ""},
+	{"disk_write_latency", "磁盘写延迟", "disk", []string{"write_latency"}, "device", "", "", ""},
 	// Network (2 charts, labelKey=interface triggers simplified label)
 	{"network_rx", "网络接收", "network", []string{"rx_bytes_total"}, "interface", "", "", ""},
 	{"network_tx", "网络发送", "network", []string{"tx_bytes_total"}, "interface", "", "", ""},
@@ -182,6 +182,14 @@ var chartGroups = []chartGroup{
 	{"chassis_power", "整机功耗", "chassis", []string{"power"}, "", "", "", ""},
 	{"chassis_temp", "机箱温度", "chassis", []string{"inlet_temp", "outlet_temp"}, "", "", "", ""},
 	{"chassis_fan", "机箱风扇转速", "chassis", []string{"fan_speed"}, "", "", "", "avg"},
+}
+
+// cardLevelCharts lists charts whose metric is measured per NPU card: on
+// multi-chip boards every chip of one card reports the same value (e.g. DCMI
+// power is card-scoped), so these charts dedupe to one series per npu_id
+// instead of one per chip.
+var cardLevelCharts = map[string]bool{
+	"npu_power_draw": true,
 }
 
 // ---- API response types ----
@@ -327,7 +335,7 @@ var metricDisplayNames = map[string]string{
 	// Memory
 	"memory:usage_detail": "内存", "memory:swap_detail": "Swap",
 	// Disk
-	"disk:throughput": "吞吐量", "disk:read_latency": "读耗时", "disk:write_latency": "写耗时", "disk:iops": "IOPS",
+	"disk:throughput": "吞吐量", "disk:read_latency": "读延迟", "disk:write_latency": "写延迟", "disk:iops": "IOPS",
 	// Network
 	"network:rx_bytes_total": "接收字节", "network:tx_bytes_total": "发送字节",
 	// Chassis
@@ -410,11 +418,26 @@ func groupForChart(metrics []collector.Metric, cg chartGroup) []seriesItem {
 		nameSet[n] = true
 	}
 	var items []seriesItem
+	seenCard := map[string]bool{} // cardLevelCharts: npu_id → already emitted
 	for _, m := range metrics {
 		if m.Component != cg.component || !nameSet[m.Name] {
 			continue
 		}
 		if cg.labelKey != "" && cg.labelVal != "" && m.Labels[cg.labelKey] != cg.labelVal {
+			continue
+		}
+		if cardLevelCharts[cg.id] {
+			id := m.Labels["npu_id"]
+			if id == "" || seenCard[id] {
+				continue
+			}
+			seenCard[id] = true
+			items = append(items, seriesItem{
+				ID:    id + "::" + m.Name,
+				Label: "NPU " + id,
+				Value: m.Value,
+				Unit:  m.Unit,
+			})
 			continue
 		}
 		items = append(items, seriesItem{

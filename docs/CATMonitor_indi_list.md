@@ -108,12 +108,13 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 
 #### 1.3 temperature（CPU温度）
 
-- **数据来源**：`ipmitool`（`ipmitool sdr`，筛选 CPU 相关温度传感器）
-- **采集方法**：调用 `ipmitool sensor` 读取主板传感器列表，筛选 CPU 相关温度项（如 "CPU1 Temp"），解析输出取温度值。来源层采用两级缓存：传感器结果缓存 10s（一次拉取供 temperature/mem_temperature/power 共用），传感器名称缓存 24h（名称缓存有效期内按名称逐个 `ipmitool sensor get`，过期后重新全量扫描）；命令执行超时 120s。需 ipmitool 已安装且有 BMC 访问权限；无 BMC 时该指标为空（优雅降级）
+- **数据来源**：`ipmitool`（`ipmitool sdr`，筛选 CPU 核心温度传感器）
+- **采集方法**：调用 `ipmitool sensor` 读取主板传感器列表，按以下规则筛选 CPU 核心温度（每个命中的传感器输出一条指标，靠 `sensor` 标签区分）：① 通用命名 `CPU<n> Temp`；② 部分 BMC 的核心温度命名为 `CPU<n> Core Rem`（名字不含 "Temp"，按 `cpu+core` 匹配）。供电模块温度（`CPU<n> VRD Temp`、`CPU<n> VDDQ Temp`、`CPU<n> VRM Temp`）被排除——它们不是核心温度，且通常比核心更热，混入会拉高健康分与"CPU 最高温度"。来源层采用两级缓存：传感器结果缓存 10s（一次拉取供 temperature/mem_temperature/power 共用），传感器名称缓存 24h（名称缓存有效期内按名称逐个 `ipmitool sensor get`，过期后重新全量扫描；供电温度传感器不进名字缓存，稳态下不查询）；命令执行超时 120s。需 ipmitool 已安装且有 BMC 访问权限；无 BMC 时该指标为空（优雅降级）
 - **Labels**：`cpu`（socket 编号）、`sensor`（传感器名）
 - **输出示例**：
 ```json
 {"component":"cpu","name":"temperature","value":65.0,"unit":"°C","labels":{"cpu":"0","sensor":"CPU1 Temp"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"cpu","name":"temperature","value":62.0,"unit":"°C","labels":{"cpu":"1","sensor":"CPU1 Core Rem"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
 #### 1.4 frequency（CPU频率）
@@ -319,11 +320,12 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 #### 1.24 mem_temperature（CPU内存区域温度）
 
 - **数据来源**：`ipmitool`（SDR，筛选内存区域温度传感器）
-- **采集方法**：从缓存的 SDR 中筛选 "MEM* Temp" 传感器取温度。无 BMC 时空
+- **采集方法**：从缓存的 SDR 中筛选含 "MEM"+"Temp" 的传感器取温度，包括 `MEM<n> Temp` 通用命名与部分 BMC 的 `CPU<n> MEM Temp` 命名（带 CPU 前缀的内存区域温度，同样归入本指标而非 temperature）。无 BMC 时空
 - **Labels**：`cpu`、`sensor`
 - **输出示例**：
 ```json
 {"component":"cpu","name":"mem_temperature","value":42.0,"unit":"°C","labels":{"cpu":"0","sensor":"MEM1 Temp"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"cpu","name":"mem_temperature","value":40.0,"unit":"°C","labels":{"cpu":"0","sensor":"CPU1 MEM Temp"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
 #### 1.25 core_num（CPU核数量）
@@ -719,8 +721,8 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 | 3.1 | space_usage | 磁盘空间使用率 | High | 5s | 是 | % | statfs syscall |
 | 3.2 | iops | 读写IOPS | Medium | 5s | 是 | 次/s | /proc/diskstats |
 | 3.3 | throughput | 读写吞吐量 | Medium | 5s | 是 | MB/s | /proc/diskstats |
-| 3.4 | read_latency | 读耗时 | Low | 5s | 是 | ms/s | /proc/diskstats (field 7) |
-| 3.5 | write_latency | 写耗时 | Low | 5s | 是 | ms/s | /proc/diskstats (field 11) |
+| 3.4 | read_latency | 读延迟 | Low | 5s | 是 | ms | /proc/diskstats (field 7) |
+| 3.5 | write_latency | 写延迟 | Low | 5s | 是 | ms | /proc/diskstats (field 11) |
 | 3.6 | io_wait | I/O等待占比 | Medium | 5s | 是 | % | /proc/stat |
 | 3.7 | smart_status | SMART健康状态 | Medium | 60s | 否 | - | smartctl -H |
 | 3.8 | smart_temperature | 硬盘温度 | Low | 60s | 否 | °C | smartctl -A |
@@ -764,24 +766,24 @@ CPU 采集器通过 `/proc`、`/sys`、`lscpu`、`ipmitool`、`/var/log`(mcelog/
 {"component":"disk","name":"throughput","value":25.6,"unit":"MB/s","labels":{"device":"sda","direction":"read"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 3.4 read_latency（读耗时）
+#### 3.4 read_latency（读延迟）
 
-- **数据来源**：`/proc/diskstats` 第 7 字段（read time, ms）
-- **采集方法**：两次采集间 read time 累计值差值除以间隔时间，得每秒读耗时（ms/s）。反映磁盘读 I/O 花费的时间。需 prev 快照，首次不产出
+- **数据来源**：`/proc/diskstats` 第 7 字段（read time, ms）与第 4 字段（reads completed）
+- **采集方法**：两次采集间 read time 累计值差值除以完成读次数增量，得平均单次读延迟（ms/次），公式与 iostat 的 r_await 一致。某间隔内完成读次数增量为 0 时跳过该方向（无读 I/O 无延迟）。需 prev 快照，首次不产出
 - **Labels**：`device`（"sda", "sdb", ...）
 - **输出示例**：
 ```json
-{"component":"disk","name":"read_latency","value":120.5,"unit":"ms/s","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"disk","name":"read_latency","value":0.5,"unit":"ms","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
-#### 3.5 write_latency（写耗时）
+#### 3.5 write_latency（写延迟）
 
-- **数据来源**：`/proc/diskstats` 第 11 字段（write time, ms）
-- **采集方法**：两次采集间 write time 累计值差值除以间隔时间，得每秒写耗时（ms/s）。反映磁盘写 I/O 花费的时间。需 prev 快照，首次不产出
+- **数据来源**：`/proc/diskstats` 第 11 字段（write time, ms）与第 8 字段（writes completed）
+- **采集方法**：两次采集间 write time 累计值差值除以完成写次数增量，得平均单次写延迟（ms/次），公式与 iostat 的 w_await 一致。某间隔内完成写次数增量为 0 时跳过该方向。需 prev 快照，首次不产出
 - **Labels**：`device`（"sda", "sdb", ...）
 - **输出示例**：
 ```json
-{"component":"disk","name":"write_latency","value":80.3,"unit":"ms/s","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
+{"component":"disk","name":"write_latency","value":2.5,"unit":"ms","labels":{"device":"sda"},"timestamp":"2026-07-10T10:30:00Z"}
 ```
 
 #### 3.6 io_wait（I/O等待占比）
@@ -2102,8 +2104,8 @@ FAN1 R Speed      | 9300.000   | RPM        | ok
 | 1 | space_usage | 磁盘空间使用率 | High | % |
 | 2 | iops | 读写IOPS | Medium | 次/s |
 | 3 | throughput | 读写吞吐量 | Medium | MB/s |
-| 4 | read_latency | 读耗时 | Low | ms/s |
-| 5 | write_latency | 写耗时 | Low | ms/s |
+| 4 | read_latency | 读延迟 | Low | ms |
+| 5 | write_latency | 写延迟 | Low | ms |
 | 6 | io_wait | I/O等待占比 | Medium | % |
 | 7 | smart_status | SMART健康状态 | Medium | - |
 | 8 | smart_temperature | 硬盘温度 | Low | °C |

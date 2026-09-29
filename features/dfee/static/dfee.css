@@ -5,7 +5,44 @@
   --text: #1f2329;
   --muted: #6b7280;
   --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --hover: #f0f2f5;
+  --table-line: #f1f3f5;
+  --warn-bg: #fef3c7;
+  --warn-text: #92400e;
+  --banner-ok-bg: #dcfce7;
+  --banner-ok-text: #166534;
+  --banner-err-bg: #fee2e2;
+  --banner-err-text: #991b1b;
+  --badge-na: #9ca3af;
+  --grid-line: #f1f3f5;
+  --axis-text: #9ca3af;
   --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+}
+
+/* Dark theme: neutral gray-black palette; grid-line/axis-text feed the
+   canvas chart renderer (read via getComputedStyle in dfee.js). */
+[data-theme="dark"] {
+  --bg: #171717;
+  --card: #212121;
+  --border: #383838;
+  --text: #e5e5e5;
+  --muted: #a3a3a3;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --hover: #262626;
+  --table-line: #303030;
+  --warn-bg: #3f2d10;
+  --warn-text: #fbbf24;
+  --banner-ok-bg: #14321f;
+  --banner-ok-text: #4ade80;
+  --banner-err-bg: #3b1518;
+  --banner-err-text: #f87171;
+  --badge-na: #737373;
+  --grid-line: #303030;
+  --axis-text: #737373;
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -39,6 +76,7 @@ a { color: inherit; text-decoration: none; }
 .controls { margin-left: auto; display: flex; align-items: center; gap: 14px; }
 .info-label { color: var(--muted); font-size: 13px; }
 .info-label b { color: var(--text); }
+.controls input[type=number] { width: 56px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
 .btn {
   padding: 5px 14px;
   border: 1px solid var(--border);
@@ -47,17 +85,17 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
   font-size: 13px;
 }
-.btn:hover { background: #f0f2f5; }
+.btn:hover { background: var(--hover); }
 .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn-primary:hover { background: #1d4ed8; }
+.btn-primary:hover { background: var(--accent-hover); }
 
 /* ---- banner ---- */
 .banner {
   margin: 12px 24px;
   padding: 8px 14px;
   border-radius: 6px;
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warn-bg);
+  color: var(--warn-text);
   font-size: 13px;
 }
 .banner.hidden { display: none; }
@@ -103,7 +141,7 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   background: var(--card); cursor: pointer; font-size: 12px;
   color: var(--muted);
 }
-.prio-btn:hover { background: #f0f2f5; }
+.prio-btn:hover { background: var(--hover); }
 .prio-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .filter-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -115,7 +153,7 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   padding: 2px 10px; border: 1px solid var(--border); border-radius: 4px;
   background: var(--card); cursor: pointer; font-size: 12px; color: var(--text);
 }
-.npu-dropdown-trigger:hover { background: #f0f2f5; }
+.npu-dropdown-trigger:hover { background: var(--hover); }
 .npu-dropdown-text {
   max-width: 140px; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -132,7 +170,7 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   display: flex; align-items: center; gap: 6px;
   padding: 3px 8px; font-size: 12px; cursor: pointer; border-radius: 4px;
 }
-.npu-dropdown-item:hover { background: #f0f2f5; }
+.npu-dropdown-item:hover { background: var(--hover); }
 .npu-dropdown-item input { margin: 0; cursor: pointer; }
 
 /* ---- chart grid ---- */
@@ -198,8 +236,8 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   color: #fff;
 }
 .badge-ok { background: #16a34a; }
-.badge-empty { background: #9ca3af; }
-.badge-pending { background: #2563eb; }
+.badge-empty { background: var(--badge-na); }
+.badge-pending { background: var(--accent); }
 
 /* legend (HTML, above canvas) */
 .legend {
@@ -207,7 +245,7 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
   flex-wrap: wrap;
   gap: 6px 14px;
   padding: 6px 14px;
-  border-bottom: 1px solid #f1f3f5;
+  border-bottom: 1px solid var(--table-line);
   flex-shrink: 0;
   min-height: 46px;
   align-content: flex-start;
@@ -246,8 +284,10 @@ main { padding: 20px 24px 40px; max-width: 1600px; margin: 0 auto; }
 .chart-card.compact .chart-body { display: none; }
 .chart-card.compact .legend { display: none; }
 
-.foot { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
-
 @media (max-width: 500px) {
-  .chart-grid { grid-template-columns: 1fr; }
+  /* !important beats the inline repeat(N,1fr) set by dfee.js; the card
+     rule neutralizes spans so a span-3 card cannot create implicit
+     columns in the single-column grid. */
+  .chart-grid { grid-template-columns: 1fr !important; }
+  .chart-grid > .chart-card { grid-column: auto !important; }
 }

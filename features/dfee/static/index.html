@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 能效监控</title>
+  <script>
+    // Set data-theme before the stylesheet loads to avoid a flash of the
+    // wrong theme. Manual choice (localStorage) wins; otherwise follow the
+    // OS preference.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('theme'); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') {
+        t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="stylesheet" href="/dfee/static/dfee.css">
 </head>
 <body>
@@ -14,17 +27,17 @@
     </div>
     <div class="controls">
       <span class="info-label">更新 <b id="updateTime">--</b></span>
-      <span class="info-label">间隔 <b id="intervalDisplay">--</b></span>
+      <span class="info-label">刷新间隔 <input type="number" id="intervalInput" min="1" step="1" value="3"> 秒</span>
+      <button id="applyBtn" class="btn">应用</button>
       <button id="resetLayoutBtn" class="btn">重置布局</button>
       <button id="refreshBtn" class="btn btn-primary">立即刷新</button>
+      <button id="themeBtn" class="btn" title="切换深浅主题">🌙</button>
     </div>
   </header>
 
   <div id="banner" class="banner hidden"></div>
 
   <main id="sections"></main>
-
-  <footer class="foot">CATMonitor 能效监控 · 14 张实时图表 · 数据来自 snapshot.json</footer>
 
   <script src="/dfee/static/dfee.js"></script>
 </body>

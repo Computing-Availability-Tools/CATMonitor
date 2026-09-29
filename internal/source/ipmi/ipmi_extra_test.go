@@ -76,8 +76,10 @@ func TestSaveNameCacheWritesFile(t *testing.T) {
 	}
 }
 
-// SetMockSensorGet drives the targeted-fetch path through the public hook
-// (missing-name queries return the injected error).
+// SetMockSensorGet drives the targeted-fetch path through the public hook.
+// Under SWR the expired read serves the stale discovery values; the
+// background refresh lands the targeted values. Waiting for quiescence
+// before exiting also avoids leaking the refresh goroutine into later tests.
 func TestSetMockSensorGetTargetedFetch(t *testing.T) {
 	SetCacheTTL(0)
 	defer SetCacheTTL(defaultCacheTTL)
@@ -105,15 +107,38 @@ func TestSetMockSensorGetTargetedFetch(t *testing.T) {
 	for _, s := range sensors {
 		switch s.Name {
 		case "Power":
-			if s.Value != 1824 {
-				t.Errorf("Power = %v, want 1824", s.Value)
+			if s.Value != 1800 {
+				t.Errorf("expired read Power = %v, want stale 1800", s.Value)
 			}
 		case "Inlet Temp":
-			if s.Value != 30 {
-				t.Errorf("Inlet Temp = %v, want 30", s.Value)
+			if s.Value != 28 {
+				t.Errorf("expired read Inlet Temp = %v, want stale 28", s.Value)
 			}
 		default:
 			t.Errorf("unexpected sensor %q", s.Name)
 		}
+	}
+
+	if !waitFor(t, func() bool {
+		defaultSrc.mu.Lock()
+		defer defaultSrc.mu.Unlock()
+		if defaultSrc.inflight {
+			return false
+		}
+		for _, s := range defaultSrc.cached {
+			switch s.Name {
+			case "Power":
+				if s.Value != 1824 {
+					return false
+				}
+			case "Inlet Temp":
+				if s.Value != 30 {
+					return false
+				}
+			}
+		}
+		return true
+	}) {
+		t.Fatalf("background targeted refresh never landed: %+v", defaultSrc.cached)
 	}
 }

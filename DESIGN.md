@@ -461,7 +461,7 @@ components:
 **采集逻辑**：
 1. **usage**：读取 `/proc/stat` 中 `cpu` 行和 `cpu0`~`cpuN` 行的 10 个时间字段（user/nice/system/idle/iowait/irq/softirq/steal/guest/guest_nice），与上次快照差值计算使用率。公式：`usage% = (total_delta - idle_delta) / total_delta × 100`。每个核心和总体各输出一条。
 2. **load_average**：读取 `/proc/loadavg` 前三个字段，分别对应 1m/5m/15m 负载。
-3. **temperature**：遍历 `/sys/class/thermal/thermal_zone*/temp`，值为毫摄氏度，除以 1000 转换。
+3. **temperature**：来自 `ipmitool sensor`（SDR），筛选 CPU 核心温度传感器（通用 `CPU<n> Temp` 命名及部分 BMC 的 `CPU<n> Core Rem` 命名；排除 VRD/VDDQ/VRM 供电温度），内存区域温度（`mem_temperature`）同理来自 SDR 的 MEM 温度传感器。无 BMC 时优雅降级为空。
 4. **frequency**：遍历 `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`，值为 kHz，除以 1000 转换。
 5. **context_switches**：读取 `/proc/stat` 中 `ctxt` 行，差值除以间隔得出每秒切换次数。
 6. **process_count**：解析 `/proc/loadavg` 第四字段 `running/total`。
