@@ -26,10 +26,10 @@ type promMetric struct {
 // mapping to node_*/dsmi_* Prometheus format. Static info is collected once
 // at startup and cached.
 type Exporter struct {
-	snapshotDir   string
-	deviceFilter  map[int]bool // nil = all NPU devices
-	hwInfo        HWStaticInfo
-	swInfo        SWStaticInfo
+	snapshotDir  string
+	deviceFilter map[int]bool // nil = all NPU devices
+	hwInfo       HWStaticInfo
+	swInfo       SWStaticInfo
 }
 
 // NewExporter collects static info at startup and returns an Exporter.
@@ -90,23 +90,23 @@ func (e *Exporter) staticMetrics() []promMetric {
 		"psu_info":      e.hwInfo.PSUInfo,
 	}
 	swLabels := map[string]string{
-		"os_version":            e.swInfo.OSVersion,
-		"npu_driver_version":    e.swInfo.NPUDriverVersion,
-		"npu_firmware_version":  e.swInfo.NPUFirmwareVersion,
-		"cann_version":           e.swInfo.CANNVersion,
-		"python_version":         e.swInfo.PythonVersion,
-		"torch_version":          e.swInfo.TorchVersion,
-		"torch_npu_version":      e.swInfo.TorchNPUVersion,
-		"transformers_version":   e.swInfo.TransformersVersion,
-		"mindspeed_version":      e.swInfo.MindSpeedVersion,
-		"vllm_version":           e.swInfo.VLLMVersion,
-		"vllm_ascend_version":    e.swInfo.VLLMAscendVersion,
-		"sglang_version":         e.swInfo.SGLangVersion,
-		"mindie_version":         e.swInfo.MindIEVersion,
-		"verl_version":           e.swInfo.VerLVersion,
-		"verl_npu_version":       e.swInfo.VerLNPUVersion,
-		"gpu_driver_version":     e.swInfo.GPUDriverVersion,
-		"cuda_version":           e.swInfo.CUDAVersion,
+		"os_version":           e.swInfo.OSVersion,
+		"npu_driver_version":   e.swInfo.NPUDriverVersion,
+		"npu_firmware_version": e.swInfo.NPUFirmwareVersion,
+		"cann_version":         e.swInfo.CANNVersion,
+		"python_version":       e.swInfo.PythonVersion,
+		"torch_version":        e.swInfo.TorchVersion,
+		"torch_npu_version":    e.swInfo.TorchNPUVersion,
+		"transformers_version": e.swInfo.TransformersVersion,
+		"mindspeed_version":    e.swInfo.MindSpeedVersion,
+		"vllm_version":         e.swInfo.VLLMVersion,
+		"vllm_ascend_version":  e.swInfo.VLLMAscendVersion,
+		"sglang_version":       e.swInfo.SGLangVersion,
+		"mindie_version":       e.swInfo.MindIEVersion,
+		"verl_version":         e.swInfo.VerLVersion,
+		"verl_npu_version":     e.swInfo.VerLNPUVersion,
+		"gpu_driver_version":   e.swInfo.GPUDriverVersion,
+		"cuda_version":         e.swInfo.CUDAVersion,
 	}
 	return []promMetric{
 		{name: "static_hardware_info", labels: hwLabels, value: 1, help: "Static hardware information", typ: "gauge"},
@@ -242,7 +242,7 @@ func mapNetwork(m collector.Metric) []promMetric {
 	case "rx_bytes_total":
 		iface := m.Labels["interface"]
 		return []promMetric{{
-			name: "node_network_receive_bytes_total",
+			name:   "node_network_receive_bytes_total",
 			labels: map[string]string{"interface": iface},
 			value:  m.Value,
 			help:   "Network receive bytes total", typ: "counter",
@@ -250,7 +250,7 @@ func mapNetwork(m collector.Metric) []promMetric {
 	case "tx_bytes_total":
 		iface := m.Labels["interface"]
 		return []promMetric{{
-			name: "node_network_transmit_bytes_total",
+			name:   "node_network_transmit_bytes_total",
 			labels: map[string]string{"interface": iface},
 			value:  m.Value,
 			help:   "Network transmit bytes total", typ: "counter",
@@ -285,7 +285,7 @@ func mapChassis(m collector.Metric) []promMetric {
 	case "fan_speed":
 		fanID := "FAN" + m.Labels["fan"] + " " + m.Labels["direction"]
 		return []promMetric{{
-			name: "ipmi_fan_speed_rpm",
+			name:   "ipmi_fan_speed_rpm",
 			labels: map[string]string{"fan_id": fanID},
 			value:  m.Value,
 			help:   "Fan speed", typ: "gauge",
@@ -300,28 +300,28 @@ func mapDisk(m collector.Metric) []promMetric {
 	switch m.Name {
 	case "read_sectors_total":
 		return []promMetric{{
-			name: "node_disk_read_sectors_total",
+			name:   "node_disk_read_sectors_total",
 			labels: map[string]string{"device": dev},
 			value:  m.Value,
 			help:   "Total sectors read", typ: "counter",
 		}}
 	case "written_sectors_total":
 		return []promMetric{{
-			name: "node_disk_written_sectors_total",
+			name:   "node_disk_written_sectors_total",
 			labels: map[string]string{"device": dev},
 			value:  m.Value,
 			help:   "Total sectors written", typ: "counter",
 		}}
 	case "read_time_total":
 		return []promMetric{{
-			name: "node_disk_read_time_seconds_total",
+			name:   "node_disk_read_time_seconds_total",
 			labels: map[string]string{"device": dev},
 			value:  m.Value / 1000.0,
 			help:   "Total time spent reading (seconds)", typ: "counter",
 		}}
 	case "write_time_total":
 		return []promMetric{{
-			name: "node_disk_write_time_seconds_total",
+			name:   "node_disk_write_time_seconds_total",
 			labels: map[string]string{"device": dev},
 			value:  m.Value / 1000.0,
 			help:   "Total time spent writing (seconds)", typ: "counter",
@@ -428,8 +428,8 @@ func supplementDiskStats(existing []promMetric) []promMetric {
 func encodePrometheus(metrics []promMetric) string {
 	// Group by metric name for HELP/TYPE headers.
 	type group struct {
-		help string
-		typ  string
+		help  string
+		typ   string
 		lines []string
 	}
 	groups := make(map[string]*group)

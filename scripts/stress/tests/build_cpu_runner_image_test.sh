@@ -153,8 +153,8 @@ for invalid_mirror in \
 done
 
 for forbidden_mirror in \
-    "repo"."huaweicloud.com" \
-    "mirrors"."tuna.tsinghua.edu.cn"; do
+    "repo.huaweicloud.com" \
+    "mirrors.tuna.tsinghua.edu.cn"; do
     if grep -R -F --exclude=build_cpu_runner_image_test.sh "$forbidden_mirror" \
         "$REPO_ROOT/scripts" "$REPO_ROOT/docker" "$REPO_ROOT/features" >/dev/null; then
         fail "repository hard-codes a site-specific Debian mirror: $forbidden_mirror"

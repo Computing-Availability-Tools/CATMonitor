@@ -17,6 +17,15 @@ func readMock(t *testing.T, path string) string {
 	return string(data)
 }
 
+// TestMain disables the on-disk sensor-name cache for the whole test binary:
+// discovery() persists names via saveNameCache(), and the default cacheDir
+// (/var/lib/catmonitor) would let mocked test data pollute a real host's
+// cache. An empty cacheDir makes both save and load no-ops.
+func TestMain(m *testing.M) {
+	SetCacheDir("")
+	os.Exit(m.Run())
+}
+
 func TestParseSDR(t *testing.T) {
 	out := readMock(t, "../../../tests/testdata/ipmitool-sdr-output.txt")
 	sensors := parseSDR(out)
@@ -341,6 +350,11 @@ func TestSDRTargetedFetch(t *testing.T) {
 	if sensors[0].Name != "Power" || sensors[0].Value != 1824 {
 		t.Errorf("Power sensor: got %+v", sensors[0])
 	}
+
+	// The last expired read kicked another background refresh; drain it so
+	// no goroutine leaks into the next test (same convention as the other
+	// SWR tests).
+	drainInflight(t)
 }
 
 func TestSDRFallbackOnSensorGetFailure(t *testing.T) {

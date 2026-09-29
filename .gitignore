@@ -12,6 +12,7 @@ bin/catmonitor
 *.dylib
 *.test
 *.out
+coverage.html
 .idea/
 .vscode/
 features/web/data/

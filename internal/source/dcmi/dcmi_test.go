@@ -16,9 +16,9 @@ func TestNotAvailableWithoutCGo(t *testing.T) {
 func TestMockProvider(t *testing.T) {
 	mock := &MockProvider{
 		CardListVal: []int{0},
-		Temp:     map[[2]int]int{{0, 0}: 42},
-		Powers:   map[[2]int]int{{0, 0}: 65},
-		Healths:  map[[2]int]uint{{0, 0}: 0}, // OK
+		Temp:        map[[2]int]int{{0, 0}: 42},
+		Powers:      map[[2]int]int{{0, 0}: 65},
+		Healths:     map[[2]int]uint{{0, 0}: 0}, // OK
 		Hbms: map[[2]int]*HbmInfo{{0, 0}: {
 			MemorySize:  32768,
 			MemoryUsage: 16384,
@@ -26,12 +26,12 @@ func TestMockProvider(t *testing.T) {
 			Freq:        1600,
 		}},
 		Utils: map[[3]int]uint{
-			{0, 0, 2}: 45, // AICORE rate = 45%
+			{0, 0, 2}:  45, // AICORE rate = 45%
 			{0, 0, 13}: 50, // NPU rate = 50%
 		},
 		Freqs: map[[3]int]uint{
-			{0, 0, 7}:  1800, // AICORE_CURRENT
-			{0, 0, 9}:  2000, // AICORE_MAX
+			{0, 0, 7}: 1800, // AICORE_CURRENT
+			{0, 0, 9}: 2000, // AICORE_MAX
 		},
 		Eccs: map[[3]int]*EccInfo{{0, 0, 2}: { // HBM type=2
 			SingleBitErrorCnt: 3,

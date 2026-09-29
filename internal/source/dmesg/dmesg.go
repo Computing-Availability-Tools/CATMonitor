@@ -48,12 +48,12 @@ func realFetch() (string, error) {
 }
 
 type defaultSource struct {
-	mu        sync.Mutex
-	cached    string
-	cachedAt  time.Time
-	cacheTTL  time.Duration
-	fetch     fetcher
-	mockText  string
+	mu       sync.Mutex
+	cached   string
+	cachedAt time.Time
+	cacheTTL time.Duration
+	fetch    fetcher
+	mockText string
 }
 
 var defaultSrc = &defaultSource{cacheTTL: defaultCacheTTL, fetch: realFetch}

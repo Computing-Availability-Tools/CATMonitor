@@ -1,0 +1,80 @@
+# CATMonitor pre-commit configuration
+#
+# Local usage:
+#   pre-commit install          # install git hook
+#   pre-commit run --all-files  # manual full run
+#
+# CI usage (GitHub Actions):
+#   .github/workflows/_pre_commit.yaml calls `pre-commit run --all-files`
+#
+# Excluded paths:
+#   - third_party/ : pinned upstream source (per-file SHA256, do not modify)
+#   - tests/testdata/ : test fixtures with intentionally preserved formatting
+minimum_pre_commit_version: "3.2.0"
+default_install_hook_types: [pre-commit]
+
+exclude: '^(third_party|tests/testdata)/.*'
+
+repos:
+  # Basic file hygiene (same version and config as DemonCAT)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Spell checking (same as DemonCAT)
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.43.5
+    hooks:
+      - id: typos
+        args: [--force-exclude]
+
+  # GitHub Actions workflow linter (same as DemonCAT); rev auto-updated
+  # weekly by dependabot's pre-commit ecosystem.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
+
+  # Local system hooks: Go toolchain + shellcheck (same args and exclusion
+  # list as DemonCAT; replaces its clang-format). shellcheck must be on PATH
+  # — ubuntu-latest CI runners ship it; locally install the static binary.
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (Go formatting)
+        entry: gofmt -l -w
+        language: system
+        files: '\.go$'
+        exclude: 'third_party/.*'
+
+      - id: go-vet
+        name: go vet (static analysis)
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+        args:
+          - --format=gcc
+          - --severity=warning
+          - --exclude=SC2086
+          - --exclude=SC2046
+          - --exclude=SC2006
+          - --exclude=SC2155
+          - --exclude=SC2154
+          - --exclude=SC1090
+          - --exclude=SC1091
+          - --exclude=SC2128
+          - --exclude=SC3043
+          - --exclude=SC3045

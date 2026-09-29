@@ -37,15 +37,15 @@ type Sensor struct {
 }
 
 const (
-	defaultCacheTTL    = 10 * time.Second
-	nameCacheTTL       = 24 * time.Hour
-	execTimeout        = 120 * time.Second
+	defaultCacheTTL = 10 * time.Second
+	nameCacheTTL    = 24 * time.Hour
+	execTimeout     = 120 * time.Second
 	// sensorGetTimeout bounds one `ipmitool sensor get` call. Slow BMCs can
 	// take 5-7s per sensor (measured on a 910B4 host under load); 5s killed
 	// healthy sensors and forced a full-scan fallback every cycle.
-	sensorGetTimeout   = 15 * time.Second
-	defaultCacheDir    = "/var/lib/catmonitor"
-	sensorMapFilename  = "ipmi_sensor_map.json"
+	sensorGetTimeout  = 15 * time.Second
+	defaultCacheDir   = "/var/lib/catmonitor"
+	sensorMapFilename = "ipmi_sensor_map.json"
 )
 
 type Source interface {
@@ -89,9 +89,9 @@ type defaultSource struct {
 	cacheDir       string
 	mockPower      string
 
-	inflight bool         // a background refresh or cold-start fetch is running
+	inflight bool          // a background refresh or cold-start fetch is running
 	coldDone chan struct{} // closed when the in-flight cold start finishes
-	gen      uint64       // bumped on reset; in-flight fetches discard their writes
+	gen      uint64        // bumped on reset; in-flight fetches discard their writes
 }
 
 var defaultSrc = &defaultSource{

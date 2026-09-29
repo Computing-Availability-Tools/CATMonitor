@@ -123,8 +123,8 @@ func TestDispatcherDebounceSuppresses(t *testing.T) {
 	rp := &recordingPusher{}
 	subs := NewSubscriptionManager()
 	subs.Add(&Subscription{
-		Delivery:  DeliveryWebhook,
-		Endpoint:  "http://eep/fault_event",
+		Delivery:   DeliveryWebhook,
+		Endpoint:   "http://eep/fault_event",
 		DebounceMs: 5000, // large window suppresses the second
 	})
 	d := NewDispatcher(rp, subs, 0, 4, nil)

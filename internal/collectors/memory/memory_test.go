@@ -38,6 +38,7 @@ func useTestdata(t *testing.T) {
 	dmesg.SetMock(readFile(t, "../../../tests/testdata/dmesg-oom-sample.txt"))
 	dmidecode.SetMock(readFile(t, "../../../tests/testdata/dmidecode-type17.txt"))
 	ipmi.SetMockSDR(readFile(t, "../../../tests/testdata/ipmitool-sdr-output.txt"))
+	ipmi.SetCacheDir("") // keep saveNameCache() from writing mocked names to /var/lib/catmonitor
 	t.Cleanup(func() {
 		proc.SetRoot("/proc")
 		sys.SetRoot("/sys")

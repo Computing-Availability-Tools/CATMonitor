@@ -1,0 +1,70 @@
+name: Unit Tests
+
+# Reusable unit-test workflow (called by pr_test.yaml /
+# schedule_nightly_test.yaml).
+# Runs go test ./... (536 test functions / 39 packages, no hardware needed).
+#
+# coverage=true additionally instruments the run (-coverprofile), writes the
+# total percentage to the step summary, and uploads the merged profile plus a
+# single-file clickable HTML report (go tool cover — Go toolchain built-ins,
+# no external tools or secrets). Scope is all packages incl. stress.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to checkout; empty = event default"
+        type: string
+        default: ""
+      coverage:
+        description: "Run with -coverprofile, emit summary + HTML artifact"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test (39 packages${{ inputs.coverage && ' + coverage' || '' }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run tests
+        run: go test ${{ inputs.coverage && '-coverprofile=coverage.out' || '' }} ./...
+
+      - name: Coverage summary
+        if: inputs.coverage
+        run: |
+          TOTAL=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          {
+            echo "## Coverage Summary"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Total (all packages) | ${TOTAL} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate HTML coverage report
+        if: inputs.coverage
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage results
+        if: inputs.coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+          retention-days: 7

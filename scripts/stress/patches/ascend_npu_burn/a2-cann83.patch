@@ -8,7 +8,7 @@
 -    DtypeStr.FLOAT8_E4M3FN.value: torch.float8_e4m3fn,
 -    DtypeStr.HIFLOAT8.value: torch_npu.hifloat8,
  }
- 
+
 +_OPTIONAL_DTYPES = (
 +    (DtypeStr.FLOAT4_E2M1FN_X2.value, torch_npu, "float4_e2m1fn_x2"),
 +    (DtypeStr.FLOAT8_E4M3FN.value, torch, "float8_e4m3fn"),
@@ -25,12 +25,12 @@
 +++ b/ascend_npu_burn/common/data_load.py
 @@ -24,7 +24,7 @@ class DataLoad:
      __instance = None
- 
+
      def __init__(self):
 -        self.data_size = 5  # 默认申请5G
 +        self.data_size = 1  # CATMonitor A2 profile: bounded 1 GiB data pool
          self.data_pool: Dict[str, DataInfo] = {}
- 
+
      def __new__(cls, *args, **kwargs):
 --- a/ascend_npu_burn/common/enum.py
 +++ b/ascend_npu_burn/common/enum.py
@@ -51,7 +51,7 @@
 @@ -59,11 +60,17 @@ def get_numa_configs():
              key, val = line.split(":", 1)
              sys_info[key.strip()] = val.strip()
- 
+
 +    def parse_int(key):
 +        try:
 +            return int(sys_info.get(key, 0))
@@ -67,11 +67,11 @@
 +    threads_per_core = parse_int("Thread(s) per core")
 +    cores_per_socket = parse_int("Core(s) per socket")
 +    sockets_count = parse_int("Socket(s)")
- 
+
      cpus_per_socket = (total_cpus // sockets_count) if sockets_count > 0 else 0
- 
+
 @@ -74,7 +81,7 @@ def get_numa_configs():
- 
+
      node0_info = sys_info.get("NUMA node0 CPU(s)")
      if node0_info:
 -        if "-" in node0_info:
@@ -80,7 +80,7 @@
              boundaries = node0_info.split("-")
              # 通过首尾差值判断线程是否连续
 @@ -183,11 +190,15 @@ def get_npu_numa_topology():
- 
+
      except Exception as e:
          logger.warning(f"Could not detect NPU topology automatically: {e}")
 -        # 假设标准的 8 卡机器，前 4 张在 Node 0，后 4 张在 Node 1
@@ -97,9 +97,9 @@
 +            raise RuntimeError("CATMONITOR_NPU_DEVICE_COUNT is required when lspci is unavailable")
 +        for i in range(device_count):
 +            numa_to_npus[0].append(i)
- 
+
      return dict(numa_to_npus)
- 
+
 --- a/ascend_npu_burn/config/base_config.json
 +++ b/ascend_npu_burn/config/base_config.json
 @@ -8,18 +8,12 @@
@@ -134,7 +134,7 @@
 -        "--chip_generation", type=str, choices=["A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
 +        "--chip_generation", type=str, choices=["A2", "A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
      )
- 
+
      args = parser.parse_args()
 @@ -124,7 +124,7 @@ def args_output_check(args, parser):
      output_path = pathlib.Path(args.output)

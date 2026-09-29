@@ -39,6 +39,7 @@ FAN3 Power        | 8.700      | Watts      | ok
 func setupMock(t *testing.T) {
 	t.Helper()
 	ipmi.SetMockSDR(mockSDR)
+	ipmi.SetCacheDir("") // keep saveNameCache() from writing mocked names to /var/lib/catmonitor
 	t.Cleanup(func() { ipmi.ResetFetcher() })
 }
 
@@ -144,7 +145,7 @@ func TestFanPower(t *testing.T) {
 
 func TestParseFanName(t *testing.T) {
 	cases := []struct {
-		in            string
+		in               string
 		wantFan, wantDir string
 	}{
 		{"FAN1 F Speed", "1", "F"},
