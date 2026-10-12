@@ -3,6 +3,7 @@ package stress
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -128,8 +129,11 @@ func (h *WebHandler) run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Benchmarks     []string `json:"benchmarks"`
-		TimeoutSeconds int64    `json:"timeout_seconds"`
+		Benchmarks     []string                  `json:"benchmarks"`
+		TimeoutSeconds int64                     `json:"timeout_seconds"`
+		NPUDevices     workloadapi.DeviceIDs     `json:"npu_devices,omitempty"`
+		NPUCases       workloadapi.CaseNames     `json:"npu_cases,omitempty"`
+		NPUModel       *workloadapi.ModelRequest `json:"npu_model,omitempty"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -139,7 +143,7 @@ func (h *WebHandler) run(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid timeout_seconds")
 		return
 	}
-	report, err := h.client.Start(r.Context(), ControlStartRequest{Benchmarks: body.Benchmarks, TimeoutSeconds: body.TimeoutSeconds, Initiator: InitiatorWeb})
+	report, err := h.client.Start(r.Context(), ControlStartRequest{Benchmarks: body.Benchmarks, TimeoutSeconds: body.TimeoutSeconds, Initiator: InitiatorWeb, NPUDevices: body.NPUDevices, NPUCases: body.NPUCases, NPUModel: body.NPUModel})
 	if err != nil {
 		h.proxyError(w, err)
 		return

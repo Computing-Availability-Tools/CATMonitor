@@ -16,6 +16,10 @@ optional NPU Stress（Ascend NPU Burn）
 > 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
 > `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
 
+> 公开源码兼容候选新增按 Job 选卡、严格 CSV 覆盖和资源准入，**尚未发布到上述镜像**。
+> 构建/部署/未验范围见 [受限环境指南](../../docker/RESTRICTED_ENV_GUIDE.md)；
+> 缺陷及修改点见 [兼容审计](../../docker/NPU_COMPAT_REVIEW.md)。
+
 ## 1. 镜像与容器
 
 | 镜像 | 作用 | 是否必需 |
@@ -195,7 +199,7 @@ generator 只输出配置、profile、Compose override 和 deployment manifest�
 | `--hpcg-nx/ny/nz` | 每 rank 局部网格 | 32/32/32 |
 | `--hpcg-runtime` | HPCG 目标秒数 | 60 |
 | `--npu-burn-device` | NPU Burn logical IDs 或 `all` | 必填 |
-| `--npu-run-case` | 固定 NPU Burn case | `matmul` |
+| `--npu-run-case` | 部署默认 NPU Burn case；新候选支持按 Job 选择 | `matmul` |
 | `--npu-internal-timeout` | NPU 单 case 超时 | 300 |
 
 参数必须按在线 CPU、内存容量、MPI ABI 和 NPU profile 评估。修改后重新运行 generator，
@@ -238,7 +242,7 @@ docker exec "$DAEMON_ID" catmonitor stress run --bench npu_burn -o table
 
 ```bash
 docker exec "$DAEMON_ID" catmonitor stress status -o table
-docker exec "$DAEMON_ID" catmonitor stress cancel --job <job-id>
+docker exec "$DAEMON_ID" catmonitor stress cancel --job '<job-id>'
 ```
 
 一次作业可通过 `--timeout 120s` 缩短超时，但不能超过 YAML 中的项目上限。
@@ -267,7 +271,29 @@ http://<node-address>:19322/
 不设置 GFLOPS、带宽或耗时阈值。NPU Burn 必须产生完整 CSV/SDC 结果，NPU 超时
 不能当作通过。daemon 保存 latest 和最近 100 次 history，CLI/Web 显示同一状态。
 
+NPU 选择区只回答“本次跑什么”：选择已授权的 logical ID 和已通过当前镜像准入检查的
+算子；不可用项目及原因折叠展示，`gpt3`/`llama2` 模型测试不混入算子复选框。准入
+不是实机认证，选择区不根据历史报告给算子贴“实机通过”标签。
+
+报告回答“实际跑了什么、结果如何”：主卡显示 CSV 核验后的设备、算子、用例通过数、
+错误数及作业耗时。用例数是 CSV 结果记录数，不是算子数、设备数或迭代次数。
+“分设备、分算子结果”按本轮 CSV 汇总；请求/固定选择与实际结果不一致时，在主卡
+突出提示。部署默认值、请求/固定参数、配置哈希及结果文件路径放在执行详情中。
+
+新 workload plugin 在既有报告输出中保存 `CATMONITOR_NPU_BURN_CASE_GROUPS` 分组
+元数据，不改变执行请求或成功判据。旧报告缺少此数据时仍可查看原有总数，但不
+推算分组；使用新版 Control 和 NPU workload 后的新作业才会有这份明细。
+Controller 将校验过的分组和 CSV 路径保存为 `npu_csv`，历史归档删除大段输出时
+仍保留这些明细。
+累计用例时间是 CSV 各行时间合计（设备可能并行执行）；作业耗时按作业起止时间
+计算，包含启动、执行和收尾，不包括提交前的准入检查，两者不可混用。
+
 ## 9. 从 Stress V1 迁移
+
+当前开发候选新增 CLI `--npu-devices` / `--npu-cases` 及 Web 按次设备/算子选择。
+需要新 Control 和 NPU workload，不是已有 pre-release 镜像的接口。完整源码与 A3
+配置合并、A2 独立默认规模、构建、命令和逐算子待验清单见
+[NPU 算子指南](../../docker/NPU_OPERATOR_GUIDE.md)。未验证的算子不标记硬件 PASS。
 
 ```text
 OLD_MONITORING_YAML_COMPATIBLE=true

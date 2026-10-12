@@ -26,9 +26,10 @@ chmod 0755 "$TEST_ROOT/bin/npu-burn" "$TEST_ROOT/bin/npu-preflight" "$TEST_ROOT/
 describe(){
   CATMONITOR_STRESS_BENCHMARKS=npu_burn CATMONITOR_STRESS_STATE_ROOT="$TEST_ROOT/state" CATMONITOR_LSPCI="$TEST_ROOT/bin/lspci" \
   NPU_BURN_EXECUTABLE="$TEST_ROOT/bin/npu-burn" NPU_BURN_PREFLIGHT_EXECUTABLE="$TEST_ROOT/bin/npu-preflight" \
+  HOME="$TEST_ROOT" NPU_BURN_LOG_DIR="$TEST_ROOT/output" \
   NPU_BURN_OUTPUT_DIR="$TEST_ROOT/output" NPU_BURN_RUN_CASE=matmul NPU_BURN_GROUP= \
   NPU_BURN_DEVICE=0,1 NPU_BURN_DEVICE_ROOT="$TEST_ROOT/dev" NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300 NPU_BURN_CHIP_GENERATION=A2 \
-  "$TEST_ROOT/bin/catmonitor-stress-exec" describe --benchmark npu_burn --json
+  "$TEST_ROOT/bin/catmonitor-stress-exec" describe --benchmark npu_burn --json "$@"
 }
 describe >"$TEST_ROOT/profile.json"
 grep -Fq '"key":"device_node_ids","label":"Visible /dev/davinci node IDs","value":"2,5"' "$TEST_ROOT/profile.json" || fail 'sparse IDs missing'
@@ -37,4 +38,8 @@ grep -Fq '"status":"pass"' "$TEST_ROOT/profile.json" || fail 'preflight did not 
 LSPCI_MODE=one describe >"$TEST_ROOT/mismatch.json"
 grep -Fq 'does not match NPU Burn lspci topology count' "$TEST_ROOT/mismatch.json" || fail 'mismatch not reported'
 grep -Fq '"status":"fail"' "$TEST_ROOT/mismatch.json" || fail 'mismatch did not fail'
+if LSPCI_MODE=one describe --require-pass >"$TEST_ROOT/strict.json" 2>/dev/null; then
+  fail 'strict healthcheck accepted JSON preflight failure'
+fi
+describe --require-pass >"$TEST_ROOT/strict-pass.json"
 printf 'PASS: NPU plugin maps sparse /dev IDs to contiguous PCI logical IDs\n'

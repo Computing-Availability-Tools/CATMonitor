@@ -1,0 +1,43 @@
+--- a/ascend_npu_burn/common/enum.py
++++ b/ascend_npu_burn/common/enum.py
+@@ -55,2 +55,3 @@ class ChipGeneration(Enum):
+     A5 = "A5"
+     A3 = "A3"
++    A2 = "A2"
+--- /dev/null
++++ b/ascend_npu_burn/config/a2_config.json
+@@ -0,0 +1,12 @@
++{
++  "cases": [{
++    "matmul": {
++      "seq": 1,
++      "run_count": 20,
++      "dtype": ["float16"],
++      "shape": [[[4096, 4096], [4096, 4096]]],
++      "pattern": ["uniform_random"]
++    }
++  }],
++  "group": {"default": [1]}
++}
+--- a/ascend_npu_burn/npu_burn.py
++++ b/ascend_npu_burn/npu_burn.py
+@@ -108,1 +108,1 @@
+-        "--chip_generation", type=str, choices=["A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
++        "--chip_generation", type=str, choices=["A2", "A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
+@@ -188,6 +188,8 @@
+     cfg = ConfigManager(str(BASE_CONFIG_FILE_PATH))
+     if args.chip_generation == ChipGeneration.A3.value:
+         cfg = ConfigManager(str(BASE_CONFIG_FILE_PATH), str(A3_CONFIG_FILE_PATH))
++    elif args.chip_generation == ChipGeneration.A2.value:
++        cfg = ConfigManager(str(BASE_CONFIG_FILE_PATH), str(BASE_CONFIG_FILE_PATH.with_name("a2_config.json")))
+     if args.create_reference and (args.run_case is not None or args.group is not None):
+         logger.error("Error: -c/--create_reference cannot be used with -r/--run_case or -g/--group.")
+     elif args.run_case is not None and args.group is not None:
+--- a/ascend_npu_burn/runtime/engine.py
++++ b/ascend_npu_burn/runtime/engine.py
+@@ -31,2 +31,5 @@
+ def subprocess_func(index, input_queues, result_queue, args, target_devices):
++    # Apply the A2 pool budget inside each spawn worker, never to A3/A5.
++    from ascend_npu_burn.common.data_load import data_load
++    data_load.data_size = 1 if args.chip_generation == "A2" else 5
+     install_termination_handlers()

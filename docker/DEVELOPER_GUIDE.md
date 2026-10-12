@@ -1,5 +1,7 @@
 # CATMonitor 镜像构建与发布开发者指南
 
+受限网络、本地 base、离线输入与 CA 边界见 [受限环境指南](RESTRICTED_ENV_GUIDE.md)。
+
 本文面向 CATMonitor 开发者和发布人员，说明如何从同一份源码构建、验证并记录
 Control 与 Stress workload 镜像。节点管理员如果只需要拉取镜像、生成配置并启动
 服务，请从 [Docker 部署入口](README.md) 和对应节点指南开始。

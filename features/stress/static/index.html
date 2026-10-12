@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 可靠性压测</title>
-  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20260807.1">
+  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261012.2">
 </head>
 <body>
   <header class="topbar">
@@ -22,27 +22,15 @@
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <div class="eyebrow">RELIABILITY STRESS</div>
         <h1>可靠性压测</h1>
-        <p>通过 STREAM、HPL、HPCG 与 Ascend NPU Burn 验证节点在高负载下的内存、CPU/MPI 和 NPU 计算可靠性。</p>
         <div class="risk-note">
           <span class="risk-icon" aria-hidden="true">!</span>
-          <span>运行期间会占用 CPU、内存及 MPI/NUMA 资源，可能使实时健康分暂时下降；压测结果不直接计入健康总分。</span>
+          <span>压测会占用计算资源，请确认设备空闲。结果不计入健康分。</span>
         </div>
-      </div>
-      <div class="hero-visual" aria-hidden="true">
-        <div class="pulse-ring ring-one"></div>
-        <div class="pulse-ring ring-two"></div>
-        <div class="shield">
-          <span class="shield-check">✓</span>
-        </div>
-        <div class="signal signal-a"></div>
-        <div class="signal signal-b"></div>
-        <div class="signal signal-c"></div>
       </div>
     </section>
 
-    <section class="summary-grid" aria-label="可靠性压测概览">
+    <section class="summary-grid" aria-label="可靠性压测概览" hidden>
       <article class="summary-card">
         <span class="summary-icon status-icon" aria-hidden="true"></span>
         <div>
@@ -57,14 +45,14 @@
           <div id="overview-available" class="summary-value">-- / 4</div>
         </div>
       </article>
-      <article class="summary-card">
+      <article class="summary-card" hidden>
         <span class="summary-icon source-icon" aria-hidden="true"></span>
         <div>
           <div class="summary-label">触发来源</div>
           <div id="overview-source" class="summary-value">--</div>
         </div>
       </article>
-      <article class="summary-card">
+      <article class="summary-card" hidden>
         <span class="summary-icon time-icon" aria-hidden="true"></span>
         <div>
           <div class="summary-label">最近耗时</div>
@@ -77,41 +65,68 @@
       <section class="panel control-panel">
         <div class="panel-heading">
           <div>
-            <div class="section-kicker">BENCHMARKS</div>
-            <h2>选择可靠性压测项目</h2>
+            <h2>选择压测项目</h2>
           </div>
           <span id="policy-state" class="policy-badge">读取配置</span>
         </div>
         <div id="policy" class="policy-message">正在读取配置…</div>
         <div id="choices" class="benchmark-grid"></div>
 
-        <section id="profile-preview" class="profile-preview" hidden>
-          <div class="profile-preview-heading">
-            <div>
-              <div class="section-kicker">EFFECTIVE PROFILE</div>
-              <h3>本次执行参数与资源规模</h3>
-            </div>
-            <span class="readonly-badge">只读</span>
+        <fieldset id="npu-selection" hidden>
+          <legend>NPU 设备</legend>
+          <div class="npu-device-row">
+            <div id="npu-device-choices"></div>
+            <button id="npu-select-all" type="button">全选</button>
           </div>
-          <p class="profile-preview-hint">
-            以下内容来自宿主机脚本的无副作用预检；网页不能修改执行器、MPI 参数或脚本。
-          </p>
+          <div class="npu-selection-heading">
+            <label for="npu-mode">测试类型</label>
+            <select id="npu-mode"><option value="operators">算子压测</option><option value="model">模型 SDC</option></select>
+          </div>
+          <div id="npu-model-selection" hidden>
+            <label for="npu-model-name">模型</label>
+            <select id="npu-model-name"></select>
+            <label for="npu-model-action">操作</label>
+            <select id="npu-model-action"><option value="compare">SDC 对照检测</option><option value="create_reference">生成参考（单设备）</option></select>
+            <label for="npu-reference-id">参考 ID</label>
+            <p id="npu-model-memory" class="selection-hint"></p>
+            <input id="npu-reference-id" maxlength="64" placeholder="例如 gpt3-a2-baseline-01">
+            <p class="selection-hint">预检通过不代表训练通过。多设备按卡独立执行，不合并显存；显存不足会标记“未完成”。参考生成与 SDC 检测分开记录，软件栈或显存策略变化后需重新生成参考。</p>
+          </div>
+          <div id="npu-operator-heading" class="npu-selection-heading">
+            <h3>压测算子</h3>
+            <span id="npu-case-count" aria-live="polite"></span>
+          </div>
+          <div id="npu-case-choices" class="npu-case-grid"></div>
+          <p id="npu-case-hint" class="selection-hint">预检通过不等于实机通过，以本次结果为准。</p>
+          <details id="npu-unavailable" class="selection-details" hidden>
+            <summary>当前不可用项目及原因</summary>
+            <div id="npu-unavailable-items"></div>
+          </details>
+          <details class="selection-details">
+            <summary>设备与算子选择说明</summary>
+            <p>可见不代表空闲；全选仅包含已授权设备。空选择不会变为全卡，Controller 会重新预检并固定本次选择；取消始终针对 Job ID。</p>
+            <p>准入检查不是实机认证，也不代表 A3/A5 已验证。不支持的 dtype/代际不会自动降级。模型测试需要另行准备 SDC 参考数据，不属于此处的算子选择。</p>
+          </details>
+        </fieldset>
+
+        <details id="profile-preview" class="profile-preview" hidden>
+          <summary>执行参数与预检详情</summary>
           <div id="profile-cards" class="profile-cards"></div>
-        </section>
+        </details>
 
         <div class="run-settings">
           <div class="timeout-field">
-            <label for="timeout">单次缩短超时</label>
+            <label for="timeout">作业时限（可选）</label>
             <div class="input-shell">
-              <input id="timeout" type="number" min="1" placeholder="不得超过配置上限">
+              <input id="timeout" type="number" min="1" placeholder="使用配置上限">
               <span>秒</span>
             </div>
-            <small>留空时使用各项目在 YAML 中配置的最大运行窗口</small>
+            <small>仅可缩短上限，不代表实际持续时间。</small>
           </div>
           <div class="actions">
             <button id="start" class="primary-action" disabled>
               <span class="button-play" aria-hidden="true"></span>
-              开始可靠性压测
+              开始压测
             </button>
             <button id="cancel" class="danger-action" hidden>停止当前作业</button>
           </div>
@@ -124,58 +139,25 @@
             <span id="progress-benchmark">正在准备…</span>
           </div>
           <div class="progress-track"><div class="progress-bar"></div></div>
-          <div class="progress-hint">请保持页面开启；页面刷新不会中断宿主机作业。</div>
+          <div class="progress-hint">关闭或刷新页面不会中断作业。</div>
         </div>
       </section>
 
-      <aside class="panel guide-panel">
-        <div class="section-kicker">COVERAGE</div>
-        <h2>能力覆盖</h2>
-        <div class="coverage-list">
-          <div class="coverage-item">
-            <span class="coverage-mark stream-mark"></span>
-            <div><b>内存子系统</b><small>STREAM · Copy / Scale / Add / Triad</small></div>
-          </div>
-          <div class="coverage-item">
-            <span class="coverage-mark hpl-mark"></span>
-            <div><b>浮点计算</b><small>HPL · Dense Linear Algebra</small></div>
-          </div>
-          <div class="coverage-item">
-            <span class="coverage-mark hpcg-mark"></span>
-            <div><b>综合计算</b><small>HPCG · Memory / Compute / MPI</small></div>
-          </div>
-          <div class="coverage-item">
-            <span class="coverage-mark npu-burn-mark"></span>
-            <div><b>昇腾 NPU</b><small>Ascend NPU Burn · Compute / SDC</small></div>
-          </div>
-        </div>
-        <div class="result-rule">
-          <span>判定规则</span>
-          <b>运行成功即通过</b>
-          <p>不设置性能阈值。STREAM/HPL/HPCG 达到计划时限且此前未发生错误可记录为通过；NPU Burn 必须生成完整 PASS/SDC 结果。</p>
-        </div>
-      </aside>
     </div>
 
     <div class="report-workspace">
-      <aside class="panel history-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="section-kicker">HISTORY</div>
-            <h2>最近作业</h2>
-          </div>
-          <span id="history-count" class="history-count">0</span>
-        </div>
-        <p class="history-hint">保留最近 100 次已完成作业，点击查看当次指标。</p>
+      <details class="panel history-panel">
+        <summary>历史作业 <span id="history-count" class="history-count">0</span></summary>
+        <p class="history-hint">点击查看当次结果。</p>
         <div id="history-list" class="history-list"></div>
         <div id="empty-history" class="history-empty">完成首次压测后生成历史记录</div>
-      </aside>
+      </details>
 
       <section class="panel results-panel">
         <div class="panel-heading">
           <div>
-            <div id="report-kicker" class="section-kicker">LATEST REPORT</div>
-            <h2 id="report-title">最近一次可靠性压测</h2>
+            <div id="report-kicker" class="section-kicker" hidden>LATEST REPORT</div>
+            <h2 id="report-title">本次结果</h2>
           </div>
           <div class="report-heading-actions">
             <button id="show-latest" class="text-action" hidden>查看最新</button>
@@ -187,15 +169,15 @@
           <div class="empty-chart" aria-hidden="true">
             <i></i><i></i><i></i><i></i><i></i>
           </div>
-          <b>等待首次可靠性压测</b>
-          <span>完成后将在这里展示各项目状态、运行耗时与性能指标。</span>
+          <b>暂无结果</b>
+          <span>启动压测后在此查看。</span>
         </div>
         <div id="result-cards" class="result-grid"></div>
       </section>
     </div>
   </main>
 
-  <footer>CATMonitor 可靠性压测 · STREAM / HPL / HPCG / Ascend NPU Burn · Linux</footer>
+  <footer>CATMonitor · 可靠性压测</footer>
   <script>
     window.__stressBootTimer = window.setTimeout(function () {
       var policy = document.getElementById('policy');
@@ -204,6 +186,6 @@
       }
     }, 3000);
   </script>
-  <script src="./static/stress.js?v=20260807.1"></script>
+  <script src="./static/stress.js?v=20261012.2"></script>
 </body>
 </html>

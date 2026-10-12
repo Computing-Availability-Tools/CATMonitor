@@ -81,9 +81,11 @@ stress:
       timeout: 30m
 ```
 
-配置只声明固定 plugin/container/timeout 绑定。benchmark 的 MPI、线程、问题规模、
-NPU logical ID 等参数属于 workload 容器 profile，由 Compose 环境变量预先定义；
-运行请求只能选择项目，并可将本次超时缩短到配置上限以内。
+配置声明固定 plugin/container/timeout 绑定。MPI、线程、问题规模和 NPU 默认设备
+属于 workload 容器 profile。兼容候选新增 `allowed_npu_devices` 管理员逻辑设备 allowlist；
+运行请求可通过 `--npu-devices 0,1`/JSON `npu_devices` 在该范围内选择本 Job 设备，
+并缩短超时；省略设备保留默认，空列表拒绝。新 Control/workload 需成套构建，旧发布镜像
+未包含该接口。构建和未验范围见 [受限环境指南](../../docker/RESTRICTED_ENV_GUIDE.md)。
 
 ## 部署
 
@@ -180,4 +182,6 @@ Web：
 - [STRESS_DESIGN.md](STRESS_DESIGN.md)：V2 架构与安全边界；
 - [STRESS_USER_GUIDE.md](STRESS_USER_GUIDE.md)：构建、生成、部署和使用；
 - [STRESS_TEST_GUIDE.md](STRESS_TEST_GUIDE.md)：自动化测试与 A2/A3 实机门禁；
+- [NPU_OPERATOR_GUIDE.md](../../docker/NPU_OPERATOR_GUIDE.md)：兼容候选的按 Job 选卡/选算子、完整配置及未验证范围；
+- [NPU_A3_MIGRATION_GUIDE.md](../../docker/NPU_A3_MIGRATION_GUIDE.md)：A3 模型/算子候选构建、Compose/manual 部署及真实验收；
 - [OSS_RELEASE_AUDIT.md](OSS_RELEASE_AUDIT.md)：开源发布审计。

@@ -1,6 +1,9 @@
 package stress
 
-import "time"
+import (
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
+	"time"
+)
 
 // ControlConfigView is the read-only daemon-owned Stress configuration exposed
 // to CLI and Web clients. It deliberately omits Docker socket and binary paths.
@@ -28,13 +31,16 @@ type ControlBenchmarkView struct {
 }
 
 type ControlStartRequest struct {
-	Benchmarks     []string `json:"benchmarks"`
-	TimeoutSeconds int64    `json:"timeout_seconds"`
-	Initiator      string   `json:"initiator"`
+	Benchmarks     []string                  `json:"benchmarks"`
+	TimeoutSeconds int64                     `json:"timeout_seconds"`
+	Initiator      string                    `json:"initiator"`
+	NPUDevices     workloadapi.DeviceIDs     `json:"npu_devices,omitempty"`
+	NPUCases       workloadapi.CaseNames     `json:"npu_cases,omitempty"`
+	NPUModel       *workloadapi.ModelRequest `json:"npu_model,omitempty"`
 }
 
 func (r ControlStartRequest) RunOptions() RunOptions {
-	return RunOptions{Timeout: time.Duration(r.TimeoutSeconds) * time.Second, Initiator: r.Initiator}
+	return RunOptions{Timeout: time.Duration(r.TimeoutSeconds) * time.Second, Initiator: r.Initiator, NPUDevices: r.NPUDevices, NPUCases: r.NPUCases, NPUModel: workloadapi.CopyModel(r.NPUModel)}
 }
 
 type ControlAPIError struct {

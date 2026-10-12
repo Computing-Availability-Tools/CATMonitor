@@ -70,12 +70,48 @@ func (e *DockerExecExecutor) workloadArgs(binding Binding, interactive bool, com
 	if binding.User != "" {
 		args = append(args, "--user", binding.User)
 	}
+	if binding.NPUDevices != nil {
+		args = append(args, "--env", "NPU_BURN_DEVICE="+binding.NPUDevices.String())
+		args = append(args, "--env", "CATMONITOR_NPU_REQUIRE_IDLE=1")
+	}
+	if binding.NPUCases != nil {
+		args = append(args, "--env", "NPU_BURN_RUN_CASE="+binding.NPUCases.String(), "--env", "NPU_BURN_GROUP=")
+	}
+	if binding.NPUModel != nil {
+		args = append(args, "--env", "CATMONITOR_NPU_MODEL="+binding.NPUModel.Name,
+			"--env", "CATMONITOR_NPU_MODEL_ACTION="+binding.NPUModel.Action,
+			"--env", "CATMONITOR_NPU_MODEL_REFERENCE="+binding.NPUModel.ReferenceID)
+	}
 	args = append(args, binding.Container, workloadEntrypoint)
 	args = append(args, command...)
 	return e.dockerArgs(args...)
 }
 
 func validateBinding(binding Binding) error {
+	if binding.NPUModel != nil {
+		if binding.Benchmark != "npu_burn" || binding.NPUCases != nil {
+			return errors.New("model jobs require npu_burn without operator selection")
+		}
+		if err := binding.NPUModel.Validate(); err != nil {
+			return err
+		}
+	}
+	if binding.NPUCases != nil {
+		if binding.Benchmark != "npu_burn" {
+			return errors.New("npu_cases is only valid for npu_burn")
+		}
+		if err := workloadapi.ValidateCases(binding.NPUCases); err != nil {
+			return err
+		}
+	}
+	if binding.NPUDevices != nil {
+		if binding.Benchmark != "npu_burn" {
+			return errors.New("npu_devices is only valid for npu_burn")
+		}
+		if err := workloadapi.ValidateDevices(binding.NPUDevices); err != nil {
+			return err
+		}
+	}
 	if !supportedBenchmark(binding.Benchmark) {
 		return fmt.Errorf("unsupported benchmark %q", binding.Benchmark)
 	}
@@ -95,7 +131,27 @@ func (e *DockerExecExecutor) Describe(ctx context.Context, binding Binding) (*Ex
 	if err := validateBinding(binding); err != nil {
 		return nil, err
 	}
-	args := e.workloadArgs(binding, false, "describe", "--benchmark", binding.Plugin, "--json")
+	var identity struct {
+		ID    string `json:"id"`
+		Image string `json:"image"`
+	}
+	workload := binding
+	if binding.Benchmark == "npu_burn" {
+		// Bind hardware evidence to this actual container/image, never a mutable
+		// tag or a previous deployment sharing the same friendly name.
+		out, stderr, err := e.runCommand(ctx, nil, e.dockerArgs("inspect", "--type", "container", "--format", `{"id":{{json .Id}},"image":{{json .Image}}}`, binding.Container)...)
+		if err != nil {
+			return nil, transportError("inspect", binding.Container, err, stderr, out)
+		}
+		if err := decodeStrictJSON(out, &identity); err != nil {
+			return nil, fmt.Errorf("decode workload identity: %w", err)
+		}
+		if !validSHA256(identity.ID) || !strings.HasPrefix(identity.Image, "sha256:") || !validSHA256(strings.TrimPrefix(identity.Image, "sha256:")) {
+			return nil, errors.New("invalid workload container/image identity")
+		}
+		workload.Container = identity.ID
+	}
+	args := e.workloadArgs(workload, false, "describe", "--benchmark", binding.Plugin, "--json")
 	stdout, stderr, err := e.runCommand(ctx, nil, args...)
 	if err != nil {
 		return nil, transportError("describe", binding.Container, err, stderr, stdout)
@@ -110,6 +166,10 @@ func (e *DockerExecExecutor) Describe(ctx context.Context, binding Binding) (*Ex
 	profile.Executor = "docker_exec"
 	profile.Container = binding.Container
 	profile.Plugin = binding.Plugin
+	if identity.ID != "" {
+		setProfileParameter(&profile, ProfileParameter{Key: "workload_container_id", Label: "Workload container ID", Value: identity.ID})
+		setProfileParameter(&profile, ProfileParameter{Key: "workload_image_id", Label: "Workload image ID", Value: identity.Image})
+	}
 	return &profile, nil
 }
 
@@ -164,6 +224,9 @@ func (e *DockerExecExecutor) Run(ctx context.Context, binding Binding, request w
 	if result.ProtocolVersion != workloadapi.ProtocolVersion || result.JobID != request.JobID ||
 		result.Benchmark != request.Benchmark || !workloadapi.ValidTerminalStatus(result.Status) {
 		return workloadapi.Result{}, errors.New("workload returned an invalid result envelope")
+	}
+	if result.Failure != nil && (result.Status != workloadapi.StatusUnhealthy || request.Benchmark != "npu_burn" || result.Failure.Code != "npu_hbm_oom" || result.Failure.Resource != "npu_hbm") {
+		return workloadapi.Result{}, errors.New("workload returned inconsistent failure evidence")
 	}
 	return result, nil
 }

@@ -62,6 +62,7 @@ services:
           "--benchmark",
           "stream",
           "--json",
+          "--require-pass",
         ]
       interval: 5s
       timeout: 3s
@@ -76,6 +77,7 @@ services:
     container_name: catmonitor-stress-npu
     image: ${CATMONITOR_NPU_STRESS_IMAGE:-catmonitor/npuburn:configure-me}
     restart: unless-stopped
+    init: true
     network_mode: none
     # The validated A2 runc path requires driver ioctls that are blocked by
     # Docker's default device/capability boundary even when davinci nodes are
@@ -83,6 +85,13 @@ services:
     privileged: true
     read_only: true
     environment:
+      CATMONITOR_NPU_DEVICE_MODE: ${CATMONITOR_NPU_DEVICE_MODE:-full}
+      CATMONITOR_MODEL_MEMORY_MODE: ${CATMONITOR_MODEL_MEMORY_MODE:-standard}
+      OPENBLAS_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}
+      OMP_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}
+      MKL_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}
+      NUMEXPR_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}
+      BLIS_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}
       ASCEND_RT_VISIBLE_DEVICES: ${CATMONITOR_NPU_RUNTIME_VISIBLE_DEVICES:-}
       NPU_BURN_DEVICE: ${CATMONITOR_NPU_BURN_DEVICE:-}
       NPU_BURN_RUN_CASE: ${CATMONITOR_NPU_BURN_RUN_CASE:-matmul}
@@ -97,9 +106,9 @@ services:
       - stress_npu_output:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output
       - /sys/bus/pci:/sys/bus/pci:ro
     healthcheck:
-      test: ["CMD", "/usr/local/bin/catmonitor-stress-exec", "describe", "--json"]
+      test: ["CMD", "/usr/local/bin/catmonitor-stress-exec", "describe", "--benchmark", "npu_burn", "--json", "--require-pass"]
       interval: 10s
-      timeout: 5s
+      timeout: 35s
       retries: 12
       start_period: 20s
 

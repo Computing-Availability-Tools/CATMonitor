@@ -12,6 +12,8 @@ bin/catmonitor
 *.dylib
 *.test
 *.out
+__pycache__/
+*.pyc
 .idea/
 .vscode/
 features/web/data/

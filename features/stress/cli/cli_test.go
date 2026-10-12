@@ -17,6 +17,30 @@ import (
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stress"
 )
 
+func TestNPUDevicesCLI(t *testing.T) {
+	_, _, _, _, ids, _, err := parseRunArgs([]string{"--bench", "npu_burn", "--npu-devices", "0,1"})
+	if err != nil || ids.String() != "0,1" {
+		t.Fatalf("%v %v", ids, err)
+	}
+	for _, s := range []string{"", "all", "0,0", "-1", "1;echo bad"} {
+		if _, _, _, _, _, _, err := parseRunArgs([]string{"--npu-devices", s}); err == nil {
+			t.Fatalf("accepted %q", s)
+		}
+	}
+}
+
+func TestNPUCasesCLI(t *testing.T) {
+	_, _, _, _, ids, cases, err := parseRunArgs([]string{"--bench", "npu_burn", "--npu-devices", "0,1", "--npu-cases", "matmul,conv2d"})
+	if err != nil || ids.String() != "0,1" || cases.String() != "matmul,conv2d" {
+		t.Fatalf("%v %v %v", ids, cases, err)
+	}
+	for _, s := range []string{"", "all", "1", "matmul,", "matmul,matmul", "matmul;id"} {
+		if _, _, _, _, _, _, err := parseRunArgs([]string{"--npu-cases", s}); err == nil {
+			t.Fatalf("accepted %q", s)
+		}
+	}
+}
+
 func startCLIControlFixture(t *testing.T) (string, func()) {
 	t.Helper()
 	socket := filepath.Join(t.TempDir(), "control.sock")

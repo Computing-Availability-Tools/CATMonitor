@@ -412,7 +412,7 @@ docker exec catmonitor catmonitor stress doctor \
   -c /etc/catmonitor/catmonitor.yaml -o table
 docker exec catmonitor catmonitor stress run --bench stream -o table
 docker exec catmonitor catmonitor stress status -o table
-docker exec catmonitor catmonitor stress cancel --job <job-id>
+docker exec catmonitor catmonitor stress cancel --job '<job-id>'
 docker top catmonitor-stress-cpu | grep -E 'xhpl|xhpcg|mpirun|hydra' && exit 1 || true
 ```
 
@@ -511,13 +511,7 @@ docker run -d --name catmonitor-stress-npu --restart unless-stopped \
   --device=/dev/hisi_hdc:/dev/hisi_hdc \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m \
   --tmpfs /opt/catmonitor/npuburn-home:rw,nosuid,nodev,size=1g,mode=0750 \
-  -e CATMONITOR_NPU_DEVICE_COUNT="$CATMONITOR_NPU_DEVICE_COUNT" \
-  -e ASCEND_RT_VISIBLE_DEVICES="$CATMONITOR_NPU_RUNTIME_VISIBLE_DEVICES" \
-  -e NPU_BURN_DEVICE="$CATMONITOR_NPU_BURN_DEVICE" \
-  -e NPU_BURN_RUN_CASE=matmul \
-  -e NPU_BURN_GROUP= \
-  -e NPU_BURN_CHIP_GENERATION=A2 \
-  -e NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300 \
+  --env-file "$CATMONITOR_GENERATED_DIR/npu-workload.env" \
   -v cm-stress-npu-state:/var/lib/catmonitor/stress \
   -v "$CATMONITOR_NPU_OUTPUT_DIR:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output" \
   -v /sys/bus/pci:/sys/bus/pci:ro \
@@ -526,8 +520,8 @@ docker run -d --name catmonitor-stress-npu --restart unless-stopped \
   -v /etc/ascend_install.info:/etc/ascend_install.info:ro \
   -v /usr/local/dcmi:/usr/local/dcmi:ro \
   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro \
-  --health-cmd='/usr/local/bin/catmonitor-stress-exec describe --json' \
-  --health-interval=10s --health-timeout=5s --health-retries=12 \
+  --health-cmd='/usr/local/bin/catmonitor-stress-exec describe --benchmark npu_burn --json --require-pass' \
+  --health-interval=10s --health-timeout=35s --health-retries=12 \
   --health-start-period=20s \
   "$CATMONITOR_NPU_STRESS_IMAGE"
 
@@ -579,9 +573,93 @@ docker exec catmonitor catmonitor stress doctor \
   -c /etc/catmonitor/catmonitor.yaml -o table
 docker exec catmonitor catmonitor stress run --bench npu_burn -o table
 docker exec catmonitor catmonitor stress status -o table
-docker exec catmonitor catmonitor stress cancel --job <job-id>
+docker exec catmonitor catmonitor stress cancel --job '<job-id>'
 docker top catmonitor-stress-npu | grep -E 'ascend_npu_burn|multiprocessing' && exit 1 || true
 ```
+
+### 6.6 显式单设备兼容候选（硬件验收 PENDING）
+
+仅适用于从本次源码构建、应用 `portable-runtime-v1.patch` 的新 workload 镜像，
+不能直接用本页旧 pre-release tag。构建及本地输入见 [受限环境指南](RESTRICTED_ENV_GUIDE.md)。
+旧完整部署仍使用 `full` 默认模式；这里不通过删除数量检查或加 privileged 绕过预检。
+
+先确认设备空闲且获准使用。`NPU_HOST_NODE` 是实际宿主节点路径，**不是 runtime index**；
+单设备模式要求 runtime count=1、选择 logical 0，并要求 CANN 的 `aclrtDeviceGetPCIBusId(0)`
+与设备字符号的 kernel sysfs PCI 祖先一致，再取该 PCI 的真实 NUMA。接口缺失、不支持或
+返回虚拟 PCI 而无法与 sysfs 一致时拒绝并报告 UNVERIFIED。不能凭 CANN 版本号推断可用，
+全机 PCI 的第一个设备不能冒充 logical 0。
+
+```bash
+# 在宿主机执行；先填写新镜像及授权节点，不使用示例编号代替设备发现。
+test -c "$NPU_HOST_NODE"
+NPU_HOST_ID="${NPU_HOST_NODE##*davinci}"
+bash scripts/stress/generate_stress_deployment.sh \
+  --output-dir "$CATMONITOR_GENERATED_DIR" \
+  --control-image "$CATMONITOR_IMAGE" \
+  --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
+  --npu-output-dir "$CATMONITOR_NPU_OUTPUT_DIR" \
+  --npu-device-mode single --npu-device-nodes "$NPU_HOST_ID" \
+  --npu-burn-device 0 --npu-chip-generation "$NPU_CHIP_GENERATION" \
+  --npu-runtime runc --npu-threads 1 \
+  --npu-ascend-env-script "$CANN_ENV_SCRIPT" \
+  --enable-web
+```
+
+线程 1 是初次单设备功能验证预算，不是性能默认建议。五项 BLAS/OpenMP 变量、CANN 脚本、
+count/mode/visible IDs/选择均写入生成 Compose 和 `npu-workload.env`，spawn 子进程继承。
+Compose 沿用 6.3，最后叠加生成文件（privileged=false）。手工方式将 6.4 的 **workload**
+命令替换为以下命令，其余三个 Control/Web/DFeE 命令不变；先按 6.4 创建相同 named volumes：
+
+```bash
+docker run -d --name catmonitor-stress-npu --restart unless-stopped \
+  --runtime runc --init --read-only --network none \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --device="$NPU_HOST_NODE:$NPU_HOST_NODE" \
+  --device=/dev/davinci_manager:/dev/davinci_manager \
+  --device=/dev/devmm_svm:/dev/devmm_svm \
+  --device=/dev/hisi_hdc:/dev/hisi_hdc \
+  --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+  --tmpfs /opt/catmonitor/npuburn-home:rw,nosuid,nodev,size=1g,mode=0750 \
+  --env-file "$CATMONITOR_GENERATED_DIR/npu-workload.env" \
+  -v cm-stress-npu-state:/var/lib/catmonitor/stress \
+  -v "$CATMONITOR_NPU_OUTPUT_DIR:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output" \
+  -v /sys/bus/pci:/sys/bus/pci:ro \
+  -v /usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64:ro \
+  -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info:ro \
+  -v /etc/ascend_install.info:/etc/ascend_install.info:ro \
+  -v /usr/local/dcmi:/usr/local/dcmi:ro \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro \
+  --health-cmd='/usr/local/bin/catmonitor-stress-exec describe --benchmark npu_burn --json --require-pass' \
+  --health-interval=10s --health-timeout=35s --health-retries=3 \
+  "$CATMONITOR_NPU_STRESS_IMAGE"
+```
+
+Compose/手工均只映射指定计算设备和必要管理节点，不能增加业务设备。若驱动权限不足或
+runtime 映射不可证，不切换 privileged；记录失败待硬件适配。公开合成测试不证明该命令已在 A3 通过。
+通过 doctor 后才按 6.5 从 Controller 运行。portable profile 的 `--timeout` 是 stream
+同步超时；总作业预算由 Controller 请求传入，Worker 就绪另有不超过 60 秒的等待门禁。
+超时为失败并回收 Worker；外部 Controller 超时/Cancel 继续由 V2 process group 回收。
+Docker daemon 必须实际提供 `--init` 所需的 docker-init；缺失时先修复 Docker 安装，
+不要为通过启动而删掉 init 或放大权限。
+CSV 位于 output 下本轮独立 `run-*` 目录；必须验证每个选定设备 result/err_count/run_count。
+完整新镜像验收顺序见受限环境指南第 5 节。
+
+### 6.7 本次兼容候选：按作业选卡、选算子和小规模 HPL
+
+上述 pre-release 镜像不包含本分支的新接口。新 Control、NPU workload（以及使用新 HPL
+容量检查时的 CPU workload）需从同一修复源码构建；不能只更新 YAML/网页后复用旧执行器。
+构建 profile、生成配置和手工部署差异见
+[受限环境指南第 4 节](RESTRICTED_ENV_GUIDE.md#4-同一套正式部署)。
+
+Web `/stress/` 提供逻辑设备复选框；列表来自实际 profile，授权由管理员配置决定。
+CLI 可使用 `stress run --bench npu_burn --npu-devices 0,1 --npu-cases matmul`。
+Web 同时提供实际 catalog 的算子选择和不可用原因。设备/算子选择只作用于该 Job，
+不修改共享 YAML 或容器默认值；未传参数保留部署默认，空选择报错，不自动全选。
+可见不代表空闲；当前整节点空闲门禁在发现任何 NPU 业务进程或无法解析进程表时拒绝启动。
+这不是跨调度器的独占预约，仍须在获准维护窗口运行。
+
+完整源码/配置保留、A3 按名合并配置、A2 独立配置和逐算子支持边界见
+[NPU 算子指南](NPU_OPERATOR_GUIDE.md)。配置准入不等于实机验证；新镜像的硬件矩阵为 NOT_RUN。
 
 ## 7. CPU + NPU Full
 
@@ -661,12 +739,7 @@ docker run -d --name catmonitor-stress-npu --restart unless-stopped \
   --device=/dev/hisi_hdc:/dev/hisi_hdc \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m \
   --tmpfs /opt/catmonitor/npuburn-home:rw,nosuid,nodev,size=1g,mode=0750 \
-  -e CATMONITOR_NPU_DEVICE_COUNT="$CATMONITOR_NPU_DEVICE_COUNT" \
-  -e ASCEND_RT_VISIBLE_DEVICES="$CATMONITOR_NPU_RUNTIME_VISIBLE_DEVICES" \
-  -e NPU_BURN_DEVICE="$CATMONITOR_NPU_BURN_DEVICE" \
-  -e NPU_BURN_RUN_CASE=matmul -e NPU_BURN_GROUP= \
-  -e NPU_BURN_CHIP_GENERATION=A2 \
-  -e NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300 \
+  --env-file "$CATMONITOR_GENERATED_DIR/npu-workload.env" \
   -v cm-stress-npu-state:/var/lib/catmonitor/stress \
   -v "$CATMONITOR_NPU_OUTPUT_DIR:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output" \
   -v /sys/bus/pci:/sys/bus/pci:ro \
@@ -675,8 +748,8 @@ docker run -d --name catmonitor-stress-npu --restart unless-stopped \
   -v /etc/ascend_install.info:/etc/ascend_install.info:ro \
   -v /usr/local/dcmi:/usr/local/dcmi:ro \
   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro \
-  --health-cmd='/usr/local/bin/catmonitor-stress-exec describe --json' \
-  --health-interval=10s --health-timeout=5s --health-retries=12 \
+  --health-cmd='/usr/local/bin/catmonitor-stress-exec describe --benchmark npu_burn --json --require-pass' \
+  --health-interval=10s --health-timeout=35s --health-retries=12 \
   --health-start-period=20s \
   "$CATMONITOR_NPU_STRESS_IMAGE"
 

@@ -152,6 +152,13 @@ require_fixed docker/README-npu.md '-v /var/run/docker.sock:/var/run/docker.sock
 
 cpu_manual=$(sed -n '/^### 5\.3 /,/^### 5\.4 /p' "$REPO_ROOT/docker/README-npu.md")
 npu_manual=$(sed -n '/^### 6\.4 /,/^### 6\.5 /p' "$REPO_ROOT/docker/README-npu.md")
+single_manual=$(sed -n '/^### 6\.6 /,/^## 7\./p' "$REPO_ROOT/docker/README-npu.md")
+for required in '--npu-device-mode single' '--npu-burn-device 0' '--env-file' '--require-pass' '--cap-drop ALL'; do
+    grep -Fq -- "$required" <<<"$single_manual" || fail "single-device manual missing $required"
+done
+if grep -Fq -- '--privileged' <<<"$single_manual"; then
+    fail 'single-device manual must not enable privileged'
+fi
 full_manual=$(sed -n '/^### 7\.3 /,/^## 8\./p' "$REPO_ROOT/docker/README-npu.md")
 for name in cpu npu full; do
     case "$name" in

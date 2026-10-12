@@ -27,6 +27,9 @@ type Request struct {
 	Benchmark       string                     `json:"benchmark"`
 	TimeoutSeconds  int64                      `json:"timeout_seconds"`
 	Options         map[string]json.RawMessage `json:"options"`
+	NPUDevices      DeviceIDs                  `json:"npu_devices,omitempty"`
+	NPUCases        CaseNames                  `json:"npu_cases,omitempty"`
+	NPUModel        *ModelRequest              `json:"npu_model,omitempty"`
 }
 
 // Result is the common CPU/NPU terminal envelope returned by
@@ -43,6 +46,10 @@ type Result struct {
 	Values          map[string]float64 `json:"values,omitempty"`
 	Source          string             `json:"source,omitempty"`
 	Output          string             `json:"output,omitempty"`
+	NPUDevices      DeviceIDs          `json:"npu_devices,omitempty"`
+	NPUCases        CaseNames          `json:"npu_cases,omitempty"`
+	NPUModel        *ModelResult       `json:"npu_model,omitempty"`
+	Failure         *Failure           `json:"failure,omitempty"`
 }
 
 // State is returned by the workload status operation.

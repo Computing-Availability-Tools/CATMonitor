@@ -1,5 +1,8 @@
 # CATMonitor 容器部署
 
+本地镜像/受限网络见 [受限环境指南](RESTRICTED_ENV_GUIDE.md)；
+新 NPU 兼容候选的修改点和未验范围见 [源码审计](NPU_COMPAT_REVIEW.md)。
+
 本目录是 CATMonitor 新用户的容器部署入口。Docker Compose 是推荐入口；
 `docker run` 是各节点指南均已写明的手工兼容入口，两种方式使用相同的镜像、配置和
 运行契约。文档契约完整不等于每种硬件镜像都已经实机执行，验证范围见第 7 节。

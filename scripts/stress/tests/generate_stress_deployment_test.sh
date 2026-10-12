@@ -114,4 +114,58 @@ expect_fail bash "$GENERATOR" \
     --output-dir "$TEST_ROOT/bad" --cpu-image cpu:test --npu-image npu:test \
     --npu-host-root "$HOST" --npu-device-nodes 2,9 --npu-burn-device 0,1
 
+SINGLE_OUT="$TEST_ROOT/single"
+bash "$GENERATOR" --output-dir "$SINGLE_OUT" --npu-image npu:portable \
+    --npu-host-root "$HOST" --npu-device-nodes 5 --npu-burn-device 0 \
+    --npu-device-mode single --npu-chip-generation A3 --npu-threads 2 \
+    --npu-ascend-env-script /usr/local/Ascend/cann-example/set_env.sh
+contains "$SINGLE_OUT/docker-compose.stress.generated.yml" 'privileged: false'
+contains "$SINGLE_OUT/docker-compose.stress.generated.yml" 'cap_drop: [ALL]'
+contains "$SINGLE_OUT/npu-workload.env" 'CATMONITOR_NPU_DEVICE_MODE=single'
+contains "$SINGLE_OUT/npu-workload.env" 'OMP_NUM_THREADS=2'
+contains "$SINGLE_OUT/npu-workload.env" 'ASCEND_ENV_SCRIPT=/usr/local/Ascend/cann-example/set_env.sh'
+contains "$SINGLE_OUT/stress-deployment-manifest.json" '"npu_env_sha256":"'
+contains "$SINGLE_OUT/docker-compose.stress.generated.yml" "CATMONITOR_NPU_DEVICE_MODE: 'single'"
+contains "$SINGLE_OUT/docker-compose.stress.generated.yml" "OPENBLAS_NUM_THREADS: '2'"
+contains "$SINGLE_OUT/docker-compose.stress.generated.yml" "ASCEND_ENV_SCRIPT: '/usr/local/Ascend/cann-example/set_env.sh'"
+not_contains "$SINGLE_OUT/docker-compose.stress.generated.yml" '/dev/davinci2'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/single-bad" --npu-image npu:portable \
+    --npu-host-root "$HOST" --npu-device-nodes 2,5 --npu-burn-device 0 --npu-device-mode single
 printf 'PASS: daemon/controller Stress deployment generator\n'
+
+CUSTOM="$TEST_ROOT/custom"
+bash "$GENERATOR" --output-dir "$CUSTOM" --cpu-image cpu:test --npu-image npu:test \
+    --cpu-container site-cpu --npu-container site-npu --hpl-profile small \
+    --npu-host-root "$HOST" --npu-device-nodes 2,5 --npu-burn-device 0 \
+    --npu-allowed-devices 0,1 --npu-security-profile restricted --npu-chip-generation A2
+contains "$CUSTOM/catmonitor-stress.yaml" 'container: site-cpu'
+contains "$CUSTOM/catmonitor-stress.yaml" 'container: site-npu'
+contains "$CUSTOM/catmonitor-stress.yaml" 'allowed_npu_devices: [0,1]'
+contains "$CUSTOM/docker-compose.stress.generated.yml" 'container_name: site-npu'
+contains "$CUSTOM/docker-compose.stress.generated.yml" 'privileged: false'
+contains "$CUSTOM/cpu-workload.env" 'HPL_N=4096'
+contains "$CUSTOM/cpu-workload.env" 'HPL_Q=1'
+contains "$CUSTOM/npu-workload.env" 'CATMONITOR_NPU_REQUIRE_IDLE=1'
+contains "$CUSTOM/stress-profile.json" '"container":"site-npu"'
+contains "$CUSTOM/stress-deployment-manifest.json" '"cpu_env_sha256":"'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/invalid-grid" --cpu-image cpu:test --hpl-profile small --hpl-processes 2
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/partial-size" --cpu-image cpu:test --hpl-n 4096
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/invalid-name" --cpu-image cpu:test --cpu-container 'cpu;bad'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/unauthorized" --npu-image npu:test \
+    --npu-host-root "$HOST" --npu-burn-device 1 --npu-allowed-devices 0
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/duplicate-allow" --npu-image npu:test \
+    --npu-host-root "$HOST" --npu-burn-device 0 --npu-allowed-devices 0,0
+printf 'PASS: per-job allowlist, restricted profile, custom containers and HPL dimensions\n'
+
+MODEL="$TEST_ROOT/models"
+bash "$GENERATOR" --output-dir "$MODEL" --npu-image npu:models \
+    --npu-host-root "$HOST" --npu-burn-device 0 --npu-chip-generation A3 \
+    --npu-allowed-models gpt3,llama2 --allow-npu-reference-generation \
+    --npu-model-memory-mode checkpointed --npu-job-timeout 12h
+contains "$MODEL/npu-workload.env" 'CATMONITOR_MODEL_MEMORY_MODE=checkpointed'
+contains "$MODEL/docker-compose.stress.generated.yml" "CATMONITOR_MODEL_MEMORY_MODE: 'checkpointed'"
+contains "$MODEL/catmonitor-stress.yaml" 'timeout: 12h'
+contains "$MODEL/catmonitor-stress.yaml" 'allowed_npu_models: [gpt3,llama2]'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/bad-mode" --cpu-image cpu:test --npu-model-memory-mode auto
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/bad-time" --cpu-image cpu:test --npu-job-timeout 0h
+printf 'PASS: explicit model memory policy, authorization and job time limit\n'

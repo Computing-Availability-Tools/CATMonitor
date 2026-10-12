@@ -172,7 +172,7 @@ Web 请求永远不能传 command、可执行路径、环境变量或任意 shel
 }
 ```
 
-NPU 请求可使用 describe 声明过的 typed option，例如：
+NPU 请求使用类型化逻辑设备和算子列表（当前兼容候选，不是旧镜像接口），例如：
 
 ```json
 {
@@ -180,11 +180,20 @@ NPU 请求可使用 describe 声明过的 typed option，例如：
   "job_id": "9d3b2d3a1f6e4a12",
   "benchmark": "npu_burn",
   "timeout_seconds": 300,
-  "options": {"device": 0, "case": "matmul"}
+  "npu_devices": [0, 1],
+  "npu_cases": ["matmul", "conv2d"],
+  "options": {}
 }
 ```
 
-第一版可以由部署 profile 固定 NPU 选项，但协议不得退化为任意命令。
+case 默认值由部署 profile 指定，显式 `npu_cases` 从实际 catalog 准入；`options`
+非空拒绝。Controller 先校验实时可见范围、管理员设备 allowlist、算子能力和空闲门禁，
+再冻结本 Job 选择；Describe/Run 传入同一设备/算子集合。算子 catalog 来自合并后的
+完整公共配置和 chip override，并校验当前 dtype API，不表示硬件认证。
+用户不能通过请求改环境、容器、可执行文件或 shell；Web 和 CLI 不绕过唯一 Controller。
+最终 CSV 必须完整覆盖设备×算子组合，报告区分部署默认/请求/实际，不用旧 CSV 或 profile
+冒充结果。A2 独立 sizing 配置不修改公共/A3 配置，补丁和硬件边界见
+[算子指南](../../docker/NPU_OPERATOR_GUIDE.md)。
 
 ### 4.2 describe
 
@@ -339,10 +348,12 @@ docker-compose.stress.generated.yml
 组或 A2 的 `/dev/davinci2,/dev/davinci5`。A2 稀疏节点已经是回归门禁；
 A3 16-device 仍需单独实机验收。
 
-A2/CANN 8.3/runc 的真实 workload 已证明仅映射 device nodes 不足以完成 CANN
-初始化，因此生成的 NPU workload service 使用 `privileged: true`。该权限是当前
-A2 执行面契约与安全债务，只作用于无网络的 NPU workload 容器；不得传播给
-Web、DFeE 或 CPU workload。A3/A5 是否需要同一权限必须分别实机验收。
+旧完整部署默认保留 `legacy-privileged`，仅用于无网络 NPU workload，不传播给
+Web、DFeE 或 CPU workload。兼容候选显式支持 `restricted`；single 强制 restricted，
+要求 runtime logical 0 的 CANN PCI 查询与字符设备 kernel PCI/NUMA ancestry 一致，
+无法证明则拒绝。full 保留完整 PCI/runtime/node count 交叉检查；不支持任意多节点子集。
+profile=`a2-portable-runtime-v1` 通过有序 portable + sizing-only patch 管理 A2 候选，
+不继承旧拓扑 fallback。新 A2/A3/A5 镜像、restricted 权限与真实清理均待独立硬件验收。
 
 ## 10. 安全边界与已知债务
 

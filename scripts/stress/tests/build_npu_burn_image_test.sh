@@ -91,7 +91,7 @@ case "${1-}" in
         [ "${2-}" = inspect ] || exit 90
         target=${5-${3-}}
         is_base=false
-        case "$target" in registry.example/*|base:test|missing-base:test) is_base=true ;; esac
+        case "$target" in registry.example/*|golang:1.23-bookworm|base:test|missing-base:test) is_base=true ;; esac
         if [ "$is_base" != true ]; then
             if [ ! -f "$FAKE_DOCKER_ROOT/image" ] ||
                [ "$(cat "$FAKE_DOCKER_ROOT/image")" != "$target" ]; then
@@ -179,6 +179,7 @@ case "${1-}" in
         [ -f "$context/validate_entrypoint.sh" ]
         [ -f "$context/validate_runtime_abi.py" ]
         [ -f "$context/runtime_preflight.sh" ]
+        [ -f "$context/package_inventory.py" ]
         [ -f "$context/features/stress/workloadapi/protocol.go" ]
         [ -f "$context/features/stress/resultparse/parse.go" ]
         [ -f "$context/features/stress/cmd/workload-exec/main_linux.go" ]
@@ -201,6 +202,8 @@ case "${1-}" in
         printf 'CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT=%s\n' "$selected_runtime_env"
         printf 'CATMONITOR_ASCEND_ENV_SCRIPT=%s\n' "$selected_runtime_env"
         printf 'CATMONITOR_CANN_VERSION=9.0.1\n'
+        printf 'CATMONITOR_BUILDER_CANN_VERSION_SOURCE=fixture-metadata\n'
+        printf 'CATMONITOR_RUNTIME_CANN_VERSION_SOURCE=fixture-metadata\n'
         if find -L "$context/build-driver-lib64" -maxdepth 3 -name 'libascend_hal.so*' -print -quit | grep -q .; then
             printf 'CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD=true\n'
         else
@@ -481,6 +484,11 @@ assert_fails "$ABI_FIXTURE/mismatch.log" env PYTHONPATH="$ABI_FIXTURE/site" \
 assert_contains "$ABI_FIXTURE/mismatch.log" 'builder/runtime ABI mismatch'
 
 OFFLINE_PACKAGE_ROOT="$TEST_ROOT/offline packages"
+assert_fails "$TEST_ROOT/missing-go.log" \
+    bash "$BUILD_SCRIPT" --base-image base:test --image target:test \
+    --go-image missing-go:test --build-network none \
+    --docker-bin "$TEST_ROOT/tools/docker" --build-root "$TEST_ROOT/missing-go"
+assert_contains "$TEST_ROOT/missing-go.log" 'offline Go builder image is unavailable'
 install -d -m 0755 "$OFFLINE_PACKAGE_ROOT"
 printf 'pciutils fixture\n' >"$OFFLINE_PACKAGE_ROOT/pciutils-3.8.0.aarch64.rpm"
 printf 'libpci fixture\n' >"$OFFLINE_PACKAGE_ROOT/pciutils-libs-3.8.0.aarch64.rpm"
@@ -867,7 +875,7 @@ PACKAGE_VALIDATE_LINE=$(grep -n 'CATMONITOR_PACKAGE_VERSION' "$REPO_ROOT/docker/
 [ "$WHEEL_INSTALL_LINE" -lt "$PACKAGE_VALIDATE_LINE" ] || fail 'package validation must follow wheel installation'
 [ "$PACKAGE_VALIDATE_LINE" -lt "$RUNTIME_INSTALL_LINE" ] || fail 'clean runtime installation must follow builder validation'
 [ "$RUNTIME_INSTALL_LINE" -lt "$RUNTIME_ABI_LINE" ] || fail 'runtime ABI validation must follow overlay installation'
-[ "$(grep -c '^RUN set -euo pipefail' "$REPO_ROOT/docker/stress/npu/Dockerfile")" -ge 5 ] || \
+[ "$(grep -c '^RUN unset LD_PRELOAD; set -euo pipefail' "$REPO_ROOT/docker/stress/npu/Dockerfile")" -ge 5 ] || \
     fail 'Dockerfile must keep preparation, preflight, wheel build, install, and validation layers separate'
 if grep -Eq '(^|[[:space:]])(npu-smi|npu-burn)([[:space:]]|$)' \
     "$REPO_ROOT/docker/stress/npu/Dockerfile"; then

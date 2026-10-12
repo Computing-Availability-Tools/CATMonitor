@@ -10,13 +10,16 @@ import (
 var ErrExecutorUnavailable = errors.New("stress executor is unavailable")
 
 // Binding selects a preconfigured plugin inside a preconfigured workload
-// container. Values come from the shared CATMonitor configuration, never from
-// a CLI or Web run request.
+// container. Container/plugin/user are administrator-owned. Only the typed
+// NPU logical selection may be set by the Controller after admission.
 type Binding struct {
-	Benchmark string
-	Plugin    string
-	Container string
-	User      string
+	Benchmark  string
+	Plugin     string
+	Container  string
+	User       string
+	NPUDevices workloadapi.DeviceIDs
+	NPUCases   workloadapi.CaseNames
+	NPUModel   *workloadapi.ModelRequest
 }
 
 // Executor owns transport and lifecycle only. Benchmark semantics and result

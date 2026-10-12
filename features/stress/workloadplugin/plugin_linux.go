@@ -9,9 +9,13 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,12 +30,16 @@ import (
 
 // Command is a fully resolved workload invocation owned by an image plugin.
 type Command struct {
-	Path      string
-	Args      []string
-	Dir       string
-	Env       []string
-	ResultDir string
-	Complete  func(string) (string, error)
+	Path        string
+	Args        []string
+	Dir         string
+	Env         []string
+	ResultDir   string
+	Complete    func(string) (string, error)
+	NPUDevices  workloadapi.DeviceIDs
+	NPUCases    workloadapi.CaseNames
+	Cleanup     func()
+	ModelResult func() (*workloadapi.ModelResult, error)
 }
 
 func Describe(ctx context.Context, name string) (*workloadapi.ExecutionProfile, error) {
@@ -43,6 +51,9 @@ func Describe(ctx context.Context, name string) (*workloadapi.ExecutionProfile, 
 	case "hpcg":
 		return describeHPCG(ctx), nil
 	case "npu_burn":
+		if env("CATMONITOR_NPU_MODEL") != "" {
+			return describeNPUModel(ctx), nil
+		}
 		return describeNPUBurn(ctx), nil
 	default:
 		return nil, fmt.Errorf("unsupported workload plugin %q", name)
@@ -90,6 +101,9 @@ func Resolve(name string) (Command, error) {
 		if err := regularFile("HPL input file", filepath.Join(dir, "HPL.dat")); err != nil {
 			return Command{}, err
 		}
+		if err := hplResourceCheck(filepath.Join(dir, "HPL.dat"), processes, threads); err != nil {
+			return Command{}, err
+		}
 		extra := []string{fmt.Sprintf("OPENBLAS_NUM_THREADS=%d", threads), fmt.Sprintf("OMP_NUM_THREADS=%d", threads)}
 		if library := env("HPL_LIBRARY_DIR"); library != "" {
 			if err := directory("HPL library directory", library); err != nil {
@@ -101,7 +115,20 @@ func Resolve(name string) (Command, error) {
 			}
 			extra = append(extra, "LD_LIBRARY_PATH="+value)
 		}
-		return Command{Path: launcher, Args: []string{"-np", strconv.Itoa(processes), executable}, Dir: dir, Env: extra}, nil
+		data, err := hplInput(filepath.Join(dir, "HPL.dat"))
+		if err != nil {
+			return Command{}, err
+		}
+		runDir, err := os.MkdirTemp(dir, "job-")
+		if err != nil {
+			return Command{}, err
+		}
+		cleanup := func() { _ = os.RemoveAll(runDir) }
+		if err := os.WriteFile(filepath.Join(runDir, "HPL.dat"), data, 0o600); err != nil {
+			cleanup()
+			return Command{}, err
+		}
+		return Command{Path: launcher, Args: []string{"-np", strconv.Itoa(processes), executable}, Dir: runDir, Env: extra, Cleanup: cleanup}, nil
 	case "hpcg":
 		executable, launcher, dir := env("HPCG_EXECUTABLE"), env("HPCG_MPI_LAUNCHER"), env("HPCG_WORKDIR")
 		processes, err := positive("HPCG_MPI_PROCESSES")
@@ -168,7 +195,16 @@ func describeHPL(ctx context.Context) *workloadapi.ExecutionProfile {
 	threads, threadErr := positive("HPL_THREADS_PER_PROCESS")
 	input := filepath.Join(dir, "HPL.dat")
 	n, nb, p, q := hplDimensions(input)
+	if env("HPL_N") != "" {
+		n, nb, p, q = env("HPL_N"), env("HPL_NB"), env("HPL_P"), env("HPL_Q")
+	}
 	assets := []workloadapi.AssetCheck{asset("executable", executable, "executable"), asset("working_directory", dir, "directory"), asset("input_file", input, "file"), asset("mpi_launcher", launcher, "executable")}
+	capacity := workloadapi.AssetCheck{Name: "resource_capacity", Path: input, Kind: "runtime_capacity", Required: true, Status: workloadapi.CheckPass, Message: "P x Q, online affinity, CPU quota and memory budget passed"}
+	if err := hplResourceCheck(input, processes, threads); err != nil {
+		capacity.Status = workloadapi.CheckFail
+		capacity.Message = err.Error()
+	}
+	assets = append(assets, capacity)
 	if library := env("HPL_LIBRARY_DIR"); library != "" {
 		assets = append(assets, asset("library_directory", library, "directory"))
 	}
@@ -273,6 +309,18 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 		deviceAsset.Message = topologyErr.Error()
 	}
 	assets = append(assets, deviceAsset)
+	if env("CATMONITOR_NPU_REQUIRE_IDLE") == "1" {
+		idle := workloadapi.AssetCheck{Name: "idle_devices", Path: "npu-smi info", Kind: "process_inventory", Required: true, Status: workloadapi.CheckPass, Message: "node-wide process inventory reports no running NPU processes; not an exclusive reservation"}
+		if err := checkNPUIdle(ctx, len(nodes)); err != nil {
+			idle.Status = workloadapi.CheckFail
+			idle.Message = err.Error()
+		}
+		assets = append(assets, idle)
+	}
+	caseParams, caseCheck := npuCaseProfile(ctx)
+	if caseCheck != nil {
+		assets = append(assets, *caseCheck)
+	}
 	failed += failedAssets(assets)
 	params := []workloadapi.ProfileParameter{
 		parameter("backend", "Execution backend", "workload_container", ""), parameter("executable", "Executable", executable, ""),
@@ -280,11 +328,15 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 		parameter("result_directory", "Result directory", output, ""), parameter("log_directory", "Log directory", logDir, ""), parameter("runtime_home", "Runtime home", runtimeHome, ""),
 		parameter("selector", "Workload selector", selector, ""), parameter("workload", "Run case / group", workload, ""),
 		parameter("devices", "NPU devices", env("NPU_BURN_DEVICE"), ""), parameter("device_namespace", "Device namespace", "npu_burn_logical", ""),
+		parameter("device_mode", "Device mapping mode", envDefault("CATMONITOR_NPU_DEVICE_MODE", "full"), ""),
+		parameter("blas_threads", "BLAS/OpenMP thread budget", env("OPENBLAS_NUM_THREADS"), "threads"),
 		parameter("device_node_ids", "Visible /dev/davinci node IDs", strings.Join(nodes, ","), ""), parameter("available_devices", "Available logical devices", strings.Join(devices, ","), ""),
-		parameter("topology_source", "Topology source", "container_lspci", ""), parameter("pci_topology_devices", "PCI topology logical devices", strings.Join(topology, ","), ""),
+		parameter("topology_source", "Topology source", envDefault("CATMONITOR_NPU_DEVICE_MODE", "full"), ""), parameter("pci_topology_devices", "PCI inventory (full: ordinal IDs; single: BDFs)", strings.Join(topology, ","), ""),
 		parameter("chip_generation", "Chip generation", env("NPU_BURN_CHIP_GENERATION"), ""), parameter("sdc_detection", "SDC detection", "enabled", ""),
-		parameter("internal_timeout", "Per-case timeout", env("NPU_BURN_INTERNAL_TIMEOUT_SECONDS"), "seconds"),
+		parameter("internal_timeout", "Internal stream synchronization timeout", env("NPU_BURN_INTERNAL_TIMEOUT_SECONDS"), "seconds"),
+		parameter("model_memory_mode", "Model memory mode", envDefault("CATMONITOR_MODEL_MEMORY_MODE", "standard"), ""),
 	}
+	params = append(params, caseParams...)
 	return profile("npu_burn", params, workloadapi.ResourceProfile{RuntimeSeconds: seconds, ProblemSize: workload}, assets, mpiNone("MPI is not used by Ascend NPU Burn"), failed, 0)
 }
 
@@ -332,15 +384,30 @@ func resolveNPUBurn() (Command, error) {
 	}
 	topologyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	devices, _, _, _, err := npuTopology(topologyCtx)
+	devices, nodes, _, _, err := npuTopology(topologyCtx)
 	if err != nil {
 		return Command{}, err
 	}
 	if err := validateDeviceSelection(env("NPU_BURN_DEVICE"), devices); err != nil {
 		return Command{}, err
 	}
+	if err := checkNPUIdle(topologyCtx, len(nodes)); err != nil {
+		return Command{}, err
+	}
 	args := []string{"--device", env("NPU_BURN_DEVICE"), "--sdc_detect", "--timeout", strconv.Itoa(seconds), "--chip_generation", generation}
 	runCase, group := env("NPU_BURN_RUN_CASE"), env("NPU_BURN_GROUP")
+	var selectedCases workloadapi.CaseNames
+	if hasNPUCaseCatalog() {
+		catalog, err := readNPUCaseCatalog(topologyCtx)
+		if err != nil {
+			return Command{}, err
+		}
+		if catalog.SelectionError != "" {
+			return Command{}, errors.New(catalog.SelectionError)
+		}
+		selectedCases = catalog.Selected
+		runCase, group = selectedCases.String(), ""
+	}
 	if (runCase == "") == (group == "") {
 		return Command{}, errors.New("configure exactly one of NPU_BURN_RUN_CASE or NPU_BURN_GROUP")
 	}
@@ -349,20 +416,52 @@ func resolveNPUBurn() (Command, error) {
 	} else {
 		args = append(args, "--group", group)
 	}
-	csv := filepath.Join(output, "npu_burn_results.csv")
-	before := signature(csv)
-	return Command{Path: executable, Args: args, Complete: func(console string) (string, error) {
+	// Preserve the deployment's tmpfs HOME budget while isolating persistent
+	// CSV output. Upstream's default output derives from HOME; the default-path
+	// symlink also works with the pristine CLI's inverted explicit-output check.
+	runOutput, err := os.MkdirTemp(output, "run-")
+	if err != nil {
+		return Command{}, err
+	}
+	runHome, err := os.MkdirTemp(runtimeHome, "job-")
+	if err != nil {
+		_ = os.Remove(runOutput)
+		return Command{}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(runHome) }
+	if err := os.Mkdir(filepath.Join(runHome, ".ascend_npu_burn"), 0o750); err != nil {
+		cleanup()
+		_ = os.Remove(runOutput)
+		return Command{}, err
+	}
+	if err := os.Symlink(runOutput, filepath.Join(runHome, ".ascend_npu_burn", "output")); err != nil {
+		cleanup()
+		_ = os.Remove(runOutput)
+		return Command{}, err
+	}
+	csv := filepath.Join(runOutput, "npu_burn_results.csv")
+	selected := devices
+	if env("NPU_BURN_DEVICE") != "all" {
+		selected = strings.Split(env("NPU_BURN_DEVICE"), ",")
+	}
+	selectedIDs, err := workloadapi.ParseDevices(strings.Join(selected, ","))
+	if err != nil {
+		cleanup()
+		_ = os.Remove(runOutput)
+		return Command{}, err
+	}
+	// CANN JIT also writes relative to cwd (kernel_meta), not only HOME.
+	// Keep those files inside the deployment's bounded writable tmpfs, and
+	// remove them with this job. Never make the image root writable.
+	return Command{Path: executable, Args: args, Dir: runHome, NPUDevices: selectedIDs, NPUCases: selectedCases, Cleanup: cleanup, Env: []string{"HOME=" + runHome, "NPU_BURN_OUTPUT_DIR=" + runOutput}, Complete: func(console string) (string, error) {
 		if strings.Contains(console, "| FAIL |") {
 			return console, errors.New("Ascend NPU Burn global device summary reported failure")
 		}
-		if before != "" && before == signature(csv) {
-			return console, errors.New("Ascend NPU Burn did not update its result CSV during this run")
-		}
-		summary, err := summarizeCSV(csv)
+		summary, err := summarizeSelectedCSV(csv, selectedCases, selected...)
 		if err != nil {
 			return console, err
 		}
-		return strings.TrimRight(console, "\n") + "\n" + summary + "\n", nil
+		return strings.TrimRight(console, "\n") + "\n" + summary + "\nCATMONITOR_NPU_BURN_RESULT_CSV=" + csv + "\n", nil
 	}}, nil
 }
 
@@ -604,6 +703,53 @@ func npuTopology(ctx context.Context) (logical, nodeIDs, pciIDs []string, messag
 	if len(nodeIDs) == 0 {
 		return nil, nil, nil, "", errors.New("no /dev/davinciN device nodes are available")
 	}
+	mode := envDefault("CATMONITOR_NPU_DEVICE_MODE", "full")
+	if mode == "single" {
+		if len(nodeIDs) != 1 || env("NPU_BURN_DEVICE") != "0" {
+			return nil, nodeIDs, nil, "", errors.New("single mode requires one mapped node and explicit logical device 0")
+		}
+		path := envDefault("NPU_BURN_PREFLIGHT_EXECUTABLE", "/usr/local/bin/catmonitor-npu-burn-preflight")
+		out, e := exec.CommandContext(ctx, path, "--topology-json").Output()
+		if e != nil {
+			var exit *exec.ExitError
+			if errors.As(e, &exit) && len(exit.Stderr) > 0 {
+				return nil, nodeIDs, nil, "", fmt.Errorf("single-device mapping UNVERIFIED: %s", truncate(strings.TrimSpace(string(exit.Stderr)), 1024))
+			}
+			return nil, nodeIDs, nil, "", fmt.Errorf("single-device mapping verification failed: %w", e)
+		}
+		var proof struct {
+			RuntimeCount int               `json:"runtime_count"`
+			NodeIDs      []string          `json:"node_ids"`
+			PCI          []string          `json:"pci_addresses"`
+			NUMA         map[string][]int  `json:"numa_to_logical"`
+			NodePCI      map[string]string `json:"node_pci"`
+			RuntimePCI   map[string]string `json:"runtime_pci"`
+			Source       string            `json:"mapping_source"`
+		}
+		if e = json.Unmarshal(out, &proof); e != nil || proof.RuntimeCount != 1 || len(proof.NodeIDs) != 1 || proof.NodeIDs[0] != nodeIDs[0] || proof.Source != "runtime_kernel_pci" || len(proof.PCI) == 0 || len(proof.NUMA) != 1 {
+			return nil, nodeIDs, nil, "", errors.New("single-device mapping proof is missing or inconsistent")
+		}
+		bdf := proof.NodePCI[nodeIDs[0]]
+		known := false
+		for _, p := range proof.PCI {
+			if p == bdf {
+				known = true
+			}
+		}
+		if !known || bdf == "" || len(proof.NodePCI) != 1 || len(proof.RuntimePCI) != 1 || proof.RuntimePCI["0"] != bdf {
+			return nil, nodeIDs, nil, "", errors.New("runtime and kernel device PCI identities disagree or are unverified")
+		}
+		for node, ids := range proof.NUMA {
+			n, e := strconv.Atoi(node)
+			if e != nil || n < 0 || len(ids) != 1 || ids[0] != 0 {
+				return nil, nodeIDs, nil, "", errors.New("single-device NUMA proof is invalid")
+			}
+		}
+		return []string{"0"}, nodeIDs, proof.PCI, "runtime logical 0 PCI identity agrees with mapped character device kernel PCI/NUMA ancestry", nil
+	}
+	if mode != "full" {
+		return nil, nodeIDs, nil, "", errors.New("unknown NPU device mode")
+	}
 	lspci := envDefault("CATMONITOR_LSPCI", "/usr/bin/lspci")
 	if err := executableFile("lspci", lspci); err != nil {
 		return nil, nodeIDs, nil, "", err
@@ -655,29 +801,47 @@ func validateDeviceSelection(selected string, available []string) error {
 	}
 	return nil
 }
-func signature(path string) string {
-	info, e := os.Stat(path)
-	if e != nil {
-		return ""
-	}
-	return fmt.Sprintf("%d:%d", info.ModTime().UnixNano(), info.Size())
+func summarizeCSV(path string, expectedDevices ...string) (string, error) {
+	return summarizeSelectedCSV(path, nil, expectedDevices...)
 }
-func summarizeCSV(path string) (string, error) {
+
+// Counts are CSV result rows, not operator/device counts or run_count totals.
+// This read-only breakdown travels with the existing report output so older
+// controllers and stored reports do not require a protocol migration.
+type npuCSVGroup struct {
+	Device          int     `json:"device"`
+	Operator        string  `json:"operator"`
+	Cases           int     `json:"cases"`
+	Passed          int     `json:"passed"`
+	Failed          int     `json:"failed"`
+	Errors          int     `json:"errors"`
+	CaseTimeSeconds float64 `json:"case_time_seconds"`
+}
+
+func summarizeSelectedCSV(path string, expectedCases []string, expectedDevices ...string) (string, error) {
 	f, e := os.Open(path)
 	if e != nil {
 		return "", fmt.Errorf("Ascend NPU Burn result CSV is missing: %w", e)
 	}
 	defer f.Close()
-	s := bufio.NewScanner(f)
-	header := false
+	r := csv.NewReader(f)
+	r.FieldsPerRecord = -1
+	header, e := r.Read()
+	if e != nil || len(header) < 8 || strings.Join(header[:8], ",") != "task,device_id,case_idx,run_count,stream_count,exetime,err_count,result" {
+		return "", errors.New("Ascend NPU Burn result CSV has an invalid header")
+	}
 	cases, passed, failed, errorsCount := 0, 0, 0, 0
 	devices := map[string]bool{}
+	coverage := map[string]map[string]bool{}
+	groups := map[string]*npuCSVGroup{}
 	seconds := 0.0
-	for s.Scan() {
-		fields := strings.Split(s.Text(), ",")
-		if len(fields) >= 8 && fields[0] == "task" && fields[7] == "result" {
-			header = true
-			continue
+	for {
+		fields, e := r.Read()
+		if errors.Is(e, io.EOF) {
+			break
+		}
+		if e != nil {
+			return "", fmt.Errorf("invalid CSV: %w", e)
 		}
 		if len(fields) < 8 {
 			return "", errors.New("Ascend NPU Burn result CSV has an invalid schema")
@@ -685,37 +849,90 @@ func summarizeCSV(path string) (string, error) {
 		for i := range fields {
 			fields[i] = strings.TrimSpace(fields[i])
 		}
-		if _, e = strconv.Atoi(fields[1]); e != nil {
+		if id, err := strconv.Atoi(fields[1]); err != nil || id < 0 {
 			return "", errors.New("Ascend NPU Burn result CSV has invalid device")
 		}
 		caseSeconds, e := strconv.ParseFloat(fields[5], 64)
-		if e != nil {
+		if e != nil || caseSeconds < 0 || math.IsNaN(caseSeconds) || math.IsInf(caseSeconds, 0) {
 			return "", errors.New("Ascend NPU Burn result CSV has invalid execution time")
 		}
 		errCount, e := strconv.Atoi(fields[6])
-		if e != nil {
+		if e != nil || errCount < 0 {
 			return "", errors.New("Ascend NPU Burn result CSV has invalid error count")
 		}
 		if fields[7] != "PASS" && fields[7] != "FAIL" {
 			return "", errors.New("Ascend NPU Burn result CSV has invalid result")
 		}
+		if runs, err := strconv.Atoi(fields[3]); err != nil || runs <= 0 {
+			return "", errors.New("Ascend NPU Burn result CSV has no actual executions")
+		}
 		cases++
 		devices[fields[1]] = true
+		if coverage[fields[1]] == nil {
+			coverage[fields[1]] = map[string]bool{}
+		}
+		coverage[fields[1]][fields[0]] = true
+		key := fields[1] + ":" + fields[0]
+		group := groups[key]
+		if group == nil {
+			id, _ := strconv.Atoi(fields[1]) // Already validated above.
+			group = &npuCSVGroup{Device: id, Operator: fields[0]}
+			groups[key] = group
+		}
+		group.Cases++
+		group.Errors += errCount
+		group.CaseTimeSeconds += caseSeconds
 		seconds += caseSeconds
 		errorsCount += errCount
 		if fields[7] == "PASS" && errCount == 0 {
 			passed++
+			group.Passed++
 		} else {
 			failed++
+			group.Failed++
 		}
 	}
-	if e := s.Err(); e != nil {
-		return "", e
-	}
-	if !header || cases == 0 {
+	if cases == 0 {
 		return "", errors.New("Ascend NPU Burn result CSV has no result rows")
 	}
+	if len(expectedDevices) > 0 {
+		if len(devices) != len(expectedDevices) {
+			return "", errors.New("CSV device coverage differs from selected devices")
+		}
+		for _, id := range expectedDevices {
+			if !devices[id] {
+				return "", fmt.Errorf("CSV missing selected logical device %s", id)
+			}
+		}
+	}
 	summary := fmt.Sprintf("CATMONITOR_NPU_BURN_SUMMARY devices=%d cases=%d passed=%d failed=%d errors=%d case_time_seconds=%.6f", len(devices), cases, passed, failed, errorsCount, seconds)
+	if len(expectedCases) > 0 {
+		for id, tasks := range coverage {
+			if len(tasks) != len(expectedCases) {
+				return "", fmt.Errorf("CSV operator coverage differs on logical device %s", id)
+			}
+			for _, name := range expectedCases {
+				if !tasks[name] {
+					return "", fmt.Errorf("CSV missing operator %s on logical device %s", name, id)
+				}
+			}
+		}
+	}
+	breakdown := make([]npuCSVGroup, 0, len(groups))
+	for _, group := range groups {
+		breakdown = append(breakdown, *group)
+	}
+	sort.Slice(breakdown, func(i, j int) bool {
+		if breakdown[i].Device != breakdown[j].Device {
+			return breakdown[i].Device < breakdown[j].Device
+		}
+		return breakdown[i].Operator < breakdown[j].Operator
+	})
+	data, err := json.Marshal(breakdown)
+	if err != nil {
+		return "", fmt.Errorf("encode CSV breakdown: %w", err)
+	}
+	summary += "\nCATMONITOR_NPU_BURN_CASE_GROUPS=" + string(data)
 	if failed > 0 || errorsCount > 0 {
 		return summary, errors.New("Ascend NPU Burn reported failed cases or SDC errors")
 	}

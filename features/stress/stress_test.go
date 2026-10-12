@@ -73,7 +73,17 @@ func testManager(t *testing.T, executor Executor) *Manager {
 			"stream": {Enabled: true, Plugin: "stream", Container: "catmonitor-stress-cpu", User: "65532:65532", Timeout: time.Minute},
 		},
 	}
-	return NewManagerWithExecutor(cfg, nil, executor)
+	manager := NewManagerWithExecutor(cfg, nil, executor)
+	// Registered after TempDir: all asynchronous report/history writers must
+	// exit before testing removes their directory (including early test failures).
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Errorf("fixture shutdown: %v", err)
+		}
+	})
+	return manager
 }
 
 func waitForTerminal(t *testing.T, manager *Manager, jobID string) Report {

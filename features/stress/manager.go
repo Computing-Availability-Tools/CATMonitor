@@ -109,6 +109,15 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 	if err := m.validateTimeout(selected, options.Timeout); err != nil {
 		return Report{}, err
 	}
+	if options.NPUDevices != nil || options.NPUCases != nil || options.NPUModel != nil {
+		found := false
+		for _, name := range selected {
+			found = found || name == "npu_burn"
+		}
+		if !found {
+			return Report{}, errors.New("NPU device/operator selection requires npu_burn in this job")
+		}
+	}
 	if runtime.GOOS != "linux" {
 		return Report{}, errors.New("stress execution is supported on Linux only")
 	}
@@ -116,8 +125,19 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 	// Describe may invoke an external workload container. Keep it outside the
 	// Manager lock so read-only control requests remain responsive.
 	profiles := make(map[string]*ExecutionProfile, len(selected))
+	var npuSelection *NPUSelection
 	for _, name := range selected {
-		profile, describeErr := m.describeWithTimeout(name, options.Timeout)
+		var profile *ExecutionProfile
+		var describeErr error
+		if name == "npu_burn" {
+			if options.NPUModel != nil {
+				profile, npuSelection, describeErr = m.prepareNPUModel(options)
+			} else {
+				profile, npuSelection, describeErr = m.prepareNPU(options.NPUDevices, options.NPUCases, options.Timeout)
+			}
+		} else {
+			profile, describeErr = m.describeJob(m.binding(name), options.Timeout)
+		}
 		if describeErr != nil {
 			return Report{}, fmt.Errorf("benchmark %q describe/preflight failed: %w", name, describeErr)
 		}
@@ -144,6 +164,9 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 		report.Benchmarks = append(report.Benchmarks, BenchmarkResult{
 			Name: name, Status: StatusPending, Profile: copyExecutionProfile(profiles[name]),
 		})
+		if name == "npu_burn" {
+			report.Benchmarks[len(report.Benchmarks)-1].NPUSelection = copyNPUSelection(npuSelection)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.active = &activeJob{cancel: cancel, done: make(chan struct{}), report: report}
@@ -155,7 +178,7 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 	m.last = copyReport(m.active.report)
 	started := *copyReport(m.active.report)
 	m.logInfo("stress job started", "job_id", report.JobID, "initiator", report.Initiator, "benchmarks", selected)
-	go m.run(ctx, report.JobID, selected, options.Timeout, profiles)
+	go m.run(ctx, report.JobID, selected, options.Timeout, profiles, npuSelection)
 	return started, nil
 }
 
@@ -226,14 +249,14 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (m *Manager) run(ctx context.Context, jobID string, names []string, timeoutOverride time.Duration, profiles map[string]*ExecutionProfile) {
+func (m *Manager) run(ctx context.Context, jobID string, names []string, timeoutOverride time.Duration, profiles map[string]*ExecutionProfile, npuSelection *NPUSelection) {
 	for _, name := range names {
 		if ctx.Err() != nil {
 			m.setBenchmark(name, StatusCancelled, "benchmark cancelled", nil, "", "", time.Now(), true)
 			continue
 		}
 		m.setBenchmark(name, StatusRunning, "", nil, "", "", time.Time{}, false)
-		result := m.runBenchmark(ctx, jobID, name, timeoutOverride, profiles[name])
+		result := m.runBenchmark(ctx, jobID, name, timeoutOverride, profiles[name], npuSelection)
 		m.finishBenchmark(result)
 	}
 	m.mu.Lock()
@@ -256,9 +279,12 @@ func (m *Manager) run(ctx context.Context, jobID string, names []string, timeout
 	m.logInfo("stress job finished", "job_id", report.JobID, "status", report.Status)
 }
 
-func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutOverride time.Duration, profile *ExecutionProfile) BenchmarkResult {
+func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutOverride time.Duration, profile *ExecutionProfile, selections ...*NPUSelection) BenchmarkResult {
 	started := time.Now()
 	result := BenchmarkResult{Name: name, Status: StatusUnhealthy, StartedAt: started, Profile: copyExecutionProfile(profile)}
+	if name == "npu_burn" && len(selections) > 0 {
+		result.NPUSelection = copyNPUSelection(selections[0])
+	}
 	finish := func(status Status, message string) BenchmarkResult {
 		result.Status, result.Message, result.FinishedAt = status, message, time.Now()
 		result.DurationMS = result.FinishedAt.Sub(started).Milliseconds()
@@ -279,6 +305,14 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 		Benchmark: name, TimeoutSeconds: int64(timeout / time.Second),
 		Options: map[string]json.RawMessage{},
 	}
+	if result.NPUSelection != nil {
+		binding.NPUDevices = append(workloadapi.DeviceIDs(nil), result.NPUSelection.Selected...)
+		request.NPUDevices = append(workloadapi.DeviceIDs(nil), binding.NPUDevices...)
+		binding.NPUCases = append(workloadapi.CaseNames(nil), result.NPUSelection.SelectedCases...)
+		request.NPUCases = append(workloadapi.CaseNames(nil), binding.NPUCases...)
+		binding.NPUModel = workloadapi.CopyModel(result.NPUSelection.Model)
+		request.NPUModel = workloadapi.CopyModel(binding.NPUModel)
+	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout+transportGrace)
 	defer cancel()
 	envelope, err := m.executor.Run(runCtx, binding, request)
@@ -293,6 +327,20 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 	}
 	result.Output, result.Source = envelope.Output, envelope.Source
 	result.Values = copyValues(envelope.Values)
+	result.NPUModel = envelope.NPUModel
+	result.Failure = envelope.Failure
+	if request.NPUModel != nil && envelope.Status == workloadapi.StatusHealthy {
+		if err := envelope.NPUModel.Validate(request.NPUModel, request.NPUDevices, jobID); err != nil {
+			return finish(StatusUnhealthy, err.Error())
+		}
+	}
+	if name == "npu_burn" {
+		result.NPUCSV = readNPUCSV(envelope.Output, result.Values)
+	}
+	if result.NPUSelection != nil {
+		result.NPUSelection.Actual = append([]int(nil), envelope.NPUDevices...)
+		result.NPUSelection.ActualCases = append([]string(nil), envelope.NPUCases...)
+	}
 	status := Status(envelope.Status)
 	switch status {
 	case StatusCancelled:
@@ -307,6 +355,12 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 		}
 		return finish(StatusTimeLimitReached, envelope.Message)
 	case StatusHealthy:
+		if result.NPUSelection != nil && !workloadapi.SameCases(result.NPUSelection.SelectedCases, envelope.NPUCases) {
+			return finish(StatusUnhealthy, "NPU result operator coverage does not match this job's selection")
+		}
+		if result.NPUSelection != nil && !workloadapi.SameDevices(result.NPUSelection.Selected, envelope.NPUDevices) {
+			return finish(StatusUnhealthy, "NPU result device coverage does not match this job's selection")
+		}
 	default:
 		return finish(StatusUnhealthy, "workload returned an invalid status")
 	}
@@ -663,6 +717,17 @@ func copyReport(report Report) *Report {
 	for i := range copy.Benchmarks {
 		copy.Benchmarks[i].Profile = copyExecutionProfile(report.Benchmarks[i].Profile)
 		copy.Benchmarks[i].Values = copyValues(report.Benchmarks[i].Values)
+		copy.Benchmarks[i].NPUSelection = copyNPUSelection(report.Benchmarks[i].NPUSelection)
+		copy.Benchmarks[i].NPUCSV = copyNPUCSV(report.Benchmarks[i].NPUCSV)
+		if failure := report.Benchmarks[i].Failure; failure != nil {
+			cloned := *failure
+			copy.Benchmarks[i].Failure = &cloned
+		}
+		if model := report.Benchmarks[i].NPUModel; model != nil {
+			cloned := *model
+			cloned.Devices = append(workloadapi.DeviceIDs(nil), model.Devices...)
+			copy.Benchmarks[i].NPUModel = &cloned
+		}
 	}
 	return &copy
 }
@@ -684,6 +749,8 @@ func copyConfig(cfg Config) Config {
 	if cfg.Benchmarks != nil {
 		copy.Benchmarks = make(map[string]BenchmarkConfig, len(cfg.Benchmarks))
 		for name, benchmark := range cfg.Benchmarks {
+			benchmark.AllowedNPUDevices = append([]int(nil), benchmark.AllowedNPUDevices...)
+			benchmark.AllowedNPUModels = append([]string(nil), benchmark.AllowedNPUModels...)
 			copy.Benchmarks[name] = benchmark
 		}
 	}

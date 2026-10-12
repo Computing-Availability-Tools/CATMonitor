@@ -54,9 +54,10 @@ func main() {
 func describe(args []string) error {
 	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	benchmark, jsonOutput := "", false
+	benchmark, jsonOutput, requirePass := "", false, false
 	fs.StringVar(&benchmark, "benchmark", "", "benchmark name")
 	fs.BoolVar(&jsonOutput, "json", false, "emit JSON")
+	fs.BoolVar(&requirePass, "require-pass", false, "return nonzero when preflight fails (healthcheck)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -64,6 +65,9 @@ func describe(args []string) error {
 		return errors.New("describe requires --json and no positional arguments")
 	}
 	if benchmark == "" {
+		if requirePass {
+			return errors.New("--require-pass requires --benchmark")
+		}
 		capabilities := map[string]any{"protocol_version": workloadapi.ProtocolVersion, "benchmarks": allowedBenchmarks()}
 		return json.NewEncoder(os.Stdout).Encode(capabilities)
 	}
@@ -83,7 +87,13 @@ func describe(args []string) error {
 		}
 		return fmt.Errorf("describe failed: %w", err)
 	}
-	return json.NewEncoder(os.Stdout).Encode(profile)
+	if err := json.NewEncoder(os.Stdout).Encode(profile); err != nil {
+		return err
+	}
+	if requirePass && profile.Preflight.Status != workloadapi.CheckPass {
+		return errors.New("preflight did not pass")
+	}
+	return nil
 }
 
 func run(args []string) error {
@@ -125,6 +135,32 @@ func run(args []string) error {
 	if len(request.Options) != 0 {
 		return errors.New("this workload profile does not accept per-job options")
 	}
+	if request.NPUModel != nil {
+		if err := request.NPUModel.Validate(); err != nil {
+			return err
+		}
+		if request.Benchmark != "npu_burn" || request.NPUCases != nil || request.NPUDevices == nil {
+			return errors.New("model job requires npu_burn, explicit devices and no operators")
+		}
+	}
+	if request.NPUDevices != nil {
+		if request.Benchmark != "npu_burn" {
+			return errors.New("npu_devices requires npu_burn")
+		}
+		resolved, err := workloadapi.ParseDevices(os.Getenv("NPU_BURN_DEVICE"))
+		if err != nil || !workloadapi.SameDevices(resolved, request.NPUDevices) {
+			return errors.New("NPU selection differs between Controller request and executor environment")
+		}
+	}
+	if request.NPUCases != nil {
+		if request.Benchmark != "npu_burn" {
+			return errors.New("npu_cases requires npu_burn")
+		}
+		resolved, err := workloadapi.ParseCases(os.Getenv("NPU_BURN_RUN_CASE"))
+		if err != nil || !workloadapi.SameCases(resolved, request.NPUCases) || os.Getenv("NPU_BURN_GROUP") != "" {
+			return errors.New("NPU operator selection differs between Controller request and executor environment")
+		}
+	}
 
 	root, err := stateRoot()
 	if err != nil {
@@ -162,9 +198,15 @@ func run(args []string) error {
 		return err
 	}
 
-	spec, err := workloadplugin.Resolve(request.Benchmark)
+	spec, err := workloadplugin.ResolveRequest(request)
 	if err != nil {
 		return writeRunFailure(jobDir, request, started, "", err)
+	}
+	if spec.Cleanup != nil {
+		defer spec.Cleanup()
+	}
+	if request.NPUCases != nil && !workloadapi.SameCases(request.NPUCases, spec.NPUCases) {
+		return writeRunFailure(jobDir, request, started, "", errors.New("resolved NPU operators differ from Controller request"))
 	}
 	resultDir := spec.ResultDir
 	before, err := resultparse.Capture(request.Benchmark, resultDir)
@@ -176,6 +218,9 @@ func run(args []string) error {
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = append(os.Environ(), spec.Env...)
+	if request.Benchmark == "npu_burn" {
+		cmd.Env = append(cmd.Env, "CATMONITOR_NPU_JOB_TIMEOUT_SECONDS="+strconv.FormatInt(request.TimeoutSeconds, 10))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killGroup(cmd.Process, syscall.SIGKILL) }
 	var output limitedBuffer
@@ -210,13 +255,42 @@ func run(args []string) error {
 		result.Status, result.Message = workloadapi.StatusTimeLimitReached, "configured time limit reached; workload process group stopped"
 	case runErr != nil:
 		result.Status, result.Message = workloadapi.StatusUnhealthy, fmt.Sprintf("workload command failed: %v", runErr)
+		if request.Benchmark == "npu_burn" {
+			result.Failure = workloadapi.ClassifyNPUFailure(resultOutput)
+			if result.Failure != nil {
+				result.Message = "NPU HBM exhausted; workload incomplete, not a hardware fault diagnosis"
+			}
+		}
 	default:
-		values, source, parseErr := resultparse.Parse(request.Benchmark, result.Output, resultDir, before)
+		var values map[string]float64
+		var source string
+		var parseErr error
+		if spec.ModelResult != nil {
+			result.NPUModel, parseErr = spec.ModelResult()
+			if parseErr == nil {
+				values = map[string]float64{"devices": float64(len(result.NPUModel.Devices)), "checked_steps": float64(result.NPUModel.CheckedSteps), "saved_steps": float64(result.NPUModel.SavedSteps), "errors": float64(result.NPUModel.Errors)}
+				source = "model_sdc"
+				if request.NPUModel.Action == "create_reference" {
+					source = "model_reference"
+				}
+			}
+		} else {
+			values, source, parseErr = resultparse.Parse(request.Benchmark, result.Output, resultDir, before)
+		}
 		result.Values, result.Source = values, source
 		if parseErr != nil {
 			result.Status, result.Message = workloadapi.StatusUnhealthy, parseErr.Error()
 		} else {
 			result.Status, result.Message = workloadapi.StatusHealthy, "workload command completed and required values parsed"
+			if result.NPUModel != nil {
+				result.Message = "model SDC comparison completed across all selected devices"
+				if result.NPUModel.Action == "create_reference" {
+					result.Message = "model reference generated; SDC comparison was not performed"
+				}
+			}
+			// Complete validated fresh CSV coverage before these IDs are reported.
+			result.NPUDevices = append(workloadapi.DeviceIDs(nil), spec.NPUDevices...)
+			result.NPUCases = append(workloadapi.CaseNames(nil), spec.NPUCases...)
 		}
 	}
 	state.Status, state.UpdatedAt, state.Message = result.Status, finished, result.Message
