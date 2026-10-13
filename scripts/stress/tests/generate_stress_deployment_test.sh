@@ -169,3 +169,25 @@ contains "$MODEL/catmonitor-stress.yaml" 'allowed_npu_models: [gpt3,llama2]'
 expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/bad-mode" --cpu-image cpu:test --npu-model-memory-mode auto
 expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/bad-time" --cpu-image cpu:test --npu-job-timeout 0h
 printf 'PASS: explicit model memory policy, authorization and job time limit\n'
+
+EXTERNAL_CONFIG="$TEST_ROOT/external config"
+python3 "$REPO_ROOT/scripts/stress/npu_config_profile.py" \
+    --source-dir "$REPO_ROOT/third_party/ascend_npu_burn/source/ascend_npu_burn/config" \
+    --output-dir "$EXTERNAL_CONFIG" \
+    --preset "$REPO_ROOT/configs/stress/npu-model/a2-model-b32-checkpointed-36steps.json" >/dev/null
+EXTERNAL="$TEST_ROOT/external-deployment"
+bash "$GENERATOR" --output-dir "$EXTERNAL" --npu-image npu:models \
+    --npu-host-root "$HOST" --npu-burn-device 0 --npu-chip-generation A2 \
+    --npu-config-dir "$EXTERNAL_CONFIG" --npu-model-memory-mode checkpointed --npu-security-profile restricted
+contains "$EXTERNAL/docker-compose.stress.generated.yml" "source: '$EXTERNAL_CONFIG'"
+contains "$EXTERNAL/docker-compose.stress.generated.yml" 'target: /opt/catmonitor/npuburn-python/ascend_npu_burn/config'
+contains "$EXTERNAL/docker-compose.stress.generated.yml" 'read_only: true'
+contains "$EXTERNAL/docker-compose.stress.generated.yml" "CATMONITOR_MODEL_MEMORY_MODE: 'checkpointed'"
+contains "$EXTERNAL/docker-compose.stress.generated.yml" 'privileged: false'
+contains "$EXTERNAL/stress-deployment-manifest.json" '"npu_config_files_sha256":{'
+contains "$EXTERNAL/stress-deployment-manifest.json" "$(sha256sum "$EXTERNAL_CONFIG/base_config.json" | awk '{print $1}')"
+not_contains "$MODEL/docker-compose.stress.generated.yml" 'target: /opt/catmonitor/npuburn-python/ascend_npu_burn/config'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/cpu-config" --cpu-image cpu:test --npu-config-dir "$EXTERNAL_CONFIG"
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/missing-config" --npu-image npu:test \
+    --npu-host-root "$HOST" --npu-burn-device 0 --npu-chip-generation A2 --npu-config-dir "$TEST_ROOT/missing"
+printf 'PASS: optional external NPU config mount and content identity\n'

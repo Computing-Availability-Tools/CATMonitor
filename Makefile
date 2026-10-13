@@ -86,6 +86,7 @@ test-stress-build-npu:
 	bash scripts/stress/tests/runtime_preflight_test.sh
 
 test-stress-deployment:
+	python3 scripts/stress/tests/npu_config_profile_test.py
 	python3 scripts/stress/tests/model_migration_docs_test.py
 	python3 scripts/stress/tests/restricted_inputs_test.py
 	bash scripts/stress/tests/control_image_build_test.sh

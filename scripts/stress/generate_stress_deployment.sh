@@ -48,6 +48,8 @@ NPU_ALLOWED_DEVICES=
 NPU_ALLOWED_MODELS=
 NPU_REFERENCE_GENERATION=false
 NPU_MODEL_MEMORY_MODE=standard
+NPU_CONFIG_DIR=
+NPU_CONFIG_IDENTITY=null
 NPU_JOB_TIMEOUT=30m
 NPU_SECURITY_PROFILE=
 FORCE=false
@@ -88,6 +90,7 @@ NPU workload profile (enabled only when --npu-image is supplied):
   --allow-npu-reference-generation
                             Allow single-device creation of immutable references
   --npu-model-memory-mode M  standard (default) or checkpointed; full model shapes
+  --npu-config-dir PATH      Complete external JSON config directory (read-only)
   --npu-job-timeout DURATION Positive s/m/h job limit (default: 30m; not run duration)
   --npu-security-profile P   restricted or legacy-privileged; single is restricted
   --npu-host-root PATH       Fixture root for host discovery (default: /)
@@ -165,6 +168,7 @@ while [ "$#" -gt 0 ]; do
         --npu-allowed-models) require_value "$@"; NPU_ALLOWED_MODELS=$2; shift 2 ;;
         --allow-npu-reference-generation) NPU_REFERENCE_GENERATION=true; shift ;;
         --npu-model-memory-mode) require_value "$@"; NPU_MODEL_MEMORY_MODE=$2; shift 2 ;;
+        --npu-config-dir) require_value "$@"; NPU_CONFIG_DIR=$2; shift 2 ;;
         --npu-job-timeout) require_value "$@"; NPU_JOB_TIMEOUT=$2; shift 2 ;;
         --npu-security-profile) require_value "$@"; NPU_SECURITY_PROFILE=$2; shift 2 ;;
         --npu-ascend-env-script) require_value "$@"; NPU_ASCEND_ENV_SCRIPT=$2; shift 2 ;;
@@ -307,6 +311,12 @@ if [ -n "$NPU_IMAGE" ]; then
     done
 fi
 [ "$CPU_ENABLED" = true ] || [ "$NPU_ENABLED" = true ] || die "configure at least one of --cpu-image or --npu-image"
+if [ -n "$NPU_CONFIG_DIR" ]; then
+    [ "$NPU_ENABLED" = true ] || die "--npu-config-dir requires --npu-image"
+    NPU_CONFIG_DIR=$(absolute --npu-config-dir "$NPU_CONFIG_DIR")
+    command -v python3 >/dev/null || die "external NPU JSON validation requires python3"
+    NPU_CONFIG_IDENTITY=$(python3 "$(dirname -- "${BASH_SOURCE[0]}")/npu_config_profile.py" --validate-dir "$NPU_CONFIG_DIR") || die "invalid external NPU config directory"
+fi
 
 files=(catmonitor-stress.yaml stress-profile.json docker-compose.stress.generated.yml stress-deployment-manifest.json)
 if [ "$NPU_ENABLED" = true ]; then files+=(npu-workload.env); fi
@@ -500,6 +510,15 @@ EOF
       - /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro
       - $(yaml_quote "$NPU_OUTPUT_DIR:/opt/catmonitor/npuburn-home/.ascend_npu_burn/output")
 EOF
+    if [ -n "$NPU_CONFIG_DIR" ]; then
+        cat >>"$COMPOSE" <<EOF
+      - type: bind
+        source: $(yaml_quote "$NPU_CONFIG_DIR")
+        target: /opt/catmonitor/npuburn-python/ascend_npu_burn/config
+        read_only: true
+        bind: { create_host_path: false }
+EOF
+    fi
 fi
 
 generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -519,7 +538,7 @@ if [ "$NPU_ENABLED" = true ]; then npu_env_sha=$(sha_or_null "$OUTPUT_DIR/npu-wo
 cpu_env_sha=null
 if [ "$CPU_ENABLED" = true ]; then cpu_env_sha=$(sha_or_null "$OUTPUT_DIR/cpu-workload.env"); fi
 cat >"$MANIFEST" <<EOF
-{"schema_version":2,"generated_at_utc":$(json_string "$generated_at"),"config_sha256":"$config_sha","profile_sha256":"$profile_sha","compose_sha256":"$compose_sha","cpu_env_sha256":$cpu_env_sha,"npu_env_sha256":$npu_env_sha,"cpu_manifest_sha256":$(sha_or_null "$CPU_MANIFEST"),"npu_manifest_sha256":$(sha_or_null "$NPU_MANIFEST")}
+{"schema_version":2,"generated_at_utc":$(json_string "$generated_at"),"config_sha256":"$config_sha","profile_sha256":"$profile_sha","compose_sha256":"$compose_sha","cpu_env_sha256":$cpu_env_sha,"npu_env_sha256":$npu_env_sha,"npu_config_dir":$(if [ -n "$NPU_CONFIG_DIR" ]; then json_string "$NPU_CONFIG_DIR"; else printf null; fi),"npu_config_files_sha256":$NPU_CONFIG_IDENTITY,"cpu_manifest_sha256":$(sha_or_null "$CPU_MANIFEST"),"npu_manifest_sha256":$(sha_or_null "$NPU_MANIFEST")}
 EOF
 
 chmod 0640 "$CONFIG" "$PROFILE" "$COMPOSE" "$MANIFEST"
