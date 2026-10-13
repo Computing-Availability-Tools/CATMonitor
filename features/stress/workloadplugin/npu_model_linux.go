@@ -36,6 +36,7 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 	m := environmentModel()
 	check := workloadapi.AssetCheck{Name: "model_reference_preflight", Path: env("NPU_BURN_EXECUTABLE"), Required: true, Kind: "model_sdc", Status: workloadapi.CheckPass, Message: "model imports/reference match passed; hardware validation is NOT_RUN"}
 	memoryCheck := workloadapi.AssetCheck{Name: "model_memory_preflight", Path: env("NPU_BURN_EXECUTABLE"), Required: true, Kind: "memory", Status: workloadapi.CheckFail, Message: "basic HBM screening was not completed"}
+	referenceConfirmed := false
 	ids, err := workloadapi.ParseDevices(env("NPU_BURN_DEVICE"))
 	if err == nil {
 		err = m.Validate()
@@ -51,8 +52,20 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 		data, failure := probe.Output()
 		if failure != nil {
 			message := failure.Error()
+			var diagnostic struct{ Preflight, Code, Message string }
+			if json.Unmarshal(data, &diagnostic) == nil && diagnostic.Preflight == "fail" && diagnostic.Message != "" {
+				switch diagnostic.Code {
+				case "reference_missing", "reference_mismatch", "reference_incomplete", "reference_exists", "dependency_unavailable", "preflight_failed":
+					p.Parameters = append(p.Parameters, parameter("model_preflight_code", "Model preflight reason", diagnostic.Code, ""))
+					message = diagnostic.Message
+				default:
+					diagnostic.Preflight = "" // Unknown diagnostics use the ordinary error fallback.
+				}
+			}
 			if exit, ok := failure.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
-				message = truncate(string(exit.Stderr), 1024)
+				if diagnostic.Preflight != "fail" || diagnostic.Message == "" {
+					message = truncate(string(exit.Stderr), 1024)
+				}
 			}
 			err = fmt.Errorf("model dependency/reference preflight failed: %s", message)
 		} else {
@@ -67,6 +80,7 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 			if json.Unmarshal(data, &proof) != nil || proof.Model != m.Name || proof.Action != m.Action || proof.ReferenceID != m.ReferenceID || !workloadapi.SameDevices(ids, proof.Devices) {
 				err = fmt.Errorf("model preflight JSON does not confirm request")
 			} else if err = validateModelMemory(proof.Memory, ids); err != nil {
+				referenceConfirmed = true
 				memoryCheck.Message = err.Error()
 			} else {
 				memoryCheck.Status = workloadapi.CheckPass
@@ -79,8 +93,10 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 		}
 	}
 	if err != nil {
-		check.Status, check.Message = workloadapi.CheckFail, err.Error()
-		p.Preflight.Status, p.Preflight.Message = workloadapi.CheckFail, check.Message
+		if !referenceConfirmed {
+			check.Status, check.Message = workloadapi.CheckFail, err.Error()
+		}
+		p.Preflight.Status, p.Preflight.Message = workloadapi.CheckFail, err.Error()
 	}
 	p.Assets = append(p.Assets, check, memoryCheck)
 	p.Parameters = append(p.Parameters, parameter("model", "Model", m.Name, ""), parameter("model_action", "Model action", m.Action, ""), parameter("model_reference", "Reference ID", m.ReferenceID, ""))

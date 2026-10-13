@@ -38,11 +38,12 @@ type Manager struct {
 	executor    Executor
 	writeReport func(Report) error
 
-	mu           sync.Mutex
-	active       *activeJob
-	last         *Report
-	profileMu    sync.Mutex
-	profileCache map[string]profileCacheEntry
+	mu               sync.Mutex
+	active           *activeJob
+	last             *Report
+	profileMu        sync.Mutex
+	profileCache     map[string]profileCacheEntry
+	modelPreflightMu sync.Mutex
 }
 
 type activeJob struct {
@@ -316,6 +317,10 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 	runCtx, cancel := context.WithTimeout(ctx, timeout+transportGrace)
 	defer cancel()
 	envelope, err := m.executor.Run(runCtx, binding, request)
+	if err == nil && name == "npu_burn" && request.NPUModel == nil && envelope.NPUParameters != nil &&
+		envelope.NPUParameters.Validate(jobID, request.NPUCases) == nil {
+		result.NPUParameters = workloadapi.CopyNPUParameters(envelope.NPUParameters)
+	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return finish(StatusCancelled, "benchmark cancelled")
 	}
@@ -719,6 +724,7 @@ func copyReport(report Report) *Report {
 		copy.Benchmarks[i].Values = copyValues(report.Benchmarks[i].Values)
 		copy.Benchmarks[i].NPUSelection = copyNPUSelection(report.Benchmarks[i].NPUSelection)
 		copy.Benchmarks[i].NPUCSV = copyNPUCSV(report.Benchmarks[i].NPUCSV)
+		copy.Benchmarks[i].NPUParameters = workloadapi.CopyNPUParameters(report.Benchmarks[i].NPUParameters)
 		if failure := report.Benchmarks[i].Failure; failure != nil {
 			cloned := *failure
 			copy.Benchmarks[i].Failure = &cloned

@@ -48,6 +48,22 @@ func TestFullBaseA2CatalogProfile(t *testing.T) {
 	}
 }
 
+func TestNPUCatalogKeepsEffectiveTensorParameters(t *testing.T) {
+	t.Setenv("CATMONITOR_NPU_COMPAT_PROFILE", "a2-upstream-base-v1")
+	data := `{"cases":[{"name":"conv2d","dtypes":["float16"],"selectable":true,"config":{"input_data":[1,2,3,4],"weight_data":[4,2,3,3],"dtype":["float16"],"pattern":["gauss_random"],"run_count":37}}],"selected":["conv2d"],"configuration_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	p := executableFixture(t, t.TempDir(), "preflight", "#!/bin/sh\nprintf '%s\\n' '"+data+"'\n")
+	t.Setenv("NPU_BURN_PREFLIGHT_EXECUTABLE", p)
+	params, check := npuCaseProfile(context.Background())
+	if check.Status != workloadapi.CheckPass {
+		t.Fatal(check)
+	}
+	for _, item := range params {
+		if item.Key == "case_catalog" && (!strings.Contains(item.Value, `"input_data":[1,2,3,4]`) || !strings.Contains(item.Value, `"run_count":37`)) {
+			t.Fatal("effective tensor config was discarded", item.Value)
+		}
+	}
+}
+
 func TestModelMemoryProfilesRetainOperatorCatalog(t *testing.T) {
 	for _, profile := range []string{"portable-model-sdc-memory-v1", "a2-upstream-model-sdc-memory-v1"} {
 		t.Run(profile, func(t *testing.T) {

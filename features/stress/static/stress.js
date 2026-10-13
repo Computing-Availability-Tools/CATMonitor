@@ -10,6 +10,8 @@ let selectedNPUCases = null;
 let npuMode = 'operators';
 let selectedNPUModel = '';
 let npuModelAction = 'compare';
+let modelPreflightResult = null;
+let modelPreflightInFlight = false;
 let refreshInFlight = false;
 let configRefreshedAt = 0;
 let historyReports = [];
@@ -189,6 +191,57 @@ function appendProfileParameters(container, profile) {
     parameters.appendChild(row);
   }
   container.appendChild(parameters);
+}
+
+function appendOperatorDetails(container, operators, scope) {
+  const tensorKeys = ['shape','MKN','BSHN','BNSH','input_data','weight_data',
+    'B','M','N','K','k','C','H','W','seq_len','batch_size','in.out'];
+  for (const op of operators) {
+    const details = disclosure(scope + ':operator:' + op.name, op.name + ' · tensor 参数');
+    details.className += ' npu-operator-parameters';
+    const effective = op.config;
+    const hint = document.createElement('p');
+    hint.className = 'selection-hint';
+    hint.textContent = scope.startsWith('preview:')
+      ? '当前镜像与代际的有效配置；只读预览，不是本次执行结果。'
+      : '该作业执行端实际加载的配置快照；不随当前选择或外部配置变化。';
+    details.appendChild(hint);
+    if (!effective || typeof effective !== 'object' || Array.isArray(effective)) {
+      const missing = document.createElement('p');
+      missing.className = 'selection-hint';
+      missing.textContent = '当前镜像未提供完整 tensor 配置；不使用默认值推算。';
+      details.appendChild(missing);
+    } else {
+      const shapes = Object.fromEntries(tensorKeys.filter(key => Object.hasOwn(effective, key)).map(key => [key,effective[key]]));
+      const rows = [
+        ['Tensor shape / 维度', Object.keys(shapes).length ? JSON.stringify(shapes) : '配置未提供显式 shape；未推算尺寸'],
+        ['dtype', Object.hasOwn(effective,'dtype') ? JSON.stringify(effective.dtype) : '配置未提供'],
+        ['pattern', Object.hasOwn(effective,'pattern') ? JSON.stringify(effective.pattern) : '配置未提供'],
+        ['run_count', Object.hasOwn(effective,'run_count') ? String(effective.run_count) : '配置未提供']
+      ];
+      appendDetailGrid(details, rows);
+    }
+    container.appendChild(details);
+  }
+}
+
+function appendJobOperatorParameters(container, item, jobID) {
+  const proof = item.npu_parameters;
+  const requested = item.npu_selection && item.npu_selection.selected_cases;
+  const names = proof && Array.isArray(proof.operators) ? proof.operators.map(op => op && op.name) : [];
+  const valid = proof && proof.schema_version === 1 && proof.job_id === jobID &&
+    ['A2','A3','A5'].includes(proof.chip_generation) && names.length && new Set(names).size === names.length &&
+    names.every(name => typeof name === 'string' && !['gpt3','llama2'].includes(name)) &&
+    (!requested || (Array.isArray(requested) && sameSelection(names, requested))) && proof.operators.every(op => op.config &&
+      !Array.isArray(op.config) && Number.isInteger(op.config.run_count) && op.config.run_count > 0);
+  if (valid) {
+    appendOperatorDetails(container, proof.operators, 'job:' + jobID);
+  } else {
+    const missing = document.createElement('p');
+    missing.className = 'selection-hint';
+    missing.textContent = '该报告未保存有效的本次算子参数快照；不以当前配置或启动前预检值代替实际参数。';
+    container.appendChild(missing);
+  }
 }
 function renderProfileBody(container, profile, timeoutOverride) {
   const resources = profile.resources || {};
@@ -447,11 +500,95 @@ function isNPUModel(candidate) {
 }
 
 function unavailableNPUReason(candidate) {
-  if (isNPUModel(candidate)) return '模型测试需另行准备 SDC 参考数据，不属于算子选择。';
   if ((candidate.reason || '').includes('no upstream A2 QuantMatmul')) {
     return '上游未提供 A2 的量化矩阵乘策略，不能套用 A3/A5 策略。';
   }
   return candidate.reason || '当前代际、dtype 或镜像配置未通过准入检查。';
+}
+
+function currentModelPreflightRequest() {
+  return {npu_devices: Array.from(selectedNPUDevices || []).sort((a,b) => a-b),
+    npu_model: {name:selectedNPUModel, action:npuModelAction, reference_id:byId('npu-reference-id').value.trim()}};
+}
+
+function modelPreflightKey() {
+  const item = ((config && config.benchmarks) || []).find(b => b.name === 'npu_burn');
+  const p = profileParameters(item && item.profile);
+  return JSON.stringify([currentModelPreflightRequest(), config && config.enabled, item && item.enabled, item && item.model_capabilities,
+    p.allowed_models, p.allow_reference_generation, p.model_memory_mode,
+    p.workload_image_id, p.workload_container_id, item && item.profile && item.profile.configuration_sha256]);
+}
+
+function renderModelPreflight() {
+  const button = byId('npu-model-preflight');
+  const summary = byId('npu-model-preflight-summary');
+  const panel = byId('npu-model-preflight-failures');
+  const items = byId('npu-model-preflight-items');
+  items.replaceChildren();
+  panel.hidden = true;
+  const request = currentModelPreflightRequest();
+  const model = request.npu_model;
+  const valid = !!model.name && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(model.reference_id) &&
+    request.npu_devices.length > 0 && (model.action !== 'create_reference' || request.npu_devices.length === 1);
+  const running = !!report && report.status === 'running';
+  button.disabled = modelPreflightInFlight || running || !valid;
+  if (running) { summary.textContent = '当前作业运行中；预检暂不执行，不代表模型不支持。'; return; }
+  if (modelPreflightInFlight) { summary.textContent = '只读预检中，不会训练或生成参考…'; return; }
+  if (!valid) {
+    summary.textContent = '选择已授权设备、模型并填写有效参考 ID 后预检；生成参考仅限单卡。';
+    return;
+  }
+  if (!modelPreflightResult || modelPreflightResult.key !== modelPreflightKey() ||
+      Date.now() - modelPreflightResult.checkedAt >= 60000) {
+    summary.textContent = '本次选择尚未预检；参数或参考变化后需重新检查。';
+    return;
+  }
+  const result = modelPreflightResult.value;
+  if (result.status === 'ready') {
+    summary.textContent = (model.action === 'compare' ? '本次参考匹配、预检通过' : '本次参考生成预检通过') + '；不代表训练通过，启动前仍会复检。';
+    return;
+  }
+  summary.textContent = result.status === 'not_checked' ? '本次预检未执行。' : '本次预检未通过，以下仅列未通过的项目。';
+  byId('npu-model-preflight-title').textContent = result.status === 'not_checked' ? '当前阻塞项（尚未预检）' : '本次预检未通过';
+  panel.hidden = !result.failures.length;
+  for (const failure of result.failures) {
+    const row = document.createElement('div');
+    row.className = 'unavailable-item';
+    const name = document.createElement('b');
+    name.textContent = model.name + ' · ' + failure.label;
+    row.append(name, document.createTextNode('：' + failure.message));
+    items.appendChild(row);
+  }
+}
+
+async function checkModelPreflight() {
+  renderModelPreflight();
+  if (byId('npu-model-preflight').disabled || npuMode !== 'model') return;
+  const key = modelPreflightKey();
+  const request = currentModelPreflightRequest();
+  modelPreflightInFlight = true;
+  modelPreflightResult = null;
+  renderModelPreflight();
+  try {
+    const value = await readJSON(await fetch('/api/stress/models/preflight', {
+      method:'POST', headers:{'Content-Type':'application/json','X-CATMonitor-Action':'stress'},
+      body:JSON.stringify(request)
+    }));
+    if (!['ready','failed','not_checked'].includes(value.status) || !Array.isArray(value.failures) ||
+        value.failures.some(f => !f || typeof f.code !== 'string' || typeof f.label !== 'string' || typeof f.message !== 'string') ||
+        !value.npu_model || value.npu_model.name !== request.npu_model.name ||
+        value.npu_model.action !== request.npu_model.action || value.npu_model.reference_id !== request.npu_model.reference_id ||
+        !Array.isArray(value.npu_devices) || !sameSelection(request.npu_devices, value.npu_devices) ||
+        (value.status === 'ready' && value.failures.length)) throw new Error('预检响应与本次选择不一致');
+    if (key === modelPreflightKey()) modelPreflightResult = {key, value, checkedAt:Date.now()};
+  } catch (error) {
+    // An unavailable old endpoint or transport failure is not model rejection.
+    if (key === modelPreflightKey()) modelPreflightResult = {key, checkedAt:Date.now(), value:{status:'not_checked',failures:[
+      {label:'只读预检未完成',message:'无法取得本次结果：'+error.message+'。不能认定模型不支持。'}]}};
+  } finally {
+    modelPreflightInFlight = false;
+    renderModelPreflight();
+  }
 }
 
 function renderNPUSelection() {
@@ -460,7 +597,9 @@ function renderNPUSelection() {
   field.hidden = !item || !selected || !selected.has('npu_burn');
   if (field.hidden) return;
   const p = profileParameters(item.profile || {});
-  const models = (p.allowed_models || '').split(',').filter(name => ['gpt3', 'llama2'].includes(name));
+  const capabilities = item.model_capabilities;
+  const models = (capabilities ? capabilities.allowed_models : (p.allowed_models || '').split(','))
+    .filter(name => ['gpt3', 'llama2'].includes(name));
   const memoryPolicy = byId('npu-model-memory');
   if (memoryPolicy) memoryPolicy.textContent = '完整参数 · ' + (p.model_memory_mode === 'checkpointed' ? '激活重计算' : (p.model_memory_mode === 'standard' ? '标准执行' : '显存策略未记录'));
   if (!models.includes(selectedNPUModel)) selectedNPUModel = models[0] || '';
@@ -486,7 +625,7 @@ function renderNPUSelection() {
   modelMode.onclick = () => { if (models.length) { npuMode = 'model'; renderNPUSelection(); } };
   byId('npu-model-availability').hidden = !!models.length;
   byId('npu-model-availability').textContent = '模型 SDC 尚未在当前部署启用；算子压测不受影响。';
-  const mayPrepareReference = p.allow_reference_generation === 'true';
+  const mayPrepareReference = capabilities ? capabilities.allow_reference_generation : p.allow_reference_generation === 'true';
   if (!mayPrepareReference) npuModelAction = 'compare';
   byId('npu-model-prepare').disabled = !mayPrepareReference;
   byId('npu-reference-permission').hidden = mayPrepareReference;
@@ -542,6 +681,10 @@ function renderNPUSelection() {
   const availableCases = selectableCases.map(item => item.name);
   if (selectedNPUCases === null) selectedNPUCases = new Set(defaultsCases);
   selectedNPUCases = new Set(Array.from(selectedNPUCases).filter(name => availableCases.includes(name)));
+  const parameterItems = byId('npu-operator-parameter-items');
+  parameterItems.replaceChildren();
+  byId('npu-operator-parameters').hidden = npuMode === 'model' || !selectedNPUCases.size;
+  appendOperatorDetails(parameterItems, selectableCases.filter(op => selectedNPUCases.has(op.name)), 'preview:npu');
   byId('npu-case-count').textContent = '已选 ' + selectedNPUCases.size + ' 项';
   byId('npu-case-hint').textContent = catalog.length
     ? '预检通过不等于实机通过，实际运行结果以作业报告为准。'
@@ -563,7 +706,7 @@ function renderNPUSelection() {
     label.append(input, name);
     cases.append(label);
   }
-  const unavailable = catalog.filter(item => !item.selectable || isNPUModel(item));
+  const unavailable = catalog.filter(item => !item.selectable && !isNPUModel(item));
   byId('npu-unavailable').hidden = !unavailable.length;
   const unavailableList = byId('npu-unavailable-items');
   unavailableList.replaceChildren();
@@ -575,6 +718,7 @@ function renderNPUSelection() {
     row.append(name, document.createTextNode(' · ' + unavailableNPUReason(candidate)));
     unavailableList.appendChild(row);
   }
+  renderModelPreflight();
 }
 
 function renderHistory() {
@@ -901,6 +1045,7 @@ function appendNPUResult(card, item, jobID, job) {
   timing.textContent = '累计用例时间是 CSV 各用例时间之和；设备可能并行执行。作业耗时按作业起止时间计算，包含启动、执行及收尾，不含提交前准入检查；两者不同。';
   trace.appendChild(timing);
   if (item.profile) renderProfileBody(trace, item.profile, 0);
+  appendJobOperatorParameters(trace, item, jobID);
   const csv = (item.output || '').match(/^CATMONITOR_NPU_BURN_RESULT_CSV=(.+)$/m);
   const csvPath = (item.npu_csv && item.npu_csv.path) || (csv && csv[1].trim());
   if (csvPath) appendDetailGrid(trace, [['本轮 CSV 文件', csvPath]]);
@@ -933,6 +1078,7 @@ function appendMetricContent(card, item, jobID, job) {
     summary.textContent = '执行详情';
     details.appendChild(summary);
     if (item.profile) renderProfileBody(details, item.profile, 0);
+    if (!request.name) appendJobOperatorParameters(details, item, jobID);
     const raw = document.createElement('pre');
     raw.textContent = item.output || item.message || '';
     details.appendChild(raw);
@@ -1246,6 +1392,8 @@ async function cancel() {
 byId('start').addEventListener('click', start);
 byId('cancel').addEventListener('click', cancel);
 byId('timeout').addEventListener('input', renderProfilePreview);
+byId('npu-model-preflight').addEventListener('click', checkModelPreflight);
+byId('npu-reference-id').addEventListener('input', renderModelPreflight);
 byId('show-latest').addEventListener('click', () => {
   viewedJobID = '';
   renderHistory();

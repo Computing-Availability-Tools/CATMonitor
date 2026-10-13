@@ -83,6 +83,16 @@ def write_json(path, value):
         os.fsync(target.fileno())
 
 
+class ModelPreflightError(ValueError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.preflight_code = code
+
+
+class ReferenceMissingError(FileNotFoundError):
+    preflight_code = "reference_missing"
+
+
 class ReferenceStore:
     def __init__(self, root, create=True):
         self.root = Path(root)
@@ -101,11 +111,14 @@ class ReferenceStore:
 
     def load(self, name, identity, expected_steps):
         path = self.path(name)
-        manifest = read_json(path / "manifest.json")
+        try:
+            manifest = read_json(path / "manifest.json")
+        except FileNotFoundError as exc:
+            raise ReferenceMissingError("reference has not been generated") from exc
         if type(manifest.get("schema_version")) is not int or manifest.get("schema_version") != 1 or manifest.get("complete") is not True:
-            raise ValueError("reference is not complete")
+            raise ModelPreflightError("reference_incomplete", "reference is not complete")
         if manifest.get("identity") != identity or manifest.get("steps") != expected_steps:
-            raise ValueError("reference configuration/software stack does not match")
+            raise ModelPreflightError("reference_mismatch", "reference configuration/software stack does not match")
         filename = manifest.get("baseline_file")
         if not isinstance(filename, str) or not re.fullmatch(
                 r"(?:gpt3|llama2)/[0-9a-f]{16}\.json", filename):
@@ -401,7 +414,7 @@ def main(argv=None):
     memory = basic_memory_preflight(config, devices, factory)
     if args.describe:
         if args.action == "create_reference" and store.path(args.reference).exists():
-            raise ValueError("reference ID already exists")
+            raise ModelPreflightError("reference_exists", "reference ID already exists")
         print(json.dumps(dict(preflight=memory["status"], model=args.model, action=args.action,
              reference_id=args.reference, devices=devices, expected_steps=step_count(config),
              memory_mode=memory_mode(), device_strategy="independent_sequential",
@@ -426,6 +439,13 @@ def cli_main(argv=None):
     try:
         return main(argv)
     except (ValueError, OSError, ImportError, KeyError, RuntimeError) as exc:
+        # Metadata-only failures stay RC != 0, but expose a typed reason. Do
+        # not infer missing/mismatched references by searching stderr strings.
+        args = sys.argv[1:] if argv is None else argv
+        if "--describe" in args:
+            code = getattr(exc, "preflight_code", "dependency_unavailable" if isinstance(exc, ImportError) else "preflight_failed")
+            print(json.dumps(dict(preflight="fail", code=code, message=str(exc),
+                                  hardware_validation="NOT_RUN")), file=PROTOCOL_OUT or sys.stdout)
         print("ERROR: model SDC: " + str(exc), file=sys.stderr)
         return 1
 

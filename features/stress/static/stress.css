@@ -270,6 +270,11 @@ h2 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
 .model-task-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; color: #b54708; font-size: 12px; }
 .model-task-status button, #npu-model-prepare { color: #175cd3; background: #eff4ff; }
 .model-selection .selection-details p { color: #667085; font-size: 12px; line-height: 1.6; }
+.model-preflight-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+#npu-model-preflight { color: #175cd3; background: #eff4ff; }
+.model-preflight-failures { margin-top: 12px; padding: 12px; border: 1px solid #fedf89; border-radius: 8px; background: #fffaeb; }
+.model-preflight-failures h4 { margin: 0 0 8px; font-size: 13px; color: #b54708; }
+.model-preflight-failures .unavailable-item { margin: 6px 0; font-size: 12px; line-height: 1.6; }
 .unavailable-item { margin: 8px 0; overflow-wrap: anywhere; }
 .unavailable-item b { color: #344054; }
 
@@ -312,6 +317,9 @@ h2 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
 .profile-parameter { display: flex; justify-content: space-between; gap: 10px; padding-bottom: 5px; border-bottom: 1px dashed #e4e7ec; font-size: 10px; }
 .profile-parameter span { color: var(--muted); }
 .profile-parameter b { text-align: right; overflow-wrap: anywhere; }
+.npu-operator-parameters { margin-top: 10px; }
+.npu-operator-parameters .detail-grid { grid-template-columns: minmax(0, 1fr); }
+.npu-operator-parameters .detail-value { overflow: visible; overflow-wrap: anywhere; white-space: pre-wrap; }
 .profile-checks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .profile-check {
   padding: 4px 7px;

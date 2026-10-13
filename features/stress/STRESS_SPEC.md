@@ -234,9 +234,28 @@ Controller shutdown 必须取消其 active job并等待终态持久化。
 | GET | `/stress/jobs/{id}` | 作业状态 |
 | POST | `/stress/jobs` | 提交 typed request |
 | POST | `/stress/jobs/{id}/cancel` | 取消 active job |
+| POST | `/stress/models/preflight` | 对本次模型、设备、参考执行有界只读预检；不创建 Job |
 
 POST 必须要求 `application/json`，请求体上限 64 KiB，拒绝未知字段。Busy 返回
 409；disabled/invalid 返回 400 或 403；不存在返回 404。
+
+模型预检请求为 `npu_devices` 与 `npu_model={name,action,reference_id}`，沿用管理员
+模型/设备 allowlist。Web 对应 `POST /api/stress/models/preflight`，仍只经
+`control.sock` 调用 Controller；要求 JSON、action header 和同源请求。
+响应 HTTP 200 的 `status=ready|failed|not_checked` 是预检语义，不是 workload
+结果；`failures` 只包含必需检查的失败或阻塞项，不包含通过项和未执行的 HBM 检查。
+活跃作业期间不探测 NPU，同一 Controller 同时最多一个有界模型预检。
+配置视图的 `model_capabilities` 独立公开管理员模型授权，不从算子目录或历史 PASS
+推断。前端按模型、设备、动作、参考 ID 和当前配置身份绑定预检显示；选择改变时
+丢弃旧结果。Run 仍重新进行准入，不复用此结果作为资源预约或硬件认证。
+
+算子 `case_catalog` 条目的可选 `config` 保存当前代际合并后的有效 JSON 配置，
+用于只读 tensor 参数预览。执行端的可选 `npu_parameters` 是独立执行回执：包含
+schema_version、job_id、chip_generation 和 operators[{name,config}]，在上游实际
+返回 TestCase 后记录，不重新读取部署目录。Controller 校验 Job ID/算子集合，
+深拷贝并保存到 BenchmarkResult/history，不依赖有界 console output。缺失或无效
+回执不补造、不代替 CSV/SDC 成功门禁；配置 run_count 不等于实际完成次数。
+预览与历史中的每个算子详情均默认折叠，参数不得作为新增自由输入或环境注入入口。
 
 ## 8. CLI
 

@@ -80,6 +80,13 @@ set -euo pipefail
 [ "${1-}" = --device ]
 [ "$2" = "$NPU_BURN_DEVICE" ]
 [ "$CATMONITOR_NPU_JOB_TIMEOUT_SECONDS" = 10 ]
+python3 - <<'PY'
+import json,os
+operators=[dict(name='matmul',config=dict(shape=[[[4,8],[8,16]]],dtype=['float16'],pattern=['gauss_random'],run_count=20)),
+           dict(name='conv2d',config=dict(input_data=[1,2,3,4],weight_data=[4,2,3,3],dtype=['float32'],pattern=['uniform_random'],run_count=20))]
+with open(os.environ['CATMONITOR_NPU_OPERATOR_PARAMETERS_PATH'],'w') as f:
+    json.dump(dict(schema_version=1,job_id=os.environ['CATMONITOR_NPU_JOB_ID'],chip_generation='A2',operators=operators),f)
+PY
 printf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\n' >"$NPU_BURN_OUTPUT_DIR/npu_burn_results.csv"
 IFS=, read -r -a ids <<<"$2"
 for id in "${ids[@]}"; do
@@ -110,6 +117,9 @@ r=json.load(open(sys.argv[1]))
 assert r['status']=='healthy' and r['npu_devices']==[0,1]
 assert r['npu_cases']==['matmul','conv2d']
 assert r['values']['errors']==0
+assert r['npu_parameters']['job_id']=='eeff'
+assert r['npu_parameters']['operators'][0]['config']['shape']==[[[4,8],[8,16]]]
+assert r['npu_parameters']['operators'][1]['config']['run_count']==20
 PY
 export CATMONITOR_E2E_MISSING_DEVICE=1
 printf '%s\n' '{"protocol_version":1,"job_id":"eeee","benchmark":"npu_burn","timeout_seconds":10,"npu_devices":[0,1],"options":{}}' |

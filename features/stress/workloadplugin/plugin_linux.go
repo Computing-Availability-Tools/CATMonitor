@@ -30,16 +30,17 @@ import (
 
 // Command is a fully resolved workload invocation owned by an image plugin.
 type Command struct {
-	Path        string
-	Args        []string
-	Dir         string
-	Env         []string
-	ResultDir   string
-	Complete    func(string) (string, error)
-	NPUDevices  workloadapi.DeviceIDs
-	NPUCases    workloadapi.CaseNames
-	Cleanup     func()
-	ModelResult func() (*workloadapi.ModelResult, error)
+	Path               string
+	Args               []string
+	Dir                string
+	Env                []string
+	ResultDir          string
+	Complete           func(string) (string, error)
+	NPUDevices         workloadapi.DeviceIDs
+	NPUCases           workloadapi.CaseNames
+	Cleanup            func()
+	ModelResult        func() (*workloadapi.ModelResult, error)
+	OperatorParameters func(string) (*workloadapi.NPUOperatorParameters, error)
 }
 
 func Describe(ctx context.Context, name string) (*workloadapi.ExecutionProfile, error) {
@@ -440,6 +441,7 @@ func resolveNPUBurn() (Command, error) {
 		return Command{}, err
 	}
 	csv := filepath.Join(runOutput, "npu_burn_results.csv")
+	parametersPath := filepath.Join(runOutput, "operator-parameters.json")
 	selected := devices
 	if env("NPU_BURN_DEVICE") != "all" {
 		selected = strings.Split(env("NPU_BURN_DEVICE"), ",")
@@ -453,16 +455,20 @@ func resolveNPUBurn() (Command, error) {
 	// CANN JIT also writes relative to cwd (kernel_meta), not only HOME.
 	// Keep those files inside the deployment's bounded writable tmpfs, and
 	// remove them with this job. Never make the image root writable.
-	return Command{Path: executable, Args: args, Dir: runHome, NPUDevices: selectedIDs, NPUCases: selectedCases, Cleanup: cleanup, Env: []string{"HOME=" + runHome, "NPU_BURN_OUTPUT_DIR=" + runOutput}, Complete: func(console string) (string, error) {
-		if strings.Contains(console, "| FAIL |") {
-			return console, errors.New("Ascend NPU Burn global device summary reported failure")
-		}
-		summary, err := summarizeSelectedCSV(csv, selectedCases, selected...)
-		if err != nil {
-			return console, err
-		}
-		return strings.TrimRight(console, "\n") + "\n" + summary + "\nCATMONITOR_NPU_BURN_RESULT_CSV=" + csv + "\n", nil
-	}}, nil
+	return Command{Path: executable, Args: args, Dir: runHome, NPUDevices: selectedIDs, NPUCases: selectedCases, Cleanup: cleanup,
+		Env: []string{"HOME=" + runHome, "NPU_BURN_OUTPUT_DIR=" + runOutput, "CATMONITOR_NPU_OPERATOR_PARAMETERS_PATH=" + parametersPath},
+		OperatorParameters: func(jobID string) (*workloadapi.NPUOperatorParameters, error) {
+			return readOperatorParameters(parametersPath, jobID, generation, selectedCases)
+		}, Complete: func(console string) (string, error) {
+			if strings.Contains(console, "| FAIL |") {
+				return console, errors.New("Ascend NPU Burn global device summary reported failure")
+			}
+			summary, err := summarizeSelectedCSV(csv, selectedCases, selected...)
+			if err != nil {
+				return console, err
+			}
+			return strings.TrimRight(console, "\n") + "\n" + summary + "\nCATMONITOR_NPU_BURN_RESULT_CSV=" + csv + "\n", nil
+		}}, nil
 }
 
 func profile(name string, parameters []workloadapi.ProfileParameter, resources workloadapi.ResourceProfile, assets []workloadapi.AssetCheck, mpi workloadapi.MPICheck, failed, warned int) *workloadapi.ExecutionProfile {

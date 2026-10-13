@@ -15,11 +15,12 @@ import (
 
 type npuCaseCatalog struct {
 	Cases []struct {
-		Name               string   `json:"name"`
-		Dtypes             []string `json:"dtypes"`
-		Selectable         bool     `json:"selectable"`
-		Reason             string   `json:"reason"`
-		HardwareValidation string   `json:"hardware_validation"`
+		Name               string                     `json:"name"`
+		Dtypes             []string                   `json:"dtypes"`
+		Selectable         bool                       `json:"selectable"`
+		Reason             string                     `json:"reason"`
+		HardwareValidation string                     `json:"hardware_validation"`
+		Config             map[string]json.RawMessage `json:"config,omitempty"`
 	} `json:"cases"`
 	Selected            workloadapi.CaseNames `json:"selected"`
 	SelectionError      string                `json:"selection_error"`

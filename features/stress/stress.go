@@ -79,20 +79,21 @@ type AssetCheck = workloadapi.AssetCheck
 type MPICheck = workloadapi.MPICheck
 type PreflightResult = workloadapi.PreflightResult
 type BenchmarkResult struct {
-	Name         string                   `json:"name"`
-	Status       Status                   `json:"status"`
-	Message      string                   `json:"message"`
-	StartedAt    time.Time                `json:"started_at"`
-	FinishedAt   time.Time                `json:"finished_at"`
-	DurationMS   int64                    `json:"duration_ms"`
-	Values       map[string]float64       `json:"values,omitempty"`
-	Source       string                   `json:"source,omitempty"`
-	Output       string                   `json:"output,omitempty"`
-	Profile      *ExecutionProfile        `json:"profile,omitempty"`
-	NPUSelection *NPUSelection            `json:"npu_selection,omitempty"`
-	NPUCSV       *NPUCSVResult            `json:"npu_csv,omitempty"`
-	NPUModel     *workloadapi.ModelResult `json:"npu_model,omitempty"`
-	Failure      *workloadapi.Failure     `json:"failure,omitempty"`
+	Name          string                             `json:"name"`
+	Status        Status                             `json:"status"`
+	Message       string                             `json:"message"`
+	StartedAt     time.Time                          `json:"started_at"`
+	FinishedAt    time.Time                          `json:"finished_at"`
+	DurationMS    int64                              `json:"duration_ms"`
+	Values        map[string]float64                 `json:"values,omitempty"`
+	Source        string                             `json:"source,omitempty"`
+	Output        string                             `json:"output,omitempty"`
+	Profile       *ExecutionProfile                  `json:"profile,omitempty"`
+	NPUSelection  *NPUSelection                      `json:"npu_selection,omitempty"`
+	NPUCSV        *NPUCSVResult                      `json:"npu_csv,omitempty"`
+	NPUModel      *workloadapi.ModelResult           `json:"npu_model,omitempty"`
+	NPUParameters *workloadapi.NPUOperatorParameters `json:"npu_parameters,omitempty"`
+	Failure       *workloadapi.Failure               `json:"failure,omitempty"`
 }
 
 // Compact CSV evidence is preserved when history drops verbose command output.

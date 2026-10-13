@@ -217,6 +217,7 @@ func run(args []string) error {
 	cmd.Env = append(os.Environ(), spec.Env...)
 	if request.Benchmark == "npu_burn" {
 		cmd.Env = append(cmd.Env, "CATMONITOR_NPU_JOB_TIMEOUT_SECONDS="+strconv.FormatInt(request.TimeoutSeconds, 10))
+		cmd.Env = append(cmd.Env, "CATMONITOR_NPU_JOB_ID="+request.JobID)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killGroup(cmd.Process, syscall.SIGKILL) }
@@ -243,6 +244,15 @@ func run(args []string) error {
 	result := workloadapi.Result{
 		ProtocolVersion: workloadapi.ProtocolVersion, JobID: request.JobID, Benchmark: request.Benchmark,
 		StartedAt: started, FinishedAt: finished, DurationMS: finished.Sub(started).Milliseconds(), Output: resultOutput,
+	}
+	if spec.OperatorParameters != nil {
+		// Presentation evidence does not change CSV/SDC or timeout semantics.
+		parameters, receiptErr := spec.OperatorParameters(request.JobID)
+		if receiptErr == nil {
+			result.NPUParameters = parameters
+		} else {
+			fmt.Fprintln(os.Stderr, "operator parameter receipt unavailable:", receiptErr)
+		}
 	}
 	cancelled := fileExists(filepath.Join(jobDir, "cancel.requested"))
 	switch {

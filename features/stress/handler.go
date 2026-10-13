@@ -42,6 +42,7 @@ func Register(mux *http.ServeMux, client *ControlClient, listenAddr string, logg
 	mux.HandleFunc("GET /api/stress/runs/{id}", h.job)
 	mux.HandleFunc("POST /api/stress/runs", h.run)
 	mux.HandleFunc("POST /api/stress/runs/{id}/cancel", h.cancel)
+	mux.HandleFunc("POST /api/stress/models/preflight", h.modelPreflight)
 }
 
 func (h *WebHandler) index(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +151,25 @@ func (h *WebHandler) run(w http.ResponseWriter, r *http.Request) {
 	}
 	report.Cancellable = true
 	writeJSONStatus(w, report, http.StatusAccepted)
+}
+
+func (h *WebHandler) modelPreflight(w http.ResponseWriter, r *http.Request) {
+	// Though read-only, this may import the runtime. Keep the same bounded JSON,
+	// action-header and same-origin protections as other operator requests.
+	if !h.allowRequest(w, r) {
+		return
+	}
+	var request ModelPreflightRequest
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.client.PreflightModel(r.Context(), request)
+	if err != nil {
+		h.proxyError(w, err)
+		return
+	}
+	writeJSON(w, result)
 }
 func (h *WebHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	if !h.allowRequest(w, r) {

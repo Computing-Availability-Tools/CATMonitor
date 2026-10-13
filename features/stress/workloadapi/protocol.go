@@ -35,21 +35,22 @@ type Request struct {
 // Result is the common CPU/NPU terminal envelope returned by
 // catmonitor-stress-exec.
 type Result struct {
-	ProtocolVersion int                `json:"protocol_version"`
-	JobID           string             `json:"job_id"`
-	Benchmark       string             `json:"benchmark"`
-	Status          string             `json:"status"`
-	StartedAt       time.Time          `json:"started_at"`
-	FinishedAt      time.Time          `json:"finished_at"`
-	DurationMS      int64              `json:"duration_ms"`
-	Message         string             `json:"message"`
-	Values          map[string]float64 `json:"values,omitempty"`
-	Source          string             `json:"source,omitempty"`
-	Output          string             `json:"output,omitempty"`
-	NPUDevices      DeviceIDs          `json:"npu_devices,omitempty"`
-	NPUCases        CaseNames          `json:"npu_cases,omitempty"`
-	NPUModel        *ModelResult       `json:"npu_model,omitempty"`
-	Failure         *Failure           `json:"failure,omitempty"`
+	ProtocolVersion int                    `json:"protocol_version"`
+	JobID           string                 `json:"job_id"`
+	Benchmark       string                 `json:"benchmark"`
+	Status          string                 `json:"status"`
+	StartedAt       time.Time              `json:"started_at"`
+	FinishedAt      time.Time              `json:"finished_at"`
+	DurationMS      int64                  `json:"duration_ms"`
+	Message         string                 `json:"message"`
+	Values          map[string]float64     `json:"values,omitempty"`
+	Source          string                 `json:"source,omitempty"`
+	Output          string                 `json:"output,omitempty"`
+	NPUDevices      DeviceIDs              `json:"npu_devices,omitempty"`
+	NPUCases        CaseNames              `json:"npu_cases,omitempty"`
+	NPUModel        *ModelResult           `json:"npu_model,omitempty"`
+	NPUParameters   *NPUOperatorParameters `json:"npu_parameters,omitempty"`
+	Failure         *Failure               `json:"failure,omitempty"`
 }
 
 // State is returned by the workload status operation.

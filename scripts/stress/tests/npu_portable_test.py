@@ -137,6 +137,11 @@ class PortableTest(unittest.TestCase):
                 select_cases('A2', 'quant_matmul', '')
         supported = {'float32','float16','float','bfloat16','double','int64','int32','int16','int8','uint8','bool'}
         items = {i['name']: i for i in catalog('A3', supported_dtypes=supported)}
+        effective = {name: config for group in load_config('A3')['cases'] for name, config in group.items()}
+        self.assertEqual(items['matmul']['config'], effective['matmul'])
+        self.assertEqual(items['conv2d']['config'], effective['conv2d'])
+        items['matmul']['config']['run_count'] = -1
+        self.assertEqual({i['name']: i for i in catalog('A3')}['matmul']['config'], effective['matmul'])
         self.assertTrue(items['matmul']['selectable'])
         self.assertTrue(items['quant_matmul']['selectable'])
         self.assertTrue(all(i['hardware_validation']=='NOT_RUN' for i in items.values()))

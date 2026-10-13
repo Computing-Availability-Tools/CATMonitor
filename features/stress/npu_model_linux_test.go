@@ -56,6 +56,21 @@ func TestRealModelDescribeProfileMatchesControllerContract(t *testing.T) {
 		if profile.Preflight.Status != capacity.want {
 			t.Fatalf("RC=0 must not override JSON preflight: %s, want %s", profile.Preflight.Status, capacity.want)
 		}
+		if capacity.want == CheckFail {
+			for _, asset := range profile.Assets {
+				if asset.Name == "model_reference_preflight" && asset.Status != CheckPass {
+					t.Fatalf("HBM failure must not be labelled missing reference: %+v", asset)
+				}
+			}
+		}
+	}
+	for _, reason := range []string{"reference_missing", "reference_mismatch", "dependency_unavailable"} {
+		exe := write("model-adapter", "#!/bin/sh\nprintf '%s\\n' '{\"preflight\":\"fail\",\"code\":\""+reason+"\",\"message\":\"synthetic readonly blocker\"}'\nexit 1\n", 0755)
+		t.Setenv("NPU_BURN_EXECUTABLE", exe)
+		profile, err := workloadplugin.Describe(context.Background(), "npu_burn")
+		if err != nil || profile.Preflight.Status != CheckFail || parameterValue(profile, "model_preflight_code") != reason {
+			t.Fatalf("failed Describe must retain typed reason: %+v %v", profile, err)
+		}
 	}
 }
 

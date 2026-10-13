@@ -534,7 +534,7 @@
  class WeightQuantBatchMatmulOp(OpBase, SingleTemplate):
 --- /dev/null
 +++ b/ascend_npu_burn/case_catalog.py
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,78 @@
 +"""Hardware-free case inventory; availability here is not hardware certification."""
 +import copy
 +import json
@@ -587,6 +587,7 @@
 +                    reason = 'unsupported dtype APIs: ' + ','.join(missing)
 +            result.append(dict(name=name, seq=case['seq'], dtypes=dtypes,
 +                               selectable=not reason, reason=reason,
++                               config=copy.deepcopy(case),
 +                               hardware_validation='NOT_RUN'))
 +    return result
 +

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 可靠性压测</title>
-  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261013.3">
+  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261013.5">
 </head>
 <body>
   <header class="topbar">
@@ -105,6 +105,14 @@
               <p id="npu-reference-permission" class="selection-hint" hidden>当前部署未授权生成参考，请管理员准备或授权。</p>
             </details>
             <p id="npu-model-memory" class="selection-hint"></p>
+            <div class="model-preflight-actions">
+              <button id="npu-model-preflight" type="button">预检本次选择（不训练）</button>
+              <span id="npu-model-preflight-summary" class="selection-hint" role="status"></span>
+            </div>
+            <div id="npu-model-preflight-failures" class="model-preflight-failures" hidden>
+              <h4 id="npu-model-preflight-title">本次预检未通过</h4>
+              <div id="npu-model-preflight-items"></div>
+            </div>
             <p class="selection-hint">多卡逐卡独立运行，不合并显存。预检通过不代表训练或 SDC 通过。</p>
           </div>
           <div id="npu-operator-heading" class="npu-selection-heading">
@@ -113,8 +121,12 @@
           </div>
           <div id="npu-case-choices" class="npu-case-grid"></div>
           <p id="npu-case-hint" class="selection-hint">预检通过不等于实机通过，以本次结果为准。</p>
+          <details id="npu-operator-parameters" class="selection-details" hidden>
+            <summary>已选算子的 tensor 参数（只读）</summary>
+            <div id="npu-operator-parameter-items"></div>
+          </details>
           <details id="npu-unavailable" class="selection-details" hidden>
-            <summary>当前不可用项目及原因</summary>
+            <summary>算子准入未通过的项目及原因</summary>
             <div id="npu-unavailable-items"></div>
           </details>
           <details class="selection-details">
@@ -212,6 +224,6 @@
       }
     }, 3000);
   </script>
-  <script src="./static/stress.js?v=20261013.3"></script>
+  <script src="./static/stress.js?v=20261013.5"></script>
 </body>
 </html>

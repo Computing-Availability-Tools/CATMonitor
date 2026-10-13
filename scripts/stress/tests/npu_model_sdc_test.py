@@ -210,6 +210,54 @@ class ReferenceTests(unittest.TestCase):
         sdc.write_json(stage / "gpt3/0123456789abcdef.json", records())
         return self.store.publish(name, stage, IDENTITY, 3, "generation-job")
 
+    def test_readonly_describe_emits_typed_reference_failure_without_writes(self):
+        final = self.publish()
+        manifest_path = final / "manifest.json"
+        original = manifest_path.read_bytes()
+        for scenario, action, reference, identity, want in (
+                ("missing", "compare", "missing", IDENTITY, "reference_missing"),
+                ("mismatch", "compare", "ref1", {**IDENTITY, "config": {"run_count": 3}}, "reference_mismatch"),
+                ("exists", "create_reference", "ref1", IDENTITY, "reference_exists"),
+                ("incomplete", "compare", "ref1", IDENTITY, "reference_incomplete")):
+            with self.subTest(scenario=scenario):
+                manifest_path.write_bytes(original)
+                if scenario == "incomplete":
+                    manifest = json.loads(original)
+                    manifest["complete"] = False
+                    manifest_path.write_text(json.dumps(manifest))
+                before = {p.relative_to(self.root): p.read_bytes()
+                          for p in self.root.rglob("*") if p.is_file()}
+                output, error = io.StringIO(), io.StringIO()
+                with patch.dict(os.environ, {"NPU_BURN_CHIP_GENERATION": "A2",
+                                             "CATMONITOR_MODEL_REFERENCE_ROOT": str(self.store.root)}), \
+                        patch.object(sdc, "load_runtime", return_value=(CONFIG, identity, None)), \
+                        patch.object(sdc, "basic_memory_preflight", return_value={"status": "pass"}), \
+                        patch.object(sdc, "execute") as execute, redirect_stdout(output), redirect_stderr(error):
+                    rc = sdc.cli_main(["--model", "gpt3", "--action", action,
+                                       "--reference", reference, "--devices", "0", "--describe"])
+                self.assertEqual(rc, 1)
+                proof = json.loads(output.getvalue())
+                self.assertEqual(proof["preflight"], "fail")
+                self.assertEqual(proof["code"], want)
+                self.assertEqual(proof["hardware_validation"], "NOT_RUN")
+                execute.assert_not_called()
+                after = {p.relative_to(self.root): p.read_bytes()
+                         for p in self.root.rglob("*") if p.is_file()}
+                self.assertEqual(before, after, "metadata probe mutated immutable references")
+
+    def test_readonly_import_failure_is_not_missing_reference_or_hardware_failure(self):
+        output, error = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, {"NPU_BURN_CHIP_GENERATION": "A2"}), \
+                patch.object(sdc, "load_runtime", side_effect=ImportError("transformers unavailable")), \
+                patch.object(sdc, "execute") as execute, redirect_stdout(output), redirect_stderr(error):
+            rc = sdc.cli_main(["--model", "llama2", "--action", "compare",
+                               "--reference", "ref1", "--devices", "0", "--describe"])
+        self.assertEqual(rc, 1)
+        proof = json.loads(output.getvalue())
+        self.assertEqual(proof["code"], "dependency_unavailable")
+        self.assertEqual(proof["hardware_validation"], "NOT_RUN")
+        execute.assert_not_called()
+
     def test_complete_reference_and_stack_match(self):
         self.publish()
         self.assertEqual(self.store.load("ref1", IDENTITY, 3), self.store.root / "ref1")
