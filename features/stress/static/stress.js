@@ -1101,9 +1101,25 @@ function renderReport() {
 }
 
 async function readJSON(response) {
-  const body = await response.json().catch(() => ({}));
+  let body;
+  try {
+    body = await response.json();
+  } catch (_) {
+    throw new Error('接口未返回有效 JSON，请检查访问地址或反向代理配置。');
+  }
   if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status));
   return body;
+}
+
+function refreshFailure(error) {
+  // A transport failure is not a failed workload/preflight verdict. Keep the
+  // last successfully loaded selections/report, but do not present them as
+  // fresh or allow a new operator request until connectivity recovers.
+  const networkError = error && error.name === 'TypeError' &&
+    /failed to fetch|load failed|networkerror|network request failed/i.test(error.message || '');
+  return networkError
+    ? {label: '连接中断', message: '无法连接 Web 服务，请检查地址和网络；通过 SSH 访问时，请确认隧道仍在运行。'}
+    : {label: '读取失败', message: '压测数据读取失败：' + error.message};
 }
 
 async function refresh() {
@@ -1128,10 +1144,12 @@ async function refresh() {
     renderHistory();
     renderReport();
   } catch (error) {
-    byId('policy').textContent = '配置接口读取失败：' + error.message;
-    byId('policy-state').textContent = '加载失败';
+    const failure = refreshFailure(error);
+    byId('policy').textContent = failure.message;
+    byId('policy-state').textContent = failure.label;
     byId('policy-state').className = 'policy-badge blocked';
-    setError(error.message);
+    byId('start').disabled = true;
+    setError(failure.message);
   } finally {
     refreshInFlight = false;
   }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 可靠性压测</title>
-  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261013.2">
+  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261013.3">
 </head>
 <body>
   <header class="topbar">
@@ -167,7 +167,7 @@
           <div class="coverage-item"><span class="coverage-mark hpcg-mark" aria-hidden="true"></span><div><b>综合计算</b><small>HPCG · Memory / Compute / MPI</small></div></div>
           <div class="coverage-item"><span class="coverage-mark npu-burn-mark" aria-hidden="true"></span><div><b>昇腾 NPU</b><small>Ascend NPU Burn · Compute / SDC</small></div></div>
         </div>
-        <div class="result-rule"><span>判定规则</span><b>运行成功即通过</b><p>不设置性能阈值。STREAM/HPL/HPCG 达到计划时限且此前未发生错误可记录为通过；NPU Burn 必须生成完整 PASS/SDC 结果。模型参考生成不等同于 SDC 检测通过。</p></div>
+        <div class="result-rule"><span>判定规则</span><b>执行完成，校验通过</b><p>不设置性能阈值。CPU 项目按有效结果或无错误达到计划时限判定；NPU 算子必须生成本轮完整 PASS/SDC 结果且错误数为 0。模型必须完成与匹配参考的对照；生成参考不等于检测通过。</p></div>
       </aside>
     </div>
 
@@ -212,6 +212,6 @@
       }
     }, 3000);
   </script>
-  <script src="./static/stress.js?v=20261013.2"></script>
+  <script src="./static/stress.js?v=20261013.3"></script>
 </body>
 </html>

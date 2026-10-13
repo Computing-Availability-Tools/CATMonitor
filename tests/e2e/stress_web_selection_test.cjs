@@ -79,9 +79,11 @@ const html = fs.readFileSync(path.join(__dirname, '../../features/stress/static/
 assert.match(html, /<details id="profile-preview"[^>]*>/, 'deployment details are collapsed by default');
 assert.doesNotMatch(html, /<details id="profile-preview"[^>]*\bopen\b/);
 assert.match(html, /<details class="panel history-panel">/);
-assert.match(html, /能力覆盖.*[\s\S]*运行成功即通过/);
+assert.match(html, /能力覆盖.*[\s\S]*执行完成，校验通过/);
+assert.doesNotMatch(html, /运行成功即通过/);
 assert.match(html, /STREAM · Copy \/ Scale \/ Add \/ Triad/);
-assert.match(html, /NPU Burn 必须生成完整 PASS\/SDC 结果/);
+assert.match(html, /NPU 算子必须生成本轮完整 PASS\/SDC 结果且错误数为 0/);
+assert.match(html, /模型必须完成与匹配参考的对照；生成参考不等于检测通过/);
 assert.doesNotMatch(html, /<select id="npu-mode"|<select id="npu-model-name"|<select id="npu-model-action"|hero-visual/);
 assert.match(html, /id="npu-mode-model"[^>]*>模型 SDC/);
 assert.match(html, /首次使用：准备参考/);
@@ -189,6 +191,32 @@ assert.match(allText(nodes.get('result-cards')), /尚无完整 CSV 用例结果�
 assert.doesNotMatch(allText(nodes.get('result-cards')), /14 \/ 14|检测错误 0/);
 vm.runInContext(`report=null;`, context);
 (async () => {
+  const lostConnection = vm.runInContext('refreshFailure(new TypeError("Failed to fetch"))', context);
+  assert.equal(lostConnection.label, '连接中断');
+  assert.match(lostConnection.message, /SSH.*隧道/);
+  assert.doesNotMatch(lostConnection.message, /预检失败|算子失败/);
+  assert.equal(vm.runInContext('refreshFailure(new TypeError("Cannot read properties of undefined"))', context).label,
+    '读取失败', 'a rendering/schema error is not a disconnected network');
+  const controllerError = vm.runInContext('refreshFailure(new Error("HTTP 503"))', context);
+  assert.equal(controllerError.label, '读取失败');
+  assert.match(controllerError.message, /HTTP 503/);
+  context.invalidJSON = {ok: true, json: async () => { throw new SyntaxError('Unexpected token <'); }};
+  await assert.rejects(vm.runInContext('readJSON(invalidJSON)', context), /有效 JSON/);
+  const failureNodes = new Map();
+  const failureContext = vm.createContext({console,
+    document: {getElementById(id) { if (!failureNodes.has(id)) failureNodes.set(id, element()); return failureNodes.get(id); }, createElement: element, createTextNode: text => text},
+    window: {clearTimeout() {}, addEventListener() {}}, setTimeout() {}, setInterval() {},
+    fetch: async () => { throw new TypeError('Failed to fetch'); }});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../features/stress/static/stress.js'), 'utf8'), failureContext);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failureNodes.get('policy-state').textContent, '连接中断');
+  assert.equal(failureNodes.get('start').disabled, true, 'lost connectivity must disable new operator requests');
+  failureContext.fetch = async url => ({ok: true, json: async () => url.includes('/config')
+    ? {enabled:true, benchmarks:[{name:'stream', enabled:true, available:true, timeout_seconds:60}], default_benchmarks:['stream']}
+    : url.includes('/history') ? [] : null});
+  await vm.runInContext('refresh()', failureContext);
+  assert.notEqual(failureNodes.get('policy-state').textContent, '连接中断');
+  assert.equal(failureNodes.get('start').disabled, false, 'a successful refresh must restore the Run control');
   await vm.runInContext('start()', context);
   assert.equal(requests.length, 1);
   assert.deepEqual(JSON.parse(requests[0].body).npu_devices, [0, 1]);
