@@ -7,6 +7,11 @@ let report = null;
 let selected = null;
 let selectedNPUDevices = null;
 let selectedNPUCases = null;
+let npuMode = 'operators';
+let selectedNPUModel = '';
+let npuModelAction = 'compare';
+let refreshInFlight = false;
+let configRefreshedAt = 0;
 let historyReports = [];
 let viewedJobID = '';
 const expandedProfiles = new Set();
@@ -18,6 +23,7 @@ const benchmarkInfo = {
   hpcg: {description: '综合计算 · 内存 · MPI'},
   npu_burn: {description: 'NPU 计算 · SDC 检测'}
 };
+const benchmarkDisplayOrder = ['hpcg', 'hpl', 'stream', 'npu_burn'];
 const statusInfo = {
   healthy: {label: '通过', cls: 'ok'},
   time_limit_reached: {label: '通过 · 达到时限', cls: 'ok'},
@@ -344,7 +350,9 @@ function renderConfig() {
   }
   const running = report && report.status === 'running';
 
-  for (const item of config.benchmarks || []) {
+  const displayBenchmarks = (config.benchmarks || []).slice().sort((a, b) =>
+    benchmarkDisplayOrder.indexOf(a.name) - benchmarkDisplayOrder.indexOf(b.name));
+  for (const item of displayBenchmarks) {
     const available = item.enabled && item.available;
     const info = benchmarkInfo[item.name] || {
       description: '验证节点在高负载下的运行可靠性',
@@ -417,6 +425,7 @@ function renderConfig() {
   byId('policy').hidden = !reasons.length;
   byId('policy-state').className = 'policy-badge ' + (reasons.length ? 'blocked' : 'ready');
   byId('start').disabled = !config.enabled || running || selectable.length === 0;
+  byId('start-label').textContent = '开始压测';
   byId('cancel').hidden = !(running && report.cancellable);
   byId('progress-panel').hidden = !running;
   byId('progress-benchmark').textContent = activeBenchmark()
@@ -451,24 +460,55 @@ function renderNPUSelection() {
   field.hidden = !item || !selected || !selected.has('npu_burn');
   if (field.hidden) return;
   const p = profileParameters(item.profile || {});
-  const models = (p.allowed_models || '').split(',').filter(Boolean);
+  const models = (p.allowed_models || '').split(',').filter(name => ['gpt3', 'llama2'].includes(name));
   const memoryPolicy = byId('npu-model-memory');
   if (memoryPolicy) memoryPolicy.textContent = '完整参数 · ' + (p.model_memory_mode === 'checkpointed' ? '激活重计算' : (p.model_memory_mode === 'standard' ? '标准执行' : '显存策略未记录'));
-  const modelSelect = byId('npu-model-name');
-  const lastModel = modelSelect.value;
-  modelSelect.replaceChildren();
+  if (!models.includes(selectedNPUModel)) selectedNPUModel = models[0] || '';
+  const modelChoices = byId('npu-model-choices');
+  modelChoices.replaceChildren();
   for (const name of models) {
-    const option = document.createElement('option'); option.value = name; option.textContent = name; modelSelect.appendChild(option);
+    const choice = document.createElement('button');
+    choice.type = 'button';
+    choice.value = name;
+    choice.className = 'model-choice-button';
+    choice.textContent = name === 'gpt3' ? 'GPT3' : 'Llama2';
+    choice.setAttribute('aria-pressed', String(selectedNPUModel === name));
+    choice.onclick = () => { selectedNPUModel = name; renderNPUSelection(); };
+    modelChoices.appendChild(choice);
   }
-  if (models.includes(lastModel)) modelSelect.value = lastModel;
-  byId('npu-mode').querySelector('option[value="model"]').disabled = !models.length;
-  if (!models.length) byId('npu-mode').value = 'operators';
-  byId('npu-model-action').querySelector('option[value="create_reference"]').disabled = p.allow_reference_generation !== 'true';
-  if (p.allow_reference_generation !== 'true') byId('npu-model-action').value = 'compare';
-  byId('npu-model-selection').hidden = byId('npu-mode').value !== 'model';
-  byId('npu-operator-heading').hidden = byId('npu-mode').value === 'model';
-  byId('npu-case-choices').hidden = byId('npu-mode').value === 'model';
-  byId('npu-mode').onchange = () => renderNPUSelection();
+  if (!models.length) npuMode = 'operators';
+  const operatorMode = byId('npu-mode-operators');
+  const modelMode = byId('npu-mode-model');
+  modelMode.disabled = !models.length;
+  operatorMode.setAttribute('aria-pressed', String(npuMode === 'operators'));
+  modelMode.setAttribute('aria-pressed', String(npuMode === 'model'));
+  operatorMode.onclick = () => { npuMode = 'operators'; renderNPUSelection(); };
+  modelMode.onclick = () => { if (models.length) { npuMode = 'model'; renderNPUSelection(); } };
+  byId('npu-model-availability').hidden = !!models.length;
+  byId('npu-model-availability').textContent = '模型 SDC 尚未在当前部署启用；算子压测不受影响。';
+  const mayPrepareReference = p.allow_reference_generation === 'true';
+  if (!mayPrepareReference) npuModelAction = 'compare';
+  byId('npu-model-prepare').disabled = !mayPrepareReference;
+  byId('npu-reference-permission').hidden = mayPrepareReference;
+  byId('npu-model-prepare').onclick = () => {
+    if (mayPrepareReference) { npuModelAction = 'create_reference'; renderNPUSelection(); }
+  };
+  byId('npu-model-compare').onclick = () => { npuModelAction = 'compare'; renderNPUSelection(); };
+  const preparing = npuModelAction === 'create_reference';
+  byId('npu-model-preparing').hidden = !preparing;
+  byId('npu-reference-setup').hidden = preparing;
+  byId('npu-reference-label').textContent = preparing ? '新参考 ID（不能覆盖已有参考）' : '对照参考 ID';
+  byId('npu-reference-id').placeholder = preparing ? '例如 gpt3-a2-baseline-01' : '填写已生成的参考 ID';
+  if (npuMode === 'model' && selected.size === 1) {
+    byId('start-label').textContent = preparing ? '生成参考' : '开始 SDC 检测';
+  } else {
+    byId('start-label').textContent = '开始压测';
+  }
+  byId('npu-model-selection').hidden = npuMode !== 'model';
+  byId('npu-operator-heading').hidden = npuMode === 'model';
+  byId('npu-case-choices').hidden = npuMode === 'model';
+  byId('npu-case-count').hidden = npuMode === 'model';
+  byId('npu-case-hint').hidden = npuMode === 'model';
   const available = logicalIDs(p.available_devices);
   const defaults = p.devices === 'all' ? available : logicalIDs(p.devices);
   const allowed = p.allowed_devices === 'all' ? available : logicalIDs(p.allowed_devices || p.devices);
@@ -508,14 +548,6 @@ function renderNPUSelection() {
     : '当前镜像未提供算子目录；仅使用部署默认用例。';
   const cases = byId('npu-case-choices');
   cases.replaceChildren();
-  const commonNames = ['matmul', 'conv2d', 'permute', 'fusion_attention', 'matmul_atomic', 'matmul_sdma'];
-  const more = selectableCases.filter(candidate => !commonNames.includes(candidate.name));
-  const moreDetails = disclosure('selection:more-operators', '更多算子（' + more.length + ' 项）');
-  moreDetails.className = 'selection-details npu-more';
-  const moreGrid = document.createElement('div');
-  moreGrid.className = 'npu-case-grid';
-  const extraSelected = more.filter(candidate => selectedNPUCases.has(candidate.name)).length;
-  moreDetails.children[0].textContent += extraSelected ? ' · 已选 ' + extraSelected + ' 项' : '';
   for (const candidate of selectableCases) {
     const label = document.createElement('label');
     label.className = 'npu-choice';
@@ -529,11 +561,7 @@ function renderNPUSelection() {
     const name = document.createElement('span');
     name.textContent = candidate.name;
     label.append(input, name);
-    (commonNames.includes(candidate.name) ? cases : moreGrid).append(label);
-  }
-  if (more.length) {
-    moreDetails.appendChild(moreGrid);
-    cases.appendChild(moreDetails);
+    cases.append(label);
   }
   const unavailable = catalog.filter(item => !item.selectable || isNPUModel(item));
   byId('npu-unavailable').hidden = !unavailable.length;
@@ -1079,8 +1107,15 @@ async function readJSON(response) {
 }
 
 async function refresh() {
+  // NPU describe imports the runtime. Do not launch overlapping preflight
+  // probes on every two-second status tick while the previous request waits.
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   try {
-    config = await readJSON(await fetch('/api/stress/config', {cache: 'no-store'}));
+    if (!config || Date.now() - configRefreshedAt >= 60000) {
+      config = await readJSON(await fetch('/api/stress/config', {cache: 'no-store'}));
+      configRefreshedAt = Date.now();
+    }
     const latest = await fetch('/api/stress/latest', {cache: 'no-store'});
     report = latest.ok ? await latest.json() : null;
     const historyResponse = await fetch('/api/stress/history?limit=100', {cache: 'no-store'});
@@ -1097,6 +1132,8 @@ async function refresh() {
     byId('policy-state').textContent = '加载失败';
     byId('policy-state').className = 'policy-badge blocked';
     setError(error.message);
+  } finally {
+    refreshInFlight = false;
   }
 }
 
@@ -1112,8 +1149,8 @@ async function start() {
     payload.npu_devices = Array.from(selectedNPUDevices || []);
     if (!payload.npu_devices.length) { setError('请明确选择至少一个 NPU 逻辑设备。'); return; }
     const npu = (config.benchmarks || []).find(b => b.name === 'npu_burn');
-    if (byId('npu-mode').value === 'model') {
-      payload.npu_model = {name:byId('npu-model-name').value, action:byId('npu-model-action').value, reference_id:byId('npu-reference-id').value.trim()};
+    if (npuMode === 'model') {
+      payload.npu_model = {name:selectedNPUModel, action:npuModelAction, reference_id:byId('npu-reference-id').value.trim()};
       if (!payload.npu_model.name || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(payload.npu_model.reference_id)) { setError('请选择已授权模型并填写有效参考 ID。'); return; }
       if (payload.npu_model.action === 'create_reference' && payload.npu_devices.length !== 1) { setError('生成参考时只能选择一台逻辑设备。'); return; }
     } else if (profileParameters(npu.profile || {}).case_catalog) {
@@ -1149,6 +1186,11 @@ async function start() {
     });
   if (payload.npu_devices) profileLines.push('本次 NPU logical ID：' + payload.npu_devices.join(','));
   if (payload.npu_cases) profileLines.push('本次 NPU 算子：' + payload.npu_cases.join(','));
+  if (payload.npu_model) {
+    profileLines.push('本次模型：' + payload.npu_model.name);
+    profileLines.push('本次任务：' + (payload.npu_model.action === 'create_reference' ? '生成参考（不是 SDC 检测通过）' : 'SDC 对照检测'));
+    profileLines.push('参考 ID：' + payload.npu_model.reference_id);
+  }
   if (!window.confirm(
     '将启动高负载可靠性压测：\n\n' + profileLines.join('\n') +
     '\n\n设备将固定到本次作业；Controller 会重新验证权限、拓扑与运行条件。确认执行吗？'

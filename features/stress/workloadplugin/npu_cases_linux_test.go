@@ -48,6 +48,21 @@ func TestFullBaseA2CatalogProfile(t *testing.T) {
 	}
 }
 
+func TestModelMemoryProfilesRetainOperatorCatalog(t *testing.T) {
+	for _, profile := range []string{"portable-model-sdc-memory-v1", "a2-upstream-model-sdc-memory-v1"} {
+		t.Run(profile, func(t *testing.T) {
+			t.Setenv("CATMONITOR_NPU_COMPAT_PROFILE", profile)
+			if !hasNPUCaseCatalog() {
+				t.Fatal("adding model memory compatibility must not hide operator admission")
+			}
+		})
+	}
+	t.Setenv("CATMONITOR_NPU_COMPAT_PROFILE", "none")
+	if hasNPUCaseCatalog() {
+		t.Fatal("an unpatched image must not claim catalog support")
+	}
+}
+
 func TestNPUEachSelectedOperatorMustCoverEachDevice(t *testing.T) {
 	header := "task,device_id,case_idx,run_count,stream_count,exetime,err_count,result\n"
 	rows := []string{"matmul,0,0,20,1,1,0,PASS\n", "matmul,1,0,20,1,1,0,PASS\n", "conv2d,0,0,20,1,1,0,PASS\n", "conv2d,1,0,20,1,1,0,PASS\n"}

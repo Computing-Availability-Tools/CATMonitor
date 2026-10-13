@@ -1,6 +1,8 @@
 # GPT3 和 Llama2 模型压测开发候选指南
 
-本候选为 NPU Burn 的 GPT3、Llama2 增加独立的模型任务入口，覆盖参考生成和逐步 SDC 对照。它不是已发布或已完成实机验收的镜像，不能把下面的新参数用于现有远端镜像。先审查源码、完成 Linux 回归并构建新 Control 与 NPU workload 镜像，再进入维护窗口验收。
+本候选为 NPU Burn 的 GPT3、Llama2 增加独立的模型任务入口，覆盖参考生成和逐步 SDC 对照。当前 A2 演示已验证算子执行、模型基础 HBM 筛查和完整标准训练的 OOM 失败链；没有完成模型参考生成/SDC 成功或 A3 硬件验收，也没有发布本轮新镜像。不要把新参数套到旧发布镜像；使用配套候选源码和 Control/NPU workload 镜像。
+
+算子模式也启用自身 SDC 检测。这里的“模型 SDC”专指整模型训练结果与健康参考的逐步对照，不是关闭或替代算子的检测。
 
 ## 两种模型的压测内容
 
@@ -18,6 +20,8 @@
 `checksum` 是上游参数数值签名，不是密码学文件哈希。上游当前使用绝对误差阈值：loss 0.01，梯度范数 0.1，参数签名 0.1。候选不修改这些阈值。
 
 完整基础配置为 2048 个测量步骤加 64 个预热步骤，batch size 32、序列长度 512、隐藏维度 1280、36 层、20 个注意力头。两种模型的词表不同。没有裁剪完整 A3 配置；实际 HBM、内存和耗时需实机验证，作业时限不是持续压测时长。
+
+启动前按本次逻辑设备逐卡读取可用 HBM，并在 meta device 统计实际模型参数。基础最低占用按 BF16 权重、梯度和两份 AdamW 状态合计 8 字节/参数筛查；这不是完整训练峰值，未计入激活、上下文及临时空间。双卡显存不相加，A2 不因型号或历史 OOM 被禁止启动。基础通过后仍可能 OOM；此时报告模型、逻辑设备和原始原因，不发布有效参考。Web 的“模型 SDC”按钮与算子压测并列显示，所有准入算子直接展示。
 
 ## 原有缺口和候选补充
 
@@ -39,7 +43,7 @@
 
 离线环境由管理员准备与 ARM64/Python ABI 匹配的 wheel 依赖闭包，并在构建 runtime base 时安装。不要在正在运行的 workload 容器里临时 pip 安装或覆盖包，也不要为这两个模型下载无关 vLLM、模型权重或训练语料。
 
-候选位于个人 fork 的 `codex/npu-model-a3-migration` 分支，公开基线为 `c1821ca4fa2eec53eb2605dc263561c6076421d0`，整合运行兼容与模型候选。下载时记录真实 HEAD；不是已发布镜像或硬件验收声明。
+候选位于个人 fork 的 `codex/npu-model-a3-migration` 分支，本轮 HBM 和界面修复以包含本指南更新的候选提交为准。父基线为 `c1e3d6146ae04e1636bdb52c0afef853a65f03a8`；仅使用该旧基线不会获得本轮全部修复。迁移时记录并固定新的真实 HEAD 和配套镜像身份；源码提交不代表镜像已发布。
 
 以下是新镜像构建命令模板，`BUILDER_BASE` 和 `RUNTIME_BASE` 必须由管理员填入已确认的软件栈镜像，不使用任意 latest：
 
@@ -104,6 +108,17 @@ allow_npu_reference_generation: true
 
 沿用 [NPU 部署 README](README-npu.md) 的四容器 Compose 或 manual docker run 路径，使用新 Control、新 NPU image 和这份生成配置。参考位于 workload 的 `/var/lib/catmonitor/stress/model-references`，复用已有持久化 state 卷。结果和 trace 位于本轮 output 子目录，临时训练 cwd/HOME 使用既有可写目录，根文件系统保持只读。
 
+### 迁移到另一台 A2 / A3
+
+| 目标 | 镜像使用方式 | 必须确认 |
+| --- | --- | --- |
+| 另一台 A2 | 可以分发同一已验证的 ARM64 候选镜像，不要求每台重编译 | 宿主驱动与镜像软件栈兼容、实际 logical 拓扑、设备空闲及每卡 HBM；不能凭 A2 型号认定完整模型可训练 |
+| A3 | 当前无本候选已验证 A3 workload 镜像，先用公开构建脚本及 A3 profile 构建；以后有合格 A3 镜像也可直接取得 | 不使用 A2 专用补丁；保留完整 a3_config；新参考在 A3 对应栈上生成 |
+
+不是 A3 必须手写 Dockerfile，而是需要与该节点匹配的 NPU workload。统一使用 `build_npu_burn_image.sh` 驱动仓库 Dockerfile。Control 的协议/界面和 CPU workload 不因 A2→A3 产生新的职责；兼容门禁通过时不要求重复构建 CPU 镜像。CANN 位于 workload 内，宿主驱动只读挂载。
+
+本轮候选目前只有演示节点本地 tag，尚无新的 registry digest。Git 源码提交与镜像发布是两件事；没有发布镜像时，不能把旧 GHCR tag 当作这次候选。[A3 构建和四容器部署](NPU_A3_MIGRATION_GUIDE.md)覆盖所需输入和逐步验收。
+
 ## 完整操作流程
 
 ### 环境预检
@@ -114,6 +129,17 @@ docker exec catmonitor catmonitor stress doctor \
 ```
 
 Doctor 中普通 npu_burn 的通过不等于模型参考预检通过。提交模型任务时，Controller 会额外核验模型依赖、参考和本次设备。运行前确认设备空闲；不要因为设备可见就认为可以压测，也不要为验收杀业务进程。
+
+### 算子压测
+
+```bash
+# 逻辑设备和算子属于本次 Job，不修改共享 YAML 或容器默认环境。
+docker exec catmonitor catmonitor stress run \
+  --bench npu_burn --npu-devices 0,1 --npu-cases matmul \
+  -c /etc/catmonitor/catmonitor.yaml -o json
+```
+
+按本节点准入列表可指定多个算子，例如 `--npu-cases matmul,conv2d`。A2 不支持的 quant_matmul 不会套用 A3/A5 策略。完整结果必须核对请求设备、算子、本轮 CSV 与错误数；doctor 或目录中有 CSV 不代表本轮通过。
 
 ### 生成参考
 
@@ -147,7 +173,11 @@ Llama2 使用相同两步流程，把模型换成 `llama2`，使用单独的 `ll
 
 ### Web 和取消
 
-在现有 `:19322/stress/` 选择 NPU Burn，然后选择“模型 SDC”、模型、操作、参考 ID 和逻辑设备。生成参考只能选一台设备。提交的是同一 Controller Job，CLI status 与 Web 查看同一结果：
+在现有 `:19322/stress/` 选择 NPU Burn，再点“模型 SDC”。GPT3/Llama2 直接显示，默认执行 SDC 检测，不显示操作下拉；填写已生成的参考 ID，选择授权逻辑设备，点击“开始 SDC 检测”。
+
+首次没有参考时，展开“首次使用：准备参考”，点击“切换到生成参考（单卡）”，填写一个新的参考 ID，并选择一张已确认健康的卡；主按钮会明确变成“生成参考”。生成成功后再返回 SDC 检测，使用同一 ID。不会因参考不存在而自动生成，不会静默覆盖参考；未授权生成的部署只允许使用已有参考。软件栈、配置、代际或显存策略变化后，需要匹配的新参考。
+
+提交的是同一 Controller Job，CLI status 与 Web 查看同一结果：
 
 ```bash
 docker exec catmonitor catmonitor stress status --job '<job-id>' -o json
@@ -159,14 +189,14 @@ docker top catmonitor-stress-npu
 
 ## 本地测试和待验收项
 
-已执行：15 项 Python 合成回归，应用真实上游补丁并调用其 SDC 比较类，核验完整 A2/A3 配置保持和显式重计算 API；模型协议/CLI/结果解析单测；前端实际脚本 DOM 回归；Shell 语法；Linux Stress 回归、race 和 vet。最终分支编译和迁移文档契约检查另见测试结果。
+已执行：27 项 Python 合成回归，应用真实上游补丁并调用其 SDC 比较类，核验逐卡 HBM、OOM 原因、完整 A2/A3 配置保持和显式重计算 API；模型协议/CLI/结果解析单测；前端实际脚本 DOM 回归；Shell 语法；完整 Linux Stress 回归、race、vet 和 Linux ARM64/Windows amd64 编译。
 
 完整 Windows Stress 测试中，已有 Linux 专属运行/路径测试不能在 Windows 上通过。Linux Controller 模型测试、完整 `make test-stress`、Stress/Web race 和生成器 fixture 已在 WSL 实际执行通过。
 
 现有公开来源 A2 r6 镜像中的 GPT2Model、LlamaModel 真实导入和设备初始化已通过。两项完整模型尝试均在首个前向计算中发生 HBM OOM，完成步骤为 0，没有有效参考。现有约 29.5 GiB HBM 的单逻辑设备在该执行方式下不足以完成完整配置；两台设备的容量不能直接合并供单设备用例使用。
 
-此能力验证不包含本候选的 Controller/Web 模型入口。测试没有缩减模型参数或启用激活重计算；后续内存优化必须显式记录其执行方式，并重新完成训练、参考和 SDC 对照，不能将本轮失败的原始输出用于生产。
+2026-10-13 已将本候选的 Controller/Web 模型入口部署到 A2，并分别请求 GPT3 logical 0、Llama2 logical 1 完整标准训练。逐卡基础 HBM 预检通过，实际训练仍 OOM；Web 显示显存不足、任务未完成，原始原因包含模型与设备，不发布有效参考。测试没有缩减模型参数或启用激活重计算；后续内存优化必须显式记录执行方式，并重新完成训练、参考和 SDC 对照。
 
-新 Control/NPU 候选镜像构建因 A2 节点共享 Docker 分区空间不足而未执行。新入口的实机参考生成、跨设备 SDC 对照、Web/CLI 与 Cancel 清理，以及 A3 训练均待验收。源码候选提交与推送不代表镜像发布或硬件通过。实际记录见 [模型验证结果](NPU_MODEL_TEST_RESULT.md)，A3 构建、Compose/manual 启动与验收见 [A3 迁移指南](NPU_A3_MIGRATION_GUIDE.md)。
+本轮 Control/NPU 镜像基于可运行的现有运行时组装新的增量候选，不是 clean-room CANN/Custom Ops 重编译，也未发布镜像。完整模型参考生成、跨设备 SDC 对照、模型特定 Cancel/超时、激活重计算模式与 A3 训练仍待验收。源码候选提交与推送不代表镜像发布或硬件通过。实际记录见 [模型验证结果](NPU_MODEL_TEST_RESULT.md)，A3 构建、Compose/manual 启动与验收见 [A3 迁移指南](NPU_A3_MIGRATION_GUIDE.md)。
 
 进入实机前依次完成：Linux 回归 → 冻结候选源码 → 构建两张新镜像 → 独立部署 → 拓扑/空闲检查 → 单设备参考生成 → 单设备检测 → 授权多设备检测 → Web 查看同一 Job → Cancel → 进程清理。A2、A3 分别记录镜像 ID、软件栈、参考身份、步骤数及错误数，不能用旧镜像实验代替。

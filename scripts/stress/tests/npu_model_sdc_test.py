@@ -1,9 +1,11 @@
 """Hardware-free model/reference regressions, not NPU hardware certification."""
 import ast
 import csv
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -29,6 +31,146 @@ IDENTITY = dict(model="gpt3", generation="A2", config=CONFIG,
 def records(count=3):
     return {"step_" + str(i): dict(loss=1.0, grad_norm=2.0, checksum=3.0)
             for i in range(1, count + 1)}
+
+
+class MemoryTests(unittest.TestCase):
+    CONFIG = dict(CONFIG, dtype="bfloat16")
+
+    def screen(self, capacities, count=100, devices=None):
+        torch = types.SimpleNamespace(npu=types.SimpleNamespace(
+            mem_get_info=lambda device: capacities[device]))
+        with patch.object(sdc.importlib, "import_module", return_value=torch), \
+                patch.object(sdc, "model_parameter_count", return_value=count):
+            return sdc.basic_memory_preflight(self.CONFIG,
+                                             list(capacities) if devices is None else devices, None)
+
+    def test_basic_minimum_and_exact_capacity_pass(self):
+        proof = self.screen({1: (800, 1000)})
+        self.assertEqual(proof["required_bytes"], 800)
+        self.assertEqual(proof["parameter_count"], 100)
+        self.assertEqual(proof["scope"], "basic_lower_bound")
+        self.assertFalse(proof["full_peak_known"])
+        self.assertEqual(proof["status"], "pass")
+        self.assertIn("may still fail with OOM", proof["message"])
+
+    def test_two_cards_do_not_pool_capacity(self):
+        proof = self.screen({0: (500, 1000), 1: (500, 1000)})
+        self.assertEqual(proof["status"], "fail")
+        self.assertTrue(all(row["status"] == "fail" for row in proof["devices"]))
+        self.assertIn("logical 0", proof["message"])
+        self.assertIn("logical 1", proof["message"])
+
+    def test_a2_capacity_passes_basic_screen_without_full_peak_claim(self):
+        proof = self.screen({0: (29 * 2**30, 30 * 2**30)}, count=800_000_000)
+        self.assertEqual(proof["status"], "pass")
+        self.assertFalse(proof["full_peak_known"])
+        self.assertLess(proof["required_bytes"], 29 * 2**30)
+
+    def test_one_insufficient_selected_device_fails(self):
+        proof = self.screen({0: (900, 1000), 1: (799, 1000)})
+        self.assertEqual(proof["status"], "fail")
+        self.assertEqual([row["status"] for row in proof["devices"]], ["pass", "fail"])
+
+    def test_invalid_capacity_and_selection_never_pass(self):
+        for capacity in ((-1, 1000), (1001, 1000), (0, 0), (True, 1000), (1.0, 1000)):
+            with self.subTest(capacity=capacity), self.assertRaisesRegex(ValueError, "invalid NPU HBM"):
+                self.screen({0: capacity})
+        for devices in ([], [0, 0], [-1], [True]):
+            with self.subTest(devices=devices), self.assertRaises(ValueError):
+                self.screen({0: (900, 1000)}, devices=devices)
+
+    def test_missing_capacity_query_and_wrong_dtype_fail(self):
+        with patch.object(sdc.importlib, "import_module", return_value=types.SimpleNamespace()), \
+                patch.object(sdc, "model_parameter_count", return_value=100):
+            with self.assertRaisesRegex(ValueError, "HBM query is unavailable"):
+                sdc.basic_memory_preflight(self.CONFIG, [0], None)
+            with self.assertRaisesRegex(ValueError, "actual BF16"):
+                sdc.basic_memory_preflight(dict(self.CONFIG, dtype="float32"), [0], None)
+
+    def test_describe_failure_json_is_not_training_pass(self):
+        with tempfile.TemporaryDirectory() as name:
+            proof = self.screen({0: (799, 1000)})
+            output = io.StringIO()
+            with patch.dict(os.environ, {"NPU_BURN_CHIP_GENERATION": "A2",
+                                         "CATMONITOR_MODEL_REFERENCE_ROOT": str(Path(name) / "refs")}), \
+                    patch.object(sdc, "load_runtime", return_value=(self.CONFIG, IDENTITY, None)), \
+                    patch.object(sdc, "basic_memory_preflight", return_value=proof), \
+                    patch.object(sdc, "execute") as execute, redirect_stdout(output):
+                code = sdc.main(["--model", "gpt3", "--action", "create_reference",
+                                 "--reference", "test-ref", "--devices", "0", "--describe"])
+            self.assertEqual(code, 0)
+            described = json.loads(output.getvalue())
+            self.assertEqual(described["preflight"], "fail")
+            self.assertEqual(described["memory_preflight"]["status"], "fail")
+            self.assertEqual(described["hardware_validation"], "NOT_RUN")
+            execute.assert_not_called()
+            self.assertFalse((Path(name) / "refs").exists())
+
+    def test_run_refreshes_capacity_and_allows_basic_pass_on_a2(self):
+        with tempfile.TemporaryDirectory() as name:
+            passing = self.screen({0: (29 * 2**30, 30 * 2**30)}, count=800_000_000)
+            failing = self.screen({0: (1, 30 * 2**30)}, count=800_000_000)
+            args = ["--model", "gpt3", "--action", "create_reference",
+                    "--reference", "test-ref", "--devices", "0"]
+            with patch.dict(os.environ, {"NPU_BURN_CHIP_GENERATION": "A2",
+                                         "CATMONITOR_MODEL_REFERENCE_ROOT": str(Path(name) / "refs"),
+                                         "NPU_BURN_OUTPUT_DIR": str(Path(name) / "output")}), \
+                    patch.object(sdc, "load_runtime", return_value=(self.CONFIG, IDENTITY, None)), \
+                    patch.object(sdc, "basic_memory_preflight", side_effect=[passing, failing]) as screen, \
+                    patch.object(sdc, "execute") as execute:
+                self.assertEqual(sdc.main(args), 0)
+                with self.assertRaisesRegex(ValueError, "Insufficient basic NPU HBM"):
+                    sdc.main(args)
+                self.assertEqual(screen.call_count, 2)
+                self.assertEqual(execute.call_count, 1)
+
+    def test_oom_classifier_does_not_relabel_cpu_or_cuda_failure(self):
+        for message in ("NPU out of memory. Tried to allocate 162 MiB",
+                        "NPU memory exhausted", "ACL_ERROR_RT_MEMORY_ALLOCATION"):
+            self.assertTrue(sdc.is_npu_oom(RuntimeError(message)))
+        for message in ("CPU out of memory", "CUDA out of memory", "worker startup failed"):
+            self.assertFalse(sdc.is_npu_oom(RuntimeError(message)))
+
+    def test_runtime_oom_cannot_publish_reference_or_success_result(self):
+        class OOMModel:
+            def run(self):
+                raise RuntimeError("NPU out of memory. Tried to allocate 162 MiB")
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            store = sdc.ReferenceStore(root / "refs")
+            with self.assertRaisesRegex(RuntimeError,
+                    "NPU_HBM_OOM: model=gpt3, logical_device=1"):
+                sdc.execute("gpt3", "create_reference", "oom-ref", [1], store,
+                            root / "output", self.CONFIG, IDENTITY, OOMModel, "oom-job")
+            self.assertFalse((store.root / "oom-ref").exists())
+            self.assertFalse((root / "output/model-result.json").exists())
+            self.assertFalse((root / "output/model-results.csv").exists())
+
+    def test_basic_pass_then_oom_exits_nonzero_with_explicit_error(self):
+        class OOMModel:
+            def run(self):
+                raise RuntimeError("NPU out of memory. Tried to allocate 162 MiB")
+        passing = self.screen({0: (29 * 2**30, 30 * 2**30)}, count=800_000_000)
+        for model in ("gpt3", "llama2"):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                error = io.StringIO()
+                with patch.dict(os.environ, {"NPU_BURN_CHIP_GENERATION": "A2",
+                                             "CATMONITOR_MODEL_REFERENCE_ROOT": str(root / "refs"),
+                                             "NPU_BURN_OUTPUT_DIR": str(root / "output"),
+                                             "CATMONITOR_MODEL_JOB_ID": "oom-job"}), \
+                        patch.object(sdc, "load_runtime", return_value=(self.CONFIG, IDENTITY, OOMModel)), \
+                        patch.object(sdc, "basic_memory_preflight", return_value=passing), \
+                        redirect_stderr(error):
+                    code = sdc.cli_main(["--model", model, "--action", "create_reference",
+                                         "--reference", "oom-ref", "--devices", "0"])
+                self.assertEqual(code, 1)
+                self.assertIn("ERROR: model SDC: NPU_HBM_OOM: model=" + model, error.getvalue())
+                self.assertIn("logical_device=0", error.getvalue())
+                self.assertIn("162 MiB", error.getvalue())
+                self.assertFalse((root / "refs/oom-ref").exists())
+                self.assertFalse((root / "output/oom-job/model-result.json").exists())
+                self.assertFalse((root / "output/oom-job/model-results.csv").exists())
 
 
 class ReferenceTests(unittest.TestCase):
@@ -255,6 +397,35 @@ class AppliedUpstreamTests(unittest.TestCase):
                 self.assertEqual(cases[model]["batch_size"], 32)
                 self.assertEqual(cases[model]["num_hidden_layers"], 36)
                 self.assertEqual(sdc.step_count(cases[model]), 2112)
+
+    def test_meta_count_uses_resolved_case_without_npu_or_sample_allocation(self):
+        class MetaDevice:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        class MetadataModel(self.factory):
+            def _create_model(self):
+                self.assert_case = self._required_case_int("hidden_size")
+                self._prepare_runtime(torch)
+                self._prime_sample_bank(torch, 100, 2)
+                self._network = types.SimpleNamespace(parameters=lambda: [
+                    types.SimpleNamespace(numel=lambda: 32),
+                    types.SimpleNamespace(numel=lambda: 16)])
+
+            def _prepare_runtime(self, module):
+                raise AssertionError("must not initialize NPU during meta counting")
+
+            def _prime_sample_bank(self, *args):
+                raise AssertionError("must not allocate training inputs during meta counting")
+
+        torch = types.SimpleNamespace(device=lambda name: MetaDevice(), bfloat16=object())
+        self.assertEqual(sdc.model_parameter_count(dict(CONFIG, hidden_size=1280), MetadataModel, torch), 48)
+        # Overrides must not leak from the disposable metadata instance.
+        with self.assertRaises(AssertionError):
+            MetadataModel()._prepare_runtime(torch)
 
     def test_generation_and_multi_device_comparison_with_real_sdc_guard(self):
         with tempfile.TemporaryDirectory() as name:

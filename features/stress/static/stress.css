@@ -151,7 +151,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 24px 48px; }
 .summary-label { color: var(--muted); font-size: 12px; margin-bottom: 3px; }
 .summary-value { font-size: 17px; font-weight: 720; white-space: nowrap; }
 
-.workspace { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 18px; align-items: start; }
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -254,8 +254,22 @@ h2 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
 .selection-hint { margin: 9px 0; }
 .selection-details { margin-top: 12px; }
 .selection-details summary { cursor: pointer; color: #475467; }
-.npu-more { grid-column: 1 / -1; margin-top: 6px; }
-.npu-more[open] > summary { margin-bottom: 8px; }
+.npu-mode-options { display: flex; gap: 6px; }
+.npu-mode-options button { color: #475467; background: #f2f4f7; }
+.npu-mode-options button[aria-pressed="true"] { color: #175cd3; background: #eff4ff; box-shadow: inset 0 0 0 1px #84adff; }
+.model-selection { margin-top: 14px; padding: 16px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+.model-selection h3 { margin: 0 0 10px; font-size: 13px; }
+.model-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.model-choice-button { min-height: 42px; border: 1px solid #d0d5dd; color: #344054; background: #fff; font-weight: 650; }
+.model-choice-button[aria-pressed="true"] { color: #175cd3; border-color: #84adff; background: #eff4ff; }
+.model-reference-field { display: grid; gap: 7px; }
+.model-reference-field label { color: #344054; font-size: 12px; font-weight: 650; }
+.model-reference-field input { width: 100%; min-height: 40px; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 7px; color: #182230; background: #fff; font: inherit; font-size: 13px; }
+.model-reference-field input:focus { outline: 2px solid #d1e9ff; border-color: #84adff; }
+.model-reference-field small { color: #667085; font-size: 11px; line-height: 1.6; }
+.model-task-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; color: #b54708; font-size: 12px; }
+.model-task-status button, #npu-model-prepare { color: #175cd3; background: #eff4ff; }
+.model-selection .selection-details p { color: #667085; font-size: 12px; line-height: 1.6; }
 .unavailable-item { margin: 8px 0; overflow-wrap: anywhere; }
 .unavailable-item b { color: #344054; }
 

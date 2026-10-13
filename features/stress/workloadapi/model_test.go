@@ -3,7 +3,25 @@ package workloadapi
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestModelPreflightHasSeparateBoundedBudget(t *testing.T) {
+	for _, tc := range []struct {
+		benchmark string
+		model     bool
+		want      time.Duration
+	}{
+		{"npu_burn", true, 60 * time.Second},
+		{"npu_burn", false, 30 * time.Second},
+		{"stream", false, 2 * time.Second},
+		{"stream", true, 2 * time.Second},
+	} {
+		if got := PreflightTimeout(tc.benchmark, tc.model); got != tc.want {
+			t.Fatalf("%s model=%v: %s, want %s", tc.benchmark, tc.model, got, tc.want)
+		}
+	}
+}
 
 func TestModelRequestAndResult(t *testing.T) {
 	m := &ModelRequest{Name: "gpt3", Action: "compare", ReferenceID: "ref1"}

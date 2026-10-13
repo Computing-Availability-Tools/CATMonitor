@@ -20,9 +20,11 @@ func parameterValue(profile *ExecutionProfile, key string) string {
 // Job admission is deliberately uncached: a previous doctor's profile is not
 // proof that the current selection or the current workload resources are safe.
 func (m *Manager) describeJob(binding Binding, timeout time.Duration) (*ExecutionProfile, error) {
-	budget := describeTimeout
-	if binding.Benchmark == "npu_burn" {
-		budget = npuDescribeTimeout
+	budget := workloadapi.PreflightTimeout(binding.Benchmark, binding.NPUModel != nil)
+	if binding.Benchmark == "npu_burn" && binding.NPUModel != nil {
+		// Let the bounded inner model probe return its diagnostic before the
+		// outer Docker transport is killed.
+		budget += 15 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()

@@ -22,6 +22,7 @@ const document = {getElementById(id) {
   return nodes.get(id);
 }, createElement: element, createTextNode: text => text};
 const requests = [];
+const confirmations = [];
 function allText(node) {
   return typeof node === 'string' ? node : [node.textContent, ...node.children.map(allText)].join(' ');
 }
@@ -29,8 +30,15 @@ function descendants(node) {
   return [node, ...node.children.filter(child => typeof child !== 'string').flatMap(descendants)];
 }
 const context = vm.createContext({document, console,
-  window: {clearTimeout() {}, addEventListener() {}, confirm: () => true},
+  window: {clearTimeout() {}, addEventListener() {}, confirm: message => { confirmations.push(message); return true; }},
   setTimeout() {}, setInterval() {}, fetch: () => new Promise(() => {})});
+let pendingRefreshRequests = 0;
+const refreshContext = vm.createContext({document, console,
+  window: {clearTimeout() {}, addEventListener() {}}, setTimeout() {}, setInterval() {},
+  fetch: () => { pendingRefreshRequests++; return new Promise(() => {}); }});
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../features/stress/static/stress.js'), 'utf8'), refreshContext);
+vm.runInContext('refresh(); refresh();', refreshContext);
+assert.equal(pendingRefreshRequests, 1, 'pending NPU preflight must not overlap on polling ticks');
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../features/stress/static/stress.js'), 'utf8'), context);
 context.testFetch = async (url, options) => {
   requests.push({url, ...options});
@@ -39,6 +47,7 @@ context.testFetch = async (url, options) => {
 vm.runInContext(`
   fetch = testFetch;
   globalThis.testRenderReport = renderReport;
+  globalThis.testRenderConfig = renderConfig;
   renderConfig = renderHistory = renderReport = () => {};
   setError = value => { globalThis.lastError = value; };
   config = {benchmarks: [{name:'npu_burn', timeout_seconds:60, profile:{
@@ -70,7 +79,22 @@ const html = fs.readFileSync(path.join(__dirname, '../../features/stress/static/
 assert.match(html, /<details id="profile-preview"[^>]*>/, 'deployment details are collapsed by default');
 assert.doesNotMatch(html, /<details id="profile-preview"[^>]*\bopen\b/);
 assert.match(html, /<details class="panel history-panel">/);
-assert.doesNotMatch(html, /能力覆盖|运行成功即通过|hero-visual/);
+assert.match(html, /能力覆盖.*[\s\S]*运行成功即通过/);
+assert.match(html, /STREAM · Copy \/ Scale \/ Add \/ Triad/);
+assert.match(html, /NPU Burn 必须生成完整 PASS\/SDC 结果/);
+assert.doesNotMatch(html, /<select id="npu-mode"|<select id="npu-model-name"|<select id="npu-model-action"|hero-visual/);
+assert.match(html, /id="npu-mode-model"[^>]*>模型 SDC/);
+assert.match(html, /首次使用：准备参考/);
+assert.doesNotMatch(html, /<details id="npu-reference-setup"[^>]*\bopen\b/);
+vm.runInContext(`{
+  const oldConfig = config, oldSelected = selected, oldReport = report;
+  config = {enabled:true, platform:'linux', feature_enabled:true, web_enabled:true, shared_report:true,
+    benchmarks:['npu_burn','hpl','hpcg','stream'].map(name=>({name,enabled:true,available:true,timeout_seconds:60}))};
+  selected = new Set(); report = null; testRenderConfig();
+  config = oldConfig; selected = oldSelected; report = oldReport;
+}`, context);
+assert.deepEqual(nodes.get('choices').children.map(node=>node.children[0].value), ['hpcg','hpl','stream','npu_burn']);
+assert.equal(nodes.get('npu-mode-model').disabled, true);
 assert.match(html, /压测会占用计算资源/);
 const conv = nodes.get('npu-case-choices').children[1].children[0];
 conv.checked = true;
@@ -85,15 +109,14 @@ vm.runInContext(`
       .map(name=>({name,selectable:true})));
   renderNPUSelection();
 `, context);
-const moreOperators = nodes.get('npu-case-choices').children.find(node=>node.tagName==='details');
-assert.equal(nodes.get('npu-case-choices').children.length, 7, 'six common operators plus collapsed additional operators');
-assert.equal(moreOperators.open, false);
-assert.match(moreOperators.children[0].textContent, /更多算子（2 项）/);
-const extraOperator = moreOperators.children[1].children[0].children[0];
+assert.equal(nodes.get('npu-case-choices').children.length, 8, 'every admitted operator is directly visible');
+assert.equal(nodes.get('npu-case-choices').children.some(node=>node.tagName==='details'), false);
+const extraOperator = nodes.get('npu-case-choices').children[6].children[0];
 extraOperator.checked = true;
 extraOperator.change();
 assert.equal(nodes.get('npu-case-count').textContent, '已选 3 项');
-assert.match(allText(nodes.get('npu-case-choices')), /更多算子（2 项）.*已选 1 项/);
+assert.match(allText(nodes.get('npu-case-choices')), /matmul_axpy.*conv3d/);
+assert.doesNotMatch(allText(nodes.get('npu-case-choices')), /更多算子/);
 vm.runInContext(`
   config.benchmarks[0].profile.parameters[4].value = originalCatalog;
   selectedNPUCases = new Set(['matmul','conv2d']); renderNPUSelection();
@@ -191,24 +214,48 @@ vm.runInContext(`report=null;`, context);
   vm.runInContext(`
     report=null;
     config.benchmarks[0].profile.parameters.push({key:'allowed_models',value:'gpt3,llama2'}, {key:'allow_reference_generation',value:'true'});
+    config.benchmarks[0].profile.parameters[2].value='0,1';
     selectedNPUDevices = new Set([0]);
     renderNPUSelection();
-    byId('npu-mode').value='model'; byId('npu-mode').onchange();
-    byId('npu-model-name').value='gpt3';
-    byId('npu-model-action').value='create_reference';
-    byId('npu-reference-id').value='ref1';
+    byId('npu-mode-model').onclick();
   `, context);
   assert.equal(nodes.get('npu-model-selection').hidden, false);
+  assert.equal(nodes.get('npu-mode-model').disabled, false);
+  assert.equal(nodes.get('npu-mode-model').attributes['aria-pressed'], 'true');
+  assert.equal(nodes.get('npu-case-choices').hidden, true);
+  assert.equal(nodes.get('npu-model-choices').children.length, 2);
+  assert.equal(nodes.get('npu-model-choices').children[0].textContent, 'GPT3');
+  assert.equal(nodes.get('npu-model-choices').children[1].textContent, 'Llama2');
+  assert.equal(vm.runInContext('npuModelAction', context), 'compare', 'SDC detection is the default, never automatic reference generation');
+  assert.equal(nodes.get('start-label').textContent, '开始 SDC 检测');
   await vm.runInContext('start()', context);
-  assert.deepEqual(JSON.parse(requests[2].body).npu_model, {name:'gpt3',action:'create_reference',reference_id:'ref1'});
+  assert.equal(requests.length, 2, 'a missing reference must not create one implicitly');
+  assert.match(context.lastError, /参考 ID/);
+  vm.runInContext(`byId('npu-reference-id').value='ref1';`, context);
+  await vm.runInContext('start()', context);
+  assert.deepEqual(JSON.parse(requests[2].body).npu_model, {name:'gpt3',action:'compare',reference_id:'ref1'});
   assert.equal(JSON.parse(requests[2].body).npu_cases, undefined, 'models are not operator requests');
+  assert.match(confirmations.at(-1), /SDC 对照检测.*\n参考 ID：ref1/);
+  vm.runInContext(`report=null; byId('npu-model-prepare').onclick();`, context);
+  assert.equal(nodes.get('npu-model-preparing').hidden, false);
+  assert.equal(nodes.get('start-label').textContent, '生成参考');
+  await vm.runInContext('start()', context);
+  assert.deepEqual(JSON.parse(requests[3].body).npu_model, {name:'gpt3',action:'create_reference',reference_id:'ref1'});
+  assert.match(confirmations.at(-1), /生成参考（不是 SDC 检测通过）/);
   vm.runInContext('report=null; selectedNPUDevices = new Set([0,1]);', context);
   await vm.runInContext('start()', context);
-  assert.equal(requests.length, 3, 'multiple reference generators must be rejected');
+  assert.equal(requests.length, 4, 'multiple reference generators must be rejected');
   assert.match(context.lastError, /只能选择一台/);
-  vm.runInContext(`byId('npu-model-action').value='compare';`, context);
+  vm.runInContext(`byId('npu-model-compare').onclick(); byId('npu-model-choices').children[1].onclick();`, context);
+  assert.equal(nodes.get('npu-model-choices').children[1].attributes['aria-pressed'], 'true');
   await vm.runInContext('start()', context);
-  assert.deepEqual(JSON.parse(requests[3].body).npu_devices, [0,1]);
+  assert.deepEqual(JSON.parse(requests[4].body).npu_devices, [0,1]);
+  assert.deepEqual(JSON.parse(requests[4].body).npu_model, {name:'llama2',action:'compare',reference_id:'ref1'});
+  vm.runInContext(`report=null; selectedNPUDevices=new Set([0]); byId('npu-model-prepare').onclick();
+    config.benchmarks[0].profile.parameters.find(p=>p.key==='allow_reference_generation').value='false';
+    renderNPUSelection(); byId('npu-model-prepare').onclick();`, context);
+  assert.equal(nodes.get('npu-model-prepare').disabled, true);
+  assert.equal(vm.runInContext('npuModelAction',context), 'compare', 'revoked generation permission must fail closed');
   vm.runInContext(`testItem.status='healthy'; testItem.npu_model={model:'gpt3',action:'create_reference',reference_id:'ref1',devices:[0],outcome:'reference_generated',checked_steps:0,saved_steps:3,errors:0,csv:'/results/model.csv'}; report={job_id:'model-job',status:'healthy',benchmarks:[testItem]}; testRenderReport()`, context);
   assert.match(allText(nodes.get('result-cards')), /参考生成成功（不是 SDC 检测通过）/);
   vm.runInContext(`testItem.status='unhealthy'; testRenderReport()`,context);

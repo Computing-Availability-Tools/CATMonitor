@@ -3,7 +3,22 @@ package workloadapi
 import (
 	"errors"
 	"regexp"
+	"time"
 )
+
+// ModelPreflightTimeout includes runtime, operator catalog and real model/HBM
+// imports. It is not a training duration or an unbounded readiness wait.
+const ModelPreflightTimeout = 60 * time.Second
+
+func PreflightTimeout(benchmark string, model bool) time.Duration {
+	if benchmark == "npu_burn" {
+		if model {
+			return ModelPreflightTimeout
+		}
+		return 30 * time.Second
+	}
+	return 2 * time.Second
+}
 
 var modelReferenceID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 

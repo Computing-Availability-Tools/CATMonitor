@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
 )
@@ -35,7 +34,8 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 	p.Parameters = parameters
 	p.Resources.RuntimeSeconds = 0
 	m := environmentModel()
-	check := workloadapi.AssetCheck{Name: "model_reference_preflight", Required: true, Kind: "model_sdc", Status: workloadapi.CheckPass, Message: "model imports/reference match passed; hardware validation is NOT_RUN"}
+	check := workloadapi.AssetCheck{Name: "model_reference_preflight", Path: env("NPU_BURN_EXECUTABLE"), Required: true, Kind: "model_sdc", Status: workloadapi.CheckPass, Message: "model imports/reference match passed; hardware validation is NOT_RUN"}
+	memoryCheck := workloadapi.AssetCheck{Name: "model_memory_preflight", Path: env("NPU_BURN_EXECUTABLE"), Required: true, Kind: "memory", Status: workloadapi.CheckFail, Message: "basic HBM screening was not completed"}
 	ids, err := workloadapi.ParseDevices(env("NPU_BURN_DEVICE"))
 	if err == nil {
 		err = m.Validate()
@@ -62,9 +62,19 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 				Action      string                `json:"action"`
 				ReferenceID string                `json:"reference_id"`
 				Devices     workloadapi.DeviceIDs `json:"devices"`
+				Memory      *modelMemoryProof     `json:"memory_preflight"`
 			}
-			if json.Unmarshal(data, &proof) != nil || proof.Preflight != "pass" || proof.Model != m.Name || proof.Action != m.Action || proof.ReferenceID != m.ReferenceID || !workloadapi.SameDevices(ids, proof.Devices) {
+			if json.Unmarshal(data, &proof) != nil || proof.Model != m.Name || proof.Action != m.Action || proof.ReferenceID != m.ReferenceID || !workloadapi.SameDevices(ids, proof.Devices) {
 				err = fmt.Errorf("model preflight JSON does not confirm request")
+			} else if err = validateModelMemory(proof.Memory, ids); err != nil {
+				memoryCheck.Message = err.Error()
+			} else {
+				memoryCheck.Status = workloadapi.CheckPass
+				memoryCheck.Message = fmt.Sprintf("basic HBM screen passed (minimum %.2f GiB per device); full training peak is unknown and OOM remains possible", float64(proof.Memory.RequiredBytes)/(1<<30))
+				p.Parameters = append(p.Parameters, parameter("model_basic_hbm_minimum", "Basic HBM minimum (not full training peak)", fmt.Sprintf("%.2f", float64(proof.Memory.RequiredBytes)/(1<<30)), "GiB"))
+				if proof.Preflight != "pass" {
+					err = fmt.Errorf("model preflight JSON reports failure")
+				}
 			}
 		}
 	}
@@ -72,7 +82,7 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 		check.Status, check.Message = workloadapi.CheckFail, err.Error()
 		p.Preflight.Status, p.Preflight.Message = workloadapi.CheckFail, check.Message
 	}
-	p.Assets = append(p.Assets, check)
+	p.Assets = append(p.Assets, check, memoryCheck)
 	p.Parameters = append(p.Parameters, parameter("model", "Model", m.Name, ""), parameter("model_action", "Model action", m.Action, ""), parameter("model_reference", "Reference ID", m.ReferenceID, ""))
 	p.Parameters = append(p.Parameters, parameter("model_device_strategy", "Model device strategy", "independent_sequential", ""))
 	p.Resources.ProblemSize = m.Name
@@ -103,7 +113,7 @@ func ResolveRequest(request workloadapi.Request) (Command, error) {
 	}
 	// The caller already verified request/environment device equality. Repeat
 	// the complete runtime/model/idle preflight immediately before execution.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workloadapi.ModelPreflightTimeout)
 	defer cancel()
 	if p := describeNPUModel(ctx); p.Preflight.Status == workloadapi.CheckFail {
 		return Command{}, fmt.Errorf("model preflight: %s", p.Preflight.Message)

@@ -192,6 +192,71 @@ def model_dependencies(model):
     return torch
 
 
+def model_parameter_count(config, factory, torch):
+    """Count the actual bundled model on meta, without allocating NPU tensors."""
+    instance = factory()
+    instance.task_config = dict(config)
+    instance._case = instance._build_run_case()
+    instance._run_device = torch.device("meta")
+    # These overrides belong only to this disposable metadata instance. The
+    # real training instance retains its NPU initialization and sample bank.
+    instance._prepare_runtime = lambda module: module.bfloat16
+    instance._prime_sample_bank = lambda *args: None
+    with torch.device("meta"):
+        instance._create_model()
+    count = sum(parameter.numel() for parameter in instance._network.parameters())
+    if type(count) is not int or count <= 0:
+        raise ValueError("cannot determine model parameter count")
+    return count
+
+
+def basic_memory_preflight(config, devices, factory):
+    """A lower-bound screen, not a prediction of the complete training peak.
+
+    Current model training uses BF16 parameters. Count weights, gradients and
+    two minimum BF16 AdamW moments (8 bytes/parameter). Higher-precision states,
+    activations, runtime context and temporary workspaces are NOT included.
+    No chip-generation blacklist or historical OOM gate is applied.
+    """
+    torch = importlib.import_module("torch")
+    if not devices or any(type(d) is not int or d < 0 for d in devices) or len(set(devices)) != len(devices):
+        raise ValueError("explicit unique logical devices are required for the HBM screen")
+    if config.get("dtype") != "bfloat16":
+        raise ValueError("basic HBM screen requires the actual BF16 model configuration")
+    count = model_parameter_count(config, factory, torch)
+    required = count * 8
+    query = getattr(getattr(torch, "npu", None), "mem_get_info", None)
+    if not callable(query):
+        raise ValueError("NPU HBM query is unavailable; basic memory screen could not run")
+    rows = []
+    for device in devices:
+        free, total = query(device)
+        if (type(free) is not int or type(total) is not int or
+                free < 0 or total <= 0 or free > total):
+            raise ValueError("invalid NPU HBM capacity for logical device " + str(device))
+        rows.append(dict(device=device, free_bytes=free, total_bytes=total,
+                         status="pass" if free >= required else "fail"))
+    failed = [row for row in rows if row["status"] == "fail"]
+    if failed:
+        message = "Insufficient basic NPU HBM: " + "; ".join(
+            f"logical {row['device']} free={row['free_bytes'] / 2**30:.2f} GiB, "
+            f"basic minimum={required / 2**30:.2f} GiB" for row in failed)
+    else:
+        message = (f"Basic HBM screen passed (minimum {required / 2**30:.2f} GiB per device); "
+                   "full training peak is unknown and training may still fail with OOM")
+    return dict(status="fail" if failed else "pass", message=message,
+                scope="basic_lower_bound", parameter_count=count,
+                required_bytes=required, full_peak_known=False, devices=rows)
+
+
+def is_npu_oom(error):
+    message = str(error).lower()
+    return ("npu out of memory" in message or "npu memory exhausted" in message or
+            "acl_error_rt_memory_allocation" in message or
+            (type(error).__name__ == "OutOfMemoryError" and
+             "cpu" not in message and "cuda" not in message))
+
+
 def load_runtime(model, generation):
     if os.environ.get("CATMONITOR_MODEL_SDC_ENABLED") != "true":
         raise ValueError("image was not built with --enable-model-sdc")
@@ -266,7 +331,16 @@ def execute(model, action, reference, devices, store, output, config, identity,
         # replacing installed files or making the container root writable.
         os.environ["CATMONITOR_MODEL_REFERENCE_DIR"] = str(baseline)
         os.environ["CATMONITOR_MODEL_TRACE_DIR"] = str(traces)
-        result = instance.run()
+        try:
+            result = instance.run()
+        except Exception as exc:
+            if is_npu_oom(exc):
+                detail = " ".join(str(exc).split())[:1024]
+                raise RuntimeError(
+                    f"NPU_HBM_OOM: model={model}, logical_device={device}; "
+                    f"basic memory screening does not guarantee full training capacity; {detail}"
+                ) from exc
+            raise
         row = validate_model_result(result, model, action, config)
         rows.append(dict(device=device, **row))
     csv_path = output / "model-results.csv"
@@ -324,15 +398,19 @@ def main(argv=None):
                            create=not args.describe)
     if args.action == "compare":
         store.load(args.reference, identity, step_count(config))
+    memory = basic_memory_preflight(config, devices, factory)
     if args.describe:
         if args.action == "create_reference" and store.path(args.reference).exists():
             raise ValueError("reference ID already exists")
-        print(json.dumps(dict(preflight="pass", model=args.model, action=args.action,
+        print(json.dumps(dict(preflight=memory["status"], model=args.model, action=args.action,
              reference_id=args.reference, devices=devices, expected_steps=step_count(config),
              memory_mode=memory_mode(), device_strategy="independent_sequential",
-             hardware_validation="NOT_RUN", identity_sha256=canonical_hash(identity))),
+             hardware_validation="NOT_RUN", identity_sha256=canonical_hash(identity),
+             memory_preflight=memory)),
               file=PROTOCOL_OUT or sys.stdout)
         return 0
+    if memory["status"] != "pass":
+        raise ValueError(memory["message"])
     root = Path(os.environ["NPU_BURN_OUTPUT_DIR"])
     if not root.is_absolute():
         raise ValueError("output root must be absolute")
@@ -344,6 +422,14 @@ def main(argv=None):
     return 0
 
 
+def cli_main(argv=None):
+    try:
+        return main(argv)
+    except (ValueError, OSError, ImportError, KeyError, RuntimeError) as exc:
+        print("ERROR: model SDC: " + str(exc), file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
     # Native import/destructor diagnostics must not contaminate describe JSON.
     PROTOCOL_OUT = os.fdopen(os.dup(1), "w")
@@ -352,8 +438,4 @@ if __name__ == "__main__":
     if not (overlay / "ascend_npu_burn").is_dir():
         raise SystemExit("ERROR: image-owned NPU Burn overlay is missing")
     sys.path.insert(0, str(overlay))
-    try:
-        raise SystemExit(main())
-    except (ValueError, OSError, ImportError, KeyError) as exc:
-        print("ERROR: model SDC: " + str(exc), file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(cli_main())

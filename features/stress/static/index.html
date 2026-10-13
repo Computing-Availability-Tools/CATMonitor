@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 可靠性压测</title>
-  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261012.2">
+  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261013.2">
 </head>
 <body>
   <header class="topbar">
@@ -79,18 +79,33 @@
             <button id="npu-select-all" type="button">全选</button>
           </div>
           <div class="npu-selection-heading">
-            <label for="npu-mode">测试类型</label>
-            <select id="npu-mode"><option value="operators">算子压测</option><option value="model">模型 SDC</option></select>
+            <h3>测试类型</h3>
+            <div class="npu-mode-options" role="group" aria-label="NPU 测试类型">
+              <button id="npu-mode-operators" type="button" aria-pressed="true">算子压测</button>
+              <button id="npu-mode-model" type="button" aria-pressed="false">模型 SDC</button>
+            </div>
           </div>
-          <div id="npu-model-selection" hidden>
-            <label for="npu-model-name">模型</label>
-            <select id="npu-model-name"></select>
-            <label for="npu-model-action">操作</label>
-            <select id="npu-model-action"><option value="compare">SDC 对照检测</option><option value="create_reference">生成参考（单设备）</option></select>
-            <label for="npu-reference-id">参考 ID</label>
+          <p id="npu-model-availability" class="selection-hint" hidden></p>
+          <div id="npu-model-selection" class="model-selection" hidden>
+            <h3>选择模型</h3>
+            <div id="npu-model-choices" class="model-choice-grid" role="group" aria-label="选择模型"></div>
+            <div class="model-reference-field">
+              <label id="npu-reference-label" for="npu-reference-id">对照参考 ID</label>
+              <input id="npu-reference-id" maxlength="64" placeholder="填写已生成的参考 ID">
+              <small>参考是健康单卡完成同模型训练时保存的标准结果，不是预训练权重。</small>
+            </div>
+            <div id="npu-model-preparing" class="model-task-status" hidden>
+              <span>本次只生成参考，请选择一张已确认健康的逻辑卡。</span>
+              <button id="npu-model-compare" type="button">返回 SDC 检测</button>
+            </div>
+            <details id="npu-reference-setup" class="selection-details">
+              <summary>首次使用：准备参考</summary>
+              <p>先在健康单卡生成参考，再用同一参考检查其他卡。不能自动生成参考后与自身比较来宣称 SDC 通过。</p>
+              <button id="npu-model-prepare" type="button">切换到生成参考（单卡）</button>
+              <p id="npu-reference-permission" class="selection-hint" hidden>当前部署未授权生成参考，请管理员准备或授权。</p>
+            </details>
             <p id="npu-model-memory" class="selection-hint"></p>
-            <input id="npu-reference-id" maxlength="64" placeholder="例如 gpt3-a2-baseline-01">
-            <p class="selection-hint">预检通过不代表训练通过。多设备按卡独立执行，不合并显存；显存不足会标记“未完成”。参考生成与 SDC 检测分开记录，软件栈或显存策略变化后需重新生成参考。</p>
+            <p class="selection-hint">多卡逐卡独立运行，不合并显存。预检通过不代表训练或 SDC 通过。</p>
           </div>
           <div id="npu-operator-heading" class="npu-selection-heading">
             <h3>压测算子</h3>
@@ -126,7 +141,7 @@
           <div class="actions">
             <button id="start" class="primary-action" disabled>
               <span class="button-play" aria-hidden="true"></span>
-              开始压测
+              <span id="start-label">开始压测</span>
             </button>
             <button id="cancel" class="danger-action" hidden>停止当前作业</button>
           </div>
@@ -143,6 +158,17 @@
         </div>
       </section>
 
+      <aside class="panel guide-panel">
+        <div class="section-kicker">COVERAGE</div>
+        <h2>能力覆盖</h2>
+        <div class="coverage-list">
+          <div class="coverage-item"><span class="coverage-mark stream-mark" aria-hidden="true"></span><div><b>内存子系统</b><small>STREAM · Copy / Scale / Add / Triad</small></div></div>
+          <div class="coverage-item"><span class="coverage-mark hpl-mark" aria-hidden="true"></span><div><b>浮点计算</b><small>HPL · Dense Linear Algebra</small></div></div>
+          <div class="coverage-item"><span class="coverage-mark hpcg-mark" aria-hidden="true"></span><div><b>综合计算</b><small>HPCG · Memory / Compute / MPI</small></div></div>
+          <div class="coverage-item"><span class="coverage-mark npu-burn-mark" aria-hidden="true"></span><div><b>昇腾 NPU</b><small>Ascend NPU Burn · Compute / SDC</small></div></div>
+        </div>
+        <div class="result-rule"><span>判定规则</span><b>运行成功即通过</b><p>不设置性能阈值。STREAM/HPL/HPCG 达到计划时限且此前未发生错误可记录为通过；NPU Burn 必须生成完整 PASS/SDC 结果。模型参考生成不等同于 SDC 检测通过。</p></div>
+      </aside>
     </div>
 
     <div class="report-workspace">
@@ -186,6 +212,6 @@
       }
     }, 3000);
   </script>
-  <script src="./static/stress.js?v=20261012.2"></script>
+  <script src="./static/stress.js?v=20261013.2"></script>
 </body>
 </html>

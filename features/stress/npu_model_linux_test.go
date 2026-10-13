@@ -4,15 +4,73 @@ package stress
 
 import (
 	"context"
-	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadplugin"
 )
 
-type modelExecutor struct{ selectionExecutor }
+func TestRealModelDescribeProfileMatchesControllerContract(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string, mode os.FileMode) string {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	write("davinci5", "", 0600)
+	pci := write("lspci", "#!/bin/sh\necho '0000:81:00.0 Processing accelerators: Huawei Device d803'\n", 0755)
+	preflight := write("preflight", "#!/bin/sh\nexit 0\n", 0755)
+	for key, value := range map[string]string{
+		"NPU_BURN_DEVICE_ROOT": root, "CATMONITOR_LSPCI": pci,
+		"NPU_BURN_PREFLIGHT_EXECUTABLE": preflight, "NPU_BURN_DEVICE": "0",
+		"NPU_BURN_OUTPUT_DIR": root, "NPU_BURN_LOG_DIR": root, "HOME": root,
+		"NPU_BURN_CHIP_GENERATION": "A2", "NPU_BURN_INTERNAL_TIMEOUT_SECONDS": "300",
+		"NPU_BURN_RUN_CASE": "matmul", "NPU_BURN_GROUP": "",
+		"CATMONITOR_NPU_DEVICE_MODE": "full", "CATMONITOR_NPU_REQUIRE_IDLE": "0",
+		"CATMONITOR_NPU_COMPAT_PROFILE": "none", "CATMONITOR_NPU_MODEL": "gpt3",
+		"CATMONITOR_NPU_MODEL_ACTION": "create_reference", "CATMONITOR_NPU_MODEL_REFERENCE": "ref1",
+	} {
+		t.Setenv(key, value)
+	}
+	for _, capacity := range []struct {
+		status string
+		free   string
+		want   CheckStatus
+	}{{"pass", "16", CheckPass}, {"fail", "4", CheckFail}} {
+		body := `{"model":"gpt3","action":"create_reference","reference_id":"ref1","devices":[0],"preflight":"` + capacity.status + `","memory_preflight":{"status":"` + capacity.status + `","scope":"basic_lower_bound","required_bytes":8,"full_peak_known":false,"devices":[{"device":0,"free_bytes":` + capacity.free + `,"total_bytes":32,"status":"` + capacity.status + `"}]}}`
+		exe := write("model-adapter", "#!/bin/sh\nprintf '%s\\n' '"+body+"'\nexit 0\n", 0755)
+		t.Setenv("NPU_BURN_EXECUTABLE", exe)
+		profile, err := workloadplugin.Describe(context.Background(), "npu_burn")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := validateDescribeProfile("npu_burn", profile); err != nil {
+			t.Fatalf("real plugin profile violates Controller contract: %v", err)
+		}
+		if profile.Preflight.Status != capacity.want {
+			t.Fatalf("RC=0 must not override JSON preflight: %s, want %s", profile.Preflight.Status, capacity.want)
+		}
+	}
+}
+
+type modelExecutor struct {
+	selectionExecutor
+	modelBudget time.Duration
+}
 
 func (f *modelExecutor) Describe(ctx context.Context, b Binding) (*ExecutionProfile, error) {
 	p, err := f.selectionExecutor.Describe(ctx, b)
 	if b.NPUModel != nil {
+		deadline, ok := ctx.Deadline()
+		if ok {
+			f.modelBudget = time.Until(deadline)
+		}
 		p.Parameters = append(p.Parameters, ProfileParameter{Key: "model", Label: "Model", Value: b.NPUModel.Name}, ProfileParameter{Key: "model_action", Label: "Model action", Value: b.NPUModel.Action}, ProfileParameter{Key: "model_reference", Label: "Reference ID", Value: b.NPUModel.ReferenceID})
 	}
 	return p, err
@@ -44,6 +102,9 @@ func TestModelJobAuthorizationAndHistory(t *testing.T) {
 	started, err := m.StartWithOptions([]string{"npu_burn"}, req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if f.modelBudget < workloadapi.ModelPreflightTimeout || f.modelBudget > workloadapi.ModelPreflightTimeout+15*time.Second {
+		t.Fatalf("model transport budget must allow the bounded inner probe: %s", f.modelBudget)
 	}
 	req.NPUModel.Name = "llama2"
 	r := waitForTerminal(t, m, started.JobID)

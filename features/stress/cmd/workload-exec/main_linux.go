@@ -74,10 +74,7 @@ func describe(args []string) error {
 	if !allowedBenchmark(benchmark) {
 		return fmt.Errorf("benchmark %q is not supported by this container", benchmark)
 	}
-	timeout := 2 * time.Second
-	if benchmark == "npu_burn" {
-		timeout = 30 * time.Second
-	}
+	timeout := workloadapi.PreflightTimeout(benchmark, os.Getenv("CATMONITOR_NPU_MODEL") != "")
 	ctx, done := context.WithTimeout(context.Background(), timeout)
 	defer done()
 	profile, err := workloadplugin.Describe(ctx, benchmark)
@@ -255,10 +252,15 @@ func run(args []string) error {
 		result.Status, result.Message = workloadapi.StatusTimeLimitReached, "configured time limit reached; workload process group stopped"
 	case runErr != nil:
 		result.Status, result.Message = workloadapi.StatusUnhealthy, fmt.Sprintf("workload command failed: %v", runErr)
+		if request.NPUModel != nil {
+			result.Message = modelFailureMessage(runErr, resultOutput)
+		}
 		if request.Benchmark == "npu_burn" {
 			result.Failure = workloadapi.ClassifyNPUFailure(resultOutput)
 			if result.Failure != nil {
-				result.Message = "NPU HBM exhausted; workload incomplete, not a hardware fault diagnosis"
+				if request.NPUModel == nil {
+					result.Message = "NPU HBM exhausted; workload incomplete, not a hardware fault diagnosis"
+				}
 			}
 		}
 	default:
