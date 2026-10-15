@@ -255,7 +255,8 @@ schema_version、job_id、chip_generation 和 operators[{name,config}]，在上�
 返回 TestCase 后记录，不重新读取部署目录。Controller 校验 Job ID/算子集合，
 深拷贝并保存到 BenchmarkResult/history，不依赖有界 console output。缺失或无效
 回执不补造、不代替 CSV/SDC 成功门禁；配置 run_count 不等于实际完成次数。
-预览与历史中的每个算子详情均默认折叠，参数不得作为新增自由输入或环境注入入口。
+预览与历史中的每个算子详情均默认折叠且只读；修改必须走“高级参数”的类型化请求、
+预检与冻结链路，不接受任意命令、路径或环境变量注入。
 
 ## 8. CLI
 
@@ -411,7 +412,7 @@ RC 镜像构建前必须通过 `make test-monitoring-compat`。Fresh Image Accep
 `npu_model={name,action,reference_id}` 与算子选择互斥，沿用统一 Controller 和
 Job-ID Cancel。管理员通过 `allowed_npu_models` 和
 `allow_npu_reference_generation` 授权；参考生成只允许一个明确 logical ID。
-模型请求不接受用户路径、训练脚本或任意参数。
+模型请求只接受已声明的类型化训练参数，不接受用户路径、训练脚本或任意未知参数。
 
 `CATMONITOR_MODEL_MEMORY_MODE` 为部署策略：standard（缺省）或 checkpointed。
 后者必须应用显式 model-memory-v1 补丁并通过真实 API 能力检查，不缩减形状、
@@ -429,4 +430,4 @@ batch、精度或步骤，不自动回退。参考身份包含此策略，不允
 
 新模型入口与 checkpointed 模式的 A2/A3 全负载验收为 PENDING，源码与合成
 回归不替代新镜像实机验收。部署及矩阵见
-[A3 迁移指南](../../docker/NPU_A3_MIGRATION_GUIDE.md)。
+[模型 SDC 指南](../../docker/NPU_MODEL_SDC_GUIDE.md)。

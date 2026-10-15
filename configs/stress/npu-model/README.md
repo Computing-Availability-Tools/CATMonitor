@@ -1,8 +1,8 @@
 # A2 模型短测配置
 
-`a2-model-b32-checkpointed-36steps.json` 是 GPT3/Llama2 的可复用 A2 短测配置：batch 32、激活重计算、4 步预热加 32 步测量。2026 年 10 月 13 日，两种模型各自生成参考后，均在 logical 0、1 各完成 36 步 SDC 对照，错误数 0。
+`a2-model-b32-checkpointed-36steps.json` 是 GPT3/Llama2 的可复用 A2 短测配置：batch 32、激活重计算、4 步预热加 32 步测量。
 
-这不是完整 64/2048 步、隔夜运行或持续满载验收，也不是 A3 支持声明。验证节点为 Ascend910B4，单卡 32768 MiB；软件栈和镜像身份记录在配置的 `validation` 中。该字段只是既有结果摘要，新节点仍须自行预检和生成参考。
+这不是完整 64/2048 步、隔夜运行或持续满载验收，也不是 A3 支持声明。预设中的 `validation` 只记录历史来源，不是当前镜像、新节点或其他软件栈的通过证明。配套镜像、源码身份与当前验收范围以[交付指南](../../../docker/STRESS_JOB_RELEASE_GUIDE.md)为准；每个新环境仍须预检并生成匹配参考。
 
 ## 配置包含什么
 
@@ -19,11 +19,11 @@
 
 ## 从配套镜像生成完整配置目录
 
-在仓库根目录，以具备 Docker 和配置目录写权限的账号执行。镜像应已经获取；这里不执行构建。导出容器只用于 `docker cp`，不启动、不映射 NPU，也不占用设备。
+先按[交付指南](../../../docker/STRESS_JOB_RELEASE_GUIDE.md)选定并获取配套的 `CONTROL_IMAGE`、`NPU_IMAGE`。在仓库根目录，以具备 Docker 和配置目录写权限的账号执行；这里不构建镜像。导出容器只用于 `docker cp`，不启动、不映射 NPU，也不占用设备。
 
 ```bash
-NPU_IMAGE='ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-a2-6f94e58b8336'
-CONTROL_IMAGE='ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-a2-6f94e58b8336'
+: "${NPU_IMAGE:?set the matching NPU image from the deployment guide}"
+: "${CONTROL_IMAGE:?set the matching Control image from the deployment guide}"
 CONFIG_ROOT='/etc/catmonitor/npu-config-profiles'
 CONFIG_DIR="$CONFIG_ROOT/a2-model-b32-checkpointed-36steps"
 
@@ -73,36 +73,10 @@ Manual `docker run` 在原有完整 NPU 参数之外增加以下两项，而不�
 
 首次增加挂载需要在无活动 Job、设备空闲时重新创建 NPU workload 容器，但不重建镜像。根文件系统仍只读，Web 不挂 Docker socket。配置目录已经挂载后，只能在空闲时更新 JSON；配置或软件栈变化后使用新参考。
 
-## 生成参考并逐卡检测
+## 参考与验收边界
 
-先执行 `npu-smi info` 和 doctor，确认授权设备空闲；doctor 通过不代表模型训练或 SDC 通过。参考应来自已确认健康的环境。
+按[模型 SDC 指南](../../../docker/NPU_MODEL_SDC_GUIDE.md)执行预检、单卡生成参考、检测、status 和按 Job ID 取消。每次等待当前 Job 完整结束后，才提交下一项；提交成功不等于训练完成。GPT3 和 Llama2 分别使用独立参考 ID。
 
-```bash
-docker exec catmonitor catmonitor stress doctor \
-  -c /etc/catmonitor/catmonitor.yaml -o table
+本预设生成参考要求 `reference_generated`、`saved_steps=36`；在两个已授权逻辑设备上检测时，要求 `sdc_passed`、`checked_steps=72`、每卡 CSV `checked_steps=36` 且 `err_count=0`，设备与本次 Job 一致。生成参考不等于 SDC 检测通过，doctor 通过不等于训练通过。
 
-(
-  set -eu
-  for MODEL in gpt3 llama2; do
-    REFERENCE="${MODEL}-a2-b32-36-$(date +%s)"
-    docker exec catmonitor catmonitor stress run \
-      --bench npu_burn --npu-devices 0 \
-      --npu-model "$MODEL" --model-action create_reference --reference-id "$REFERENCE" \
-      -c /etc/catmonitor/catmonitor.yaml -o json
-    docker exec catmonitor catmonitor stress run \
-      --bench npu_burn --npu-devices 0,1 \
-      --npu-model "$MODEL" --model-action compare --reference-id "$REFERENCE" \
-      -c /etc/catmonitor/catmonitor.yaml -o json
-  done
-)
-```
-
-顺序为 GPT3 参考、GPT3 两张卡对照、Llama2 参考、Llama2 两张卡对照。生成参考要求 `reference_generated`、`saved_steps=36`；每个模型的双卡检测要求 `sdc_passed`、`checked_steps=72`、每卡 CSV `checked_steps=36` 且 `err_count=0`，设备与当前 Job 完整匹配。生成参考不等于 SDC 检测通过。
-
-Web 使用现有 listener。例如 Web 监听 `:5001` 时，直接访问 `http://<node-address>:5001/stress/`，不新增第二端口或转发。页面和 CLI 查看同一个 Controller Job；取消始终使用 Job ID。当前 Run/Cancel 尚无认证/RBAC，访问应限于可信网络。
-
-## 已验证和未验证范围
-
-本次两模型双卡短测均 PASS，进程退出后设备恢复空闲。GPT3 采样 HBM 最高 14159 MiB，Llama2 16402 MiB；AICore 最高约 53%，温度峰值 88°C。这些是采样值，不是精确分配器峰值，也不是满载或温度安全认证；不要在另一节点盲目继续加压。
-
-完整 64/2048 步、隔夜稳定性及 A3 硬件为 `NOT_RUN`，持续满载为 `NOT_PROVEN`。本预设不把其他 A2 型号或 CANN 版本自动视为已验证。A3 应保留自己的完整配置和兼容 profile，并在对应软件栈重新生成参考，参见 [模型流程](../../../docker/NPU_MODEL_SDC_GUIDE.md) 和 [A3 迁移指南](../../../docker/NPU_A3_MIGRATION_GUIDE.md)。
+模型参数、配置哈希、软件栈、代际或显存策略变化后，旧参考不可直接复用。完整 64/2048 步、隔夜稳定性、持续满载和 A3 硬件均须另行验收，不由本预设或历史 `validation` 自动继承。A3 保留自己的完整配置和兼容 profile，在对应软件栈重新生成参考，参见[模型指南](../../../docker/NPU_MODEL_SDC_GUIDE.md)与[配套交付指南](../../../docker/STRESS_JOB_RELEASE_GUIDE.md)。

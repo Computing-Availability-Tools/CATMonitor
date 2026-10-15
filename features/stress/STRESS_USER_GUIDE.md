@@ -1,6 +1,6 @@
 # CATMonitor 可靠性压测使用指南
 
-最新按作业参数候选的源码、镜像与 A3 完整部署入口统一见
+最新按作业参数候选的源码、A2 配套镜像与 A3 部署边界统一见
 [候选交付指南](../../docker/STRESS_JOB_RELEASE_GUIDE.md)。旧 pre-release 标签不包含
 本轮全部能力；不可把“Web 可编辑”当成旧 workload 已执行新参数。
 
@@ -17,12 +17,15 @@ optional NPU Stress（Ascend NPU Burn）
 项目专属 IP、代理、账号、PAT 和实机绝对路径不得写入仓库。受限节点使用临时
 环境变量或离线镜像包。
 
-> 当前程序内部版本是 `0.3.5`，当前 ARM64 pre-release 镜像标签是
-> `arm64-v0.3.5-stress`，目标发布线是 `v0.3.6`。
+旧 `arm64-v0.3.5-stress` 镜像不包含当前全部接口。发布状态和已验范围只在交付指南
+维护；本文说明操作语义，不重复另一份镜像清单或历史实验报告。
 
-> 公开源码兼容候选新增按 Job 选卡、严格 CSV 覆盖和资源准入，**尚未发布到上述镜像**。
-> 构建/部署/未验范围见 [受限环境指南](../../docker/RESTRICTED_ENV_GUIDE.md)；
-> 缺陷及修改点见 [兼容审计](../../docker/NPU_COMPAT_REVIEW.md)。
+当前 generator 默认开放已选择 Stress profile 的完整操作入口：Web Run/Cancel，
+以及 NPU 映射范围内所有 logical ID、GPT3/Llama2、单卡参考生成。默认选中仍为
+logical 0 / matmul；不自动执行负载、生成参考或绕过空闲/参考检查。
+管理员用 `--disable-web`、`--npu-allowed-devices`、`--npu-allowed-models none`
+或 `--deny-npu-reference-generation` 收紧。旧 YAML 不会自动升级，Monitoring-only
+仍默认关闭 Stress；Run/Cancel 无认证/RBAC，只对可信管理网络开放。
 
 ## 1. 镜像与容器
 
@@ -84,21 +87,8 @@ Controller 将本次完整有效参数及哈希冻结；Run 使用同一快照�
 容器数量：Monitoring-only 3 个；CPU-only 4 个；NPU-only 4 个；CPU+NPU Full
 5 个。CPU-only 用户不需要下载较大的 NPU workload 镜像。
 
-当前 Linux/ARM64 Stress 专用镜像命名：
-
-```text
-ghcr.io/spike677/catmonitor-generic:arm64-v0.3.5-stress
-ghcr.io/spike677/catmonitor-gpu:arm64-v0.3.5-stress
-ghcr.io/spike677/catmonitor-npu:arm64-v0.3.5-stress
-ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.5-stress
-ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.5-stress
-```
-
-程序版本由项目 owner 保持为 `0.3.5`；`stress` 后缀表示该镜像来自 Stress 集成分支，
-不是通用 0.3.5 或最终 v0.3.6 正式镜像。Image ID、digest 和 Git source commit
-仍须随发布记录核对，不能复用 a2-r1。
-
-GPU pre-release package 当前为 Private；GPU 用户拉取前需要完成 GHCR 身份认证。
+镜像 tag 不等于程序版本或认证范围。获取时核对完整源码提交、Image ID、registry digest，
+不混用不同协议的 Control/workload；正式版本和 release tag 由项目 owner 管理。
 
 ## 2. 前置条件
 
@@ -131,37 +121,8 @@ uname -m
 
 ## 3. 获取 ARM64 Stress pre-release 镜像
 
-```bash
-git clone --branch codex/stress-job-parameters https://github.com/spike677/CATMonitor.git
-cd CATMonitor
-git switch codex/stress-job-parameters
-git status --short
-
-export CATMONITOR_RELEASE='arm64-v0.3.5-stress'
-export CATMONITOR_REGISTRY='ghcr.io/spike677'
-```
-
-按节点选择 Control 镜像：
-
-```bash
-# 三选一
-export CONTROL_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-generic:${CATMONITOR_RELEASE}"
-# export CONTROL_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-gpu:${CATMONITOR_RELEASE}"
-# export CONTROL_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-npu:${CATMONITOR_RELEASE}"
-
-export CPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-cpu:${CATMONITOR_RELEASE}"
-export NPU_STRESS_IMAGE="${CATMONITOR_REGISTRY}/catmonitor-stress-npu:${CATMONITOR_RELEASE}"
-```
-
-只拉需要的镜像：
-
-```bash
-docker pull "$CONTROL_IMAGE"
-docker pull "$CPU_STRESS_IMAGE"  # 仅 CPU Stress
-docker pull "$NPU_STRESS_IMAGE"  # 仅 NPU Stress
-```
-
-不同硬件的完整 Compose 命令见：
+当前 A2 配套镜像和 digest 使用 [交付指南](../../docker/STRESS_JOB_RELEASE_GUIDE.md)。
+不同硬件的镜像获取、Monitoring、CPU/NPU-only 和 Full 完整启动命令只在节点指南维护：
 
 - [Generic](../../docker/README-generic.md)
 - [NVIDIA GPU](../../docker/README-gpu.md)
@@ -178,69 +139,20 @@ mirror/proxy、生成 manifest 和制作 RC tag 属于开发/发布职责，统�
 
 ## 5. 生成节点配置
 
-```bash
-sudo install -d -m 0750 \
-  /etc/catmonitor/generated-stress \
-  /var/lib/catmonitor/stress \
-  /var/lib/catmonitor/stress/npu-burn-output
-```
+按所选节点指南执行一次 `generate_stress_deployment.sh`：只传 CPU image 为 CPU-only，
+只传 NPU image 为 NPU-only，两者一起传为 Full。生成器不拉镜像、创建容器或执行负载。
+生成的 YAML、env、profile、Compose override 和 manifest 是同一部署输入，不应手工
+拼出另一套参数。按 Job 修改不需要重新生成；改部署默认/allowlist 才重新生成。
 
-### 5.1 CPU-only
-
-```bash
-sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir /etc/catmonitor/generated-stress \
-  --control-image "$CONTROL_IMAGE" \
-  --cpu-image "$CPU_STRESS_IMAGE" \
-  --enable-web \
-  --force
-```
-
-### 5.2 NPU-only
-
-```bash
-sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir /etc/catmonitor/generated-stress \
-  --control-image "$CONTROL_IMAGE" \
-  --npu-image "$NPU_STRESS_IMAGE" \
-  --npu-burn-device all \
-  --npu-chip-generation A2 \
-  --npu-runtime runc \
-  --enable-web \
-  --force
-```
-
-默认动态发现实际 `/dev/davinciN`；`all` 表示使用经容器 PCI topology 验证通过的
-全部 NPU Burn logical devices。不要用 host 最大 device ID 推导设备数量。generator
-会按映射数量输出 CANN runtime visible IDs；doctor 会在 workload 容器中核对
-CANN、torch_npu、custom ops、PCI topology 和实际 `torch_npu` device count。
-
-A2/CANN 8.3/runc 的已验证运行契约会让 `catmonitor-stress-npu` 使用
-`privileged: true` 与 `network_mode: none`。这是 NPU workload 独有权限；Web、
-DFeE 与 CPU workload 不应获得该权限。A3/A5 仍需独立实机验收，不能从 A2
-结果外推。
-
-### 5.3 CPU + NPU Full
-
-```bash
-sudo bash scripts/stress/generate_stress_deployment.sh \
-  --output-dir /etc/catmonitor/generated-stress \
-  --control-image "$CONTROL_IMAGE" \
-  --cpu-image "$CPU_STRESS_IMAGE" \
-  --npu-image "$NPU_STRESS_IMAGE" \
-  --npu-burn-device all \
-  --npu-chip-generation A2 \
-  --npu-runtime runc \
-  --enable-web \
-  --force
-```
-
-generator 只输出配置、profile、Compose override 和 deployment manifest；不会拉取镜像、
-创建容器或执行压测。
+NPU 动态发现实际 `/dev/davinciN`，映射数量不能由最大编号推导。`all` 也必须在管理员
+明确授权后选择，不因空列表自动扩大范围。完整 PCI、容器节点和 runtime logical ID
+分开核验。权限策略在生成阶段明确指定，不为 doctor 通过扩大设备或自动升级 privileged。
+Web/DFeE 始终不获得 NPU workload 或 Docker socket 权限。
 
 ## 6. 资源参数
 
-网页不允许编辑脚本、命令、路径、MPI 或 NPU profile。管理员在生成配置时固定参数：
+网页不允许编辑脚本、命令、路径、容器绑定或权限；允许通过类型化字段修改本次作业的
+线程、MPI 规模和 tensor/model 参数。下表是管理员生成部署默认值时使用的参数：
 
 | 参数 | 含义 | 默认值 |
 |---|---|---:|
@@ -255,8 +167,27 @@ generator 只输出配置、profile、Compose override 和 deployment manifest�
 | `--npu-run-case` | 部署默认 NPU Burn case；新候选支持按 Job 选择 | `matmul` |
 | `--npu-internal-timeout` | NPU 单 case 超时 | 300 |
 
-参数必须按在线 CPU、内存容量、MPI ABI 和 NPU profile 评估。修改后重新运行 generator，
-再用同一 Compose 命令执行 `up -d`。
+参数必须按在线 CPU、内存容量、MPI ABI 和 NPU profile 评估。改部署默认后重新运行
+generator，再用原 Compose 命令执行 `up -d`；本次作业参数不写回这些默认值。
+
+### NPU 算子与只读运行边界
+
+算子来自镜像完整公共配置与代际 override，按名称合并并检查实际 dtype API；
+可选不等于实机认证。A2 无上游 quant_matmul 策略，拒绝而不借用 A3/A5 策略。
+GPT3/Llama2 使用独立 [模型 SDC 入口](../../docker/NPU_MODEL_SDC_GUIDE.md)，不混入算子列表。
+显式不支持的 dtype、越权设备、空选择或旧镜像不认识的参数都拒绝，不自动降级。
+
+每轮使用独立输出目录，CSV 必须覆盖 **每个选中设备 × 每个选中算子**；有效运行次数
+大于 0、result 成功、err_count=0，且实际参数/设备与请求一致。不以 CSV 存在、mtime
+变化或进程返回 0 判断通过。缺项、额外项、数值错误和 NPU 超时均不能写成 Healthy。
+完整 PCI 与 torch/runtime 拓扑必须可解释；single 无法证明真实 PCI/NUMA 映射时拒绝，
+不能用全机 PCI 的第一项冒充子集 logical 0。任意多设备子集及调度器资源预约未实现。
+
+Conv2D/Cast 可能相对当前目录写 `kernel_meta`。plugin 将每个 Job 的 cwd 和 HOME
+同时指向有界可写 tmpfs，结束/取消后清理临时 JIT，只持久化结果；不要取消只读根、
+扩大权限或挂宿主源码绕过错误。portable patch 将后台同步异常传回 Worker，
+“线程结束”不等于“同步成功”；内部/外部超时、启动失败和 Cancel 都须回收本轮进程。
+线程预算由 generator/env 持久化，spawn 子进程继承，不靠一次手工 `docker exec -e`。
 
 ## 7. 验证、运行和取消
 
@@ -264,7 +195,8 @@ Controller 会通过配置的 Docker Unix socket 自动协商 daemon API 版本�
 YAML、Compose 或容器环境中手工设置 `DOCKER_API_VERSION`。这也允许新版 Control
 镜像连接项目支持的较旧 Docker daemon。
 
-通过 Compose project/service label 找到 daemon：
+手工 `docker run` 部署设 `DAEMON_ID=catmonitor`，跳过下面的 Compose 查询。
+Compose 部署通过 project/service label 找到 daemon：
 
 ```bash
 DAEMON_ID=$(docker ps \
@@ -298,6 +230,7 @@ docker exec "$DAEMON_ID" catmonitor stress status -o table
 docker exec "$DAEMON_ID" catmonitor stress cancel --job '<job-id>'
 ```
 
+CLI `run` 会等待终态；运行期间需用另一宿主终端或 Web 执行 status/cancel。
 一次作业可通过 `--timeout 120s` 缩短超时，但不能超过 YAML 中的项目上限。
 NPU Burn 的默认上限为 `2h`（7200 秒），算子、模型参考生成与模型 SDC 对照共用
 `stress.benchmarks.npu_burn.timeout`。这是最长作业时限，不保证持续运行 2 小时；
@@ -371,10 +304,9 @@ Controller 将校验过的分组和 CSV 路径保存为 `npu_csv`，历史归档
 
 ## 9. 从 Stress V1 迁移
 
-当前开发候选新增 CLI `--npu-devices` / `--npu-cases` 及 Web 按次设备/算子选择。
-需要新 Control 和 NPU workload，不是已有 pre-release 镜像的接口。完整源码与 A3
-配置合并、A2 独立默认规模、构建、命令和逐算子待验清单见
-[NPU 算子指南](../../docker/NPU_OPERATOR_GUIDE.md)。未验证的算子不标记硬件 PASS。
+CLI `--npu-devices` / `--npu-cases` 和高级参数需要配套更新 Control 及相关 workload；
+当前镜像/补丁身份见交付指南。保留完整源码与 A3 配置，按作业改参不裁剪共享配置。
+未验证的算子、模型和硬件不标记 PASS。
 
 ```text
 OLD_MONITORING_YAML_COMPATIBLE=true
@@ -414,7 +346,7 @@ stress doctor → STREAM → HPCG → HPL → NPU Burn（如启用）
 | CPU benchmark unavailable | CPU workload 状态、MPI ABI、benchmark 资产和资源规模 |
 | NPU benchmark unavailable | runtime preflight 中的驱动、CANN/torch_npu、设备数量和 PCI topology |
 | `aclInit 507899` / device invalid | 使用 generator 生成的 A2 override；确认只有 NPU workload 为 privileged |
-| Web 无法 Run/Cancel | `--enable-web`、daemon 状态、`19322` 网络策略 |
+| Web 无法 Run/Cancel | 当前 YAML 的 `web_enabled`、是否用了 `--disable-web`、daemon 状态及实际 Web 端口的网络策略 |
 | Cancel 后仍有进程 | workload 容器进程；应按缺陷处理，不能忽略 |
 | Registry 不可达 | 用 `docker save/load` 转移同一标签和 Image ID 的镜像 |
 

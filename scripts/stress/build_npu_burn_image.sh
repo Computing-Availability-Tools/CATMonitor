@@ -33,7 +33,7 @@ BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE=
 RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE=
 BUILD_DRIVER_LIB_DIR=
 COMPAT_PROFILE=none
-MODEL_SDC_ENABLED=false
+MODEL_SDC_ENABLED=auto
 BUILD_NETWORK=default
 BUILD_NETWORK_EXPLICIT=false
 BUILD_ROOT=/var/tmp/catmonitor-npu-burn-build
@@ -74,8 +74,11 @@ Build controls:
                             only by the disposable builder stage; it is never
                             copied into the final runtime image
   --compat-profile NAME     Compatibility identity (default: none)
-  --enable-model-sdc        Validate GPT3/Llama2 imports in final runtime image;
-                            requires model-sdc-v1 patch and prepared dependencies
+  --enable-model-sdc        Validate GPT3/Llama2 imports (automatic for model-sdc
+                            compatibility profiles); requires the explicit patch
+                            chain and prepared runtime dependencies
+  --disable-model-sdc       Disable model validation for non-job profiles;
+                            conflicts with complete model/job profiles
   --build-network NAME      Docker build network: default, host, or none
   --go-image IMAGE          Local Go builder (default: golang:1.23-bookworm)
                             (default: default; offline package input selects
@@ -126,6 +129,7 @@ while [ "$#" -gt 0 ]; do
         --build-driver-lib-dir) require_value "$@"; BUILD_DRIVER_LIB_DIR=$2; shift 2 ;;
         --compat-profile) require_value "$@"; COMPAT_PROFILE=$2; shift 2 ;;
         --enable-model-sdc) MODEL_SDC_ENABLED=true; shift ;;
+        --disable-model-sdc) MODEL_SDC_ENABLED=false; shift ;;
         --build-network) require_value "$@"; BUILD_NETWORK=$2; BUILD_NETWORK_EXPLICIT=true; shift 2 ;;
         --go-image) require_value "$@"; GO_IMAGE=$2; shift 2 ;;
         --pciutils-package) require_value "$@"; PCIUTILS_PACKAGES+=("$2"); shift 2 ;;
@@ -221,6 +225,13 @@ case "$COMPAT_PROFILE" in
             die "compat profile $COMPAT_PROFILE requires at least one --patch"
         ;;
 esac
+
+if [ "$MODEL_SDC_ENABLED" = auto ]; then
+    case "$COMPAT_PROFILE" in
+        *model-sdc*) MODEL_SDC_ENABLED=true ;;
+        *) MODEL_SDC_ENABLED=false ;;
+    esac
+fi
 
 for tool in readlink install mktemp tar sha256sum find grep date awk wc tee; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
@@ -520,7 +531,7 @@ if [ "$MODEL_SDC_ENABLED" = true ] && [ "$COMPAT_PROFILE" = none ]; then
 fi
 case "$COMPAT_PROFILE" in
     portable-model-sdc-memory-job-v1|a2-upstream-model-sdc-memory-job-v1)
-        [ "$MODEL_SDC_ENABLED" = true ] || die "job model profile requires --enable-model-sdc"
+        [ "$MODEL_SDC_ENABLED" = true ] || die "job model profile requires model SDC; --disable-model-sdc conflicts with this profile"
         grep -q 'def frozen_config(' "$STAGED_SOURCE/ascend_npu_burn/case_catalog.py" && \
         grep -q 'json_data = frozen' "$STAGED_SOURCE/ascend_npu_burn/common/utils.py" && \
         grep -q 'CATMONITOR_MODEL_LOSS_TOLERANCE' "$STAGED_SOURCE/ascend_npu_burn/benchmarks/model/run_config.py" || \

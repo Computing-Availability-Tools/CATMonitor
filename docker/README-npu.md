@@ -1,22 +1,32 @@
 # CATMonitor：Ascend NPU 节点
 
 > 最新“按作业参数 / 模型 SDC”候选统一使用 `codex/stress-job-parameters`，
-> 完整获取、A2/A3 镜像区分及 A3 五容器部署见 [候选交付指南](STRESS_JOB_RELEASE_GUIDE.md)。
+> 当前 A2/A3 镜像区分、按作业参数及五容器部署见 [候选交付指南](STRESS_JOB_RELEASE_GUIDE.md)。
 > 本页旧 `arm64-v0.3.5-stress` 是 Monitoring/Stress V2 历史基线，不包含本轮全部功能。
 
-适用于 Ascend NPU Linux 节点。支持 Ascend Monitoring、可选 CPU Stress 和可选
-NPU Burn。当前 Stress 镜像只声明已完成 A2/Ascend910B4、CANN 8.3、`runc` 的功能验收；
-其他 SoC/CANN 组合必须单独验收，不能由 A2 结果外推。
+适用于 Ascend NPU Linux 节点。下文 `arm64-v0.3.5-stress` 是历史 A2/CANN 8.3/runc
+部署基线；当前 A2/CANN 8.5.1 三件套、digest 和有限实测范围见上方交付指南。
+A3/其他软件栈须单独验收，不能由 A2 结果外推，也不能混用两批镜像。
 
 Docker Compose 是推荐入口；本页同时给出完整的 `docker run` 入口。两种入口使用
 相同镜像、generator 配置、挂载、权限和 3/4/4/5 容器模型。
 
-不想反复组合多个 `-f` 时，使用 [Compose 薄启动入口](README.md#61-简化-compose-启动与查询实际端口)。
+不想反复组合多个 `-f` 时，使用 [Compose 薄启动入口](README.md#compose-与手工启动)。
 Web/DFeE 会在起始端口占用时自动递增；启动后用 `urls` 查询实际地址，不要把
 默认 19322 写成每次都保证的监听端口。
 
-> 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
-> `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
+## 选择一条部署路线
+
+| 场景 | 执行顺序 | 容器数 |
+| --- | --- | ---: |
+| Monitoring-only | 第 1/2 节 → 第 3 节 | 3 |
+| CPU Stress | 第 1/2/4 节 → 5.1 → 5.2 或 5.3 → 5.4 | 4 |
+| NPU Stress | 第 1/2/4 节 → 6.1 → 6.3 或 6.4 → 6.5 | 4 |
+| CPU + NPU Full | 第 1/2/4 节 → 7.1 → 7.2 或 7.3 → 第 8 节 | 5 |
+
+各场景互斥；每个场景的 Compose / 手工方式也二选一。不要先启动 Monitoring 三容器，
+再重复执行四/五容器命令。已有同名容器或端口占用时 STOP，先确认归属与升级窗口，
+不删除未知服务。手工 NPU/Full 路径另须执行 6.2 的设备参数读取块。
 
 ## 1. 前置条件
 
@@ -142,6 +152,7 @@ docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
 test "$(docker ps --filter name='^/catmonitor$' --filter status=running -q | wc -l)" -eq 1
 test "$(docker ps --filter name='^/catmonitor-web$' --filter status=running -q | wc -l)" -eq 1
 test "$(docker ps --filter name='^/catmonitor-dfee$' --filter status=running -q | wc -l)" -eq 1
+docker exec catmonitor catmonitor collect -o table
 docker exec catmonitor test -s /var/lib/catmonitor/snapshot/snapshot_npu.json
 curl -fsS http://127.0.0.1:19320/-/ready
 curl -fsS http://127.0.0.1:19322/ >/dev/null
@@ -152,6 +163,9 @@ curl -fsS http://127.0.0.1:9333/metrics >/dev/null
 ### 3.3 Verify
 
 Web 中 Stress 显示未启用；旧 Monitoring YAML 可以完全没有顶层 `stress:` 段。
+
+<details>
+<summary>可选 Monitoring 用法：部分服务、自定义配置、独立 DFeE 和 Prometheus/Grafana</summary>
 
 ### 3.4 只启动部分 Monitoring 服务
 
@@ -286,6 +300,8 @@ scrape_configs:
 `features/dfee/grafana-dashboard.json`。完整 DFeE 参数与独立二进制用法见
 [DFeE 使用文档](../features/dfee/USAGE.md)。
 
+</details>
+
 ## 4. Stress 运行目录
 
 generator 只生成节点配置和只读 metadata，不启动或删除容器。以下 A2 参数是当前
@@ -323,7 +339,7 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
 
 ### 5.2 Compose
 
-先执行第 4 节 CPU-only generator，然后：
+先准备第 4 节目录，再执行 5.1 的 CPU-only generator，然后：
 
 ```bash
 CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
@@ -338,7 +354,10 @@ CATMONITOR_STRESS_STATE_DIR="$CATMONITOR_STRESS_STATE_DIR" \
 
 ### 5.3 Manual `docker run`
 
-先执行第 4 节 CPU-only generator。下面命令完整创建 CPU workload、daemon、Web 与
+<details>
+<summary>展开 CPU Stress 完整四容器命令（不需要 Compose）</summary>
+
+先准备第 4 节目录，再执行 5.1 的 CPU-only generator。下面命令完整创建 CPU workload、daemon、Web 与
 DFeE 共 4 个容器；只有 daemon 挂 Docker Socket。
 
 ```bash
@@ -414,6 +433,8 @@ generated YAML、state、control 与 Docker Socket；CPU workload 使用 `networ
 只读根文件系统、最小 capabilities、16 GiB shm、只读安全选项和独立可写 state；
 Web/DFeE 不挂 Docker Socket。
 
+</details>
+
 ### 5.4 Doctor / Run / Cancel
 
 ```bash
@@ -422,8 +443,11 @@ docker exec catmonitor catmonitor stress doctor \
 docker exec catmonitor catmonitor stress run --bench stream -o table
 docker exec catmonitor catmonitor stress status -o table
 docker exec catmonitor catmonitor stress cancel --job '<job-id>'
-docker top catmonitor-stress-cpu | grep -E 'xhpl|xhpcg|mpirun|hydra' && exit 1 || true
+docker top catmonitor-stress-cpu -eo pid,args
 ```
+
+Cancel 请求被接受不等于清理已结束；status 到达 `cancelled` 后，确认容器内没有
+本轮 stream_omp/xhpl/xhpcg/mpirun/hydra 进程。`docker top` 失败必须排查，不吞掉退出码。
 
 ## 6. NPU Stress
 
@@ -486,7 +510,7 @@ runtime logical namespace `0,1`，并在 workload preflight 中与 PCI topology�
 
 ### 6.3 Compose
 
-先执行第 4 节 NPU-only generator，然后：
+先准备第 4 节目录，再执行 6.1 的 NPU-only generator，然后：
 
 ```bash
 CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
@@ -501,7 +525,10 @@ CATMONITOR_STRESS_STATE_DIR="$CATMONITOR_STRESS_STATE_DIR" \
 
 ### 6.4 Manual `docker run`
 
-先执行第 4 节 NPU-only generator和 profile 读取块。下面命令动态使用 generator
+<details>
+<summary>展开 NPU Stress 完整四容器命令（不需要 Compose）</summary>
+
+先准备第 4 节目录，执行 6.1 的 NPU-only generator，再执行 6.2 的 profile 读取块。下面命令动态使用 generator
 发现的所有 host nodes，不允许手工把稀疏 host ID 当成 NPU Burn logical ID。
 
 ```bash
@@ -575,6 +602,8 @@ NPU workload 的根文件系统只读；`HOME=/opt/catmonitor/npuburn-home` 由 
 运行期可写目录，结果另外持久化到 `$CATMONITOR_NPU_OUTPUT_DIR`。A2/CANN 8.3/runc
 profile 只给 NPU workload `privileged=true`，其网络为 `none`；Web/DFeE 不获得该权限。
 
+</details>
+
 ### 6.5 Doctor / Run / Cancel
 
 ```bash
@@ -583,13 +612,16 @@ docker exec catmonitor catmonitor stress doctor \
 docker exec catmonitor catmonitor stress run --bench npu_burn -o table
 docker exec catmonitor catmonitor stress status -o table
 docker exec catmonitor catmonitor stress cancel --job '<job-id>'
-docker top catmonitor-stress-npu | grep -E 'ascend_npu_burn|multiprocessing' && exit 1 || true
+docker top catmonitor-stress-npu -eo pid,args
 ```
+
+status 到达 `cancelled` 后应无本轮 ascend_npu_burn/launch.py/multiprocessing Worker；
+没有完整 CSV 的取消作业不能按通过计数。不要用会退出登录 shell 或掩盖失败的检查管道。
 
 ### 6.6 显式单设备兼容候选（硬件验收 PENDING）
 
 仅适用于从本次源码构建、应用 `portable-runtime-v1.patch` 的新 workload 镜像，
-不能直接用本页旧 pre-release tag。构建及本地输入见 [受限环境指南](RESTRICTED_ENV_GUIDE.md)。
+不能直接用本页旧 pre-release tag。构建及本地输入见 [开发者指南](DEVELOPER_GUIDE.md)。
 旧完整部署仍使用 `full` 默认模式；这里不通过删除数量检查或加 privileged 绕过预检。
 
 先确认设备空闲且获准使用。`NPU_HOST_NODE` 是实际宿主节点路径，**不是 runtime index**；
@@ -651,14 +683,14 @@ runtime 映射不可证，不切换 privileged；记录失败待硬件适配。�
 Docker daemon 必须实际提供 `--init` 所需的 docker-init；缺失时先修复 Docker 安装，
 不要为通过启动而删掉 init 或放大权限。
 CSV 位于 output 下本轮独立 `run-*` 目录；必须验证每个选定设备 result/err_count/run_count。
-完整新镜像验收顺序见受限环境指南第 5 节。
+完整新镜像验收顺序见 [Stress 测试指南](../features/stress/STRESS_TEST_GUIDE.md)。
 
 ### 6.7 本次兼容候选：按作业选卡、选算子和小规模 HPL
 
 上述 pre-release 镜像不包含本分支的新接口。新 Control、NPU workload（以及使用新 HPL
 容量检查时的 CPU workload）需从同一修复源码构建；不能只更新 YAML/网页后复用旧执行器。
-构建 profile、生成配置和手工部署差异见
-[受限环境指南第 4 节](RESTRICTED_ENV_GUIDE.md#4-同一套正式部署)。
+当前配套镜像、构建 profile、生成配置和完整手工路径见
+[候选交付指南](STRESS_JOB_RELEASE_GUIDE.md)。
 
 Web `/stress/` 提供逻辑设备复选框；列表来自实际 profile，授权由管理员配置决定。
 CLI 可使用 `stress run --bench npu_burn --npu-devices 0,1 --npu-cases matmul`。
@@ -667,8 +699,9 @@ Web 同时提供实际 catalog 的算子选择和不可用原因。设备/算子
 可见不代表空闲；当前整节点空闲门禁在发现任何 NPU 业务进程或无法解析进程表时拒绝启动。
 这不是跨调度器的独占预约，仍须在获准维护窗口运行。
 
-完整源码/配置保留、A3 按名合并配置、A2 独立配置和逐算子支持边界见
-[NPU 算子指南](NPU_OPERATOR_GUIDE.md)。配置准入不等于实机验证；新镜像的硬件矩阵为 NOT_RUN。
+完整源码/配置保留、算子准入和逐设备×算子 CSV 核验见
+[Stress 用户指南](../features/stress/STRESS_USER_GUIDE.md#npu-算子与只读运行边界)。
+配置准入不等于实机验证；每批镜像的已验范围以交付指南为准，其他场景保持 NOT_RUN。
 
 ## 7. CPU + NPU Full
 
@@ -694,7 +727,7 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
 
 ### 7.2 Compose
 
-先执行第 4 节 Full generator，然后：
+先准备第 4 节目录，再执行 7.1 的 Full generator，然后：
 
 ```bash
 CATMONITOR_IMAGE="$CATMONITOR_IMAGE" \
@@ -709,8 +742,11 @@ CATMONITOR_STRESS_STATE_DIR="$CATMONITOR_STRESS_STATE_DIR" \
 
 ### 7.3 Manual `docker run`
 
-先执行第 4 节 Full generator和 profile 读取块。下面是完整的 5 容器命令，不需要从
-其他章节拼接隐藏参数。
+<details>
+<summary>展开 CPU + NPU Full 完整五容器命令（不需要 Compose）</summary>
+
+先准备第 4 节目录，执行 7.1 的 Full generator，再用本次 Full profile 执行 6.2
+的设备参数读取块。下面给出完整的 5 容器命令。
 
 ```bash
 docker volume create cm-snapshot
@@ -802,6 +838,8 @@ docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
 Full 必须恰好 5 个容器。daemon 因启用 Stress 获得 Docker Socket；Web 与 DFeE
 仍没有 Docker Socket。
 
+</details>
+
 ## 8. Web
 
 ```text
@@ -814,15 +852,34 @@ Web/DFeE 不挂 Docker Socket。当前 operator API 尚无认证/RBAC，只能�
 
 ## 9. 停止与清理
 
-手工入口停止但保留容器：
+先等待当前 Job 终态，或按 Job ID Cancel 并确认清理完成。以下只管理本次创建的容器，
+不删除镜像、named volumes、snapshot 或 history；不要用于未知同名服务。
+手工部署先停止三个 Control 服务：
 
 ```bash
-docker stop catmonitor catmonitor-web catmonitor-dfee \
-  catmonitor-stress-cpu catmonitor-stress-npu 2>/dev/null || true
+docker stop catmonitor-web catmonitor-dfee catmonitor
 ```
 
-重新启动只选择当前 profile 实际存在的容器。删除容器不会删除 named volumes；不要在
-需要保留 snapshot/history 时删除这些 volumes。
+再停止本场景实际创建的 workload：CPU-only 执行第一行、NPU-only 第二行、Full 两行，
+Monitoring-only 跳过：
+
+```bash
+docker stop catmonitor-stress-cpu
+docker stop catmonitor-stress-npu
+```
+
+恢复时顺序相反：先启动本场景对应 workload（Monitoring-only 跳过），再启动 Control：
+
+```bash
+docker start catmonitor-stress-cpu
+docker start catmonitor-stress-npu
+# 等 workload 就绪后，所有场景执行：
+docker start catmonitor
+docker start catmonitor-web catmonitor-dfee
+```
+
+Compose 部署使用原文件组合和相同 profile 的 `stop` / `start`，不要改用另一套项目名。
+不要在需要保留数据时使用 `down -v`。
 
 切换到新的 Stress 镜像集合：
 
@@ -865,16 +922,9 @@ NPU 被业务使用不意味着 Docker 不能创建容器或 CPU 不能绑核；
 同一物理设备时，驱动的设备命名空间隔离可能让新容器内 `npu-smi` 返回
 `device is used / -8020`。不要靠增加 CPU/PID 额度或强制更换 runtime 绕过。
 
-124 的 A2/910B4、Docker 18.09、驱动 25.5 对照中：双卡 vLLM TP=2 实际推理期间，
-新普通容器的创建和有效 CPU 集合绑定通过，但管理查询失败；vLLM 退出后，同一
-配置恢复正常。在此期间既有特权 Control 的管理查询仍可用。这不是所有 A2/A3
-环境的认证，也不能据此给其他节点的 `-8005` 确认根因。
-
-后续经授权的临时对照中，正式普通 NPU 容器保持运行，独立双卡 vLLM TP=2
-完成 18 次真实推理：新特权探针的创建、CPU 绑核及 `npu-smi` 全部通过，普通
-探针仍返回 `-8020`。特权探针还能查询到与宿主一致的业务 PID；独立 PID
-命名空间下进程名可能为空，不得据此判为空闲。全部诊断容器随后删除，正式
-容器的 ID、镜像、启动时间和权限均未改变。
+有限 A2 对照中，业务占用时普通容器可创建/绑核，但管理查询失败；经授权的特权
+探针可查询同卡设备和业务 PID。进程名可能因 PID 命名空间而为空，不能据此判为空闲。
+这不认证所有 A2/A3 驱动，也不能据此给其他错误码确认根因。
 
 - Monitoring 与业务可继续并存，管理查询使用既有、经过批准的 Control 边界；
   Web/DFeE 不因此获得 Docker Socket 或设备权限。

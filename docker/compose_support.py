@@ -84,7 +84,80 @@ def legacy(mode, output, filenames):
         (Path(output) / ("%02d.json" % index)).write_text(json.dumps(document))
 
 
-def urls(service, public_host, logs):
+def load_document(filename):
+    text = Path(filename).read_text()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            import yaml
+        except ImportError:
+            fail("legacy resolved configuration needs Python 3 + PyYAML")
+        return yaml.safe_load(text)
+
+
+def validate_resolved(mode, directory, document):
+    services = document.get("services", {})
+    expected = {"catmonitor", "web", "dfee"}
+    for kind in ("cpu", "npu"):
+        if mode in (kind, "full"):
+            expected.add("catmonitor-stress-" + kind)
+    # Compose v2 may retain inactive profile services in config output. They
+    # must remain profile-gated and are not counted as activated workloads.
+    for name, service in services.items():
+        if name not in expected and not service.get("profiles"):
+            fail("unexpected ungated service in resolved configuration: " + name)
+    if not expected.issubset(services):
+        fail("resolved configuration is missing a selected service")
+    for name in ("web", "dfee"):
+        service = services[name]
+        if service.get("privileged"):
+            fail(name + " must not be privileged")
+        for volume in service.get("volumes", []):
+            target = volume.get("target") if isinstance(volume, dict) else volume.split(":")[1]
+            if target in ("/var/run/docker.sock", "/run/docker.sock"):
+                fail(name + " must not mount the Docker socket")
+    if mode == "monitoring":
+        return
+    profile = json.loads((Path(directory) / "stress-profile.json").read_text())
+    control = profile.get("control_image")
+    if control and any(services[name].get("image") != control for name in ("catmonitor", "web", "dfee")):
+        fail("resolved Control/Web/DFeE images differ from the generated control_image")
+    for kind in ("cpu", "npu"):
+        if mode not in (kind, "full"):
+            continue
+        binding = profile[kind]
+        service = services["catmonitor-stress-" + kind]
+        if service.get("container_name") != binding["container"] or service.get("image") != binding["image"]:
+            fail("resolved " + kind + " container/image differs from Controller binding; regenerate instead of renaming only Compose")
+        if service.get("network_mode") != "none" or service.get("read_only") is not True:
+            fail(kind + " workload must retain network none and a read-only root")
+        if kind == "npu":
+            if binding.get("runtime") and (service.get("runtime") or "runc") != binding["runtime"]:
+                fail("NPU runtime differs from generated profile; regenerate --npu-runtime")
+            if bool(service.get("privileged", False)) != binding["privileged"]:
+                fail("NPU privilege differs from generated profile; regenerate --npu-security-profile")
+            if binding["privileged"] and (service.get("cap_drop") or service.get("security_opt")):
+                fail("privileged NPU retains restricted cap_drop/security_opt; remove stale overlays and regenerate")
+            environment = service.get("environment", {})
+            if not isinstance(environment, dict):
+                environment = dict(item.split("=", 1) for item in environment)
+            if str(environment.get("CATMONITOR_NPU_DEVICE_MODE")) != binding["device_mode"]:
+                fail("resolved NPU device mode differs from generated profile")
+            count = len(binding["host_device_ids"])
+            if str(environment.get("CATMONITOR_NPU_DEVICE_COUNT")) != str(count):
+                fail("resolved NPU mapped device count differs from generated profile")
+            node_ids = set()
+            for device in service.get("devices", []):
+                target = device.get("target") if isinstance(device, dict) else device.split(":")[1]
+                match = re.fullmatch(r"/dev/davinci([0-9]+)", target or "")
+                if match:
+                    node_ids.add(int(match.group(1)))
+            if node_ids != set(binding["host_device_ids"]):
+                fail("resolved NPU device nodes differ from generated profile")
+
+
+def urls(service, public_host, logs, network="host", published=None):
     marker = "web server starting" if service == "web" else "dfee server starting (read-only consumer)"
     addresses = []
     for line in logs.splitlines():
@@ -100,13 +173,26 @@ def urls(service, public_host, logs):
     if not match or not 0 < int(match.group(2)) <= 65535:
         fail("invalid actual listener address for " + service)
     host, port = match.groups()
+    listener = address
+    if network != "host":
+        mappings = (published or {}).get(port + "/tcp") or []
+        if not mappings:
+            fail(service + " has no published host port; do not advertise the container listener as a node URL")
+        if host in ("localhost", "127.0.0.1", "[::1]"):
+            fail(service + " binds container loopback; use a wildcard listener before publishing a bridge port")
+        mapping = next((item for item in mappings if ":" not in item.get("HostIp", "")), mappings[0])
+        host, port = mapping.get("HostIp", "0.0.0.0"), mapping["HostPort"]
+        if ":" in host and not host.startswith("["):
+            host = "[" + host + "]"
     wildcard = host in ("", "0.0.0.0", "[::]")
     loopback = host in ("localhost", "127.0.0.1", "[::1]")
     display_host = public_host if wildcard and public_host else ("127.0.0.1" if wildcard else host)
     if ":" in display_host and not display_host.startswith("["):
         display_host = "[" + display_host + "]"
     prefix = "WEB" if service == "web" else "DFEE"
-    print(prefix + "_LISTEN=" + address)
+    print(prefix + "_LISTEN=" + listener)
+    if network != "host":
+        print(prefix + "_PUBLISHED=" + host + ":" + port)
     print(prefix + "_URL=http://" + display_host + ":" + port + "/")
     if service == "web":
         print("STRESS_URL=http://" + display_host + ":" + port + "/stress/")
@@ -120,7 +206,21 @@ def main(args):
     elif args[0] == "legacy":
         legacy(args[1], args[2], args[3:])
     elif args[0] == "urls":
-        urls(args[1], args[2], sys.stdin.read())
+        urls(args[1], args[2], sys.stdin.read(), args[3] if len(args) > 3 else "host",
+             json.loads(args[4]) if len(args) > 4 else None)
+    elif args[0] == "validate":
+        validate_resolved(args[1], args[2], load_document(args[3]))
+        print("COMPOSE_CONTRACT=PASS", file=sys.stderr)
+    elif args[0] == "workload-names":
+        profile = json.loads((Path(args[2]) / "stress-profile.json").read_text())
+        for kind in ("cpu", "npu"):
+            if args[1] in (kind, "full"):
+                print(profile[kind]["container"])
+    elif args[0] == "runtime":
+        print(load_document(args[1])["services"]["catmonitor-stress-npu"].get("runtime") or "runc")
+    elif args[0] == "check-runtime":
+        if args[1] not in json.load(sys.stdin):
+            fail("Docker runtime " + args[1] + " is not installed; do not silently switch runtimes")
     else:
         fail("unknown Compose helper action")
 

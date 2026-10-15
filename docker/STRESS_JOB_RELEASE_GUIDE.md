@@ -7,6 +7,40 @@
 本指南是候选交付，不是正式 release 或 A3 配套认证。A3 真实硬件验收为 **PENDING**；
 构建/import/ABI 检查和 A2 实测不能替代 A3 workload 结果。
 
+## 当前源码的默认能力与管理员限制
+
+主仓 Web 默认监听 `:19322`；原 `--enable-web` 仅控制 Stress Run/Cancel，
+不是启动整个 Web 的开关。当前 generator 显式部署 Stress 时默认 `web_enabled: true`，
+保留 `--enable-web` 兼容入口，新增 `--disable-web` 供管理员关闭 Web 操作。
+Monitoring-only 的全局配置仍为 `stress.enabled: false`，不需要 Docker socket。
+
+指定 NPU image 后默认开放当前映射范围内全部 runtime logical ID、GPT3/Llama2
+以及单设备参考生成。默认选中仍是 logical 0 / matmul，不全选、不自动执行或生成参考。
+算子始终带 `--sdc_detect`；模型必须先有独立、完整且参数/软件身份匹配的参考。
+模型入口开放不是依赖、显存、参考或硬件验证通过；不支持的代际/dtype 不自动替换。
+
+完整模型 `*-model-sdc-*` compatibility profile 构建时默认启用模型依赖导入检查；
+补丁链及准备好的依赖仍必须显式提供，缺失即失败。旧镜像不能只设置环境变量补齐功能。
+本次默认值来自 Git 中的 generator，不会被 `docker pull` 自动写入已有 YAML。
+更新源码后重新生成、审查配置，再只重建/重启属于本项目的 Controller；容器权限或
+环境发生变更时才重建相应 workload，不改其他项目或已有业务。
+
+| 管理员需求 | generator 参数 |
+| --- | --- |
+| 只授权 logical 0 | `--npu-allowed-devices 0` |
+| 只授权指定映射设备 | `--npu-allowed-devices 0,1`（本节点存在这些 logical ID 时） |
+| 只开放 GPT3 | `--npu-allowed-models gpt3` |
+| 关闭全部模型，仅保留算子 | `--npu-allowed-models none` |
+| 允许模型比较，但禁止生成新参考 | `--deny-npu-reference-generation` |
+| 关闭 Web Run/Cancel，保留 CLI | `--disable-web` |
+| 减少映射/权限 | `--npu-device-mode single --npu-device-nodes <host-id>`；仅映射明确授权设备，须通过映射验证 |
+
+设备授权不代表空闲。容器 readiness/普通 doctor 可以在业务存在时检查依赖，
+每次 Run 仍在 Controller 与 workload 两层强制检查空闲，不杀业务、不自动排队。
+当前 Run/Cancel 无认证/RBAC，只能在可信管理网络开放。全局 job 上限仍默认 2h，
+需要更久时明确配置 `--npu-job-timeout 8h`；内部同步 300s 不是整个任务时长。
+线程预算仍为 1；readonly root、完整 base/A3 JSON 和按 Job 冻结参数保持不变。
+
 ## 1. 本批镜像和源码
 
 三类镜像不是三套控制面。Full 使用一张 Control（daemon/Web/DFeE）、一张 CPU、
@@ -380,4 +414,5 @@ docker stop catmonitor-web catmonitor-dfee catmonitor catmonitor-stress-cpu catm
 
 保留 SOURCE_COMMIT、镜像 digest/ID、构建和部署 manifest、本轮报告/CSV、进程前后对照。
 升级失败时停止本轮新容器，恢复备份配置和原容器名后启动旧容器；不得清理唯一旧镜像。
-更详细的模型边界见 [模型指南](NPU_MODEL_SDC_GUIDE.md) 和 [A3 迁移指南](NPU_A3_MIGRATION_GUIDE.md)。
+更详细的模型边界见 [模型指南](NPU_MODEL_SDC_GUIDE.md)，构建与受限网络输入见
+[开发者指南](DEVELOPER_GUIDE.md)。其他硬件和单设备模板见 [NPU 节点指南](README-npu.md)。

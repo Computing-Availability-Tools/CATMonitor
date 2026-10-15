@@ -107,9 +107,9 @@ require_fixed docker/Dockerfile.npu 'ARG DEBIAN_MIRROR=""'
 # data volumes, faultsub and the exporter integration visible in every hardware
 # guide. These are static documentation gates; real hardware validation is
 # tracked separately in STRESS_TEST_GUIDE.md.
-require_fixed docker/README.md '`docker run` 是各节点指南均已写明的手工兼容入口'
-require_fixed docker/README.md 'OLD_MONITORING_YAML_COMPATIBLE=true'
-require_fixed docker/README.md 'OLD_STRESS_YAML_COMPATIBLE=false'
+require_fixed docker/README.md '`docker run`'
+require_fixed docker/README.md '旧 Monitoring YAML 兼容'
+require_fixed docker/README.md '旧 Stress V1 YAML 不兼容'
 for readme in docker/README-generic.md docker/README-gpu.md docker/README-npu.md; do
     monitoring=$(sed -n '/^## 3\./,/^## 4\./p' "$REPO_ROOT/$readme")
     [ -n "$monitoring" ] || fail "$readme Monitoring section is empty"
@@ -169,6 +169,10 @@ for name in cpu npu full; do
         full) section=$full_manual ;;
     esac
     [ -n "$section" ] || fail "README-npu $name manual section is empty"
+    expected_count=4
+    [ "$name" != full ] || expected_count=5
+    [ "$(grep -Ec '^[[:space:]]*docker run -d --name ' <<<"$section")" -eq "$expected_count" ] ||
+        fail "README-npu $name manual path must create $expected_count containers"
     [ "$(grep -Fc -- '-v /var/run/docker.sock:/var/run/docker.sock' <<<"$section")" -eq 1 ] ||
         fail "README-npu $name manual path must mount Docker socket exactly once on daemon"
     grep -Fq -- '--name catmonitor' <<<"$section" || fail "$name manual path lacks daemon"
@@ -196,6 +200,8 @@ for name in generic_cpu gpu_cpu; do
         gpu_cpu) section=$gpu_cpu_manual ;;
     esac
     [ -n "$section" ] || fail "$name manual section is empty"
+    [ "$(grep -Ec '^[[:space:]]*docker run -d --name ' <<<"$section")" -eq 4 ] ||
+        fail "$name manual path must create four containers"
     [ "$(grep -Fc -- '-v /var/run/docker.sock:/var/run/docker.sock' <<<"$section")" -eq 1 ] ||
         fail "$name manual path must mount Docker socket exactly once on daemon"
     grep -Fq -- '--name catmonitor-stress-cpu' <<<"$section" || fail "$name manual path lacks CPU workload"
@@ -227,30 +233,25 @@ for retired in catmonitor-install benchmark_check.sh catmonitor-stress-web ':295
     done
 done
 
-# The interactive demo is the copy/paste path used for manual acceptance. It
-# must preserve the same three-stage architecture and leave Web mutations to
-# the operator instead of replacing them with API calls.
-require_fixed docker/README.md '[DEMO_GUIDE.md](DEMO_GUIDE.md)'
-require_fixed docker/DEMO_GUIDE.md '## 1. Generic Monitoring'
-require_fixed docker/DEMO_GUIDE.md '## 2. Generic + CPU Stress'
-require_fixed docker/DEMO_GUIDE.md '## 3. Ascend Full（CPU + NPU）'
-require_fixed docker/DEMO_GUIDE.md 'docker exec catmonitor catmonitor collect -o table'
-require_fixed docker/DEMO_GUIDE.md 'docker exec catmonitor catmonitor stress doctor'
-require_fixed docker/DEMO_GUIDE.md '用户 Web Run/Cancel 检查点'
-require_fixed docker/DEMO_GUIDE.md '用户 Web 发起 NPU Burn'
-require_fixed docker/DEMO_GUIDE.md 'Web 上的开始与取消必须由用户完成'
-require_fixed docker/DEMO_GUIDE.md '"${CATMONITOR_NPU_DEVICE_ARGS[@]}"'
-require_fixed docker/DEMO_GUIDE.md 'export CATMONITOR_ONLINE_CPUS="$(nproc)"'
-require_fixed docker/DEMO_GUIDE.md 'CATMONITOR_ONLINE_CPUS % CATMONITOR_HPL_PROCESSES'
-require_fixed docker/DEMO_GUIDE.md 'HPL_MPI_PROCESSES="$CATMONITOR_HPL_PROCESSES"'
-require_fixed docker/DEMO_GUIDE.md 'HPCG_MPI_PROCESSES="$CATMONITOR_HPCG_PROCESSES"'
-if grep -Fq 'docker compose' "$REPO_ROOT/docker/DEMO_GUIDE.md"; then
-    fail 'interactive docker run demo must not depend on Compose'
-fi
-for retired in catmonitor-install benchmark_check.sh catmonitor-stress-web ':29592' cpu-runner.sock; do
-    if grep -Fq -- "$retired" "$REPO_ROOT/docker/DEMO_GUIDE.md"; then
-        fail "interactive demo still references retired V1 entry: $retired"
-    fi
+# Hardware READMEs are the sole manual deployment paths. Operation checks stay
+# alongside those commands, rather than duplicating deployment in a demo guide.
+require_fixed docker/README.md '(STRESS_JOB_RELEASE_GUIDE.md)'
+for readme in docker/README-generic.md docker/README-gpu.md docker/README-npu.md; do
+    require_fixed "$readme" 'catmonitor collect -o table'
+    require_fixed "$readme" 'catmonitor stress doctor'
+    require_fixed "$readme" 'catmonitor stress run --bench stream'
+    require_fixed "$readme" 'catmonitor stress status'
+    require_fixed "$readme" 'catmonitor stress cancel --job'
+    require_fixed "$readme" '/stress/'
+    require_fixed "$readme" '认证/RBAC'
+done
+require_fixed docker/README-npu.md 'catmonitor stress run --bench npu_burn'
+require_fixed docker/README-generic.md '在线 CPU'
+require_fixed docker/README-gpu.md 'HPL_MPI_PROCESSES'
+require_fixed docker/README-npu.md 'HPCG_MPI_PROCESSES'
+for retired in DEMO_GUIDE.md NPU_A3_MIGRATION_GUIDE.md NPU_COMPAT_REVIEW.md \
+    NPU_MODEL_TEST_RESULT.md NPU_OPERATOR_GUIDE.md RESTRICTED_ENV_GUIDE.md; do
+    [ ! -e "$REPO_ROOT/docker/$retired" ] || fail "redundant guide reintroduced: $retired"
 done
 
 printf 'PASS: unified daemon/controller and CPU/NPU workload container contracts\n'

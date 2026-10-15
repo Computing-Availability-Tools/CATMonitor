@@ -3,7 +3,7 @@
 适用于没有 NVIDIA GPU 或 Ascend NPU 的 Linux 节点。推荐部署 Monitoring，按需增加
 STREAM、HPL、HPCG CPU Stress。
 
-可使用 [Compose 薄启动入口](README.md#61-简化-compose-启动与查询实际端口)
+可使用 [Compose 薄启动入口](README.md#compose-与手工启动)
 统一文件组合，并查询 Web/DFeE 自动回退后的真实端口；手工 `docker run` 仍保留。
 
 > 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
@@ -15,9 +15,8 @@ STREAM、HPL、HPCG CPU Stress。
 - Docker Engine；
 - 访问镜像 registry，或已离线导入相同的 Stress 镜像。
 
-使用推荐的 Compose 部署方式时才额外需要 Docker Compose v2。只使用本页的
-`docker run` 兼容入口时不需要 Compose。直接拉取预构建镜像时需要访问镜像
-registry，受限节点也可以提前离线导入相同标签和 Image ID 的镜像。
+仅 Compose 部署额外需要 Docker Compose v2；手工 `docker run` 不需要。
+本页镜像为 ARM64，amd64 节点须使用对应架构的配套镜像或按开发者指南构建。
 
 ```bash
 docker version
@@ -61,7 +60,12 @@ docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 
 ## 3. Monitoring-only
 
-使用项目提供的默认容器配置：
+**部署路线互斥：新节点选择本节 Monitoring-only（三容器），或直接跳到第 4 节 CPU
+Stress（四容器），每条路线再选 Compose 或手工启动。不要先启动三容器，再重复执行
+四容器命令。** 创建前检查 `docker ps -a` 和 `ss -lntp`；存在同名容器或所需端口
+被占用时 STOP，先确认所有者和迁移方案，不删除未知服务。已有容器的停止/恢复见第 7 节。
+
+Compose 使用项目提供的默认容器配置：
 
 ```bash
 export CATMONITOR_CONFIG="$PWD/docker/catmonitor.yaml"
@@ -131,6 +135,7 @@ docker run -d --name catmonitor-dfee --network host \
 等待首次采集后验证：
 
 ```bash
+docker exec catmonitor catmonitor collect -o table
 docker exec catmonitor ls /var/lib/catmonitor/snapshot
 curl -fsS http://127.0.0.1:19320/-/ready
 curl -fsS http://127.0.0.1:19322/ >/dev/null
@@ -139,6 +144,9 @@ curl -fsS http://127.0.0.1:19323/ >/dev/null
 
 Web 中 Stress 配置会显示为未启用；Monitoring 页面不受影响。旧 Monitoring YAML
 可以完全没有顶层 `stress:` 段。
+
+<details>
+<summary>可选 Monitoring 用法：部分服务、自定义配置、独立 DFeE 和 Prometheus/Grafana</summary>
 
 ### 3.2 只启动部分 Monitoring 服务
 
@@ -272,6 +280,8 @@ scrape_configs:
 Grafana 导入 `features/dfee/grafana-dashboard.json`。DFeE 的 CSV、设备过滤和
 `max-runtime` 等完整参数见 [DFeE 使用文档](../features/dfee/USAGE.md)。
 
+</details>
+
 ## 4. CPU Stress
 
 ### 4.1 Generate
@@ -326,6 +336,9 @@ docker compose -p catmonitor \
 ```
 
 ### 4.3 Manual `docker run`
+
+<details>
+<summary>展开完整四容器命令（不需要 Compose）</summary>
 
 不能使用 Compose 时，下面命令完整创建 CPU workload、daemon、Web 与 DFeE 共 4 个
 容器。只有 daemon 挂 Docker Socket；Web/DFeE 不挂 socket。
@@ -395,7 +408,22 @@ docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
 手工与 Compose 入口使用相同的 generated YAML 和资源参数；不要只修改容器环境而
 不重新生成配置。
 
+</details>
+
 ## 5. 验证和使用
+
+手工 `docker run` 部署直接从宿主机调用，不需要 Compose：
+
+```bash
+docker exec catmonitor catmonitor stress doctor -c /etc/catmonitor/catmonitor.yaml -o table
+docker exec catmonitor catmonitor stress run --bench stream -o table
+# run 等待终态；执行期间用另一终端查看或按实际 Job ID 取消。
+docker exec catmonitor catmonitor stress status -o table
+docker exec catmonitor catmonitor stress cancel --job '<job-id>'
+```
+
+Web 为 `http://<node-address>:19322/stress/`，与 CLI 共享 Run/Cancel 和作业报告。
+以下是 Compose 部署对应的等价操作，不用于上面的手工容器。
 
 从 daemon 容器验证三项 CPU workload：
 
@@ -436,8 +464,10 @@ http://<node-address>:19322/
 
 ## 6. 资源参数
 
-CPU 线程、MPI rank 和 HPCG 规模在生成的 Compose profile 中固定，不能从 Web
-编辑。需要调整时重新运行 generator，例如：
+本页旧 pre-release 镜像的 CPU 线程、MPI rank 和 HPCG 规模采用部署默认值。
+配套新版 Control/workload 可在“高级参数”修改本次作业，不写回默认；接口与镜像
+范围见 [Stress 用户指南](../features/stress/STRESS_USER_GUIDE.md)。改部署默认才重新
+运行 generator，例如：
 
 ```bash
 sudo bash scripts/stress/generate_stress_deployment.sh \
@@ -458,6 +488,38 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)。
 
 ## 7. 停止、启动和升级
+
+以下只管理本次创建的容器；不要删除数据卷。启用 Stress 时，先执行
+`catmonitor stress status`，等待当前 Job 结束，或按第 5 节取消并确认清理后再停。
+
+### 手工 `docker run`
+
+Monitoring-only 三容器，停止与恢复分别执行：
+
+```bash
+docker stop catmonitor-web catmonitor-dfee catmonitor
+
+docker start catmonitor
+docker start catmonitor-web catmonitor-dfee
+```
+
+CPU Stress 四容器，先停前端/daemon，最后停 workload；恢复时 workload 先于 daemon：
+
+```bash
+docker exec catmonitor catmonitor stress status -o table
+# 确认没有 active Job 后，才执行停止。
+docker stop catmonitor-web catmonitor-dfee catmonitor
+docker stop catmonitor-stress-cpu
+
+docker start catmonitor-stress-cpu
+docker start catmonitor
+docker start catmonitor-web catmonitor-dfee
+```
+
+`docker start` 恢复已有容器，不是再次执行 `docker run`。更换镜像需要单独安排重建，
+停止不会自动更新镜像或配置。
+
+### Compose
 
 Monitoring-only：
 

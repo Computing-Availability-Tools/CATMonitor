@@ -30,11 +30,13 @@ HPCG_NX=32
 HPCG_NY=32
 HPCG_NZ=32
 HPCG_RUNTIME=60
-WEB_ENABLED=false
+# Invoking this generator explicitly opts into Stress. Monitoring-only config
+# defaults remain disabled; generated Stress deployments expose the complete UI.
+WEB_ENABLED=true
 NPU_HOST_ROOT=/
 NPU_DEVICE_ROOT=/dev
 NPU_DEVICE_NODES=
-NPU_BURN_DEVICE=
+NPU_BURN_DEVICE=0
 NPU_RUNTIME=runc
 NPU_OUTPUT_DIR=/var/lib/catmonitor/stress/npu-burn-output
 NPU_RUN_CASE=matmul
@@ -44,9 +46,9 @@ NPU_INTERNAL_TIMEOUT=300
 NPU_DEVICE_MODE=full
 NPU_THREADS=1
 NPU_ASCEND_ENV_SCRIPT=
-NPU_ALLOWED_DEVICES=
-NPU_ALLOWED_MODELS=
-NPU_REFERENCE_GENERATION=false
+NPU_ALLOWED_DEVICES=all
+NPU_ALLOWED_MODELS=auto
+NPU_REFERENCE_GENERATION=auto
 NPU_MODEL_MEMORY_MODE=standard
 NPU_CONFIG_DIR=
 NPU_CONFIG_IDENTITY=null
@@ -85,10 +87,12 @@ CPU workload profile:
 
 NPU workload profile (enabled only when --npu-image is supplied):
   --npu-container NAME      Existing/custom workload container binding
-  --npu-allowed-devices IDS  Administrator logical allowlist (default: selection)
-  --npu-allowed-models NAMES gpt3,llama2; opt-in model SDC jobs (default: disabled)
+  --npu-allowed-devices IDS  Administrator logical allowlist (default: all mapped)
+  --npu-allowed-models NAMES gpt3,llama2 (default), either model, or none to disable
   --allow-npu-reference-generation
-                            Allow single-device creation of immutable references
+                            Allow single-device immutable references (default with models)
+  --deny-npu-reference-generation
+                            Disable reference creation; retain model comparison
   --npu-model-memory-mode M  standard (default) or checkpointed; full model shapes
   --npu-config-dir PATH      Complete external JSON config directory (read-only)
   --npu-job-timeout DURATION Positive s/m/h job limit (default: 2h; not run duration)
@@ -96,7 +100,7 @@ NPU workload profile (enabled only when --npu-image is supplied):
   --npu-host-root PATH       Fixture root for host discovery (default: /)
   --npu-device-root PATH     Host device directory (default: /dev)
   --npu-device-nodes IDS     /dev/davinci IDs, comma separated; default: discover
-  --npu-burn-device IDS      NPU Burn logical IDs, comma separated, or all
+  --npu-burn-device IDS      NPU Burn logical IDs, comma separated, or all (default: 0)
   --npu-runtime NAME         Docker runtime (default: runc)
   --npu-output-dir PATH      Host result directory
   --npu-run-case NAME        Deployment default run case (default: matmul)
@@ -110,7 +114,8 @@ NPU workload profile (enabled only when --npu-image is supplied):
 Controller:
   --docker-socket PATH       Daemon Docker socket
   --report-path PATH         Daemon report path
-  --enable-web               Enable Run/Cancel on the unified :19322 Web listener
+  --enable-web               Enable Run/Cancel on unified :19322 (default)
+  --disable-web              Disable Web Run/Cancel; retain CLI and monitoring
   --force                    Replace existing generated files
   -h, --help                 Show this help
 
@@ -121,6 +126,10 @@ Outputs:
   stress-deployment-manifest.json
   cpu-workload.env (only when CPU is enabled; for manual --env-file)
   npu-workload.env (only when NPU is enabled; for manual --env-file)
+
+Defaults enable capabilities, never start jobs, select all cards, or generate
+references automatically. Use trusted management networks: Run/Cancel has no
+authentication/RBAC. Device idle, reference identity and result checks remain.
 EOF
 }
 
@@ -167,12 +176,14 @@ while [ "$#" -gt 0 ]; do
         --npu-allowed-devices) require_value "$@"; NPU_ALLOWED_DEVICES=$2; shift 2 ;;
         --npu-allowed-models) require_value "$@"; NPU_ALLOWED_MODELS=$2; shift 2 ;;
         --allow-npu-reference-generation) NPU_REFERENCE_GENERATION=true; shift ;;
+        --deny-npu-reference-generation) NPU_REFERENCE_GENERATION=false; shift ;;
         --npu-model-memory-mode) require_value "$@"; NPU_MODEL_MEMORY_MODE=$2; shift 2 ;;
         --npu-config-dir) require_value "$@"; NPU_CONFIG_DIR=$2; shift 2 ;;
         --npu-job-timeout) require_value "$@"; NPU_JOB_TIMEOUT=$2; shift 2 ;;
         --npu-security-profile) require_value "$@"; NPU_SECURITY_PROFILE=$2; shift 2 ;;
         --npu-ascend-env-script) require_value "$@"; NPU_ASCEND_ENV_SCRIPT=$2; shift 2 ;;
         --enable-web) WEB_ENABLED=true; shift ;;
+        --disable-web) WEB_ENABLED=false; shift ;;
         --force) FORCE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown argument: $1" ;;
@@ -261,7 +272,7 @@ if [ -n "$NPU_IMAGE" ]; then
         *) die "invalid NPU security profile" ;;
     esac
     safe_token "$NPU_RUNTIME" || die "--npu-runtime has an invalid value"
-    [ -n "$NPU_BURN_DEVICE" ] && valid_ids "$NPU_BURN_DEVICE" || die "--npu-burn-device is required and must contain logical IDs or all"
+    valid_ids "$NPU_BURN_DEVICE" || die "--npu-burn-device must contain logical IDs or all"
     [ -n "$NPU_RUN_CASE" ] || [ -n "$NPU_GROUP" ] || die "NPU profile requires a run case or group"
     [ -z "$NPU_RUN_CASE" ] || safe_token "$NPU_RUN_CASE" || die "invalid NPU run case"
     [ -z "$NPU_GROUP" ] || safe_token "$NPU_GROUP" || die "invalid NPU group"
@@ -292,7 +303,6 @@ if [ -n "$NPU_IMAGE" ]; then
     logical_device_ids=()
     for ((i = 0; i < ${#device_ids[@]}; i++)); do logical_device_ids+=("$i"); done
     logical_device_csv=$(IFS=,; printf '%s' "${logical_device_ids[*]}")
-    NPU_ALLOWED_DEVICES=${NPU_ALLOWED_DEVICES:-$NPU_BURN_DEVICE}
     if [ "$NPU_ALLOWED_DEVICES" = all ]; then NPU_ALLOWED_DEVICES=$logical_device_csv; fi
     valid_ids "$NPU_ALLOWED_DEVICES" || die "invalid NPU allowlist"
     IFS=, read -r -a allowed_ids <<<"$NPU_ALLOWED_DEVICES"
@@ -336,6 +346,15 @@ MANIFEST="$OUTPUT_DIR/stress-deployment-manifest.json"
 NPU_ALLOW_FIELD=
 case "$NPU_MODEL_MEMORY_MODE" in standard|checkpointed) ;; *) die "--npu-model-memory-mode must be standard or checkpointed" ;; esac
 [[ "$NPU_JOB_TIMEOUT" =~ ^[1-9][0-9]*(s|m|h)$ ]] || die "--npu-job-timeout must be a positive s/m/h duration"
+# Resolve capability defaults only for an explicitly selected NPU image. CPU-only
+# deployments must not acquire model authorization or require an NPU runtime.
+case "$NPU_ALLOWED_MODELS" in
+    auto) if [ "$NPU_ENABLED" = true ]; then NPU_ALLOWED_MODELS=gpt3,llama2; else NPU_ALLOWED_MODELS=; fi ;;
+    none) NPU_ALLOWED_MODELS= ;;
+esac
+if [ "$NPU_REFERENCE_GENERATION" = auto ]; then
+    if [ -n "$NPU_ALLOWED_MODELS" ]; then NPU_REFERENCE_GENERATION=true; else NPU_REFERENCE_GENERATION=false; fi
+fi
 if [ -n "$NPU_ALLOWED_MODELS" ] || [ "$NPU_REFERENCE_GENERATION" = true ]; then
     [ "$NPU_ENABLED" = true ] || die "model authorization requires --npu-image"
     case "$NPU_ALLOWED_MODELS" in
@@ -527,7 +546,7 @@ if [ "$NPU_ENABLED" = true ]; then
     device_json=$(printf '%s\n' "${device_ids[@]}" | awk 'BEGIN{printf "["} {if(NR>1)printf ",";printf "%d",$1} END{printf "]"}')
 fi
 cat >"$PROFILE" <<EOF
-{"schema_version":2,"generated_at_utc":$(json_string "$generated_at"),"architecture":"daemon_controller_docker_exec","control_image":$(if [ -n "$CONTROL_IMAGE" ]; then json_string "$CONTROL_IMAGE"; else printf null; fi),"cpu":{"enabled":$CPU_ENABLED,"image":$(if [ -n "$CPU_IMAGE" ]; then json_string "$CPU_IMAGE"; else printf null; fi),"container":"$CPU_CONTAINER","plugins":["stream","hpl","hpcg"],"user":"65532:65532","resources":{"stream_threads":$STREAM_THREADS,"hpl_processes":$HPL_PROCESSES,"hpl_threads":$HPL_THREADS,"hpcg_processes":$HPCG_PROCESSES,"hpcg_threads":$HPCG_THREADS}},"npu":{"enabled":$NPU_ENABLED,"image":$(if [ -n "$NPU_IMAGE" ]; then json_string "$NPU_IMAGE"; else printf null; fi),"container":"$NPU_CONTAINER","host_device_ids":$device_json,"runtime_visible_device_ids":$(if [ "$NPU_ENABLED" = true ]; then json_string "$logical_device_csv"; else printf null; fi),"burn_logical_ids":$(json_string "$NPU_BURN_DEVICE"),"device_mode":$(json_string "$NPU_DEVICE_MODE"),"threads":$NPU_THREADS,"ascend_env_script":$(json_string "$NPU_ASCEND_ENV_SCRIPT"),"privileged":$NPU_PRIVILEGED},"security":{"daemon_docker_socket":true,"web_docker_socket":false,"dfee_docker_socket":false,"npu_workload_privileged":$NPU_PRIVILEGED,"debt":"daemon Docker socket and the enabled NPU workload privilege are temporary V2 boundaries"}}
+{"schema_version":2,"generated_at_utc":$(json_string "$generated_at"),"architecture":"daemon_controller_docker_exec","control_image":$(if [ -n "$CONTROL_IMAGE" ]; then json_string "$CONTROL_IMAGE"; else printf null; fi),"cpu":{"enabled":$CPU_ENABLED,"image":$(if [ -n "$CPU_IMAGE" ]; then json_string "$CPU_IMAGE"; else printf null; fi),"container":"$CPU_CONTAINER","plugins":["stream","hpl","hpcg"],"user":"65532:65532","resources":{"stream_threads":$STREAM_THREADS,"hpl_processes":$HPL_PROCESSES,"hpl_threads":$HPL_THREADS,"hpcg_processes":$HPCG_PROCESSES,"hpcg_threads":$HPCG_THREADS}},"npu":{"enabled":$NPU_ENABLED,"image":$(if [ -n "$NPU_IMAGE" ]; then json_string "$NPU_IMAGE"; else printf null; fi),"container":"$NPU_CONTAINER","host_device_ids":$device_json,"runtime_visible_device_ids":$(if [ "$NPU_ENABLED" = true ]; then json_string "$logical_device_csv"; else printf null; fi),"burn_logical_ids":$(json_string "$NPU_BURN_DEVICE"),"device_mode":$(json_string "$NPU_DEVICE_MODE"),"runtime":$(json_string "$NPU_RUNTIME"),"threads":$NPU_THREADS,"ascend_env_script":$(json_string "$NPU_ASCEND_ENV_SCRIPT"),"privileged":$NPU_PRIVILEGED},"security":{"daemon_docker_socket":true,"web_docker_socket":false,"dfee_docker_socket":false,"npu_workload_privileged":$NPU_PRIVILEGED,"debt":"daemon Docker socket and the enabled NPU workload privilege are temporary V2 boundaries"}}
 EOF
 
 config_sha=$(sha256sum "$CONFIG" | awk '{print $1}')
@@ -547,3 +566,9 @@ printf 'CPU profile: %s' "$CPU_ENABLED"
 if [ "$CPU_ENABLED" = true ]; then printf ' (%s)' "$CPU_IMAGE"; fi
 printf '\n'
 printf 'NPU profile: %s\n' "$NPU_ENABLED"
+printf 'Web Run/Cancel: %s (trusted management networks only; no authentication/RBAC)\n' "$WEB_ENABLED"
+if [ "$NPU_ENABLED" = true ]; then
+    printf 'NPU logical allowlist: %s; default selection: %s\n' "$NPU_ALLOWED_DEVICES" "$NPU_BURN_DEVICE"
+    printf 'NPU models: %s; reference creation allowed: %s\n' "${NPU_ALLOWED_MODELS:-none}" "$NPU_REFERENCE_GENERATION"
+    printf 'No workload or reference generation was started; idle and reference checks remain required.\n'
+fi

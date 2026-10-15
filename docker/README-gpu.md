@@ -3,7 +3,7 @@
 适用于带 NVIDIA GPU 的 Linux 节点。当前提供 NVIDIA Monitoring 和可选 CPU Stress，
 不提供 GPU workload 压测插件。
 
-可使用 [Compose 薄启动入口](README.md#61-简化-compose-启动与查询实际端口)
+可使用 [Compose 薄启动入口](README.md#compose-与手工启动)
 统一文件组合，并查询 Web/DFeE 自动回退后的真实端口；手工 `docker run` 仍保留。
 
 > 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
@@ -14,15 +14,32 @@
 ## 1. 前置条件
 
 - Linux/amd64 或 Linux/arm64；
-- Docker Engine 与 Docker Compose v2；
+- Docker Engine；仅 Compose 部署额外需要 Docker Compose v2，手工 `docker run` 不需要；
 - 宿主机 `nvidia-smi` 可执行；
 - Docker 可读取宿主机 NVIDIA 动态库路径。
 
 ```bash
 nvidia-smi
 docker version
-docker compose version
+# 仅 Compose 部署需要
+docker compose version 2>/dev/null || true
 ```
+
+本页镜像为 ARM64，amd64 节点须使用对应架构的配套镜像或按开发者指南构建。
+手工部署先确定 NVIDIA 库目录；已设置 `NVIDIA_LIB_DIR` 时保留自定义路径。
+
+```bash
+case "$(uname -m)" in
+  aarch64|arm64) export NVIDIA_LIB_DIR="${NVIDIA_LIB_DIR:-/usr/lib/aarch64-linux-gnu}" ;;
+  x86_64|amd64) export NVIDIA_LIB_DIR="${NVIDIA_LIB_DIR:-/usr/lib/x86_64-linux-gnu}" ;;
+esac
+test -d "${NVIDIA_LIB_DIR:?set NVIDIA_LIB_DIR to the actual NVIDIA library directory}"
+ls -l "$NVIDIA_LIB_DIR"/libnvidia-ml.so*
+test -x /usr/bin/nvidia-smi
+```
+
+任一检查失败时 STOP，按驱动实际安装位置调整目录或 `nvidia-smi` 的宿主源路径后重检；
+不要用不存在的 `-v` 路径让 Docker 创建空目录，也不要凭 CPU 架构假定库已安装。
 
 ## 2. 获取 ARM64 Stress pre-release 镜像
 
@@ -53,6 +70,11 @@ docker pull "$CATMONITOR_CPU_STRESS_IMAGE"
 请使用 [镜像构建与发布开发者指南](DEVELOPER_GUIDE.md)。
 
 ## 3. NVIDIA Monitoring
+
+**部署路线互斥：新节点选择本节 Monitoring-only（三容器），或直接跳到第 4 节 CPU
+Stress（四容器），每条路线再选 Compose 或手工启动。不要先启动三容器，再重复执行
+四容器命令。** 创建前检查 `docker ps -a` 和 `ss -lntp`；存在同名容器或所需端口
+被占用时 STOP，先确认所有者和迁移方案，不删除未知服务。已有容器的停止/恢复见第 7 节。
 
 ```bash
 export CATMONITOR_CONFIG="$PWD/docker/catmonitor.yaml"
@@ -97,10 +119,10 @@ curl -fsS http://127.0.0.1:19320/metrics | grep -i gpu | head
 
 Compose 是推荐方式；不能使用 Compose 时仍可用下面的旧部署方式。它只启动三个
 Monitoring 容器，不挂 Docker Socket/control socket，也不需要 CPU workload 镜像。
-以下 NVIDIA 库目录按节点实际架构调整。
+使用第 1 节已检查的 NVIDIA 库目录。
 
 ```bash
-export NVIDIA_LIB_DIR=/usr/lib/x86_64-linux-gnu
+: "${NVIDIA_LIB_DIR:?complete the NVIDIA mount checks in section 1 first}"
 
 docker volume create cm-snapshot
 docker volume create cm-data
@@ -140,6 +162,7 @@ docker run -d --name catmonitor-dfee --network host \
 ```
 
 ```bash
+docker exec catmonitor catmonitor collect -o table
 docker exec catmonitor test -s /var/lib/catmonitor/snapshot/snapshot_gpu.json
 curl -fsS http://127.0.0.1:19320/-/ready
 curl -fsS http://127.0.0.1:19322/ >/dev/null
@@ -148,6 +171,9 @@ curl -fsS http://127.0.0.1:19323/ >/dev/null
 
 Web 中 Stress 配置会显示为未启用；Monitoring 页面不受影响。旧 Monitoring YAML
 可以完全没有顶层 `stress:` 段。
+
+<details>
+<summary>可选 Monitoring 用法：部分服务、自定义配置、独立 DFeE 和 Prometheus/Grafana</summary>
 
 ### 3.2 只启动部分 Monitoring 服务
 
@@ -278,6 +304,8 @@ scrape_configs:
 `features/dfee/grafana-dashboard.json`。完整 DFeE 参数与独立二进制用法见
 [DFeE 使用文档](../features/dfee/USAGE.md)。
 
+</details>
+
 ## 4. NVIDIA Monitoring + CPU Stress
 
 ### 4.1 Generate
@@ -322,11 +350,14 @@ CATMONITOR_STRESS_STATE_DIR=/var/lib/catmonitor/stress \
 
 ### 4.3 Manual `docker run`
 
+<details>
+<summary>展开完整四容器命令（不需要 Compose）</summary>
+
 不能使用 Compose 时，下面命令完整创建 CPU workload、NVIDIA daemon、Web 与 DFeE
-共 4 个容器。按节点实际架构设置 NVIDIA 动态库目录。
+共 4 个容器。使用第 1 节已检查的 NVIDIA 库目录。
 
 ```bash
-export NVIDIA_LIB_DIR=/usr/lib/aarch64-linux-gnu
+: "${NVIDIA_LIB_DIR:?complete the NVIDIA mount checks in section 1 first}"
 
 docker volume create cm-snapshot
 docker volume create cm-data
@@ -395,7 +426,22 @@ docker run -d --name catmonitor-dfee --restart unless-stopped --network host \
 只有 daemon 挂 Docker Socket；CPU workload 使用 `network none`，Web/DFeE 不挂
 socket，也不会创建 NPU workload。
 
+</details>
+
 ## 5. 验证与运行
+
+手工 `docker run` 部署直接从宿主机调用，不需要 Compose：
+
+```bash
+docker exec catmonitor catmonitor stress doctor -c /etc/catmonitor/catmonitor.yaml -o table
+docker exec catmonitor catmonitor stress run --bench stream -o table
+# run 等待终态；执行期间用另一终端查看或按实际 Job ID 取消。
+docker exec catmonitor catmonitor stress status -o table
+docker exec catmonitor catmonitor stress cancel --job '<job-id>'
+```
+
+Web 为 `http://<node-address>:19322/stress/`，与 CLI 共享 Run/Cancel 和作业报告。
+以下是 Compose 部署对应的等价操作，不用于上面的手工容器。
 
 ```bash
 docker compose -p catmonitor \
@@ -435,14 +481,46 @@ http://<node-address>:19322/
 ## 6. 配置边界
 
 - GPU workload plugin：当前不支持；
-- CPU benchmark 参数由生成的 Compose profile 固定；
-- Web 只能选项目并缩短单次超时，不能编辑脚本、命令或 MPI 参数；
+- 本页旧 pre-release 的 CPU 参数采用部署默认；新接口须配套更新 Control/workload；
+- 新版 Web 仅通过类型化字段改本次 MPI/线程/规模，不允许脚本或任意命令；
 - daemon 是唯一 Controller，Web 与 DFeE 不挂 Docker Socket。
 
 高级 CPU 参数见
 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)。
 
 ## 7. 停止与升级
+
+以下只管理本次创建的容器；不要删除数据卷。启用 Stress 时，先执行
+`catmonitor stress status`，等待当前 Job 结束，或按第 5 节取消并确认清理后再停。
+
+### 手工 `docker run`
+
+Monitoring-only 三容器，停止与恢复分别执行：
+
+```bash
+docker stop catmonitor-web catmonitor-dfee catmonitor
+
+docker start catmonitor
+docker start catmonitor-web catmonitor-dfee
+```
+
+CPU Stress 四容器，先停前端/daemon，最后停 workload；恢复时 workload 先于 daemon：
+
+```bash
+docker exec catmonitor catmonitor stress status -o table
+# 确认没有 active Job 后，才执行停止。
+docker stop catmonitor-web catmonitor-dfee catmonitor
+docker stop catmonitor-stress-cpu
+
+docker start catmonitor-stress-cpu
+docker start catmonitor
+docker start catmonitor-web catmonitor-dfee
+```
+
+`docker start` 恢复已有容器，不是再次执行 `docker run`。更换镜像需要单独安排重建，
+停止不会自动更新镜像或配置。
+
+### Compose
 
 Monitoring-only：
 

@@ -192,8 +192,9 @@ case 默认值由部署 profile 指定，显式 `npu_cases` 从实际 catalog �
 完整公共配置和 chip override，并校验当前 dtype API，不表示硬件认证。
 用户不能通过请求改环境、容器、可执行文件或 shell；Web 和 CLI 不绕过唯一 Controller。
 最终 CSV 必须完整覆盖设备×算子组合，报告区分部署默认/请求/实际，不用旧 CSV 或 profile
-冒充结果。A2 独立 sizing 配置不修改公共/A3 配置，补丁和硬件边界见
-[算子指南](../../docker/NPU_OPERATOR_GUIDE.md)。
+冒充结果。显式 sizing profile 不修改公共/A3 配置；当前完整参数候选不用 sizing 补丁。
+补丁边界见 [补丁说明](../../scripts/stress/patches/ascend_npu_burn/README.md)，
+使用边界见 [用户指南](STRESS_USER_GUIDE.md#npu-算子与只读运行边界)。
 
 ### 4.2 describe
 

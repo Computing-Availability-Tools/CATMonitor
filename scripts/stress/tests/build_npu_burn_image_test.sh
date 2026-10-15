@@ -159,6 +159,7 @@ case "${1-}" in
                         SOURCE_SHA256=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/source-sha" ;;
                         PATCHED_SOURCE_SHA256=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/patched-sha" ;;
                         COMPAT_PROFILE=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/profile" ;;
+                        MODEL_SDC_ENABLED=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/model-sdc-enabled" ;;
                         SOURCE_ORIGIN=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/origin" ;;
                         UPSTREAM_REPOSITORY=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/repository" ;;
                         UPSTREAM_REVISION=*) printf '%s\n' "${2#*=}" >"$FAKE_DOCKER_ROOT/revision" ;;
@@ -223,6 +224,9 @@ case "${1-}" in
         printf 'CATMONITOR_PACKAGE_VERSION=26.1.0+torch.2.10.0\n'
         printf 'CATMONITOR_PACKAGE_FILE=/usr/local/lib/python3.12/site-packages/ascend_npu_burn/__init__.py\n'
         printf 'CATMONITOR_CUSTOM_OPS_IMPORT=PASS\n'
+        if [ "$(cat "$FAKE_DOCKER_ROOT/model-sdc-enabled")" = true ]; then
+            printf 'CATMONITOR_MODEL_IMPORT=PASS\n'
+        fi
         printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'
         printf 'CATMONITOR_BUILDER_PYTHON_SOABI=cpython-312-aarch64-linux-gnu\n'
         printf 'CATMONITOR_BUILDER_TORCH_VERSION=2.10.0\n'
@@ -600,8 +604,35 @@ assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"profil
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" 'a2-cann83.patch'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"build_driver":{"injected":true'
 assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"included_in_final_image":false'
+assert_contains "$A2_PATCH_ROOT/manifests/npu-burn-image-manifest.json" '"model_sdc_enabled":false'
 [ "$BUNDLED_BEFORE" = "$(sha256sum "$BUNDLED_SOURCE/README.md" | awk '{print $1}')" ] || \
     fail 'A2 compatibility patch modified the vendored source tree'
+
+for target in a2 a3; do
+    model_patches=(--patch "$REPO_ROOT/scripts/stress/patches/ascend_npu_burn/portable-runtime-v1.patch")
+    model_profile=portable-model-sdc-memory-job-v1
+    if [ "$target" = a2 ]; then
+        model_profile=a2-upstream-model-sdc-memory-job-v1
+        model_patches+=(--patch "$REPO_ROOT/scripts/stress/patches/ascend_npu_burn/a2-upstream-base.patch")
+    fi
+    for name in model-sdc-v1 model-memory-v1 job-parameters-v1; do
+        model_patches+=(--patch "$REPO_ROOT/scripts/stress/patches/ascend_npu_burn/$name.patch")
+    done
+    model_root="$TEST_ROOT/$target-model-default-build"
+    bash "$BUILD_SCRIPT" --base-image registry.example/ascend:models \
+        --image "catmonitor/npuburn:$target-model-default-test" \
+        --docker-bin "$TEST_ROOT/tools/docker" --compat-profile "$model_profile" \
+        "${model_patches[@]}" --build-root "$model_root"
+    assert_contains "$model_root/manifests/npu-burn-image-manifest.json" '"model_sdc_enabled":true'
+    assert_contains "$model_root/manifests/npu-burn-image-manifest.json" '"model_import":true'
+    assert_fails "$TEST_ROOT/$target-model-disable.log" \
+        bash "$BUILD_SCRIPT" --base-image registry.example/ascend:models \
+        --image "catmonitor/npuburn:$target-model-disabled-test" \
+        --docker-bin "$TEST_ROOT/tools/docker" --compat-profile "$model_profile" \
+        "${model_patches[@]}" --disable-model-sdc --build-root "$TEST_ROOT/$target-model-disabled"
+    assert_contains "$TEST_ROOT/$target-model-disable.log" '--disable-model-sdc conflicts with this profile'
+done
+printf 'PASS: complete A2/A3 model profiles enable model checks without an extra opt-in\n'
 
 OVERRIDE_ROOT="$TEST_ROOT/override-build"
 OVERRIDE_MANIFEST="$OVERRIDE_ROOT/manifests/npu-burn-image-manifest.json"

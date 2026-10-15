@@ -125,7 +125,6 @@ catmonitor stress cancel --job JOB_ID
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单（216 项） |
 | [docs/test_report.md](docs/test_report.md) | v0.3.6 真机测试报告（Ascend 910B4 / linux/arm64 端到端）+ v0.3.5/V1 历史报告 |
 | [docker/README.md](docker/README.md) | 三类 Control、可选 Stress workload、Compose 与手工部署入口 |
-| [docker/DEMO_GUIDE.md](docker/DEMO_GUIDE.md) | Generic Monitoring、CPU Stress、Ascend Full 三阶段交互演示 |
 | [features/health/HEALTH_SPEC.md](features/health/HEALTH_SPEC.md) | 健康度评估规格 |
 | [features/stress/README.md](features/stress/README.md) | 可靠性压测入口、规格、设计与部署验收文档 |
 | [features/web/Web_SPEC.md](features/web/Web_SPEC.md) | Web 仪表盘规格 |

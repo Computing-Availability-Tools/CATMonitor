@@ -41,6 +41,9 @@ contains "$CPU_OUT/stress-profile.json" '"web_docker_socket":false'
 expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/no-profile"
 expect_fail bash "$GENERATOR" --output-dir "$CPU_OUT" --cpu-image ghcr.io/example/cpu:fixture
 bash "$GENERATOR" --output-dir "$CPU_OUT" --cpu-image ghcr.io/example/cpu:fixture --force >/dev/null
+contains "$CPU_OUT/catmonitor-stress.yaml" 'web_enabled: true'
+not_contains "$CPU_OUT/catmonitor-stress.yaml" 'allowed_npu_models:'
+not_contains "$CPU_OUT/catmonitor-stress.yaml" 'allow_npu_reference_generation:'
 
 HOST="$TEST_ROOT/host"
 mkdir -p \
@@ -193,3 +196,50 @@ expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/cpu-config" --cpu-image c
 expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/missing-config" --npu-image npu:test \
     --npu-host-root "$HOST" --npu-burn-device 0 --npu-chip-generation A2 --npu-config-dir "$TEST_ROOT/missing"
 printf 'PASS: optional external NPU config mount and content identity\n'
+
+# Complete capabilities are the generator defaults, not automatic execution or
+# permission to widen a restricted/single-device container's mapping.
+DEFAULTS="$TEST_ROOT/default-capabilities"
+bash "$GENERATOR" --output-dir "$DEFAULTS" --npu-image npu:models \
+    --npu-host-root "$HOST" --npu-chip-generation A2
+contains "$DEFAULTS/catmonitor-stress.yaml" 'web_enabled: true'
+contains "$DEFAULTS/catmonitor-stress.yaml" 'allowed_npu_devices: [0,1]'
+contains "$DEFAULTS/catmonitor-stress.yaml" 'allowed_npu_models: [gpt3,llama2]'
+contains "$DEFAULTS/catmonitor-stress.yaml" 'allow_npu_reference_generation: true'
+contains "$DEFAULTS/npu-workload.env" 'NPU_BURN_DEVICE=0'
+contains "$DEFAULTS/npu-workload.env" 'NPU_BURN_RUN_CASE=matmul'
+contains "$DEFAULTS/npu-workload.env" 'ASCEND_RT_VISIBLE_DEVICES=0,1'
+contains "$DEFAULTS/npu-workload.env" 'NPU_BURN_INTERNAL_TIMEOUT_SECONDS=300'
+contains "$DEFAULTS/docker-compose.stress.generated.yml" 'privileged: true'
+not_contains "$DEFAULTS/docker-compose.stress.generated.yml" 'read_only: false'
+
+RESTRICTED="$TEST_ROOT/admin-restrictions"
+bash "$GENERATOR" --output-dir "$RESTRICTED" --npu-image npu:models \
+    --npu-host-root "$HOST" --npu-chip-generation A2 \
+    --npu-allowed-devices 0 --npu-allowed-models gpt3 \
+    --deny-npu-reference-generation --disable-web --npu-security-profile restricted
+contains "$RESTRICTED/catmonitor-stress.yaml" 'web_enabled: false'
+contains "$RESTRICTED/catmonitor-stress.yaml" 'allowed_npu_devices: [0]'
+contains "$RESTRICTED/catmonitor-stress.yaml" 'allowed_npu_models: [gpt3]'
+contains "$RESTRICTED/catmonitor-stress.yaml" 'allow_npu_reference_generation: false'
+contains "$RESTRICTED/docker-compose.stress.generated.yml" 'privileged: false'
+
+NO_MODELS="$TEST_ROOT/no-models"
+bash "$GENERATOR" --output-dir "$NO_MODELS" --npu-image npu:operators \
+    --npu-host-root "$HOST" --npu-chip-generation A2 --npu-allowed-models none
+not_contains "$NO_MODELS/catmonitor-stress.yaml" 'allowed_npu_models:'
+not_contains "$NO_MODELS/catmonitor-stress.yaml" 'allow_npu_reference_generation: true'
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/conflicting-reference" \
+    --npu-image npu:models --npu-host-root "$HOST" --npu-chip-generation A2 \
+    --npu-allowed-models none --allow-npu-reference-generation
+expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/cpu-model-authorization" \
+    --cpu-image cpu:test --npu-allowed-models gpt3
+contains "$SINGLE_OUT/catmonitor-stress.yaml" 'allowed_npu_devices: [0]'
+contains "$SINGLE_OUT/npu-workload.env" 'ASCEND_RT_VISIBLE_DEVICES=0'
+
+WEB_OFF="$TEST_ROOT/cpu-web-off"
+bash "$GENERATOR" --output-dir "$WEB_OFF" --cpu-image cpu:test --disable-web
+contains "$WEB_OFF/catmonitor-stress.yaml" 'web_enabled: false'
+bash "$GENERATOR" --output-dir "$WEB_OFF" --cpu-image cpu:test --disable-web --enable-web --force
+contains "$WEB_OFF/catmonitor-stress.yaml" 'web_enabled: true'
+printf 'PASS: complete defaults, explicit admin restrictions and unchanged device mappings\n'
