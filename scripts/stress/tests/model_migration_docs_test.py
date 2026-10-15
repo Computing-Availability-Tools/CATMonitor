@@ -63,6 +63,21 @@ class MigrationDocs(unittest.TestCase):
         self.assertNotIn("29592", shells)
         self.assertIn("**PENDING**", text)
 
+    def test_a2_first_delivery_keeps_distinct_stack_and_hardware_boundary(self):
+        text = (ROOT / FILES[-1]).read_text(encoding="utf-8")
+        self.assertIn("export NPU_CHIP_GENERATION=A2", text)
+        self.assertIn("A2 优先只拉 A2 三件套，不需要下载 A3 镜像", text)
+        self.assertIn("a2-upstream-model-sdc-memory-job-v1", text)
+        self.assertIn("/usr/local/Ascend/ascend-toolkit/set_env.sh", text)
+        self.assertIn("2.9.0.post1+gitee7ba04", text)
+        self.assertIn("本批镜像构建提交固定为 `4630b98227a31fc56a679c4785e35abd98d05d4e`", text)
+        self.assertIn("不是“全新节点从零下载”的证据", text)
+        self.assertIn("完整模型训练或隔夜可靠性认证", text)
+        for package in ("catmonitor-npu", "catmonitor-stress-cpu", "catmonitor-stress-npu"):
+            self.assertRegex(text, r"docker pull ghcr\.io/spike677/" + package + r"@sha256:[0-9a-f]{64}(?=\s|$)")
+        for digest in re.findall(r"\bsha256:([0-9a-f]+)", text):
+            self.assertEqual(len(digest), 64, "Invalid digest or Image ID length")
+
 
 if __name__ == "__main__":
     unittest.main()

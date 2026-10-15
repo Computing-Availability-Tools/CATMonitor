@@ -1,7 +1,9 @@
-# 按作业参数候选：内源 A3 获取、部署和验收
+# 按作业参数候选：内源 A2 / A3 获取、部署和验收
 
 统一源码分支：`spike677/CATMonitor:codex/stress-job-parameters`；功能基线：
 `f636dd000995d7693107197f1310151c29ba4941`，已整合 develop `0554f54`。
+本批镜像构建提交固定为 `4630b98227a31fc56a679c4785e35abd98d05d4e`；
+后续本页部署对象说明是纯文档更新，不声称镜像因此重新构建。**当前优先交付和验证 A2。**
 本指南是候选交付，不是正式 release 或 A3 配套认证。A3 真实硬件验收为 **PENDING**；
 构建/import/ABI 检查和 A2 实测不能替代 A3 workload 结果。
 
@@ -14,12 +16,37 @@
 | --- | --- |
 | ARM64 Ascend Control | `ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-job-20261015-r1` |
 | ARM64 CPU workload | `ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-job-20261015-r1` |
-| A3 / CANN 9.1 NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a3-cann91-20261015-r1` |
 | A2 / CANN 8.5.1 NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a2-cann851-20261015-r1` |
+| A3 / CANN 9.1 NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a3-cann91-20261015-r1` |
 
 这些是本批候选引用，只有交付记录中的 push/pull gate 通过才算已发布。不能仅凭标签
 推断内容；发布人员应另提供本批 `RELEASE.json` 的实际 source commit、Image ID、digest、
 base 和 profile。管理员以该记录固定 checkout 和镜像 digest。不要覆盖旧 stable/latest。
+
+### 1.1 已发布的 A2 三件套（2026-10-15）
+
+下列三个 digest 已通过 GHCR manifest/config、`docker pull` 后 Image ID 一致性、
+匿名 registry 读取验证，平台均为 `linux/arm64`。回拉复用了当前节点的已有层，
+不是“全新节点从零下载”的证据。优先用 digest 固定部署输入：
+
+```bash
+docker pull ghcr.io/spike677/catmonitor-npu@sha256:02c3dc59e2b12b0fc499ed84e6556b63d69ed1951b863f1602d3efc7045fef5b
+docker pull ghcr.io/spike677/catmonitor-stress-cpu@sha256:8ceb049bdc5da4c675199277711eeb7d0a84f16a0834239328a8b5a41733d425
+docker pull ghcr.io/spike677/catmonitor-stress-npu@sha256:05e84e660af248ec5ec0f86184dff9d2adf38abe97690f2c6a923b220d64e229
+```
+
+| A2 角色 | 预期 Image ID |
+| --- | --- |
+| Control | `sha256:9858f14b8b562a21e0429e222064998e260085dc9d58c07519879b462b806acc` |
+| CPU | `sha256:758577a1677ff407d126635ee113ab35b5d99302aab10b3aefcc08c37033259a` |
+| NPU | `sha256:5b97aee15006b1f46ae1d9fca45dfa4dfcb70f9bb5e4563ce7f0cfd8b9576bd2` |
+
+124 A2 节点已验证 doctor 4/4、STREAM/HPL/HPCG 小规模改参作业，以及 logical 0、1
+的 matmul FP16 小规模作业（本轮 CSV 2/2、检测错误 0）。这不是完整算子矩阵、
+完整模型训练或隔夜可靠性认证，也不是 A3 的硬件验收。
+NPU 镜像本地未压缩大小约 15 GiB；迁入前检查实际存储，不宣称已完成极限瘦身。
+
+### 1.2 获取与选择代际
 
 下面命令都在获准的 **Linux ARM64 宿主机 Bash** 执行。不需要安装器；Compose 可选。
 只带入公开源码和获准分发的镜像，不向公开仓库上传内源数据或凭据。
@@ -36,7 +63,17 @@ git merge-base --is-ancestor f636dd000995d7693107197f1310151c29ba4941 HEAD
 # git checkout --detach "$SOURCE_COMMIT"
 export CONTROL_IMAGE=ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-job-20261015-r1
 export CPU_IMAGE=ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-job-20261015-r1
-export NPU_IMAGE=ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a3-cann91-20261015-r1
+export NPU_CHIP_GENERATION=A2  # A3 节点显式改为 A3；不根据设备个数猜代际。
+case "$NPU_CHIP_GENERATION" in
+  A2)
+    export NPU_IMAGE=ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a2-cann851-20261015-r1
+    export CANN_ENV_SCRIPT=/usr/local/Ascend/ascend-toolkit/set_env.sh
+    export NPU_COMPAT_PROFILE=a2-upstream-model-sdc-memory-job-v1 ;;
+  A3)
+    export NPU_IMAGE=ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a3-cann91-20261015-r1
+    export CANN_ENV_SCRIPT=/usr/local/Ascend/cann-9.1.0/set_env.sh
+    export NPU_COMPAT_PROFILE=portable-model-sdc-memory-job-v1 ;;
+esac
 
 docker pull "$CONTROL_IMAGE"
 docker pull "$CPU_IMAGE"
@@ -47,12 +84,14 @@ docker image inspect "$NPU_IMAGE" \
   --format '{{index .Config.Labels "io.catmonitor.npu-burn.compat-profile"}}'
 ```
 
-预期全部 `linux/arm64`；A3 profile 必须是 `portable-model-sdc-memory-job-v1`。
+预期全部 `linux/arm64`；profile 必须与 `$NPU_COMPAT_PROFILE` 一致。
+A2 优先只拉 A2 三件套，不需要下载 A3 镜像。A2 的 CANN 为 8.5.1、torch_npu 为
+2.9.0.post1+gitee7ba04；闭源 A2 节点仍需验证宿主驱动兼容性，不能因为同是 A2 就跳过门禁。
 若 registry 要求认证，由管理员通过 `docker login ... --password-stdin` 登录，不把
 token 写入 Git/命令行参数/本文。完全离线可在获准联网机器 `docker save` 三张镜像、
 压缩后传入并 `docker load`，核对 ID 与交付记录；不是从未知旧容器提取执行包。
 
-## 2. A3 构建补丁契约（使用已发布镜像可跳过）
+## 2. A3 构建补丁契约（A2 用户和使用已发布镜像者跳过）
 
 顺序固定：`portable-runtime-v1.patch` → `model-sdc-v1.patch` →
 `model-memory-v1.patch` → `job-parameters-v1.patch`。
@@ -66,7 +105,8 @@ profile 为 `portable-model-sdc-memory-job-v1`；不应用 A2 的生成代际/�
 : "${NPU_BUILD_ROOT:?set a dedicated build directory}"
 bash scripts/stress/build_npu_burn_image.sh \
   --builder-base-image "$NPU_BUILDER_BASE" --runtime-base-image "$NPU_RUNTIME_BASE" \
-  --image "$NPU_IMAGE" --compat-profile portable-model-sdc-memory-job-v1 \
+  --image ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a3-cann91-20261015-r1 \
+  --compat-profile portable-model-sdc-memory-job-v1 \
   --patch scripts/stress/patches/ascend_npu_burn/portable-runtime-v1.patch \
   --patch scripts/stress/patches/ascend_npu_burn/model-sdc-v1.patch \
   --patch scripts/stress/patches/ascend_npu_burn/model-memory-v1.patch \
@@ -105,8 +145,8 @@ Web/DFeE 在端口占用时会递增，但 Metrics、faultsub、Exporter 不自�
 
 ## 4. 一次生成 Full 配置
 
-本批 A3 镜像的 CANN 初始化脚本为 `/usr/local/Ascend/cann-9.1.0/set_env.sh`。
-若使用自己的其他 A3 runtime，先核实其真实路径及版本，再调整；不套用 A2 路径。
+第 1 节按代际选择对应的 CANN 初始化脚本。若使用自己的其他 runtime，先核实其真实
+路径及版本再调整；不把 A2 的路径套到 A3。本节一次生成 A2 或 A3 的 Full 配置。
 
 ```bash
 export GENERATED_DIR=/etc/catmonitor/generated-job-stress
@@ -120,12 +160,12 @@ bash scripts/stress/generate_stress_deployment.sh \
   --stream-threads 1 --hpl-processes 1 --hpl-threads 1 \
   --hpcg-processes 1 --hpcg-threads 1 --hpcg-nx 16 --hpcg-ny 16 --hpcg-nz 16 --hpcg-runtime 2 \
   --npu-image "$NPU_IMAGE" --npu-output-dir "$NPU_OUTPUT" \
-  --npu-chip-generation A3 --npu-runtime runc \
+  --npu-chip-generation "$NPU_CHIP_GENERATION" --npu-runtime runc \
   --npu-device-mode full --npu-security-profile legacy-privileged \
   --npu-burn-device 0 --npu-allowed-devices 0 \
   --npu-run-case matmul --npu-allowed-models gpt3,llama2 --allow-npu-reference-generation \
   --npu-model-memory-mode checkpointed --npu-job-timeout 2h \
-  --npu-threads 1 --npu-ascend-env-script /usr/local/Ascend/cann-9.1.0/set_env.sh \
+  --npu-threads 1 --npu-ascend-env-script "$CANN_ENV_SCRIPT" \
   --enable-web
 
 python3 -m json.tool "$GENERATED_DIR/stress-profile.json"
@@ -255,7 +295,9 @@ docker exec catmonitor-stress-npu /usr/local/bin/catmonitor-stress-exec \
 
 ## 7. CPU 按作业参数闭环
 
-以下命令返回 Job；每次用 status 等到终态，不能同时启动下一项。CLI/Web 共享作业。
+CLI `run` 会等待本次作业结束并输出报告，不是后台启动命令。需要在执行中查看或取消时，
+另开宿主机终端执行 `status` / `cancel --job`；Web API 的提交则立即返回 Job。
+每次等到终态再启动下一项。CLI/Web 共享作业。
 
 ```bash
 docker exec catmonitor catmonitor stress run --bench stream --stream-threads 1 -o json
@@ -276,7 +318,7 @@ docker exec catmonitor catmonitor stress status -o json
 HPL 必须满足 P×Q=ranks，CPU/内存超额明确拒绝。STREAM 数组大小及内部重复次数仍是
 编译参数，不能在 Web 修改。Web 在“高级参数 · 仅本次作业”展开编辑，历史只读。
 
-## 8. A3 算子、模型、Cancel
+## 8. A2 / A3 算子、模型、Cancel
 
 先 `npu-smi info` 确认授权设备空闲。以下只测 logical 0；更多设备须先修改 allowlist。
 小规模不是完整性能/可靠性验收，不能替代默认大规模运行。
@@ -294,12 +336,16 @@ docker exec catmonitor catmonitor stress status -o json
 
 模型先在健康设备生成独立参考，再以**相同参数、软件栈、内存策略和阈值**对照：
 
+以下参考 ID 仅为示例，管理员改成该节点/代际自己的新 ID。A2 不提供 quant_matmul
+上游策略，不能借用 A3 策略；matmul 等算子的可选范围由镜像实际准入决定。
+A2 32GB 完整模型可能 OOM；小参数功能检查与完整模型验收必须分开记录。
+
 ```bash
 docker exec catmonitor catmonitor stress run --bench npu_burn --npu-devices 0 \
-  --npu-model gpt3 --model-action create_reference --reference-id gpt3-a3-job-01 -o json
+  --npu-model gpt3 --model-action create_reference --reference-id gpt3-node-job-01 -o json
 # 等参考完整生成后执行，不覆盖已有 ID。
 docker exec catmonitor catmonitor stress run --bench npu_burn --npu-devices 0 \
-  --npu-model gpt3 --model-action compare --reference-id gpt3-a3-job-01 -o json
+  --npu-model gpt3 --model-action compare --reference-id gpt3-node-job-01 -o json
 ```
 
 Llama2 使用独立 reference ID。默认完整训练可能 HBM OOM；checkpointed 不保证足够。
