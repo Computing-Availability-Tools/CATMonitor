@@ -60,9 +60,19 @@ class ComposeSupportTest(unittest.TestCase):
                                          ("privileged", False, "privilege differs"),
                                          ("runtime", "ascend", "runtime differs"),
                                          ("container_name", "old-npu", "Controller binding"),
+                                         ("devices", [dict(source="/dev/davinci7", target="/dev/davinci2"),
+                                                      dict(source="/dev/davinci5", target="/dev/davinci5")], "device source"),
                                          ("devices", [], "device nodes"),
                                          ("read_only", False, "read-only root")):
                 with self.subTest(field=field), self.assertRaisesRegex(ValueError, reason):
+                    support.validate_resolved("npu", folder, dict(document, services=dict(
+                        document["services"], **{"catmonitor-stress-npu": dict(service, **{field: value})})))
+            binding["privileged"] = False
+            (folder / "stress-profile.json").write_text(json.dumps(dict(npu=binding)))
+            service.update(privileged=False, cap_drop=["ALL"], security_opt=["no-new-privileges:true"])
+            support.validate_resolved("npu", folder, document)
+            for field, value in (("cap_drop", []), ("security_opt", []), ("cap_add", ["SYS_ADMIN"])):
+                with self.subTest(restricted_field=field), self.assertRaisesRegex(ValueError, "restricted NPU"):
                     support.validate_resolved("npu", folder, dict(document, services=dict(
                         document["services"], **{"catmonitor-stress-npu": dict(service, **{field: value})})))
             document["services"]["web"]["volumes"] = [dict(target="/var/run/docker.sock")]

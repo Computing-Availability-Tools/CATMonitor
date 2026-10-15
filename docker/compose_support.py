@@ -139,6 +139,11 @@ def validate_resolved(mode, directory, document):
                 fail("NPU privilege differs from generated profile; regenerate --npu-security-profile")
             if binding["privileged"] and (service.get("cap_drop") or service.get("security_opt")):
                 fail("privileged NPU retains restricted cap_drop/security_opt; remove stale overlays and regenerate")
+            if not binding["privileged"]:
+                drops = {str(value).upper() for value in service.get("cap_drop", [])}
+                options = {str(value).lower() for value in service.get("security_opt", [])}
+                if "ALL" not in drops or not options.intersection({"no-new-privileges", "no-new-privileges:true"}) or service.get("cap_add"):
+                    fail("restricted NPU must retain cap_drop ALL/no-new-privileges without added capabilities")
             environment = service.get("environment", {})
             if not isinstance(environment, dict):
                 environment = dict(item.split("=", 1) for item in environment)
@@ -152,6 +157,9 @@ def validate_resolved(mode, directory, document):
                 target = device.get("target") if isinstance(device, dict) else device.split(":")[1]
                 match = re.fullmatch(r"/dev/davinci([0-9]+)", target or "")
                 if match:
+                    source = device.get("source", "") if isinstance(device, dict) else device.split(":")[0]
+                    if os.path.basename(source) != "davinci" + match.group(1):
+                        fail("resolved NPU device source is not the generated identity mapping")
                     node_ids.add(int(match.group(1)))
             if node_ids != set(binding["host_device_ids"]):
                 fail("resolved NPU device nodes differ from generated profile")
