@@ -105,5 +105,26 @@ class JobParametersTests(unittest.TestCase):
         for name in ("base_config.json", "a3_config.json"):
             self.assertEqual((self.source / "ascend_npu_burn/config" / name).read_bytes(), (ROOT / "third_party/ascend_npu_burn/source/ascend_npu_burn/config" / name).read_bytes())
 
+    def test_a3_only_release_patch_chain_without_a2_admission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "source"
+            shutil.copytree(ROOT / "third_party/ascend_npu_burn/source", target)
+            for path in target.rglob("*.py"):
+                path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+            for name in ("portable-runtime-v1.patch", "model-sdc-v1.patch",
+                         "model-memory-v1.patch", "job-parameters-v1.patch"):
+                with (ROOT / "scripts/stress/patches/ascend_npu_burn" / name).open("rb") as source:
+                    subprocess.run(["patch", "--batch", "--forward", "-p1", "-d", str(target)],
+                                   stdin=source, capture_output=True, check=True)
+            catalog = module("a3_only_job_catalog", target / "ascend_npu_burn/case_catalog.py")
+            config = catalog.load_config("A3")
+            result = resolver.resolve(config, config, "A3", ["quant_matmul"],
+                                      {"operators": {"quant_matmul": {"dtype": ["int8"], "run_count": 2}}})
+            self.assertEqual(len(resolver.cases(result["config"])), 20)
+            for name in ("base_config.json", "a3_config.json"):
+                self.assertEqual((target / "ascend_npu_burn/config" / name).read_bytes(),
+                                 (ROOT / "third_party/ascend_npu_burn/source/ascend_npu_burn/config" / name).read_bytes())
+            self.assertFalse((target / "ascend_npu_burn/config/a2_config.json").exists())
+
 if __name__ == "__main__":
     unittest.main()

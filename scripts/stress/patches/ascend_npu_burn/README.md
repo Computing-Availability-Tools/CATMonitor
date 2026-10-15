@@ -79,6 +79,14 @@ non-reentrant activation checkpointing with RNG preservation. The default is
 `standard`; no dimensions, batch, dtype or step counts are reduced. An absent
 Transformers checkpoint API is an error, not a fallback. This policy is bound
 to reference identity, and its full A2/A3 hardware validation is PENDING.
-For A3, apply portable-runtime-v1, model-sdc-v1, model-memory-v1 in that order,
-with an explicit `portable-model-sdc-memory-v1` profile; do not apply the A2
+For current A3 per-job builds, apply portable-runtime-v1, model-sdc-v1,
+model-memory-v1, job-parameters-v1 in that order, with the explicit
+`portable-model-sdc-memory-job-v1` profile; do not apply the A2
 config-selector or sizing patches. See the [A3 migration guide](../../../../docker/NPU_A3_MIGRATION_GUIDE.md).
+
+`job-parameters-v1.patch` loads the validated per-job configuration and SDC
+tolerances. A2 adds only `a2-upstream-base.patch` immediately after portable
+runtime, using `a2-upstream-model-sdc-memory-job-v1`; A3 never adds that patch.
+Both chains preserve the bundled base and complete A3 JSON. The current source
+branch is `codex/stress-job-parameters`; see the
+[paired-image deployment guide](../../../../docker/STRESS_JOB_RELEASE_GUIDE.md).

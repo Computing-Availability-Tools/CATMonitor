@@ -2,6 +2,11 @@
 
 本指南用于从公开源码构建 A3 候选镜像，在获准节点验证算子及 GPT3/Llama2 模型。保持 Unified Stress V2：CLI/Web → 唯一 daemon Controller → Docker Executor → workload executor。Web 继续使用 `:19322`，不挂 Docker socket。
 
+当前统一开发分支是 `codex/stress-job-parameters`，功能基线为 `f636dd000995d7693107197f1310151c29ba4941`。
+**已有配套镜像的内源 A3 部署、完整五容器手工命令和按作业参数测试，以
+[按作业参数候选交付指南](STRESS_JOB_RELEASE_GUIDE.md) 为入口。** 本文保留从源码构建及模型验收细节。
+旧 `arm64-v0.3.5-stress` 标签不包含本轮全部能力；A2 镜像不能替代 A3 软件栈验收。
+
 当前 A2 原配置实验中，两个模型真实导入通过，但首次前向均 HBM OOM，完成 0/2112 步。A3、新模型入口和新增激活重计算模式的完整硬件验收均为 **PENDING**。换到 A3 不自动意味着通过，增加作业超时也不能解决显存不足。
 
 ## 1 训练方式与支持边界
@@ -22,10 +27,10 @@ GPT3 用例使用 GPT2Model 加训练头，Llama2 使用 LlamaModel 加训练头
 
 ## 2 需要带入环境的内容
 
-从个人 fork 下载 `codex/npu-model-a3-migration` 分支，记录 `git rev-parse HEAD`。以最终交付的完整 commit 固定源码，不只看程序版本号。
+从个人 fork 下载 `codex/stress-job-parameters` 分支，记录 `git rev-parse HEAD`。以最终交付的完整 commit 固定源码，不只看程序版本号。
 
 ```bash
-git clone --branch codex/npu-model-a3-migration \
+git clone --branch codex/stress-job-parameters \
   https://github.com/spike677/CATMonitor.git
 cd CATMonitor
 git rev-parse HEAD
@@ -40,11 +45,11 @@ Git 不可达时，可以从该分支下载源码 ZIP，在获准传输方式下
 | `scripts/stress/build_npu_burn_image.sh` | 新 NPU workload 镜像及 build manifest |
 | `docker/stress/npu/*` | 环境初始化、模型 adapter、NPU 启动和预检 |
 | `third_party/ascend_npu_burn/source` | 完整上游树；构建时显式应用补丁，不改仓库内上游文件 |
-| 三个 A3 补丁，见下方命令 | ARM64/运行兼容、可写参考/trace 路径、显式激活重计算 |
+| 四个 A3 补丁，见下方命令 | ARM64/运行兼容、可写参考/trace 路径、显式激活重计算、冻结作业参数 |
 | `scripts/stress/generate_stress_deployment.sh` | YAML、工作负载 env、设备映射和部署 manifest |
 | Compose 四文件或本指南 manual 命令 | 启动 4 容器；选 CPU 后为 5 容器 |
 
-NPU-only 是 2 张镜像、4 个容器：Control 用于 daemon/Web/DFeE，NPU workload 用于 Burn。额外 CPU 压测才需要 CPU workload 镜像和容器，不要求为了模型重建 CPU 镜像。
+NPU-only 是 2 张镜像、4 个容器：Control 用于 daemon/Web/DFeE，NPU workload 用于 Burn。Full 是 3 张镜像、5 个容器；本轮按作业参数同时改变 CPU workload 协议，启用 CPU 时必须使用配套新镜像，不能沿用旧 CPU executor。
 
 ## 3 从源码构建两张候选镜像
 
@@ -82,10 +87,11 @@ bash scripts/stress/build_npu_burn_image.sh \
   --builder-base-image "$NPU_BUILDER_BASE" \
   --runtime-base-image "$NPU_RUNTIME_BASE" \
   --image "$NPU_IMAGE" \
-  --compat-profile portable-model-sdc-memory-v1 \
+  --compat-profile portable-model-sdc-memory-job-v1 \
   --patch scripts/stress/patches/ascend_npu_burn/portable-runtime-v1.patch \
   --patch scripts/stress/patches/ascend_npu_burn/model-sdc-v1.patch \
   --patch scripts/stress/patches/ascend_npu_burn/model-memory-v1.patch \
+  --patch scripts/stress/patches/ascend_npu_burn/job-parameters-v1.patch \
   --enable-model-sdc \
   --build-root "$NPU_BUILD_ROOT"
 
@@ -117,7 +123,7 @@ bash scripts/stress/generate_stress_deployment.sh \
   --npu-output-dir "$NPU_OUTPUT" --enable-web
 ```
 
-`ASCEND_ENV_SCRIPT` 必须填写 workload 内实际的绝对 CANN 初始化路径。不要套用 A2 的路径。`12h` 是候选作业上限，不是完整训练预计耗时或固定压测时长。算子 worker 的软件同步上限默认 300 秒；模型沿用直接同步，由 Controller 外层时限终止整个进程组，不宣称模型每次同步具有该 300 秒软件计时器。先测量单设备，再按实测估算顺序多设备所需时限。
+`ASCEND_ENV_SCRIPT` 必须填写 workload 内实际的绝对 CANN 初始化路径。不要套用 A2 的路径。`2h` 是候选作业上限，不是完整训练预计耗时或固定压测时长。算子 worker 的软件同步上限默认 300 秒；模型沿用直接同步，由 Controller 外层时限终止整个进程组，不宣称模型每次同步具有该 300 秒软件计时器。先测量单设备，再按实测估算顺序多设备所需时限。
 
 示例仅授权 logical 0。获得实际拓扑后，如需 device 8、14 或多个设备，管理员修改 `--npu-burn-device` 默认值和 `--npu-allowed-devices`，在新目录重新生成配置，不能将 host `/dev/davinciN` 编号直接当成 runtime logical index，也不能因未选择而默认全卡。作业设备由 CLI/Web 每次明确选择。
 

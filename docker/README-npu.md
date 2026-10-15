@@ -1,5 +1,9 @@
 # CATMonitor：Ascend NPU 节点
 
+> 最新“按作业参数 / 模型 SDC”候选统一使用 `codex/stress-job-parameters`，
+> 完整获取、A2/A3 镜像区分及 A3 五容器部署见 [候选交付指南](STRESS_JOB_RELEASE_GUIDE.md)。
+> 本页旧 `arm64-v0.3.5-stress` 是 Monitoring/Stress V2 历史基线，不包含本轮全部功能。
+
 适用于 Ascend NPU Linux 节点。支持 Ascend Monitoring、可选 CPU Stress 和可选
 NPU Burn。当前 Stress 镜像只声明已完成 A2/Ascend910B4、CANN 8.3、`runc` 的功能验收；
 其他 SoC/CANN 组合必须单独验收，不能由 A2 结果外推。

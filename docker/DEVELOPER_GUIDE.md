@@ -416,7 +416,9 @@ git diff --check
 
 ### 按作业参数候选的构建边界
 
-本地 `codex/stress-job-parameters` 从公开提交 `5a3537c` 开发；不修改正式版本号。
+统一分支 `codex/stress-job-parameters` 已在 `f636dd0` 整合 develop `0554f54`；
+交付时记录实际构建提交，不修改正式版本号。候选镜像与 A3 部署入口见
+[配套交付指南](STRESS_JOB_RELEASE_GUIDE.md)。
 本功能同时改变 Control 请求/报告和 CPU/NPU workload 协议，需构建三张匹配候选镜像，
 不能仅更新 Web 后宣称参数已被执行。不自动更新已发布 registry 标签或正在运行的容器。
 

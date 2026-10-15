@@ -1,5 +1,9 @@
 # CATMonitor 可靠性压测使用指南
 
+最新按作业参数候选的源码、镜像与 A3 完整部署入口统一见
+[候选交付指南](../../docker/STRESS_JOB_RELEASE_GUIDE.md)。旧 pre-release 标签不包含
+本轮全部能力；不可把“Web 可编辑”当成旧 workload 已执行新参数。
+
 本文面向首次部署和日常操作 CATMonitor Stress 的节点管理员。用户只需要理解：
 
 ```text
@@ -128,9 +132,9 @@ uname -m
 ## 3. 获取 ARM64 Stress pre-release 镜像
 
 ```bash
-git clone https://github.com/Computing-Availability-Tools/CATMonitor.git
+git clone --branch codex/stress-job-parameters https://github.com/spike677/CATMonitor.git
 cd CATMonitor
-git checkout refactor/unified-stress-platform
+git switch codex/stress-job-parameters
 git status --short
 
 export CATMONITOR_RELEASE='arm64-v0.3.5-stress'

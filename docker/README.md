@@ -1,5 +1,9 @@
 # CATMonitor 容器部署
 
+最新按作业参数候选统一使用 `codex/stress-job-parameters`；配套镜像、A2/A3 区分和
+完整部署命令见 [候选交付指南](STRESS_JOB_RELEASE_GUIDE.md)。下文旧 pre-release 镜像
+不包含本轮全部能力，不用它们验证新参数执行。本次不重写原 Monitoring 部署契约。
+
 本地镜像/受限网络见 [受限环境指南](RESTRICTED_ENV_GUIDE.md)；
 新 NPU 兼容候选的修改点和未验范围见 [源码审计](NPU_COMPAT_REVIEW.md)。
 

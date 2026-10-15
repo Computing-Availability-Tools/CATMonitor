@@ -7,7 +7,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 FILES = ("docker/NPU_A3_MIGRATION_GUIDE.md", "docker/NPU_MODEL_SDC_GUIDE.md",
-         "docker/NPU_MODEL_TEST_RESULT.md", "docker/README-npu.md")
+         "docker/NPU_MODEL_TEST_RESULT.md", "docker/README-npu.md",
+         "docker/STRESS_JOB_RELEASE_GUIDE.md")
 
 
 class MigrationDocs(unittest.TestCase):
@@ -37,6 +38,30 @@ class MigrationDocs(unittest.TestCase):
             self.assertIn(required, shells)
         self.assertEqual(len(re.findall(r"docker run -d --name ", shells)), 4)
         self.assertIn("A3、新模型入口和新增激活重计算模式的完整硬件验收均为 **PENDING**", text)
+
+    def test_current_a3_patch_chain_and_source_are_consistent(self):
+        names = ["portable-runtime-v1.patch", "model-sdc-v1.patch",
+                 "model-memory-v1.patch", "job-parameters-v1.patch"]
+        for name in (FILES[0], FILES[-1]):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            shells = "\n".join(re.findall(r"```bash\n(.*?)\n```", text, re.S))
+            self.assertIn("codex/stress-job-parameters", shells)
+            self.assertNotIn("codex/npu-model-a3-migration", shells)
+            self.assertIn("--compat-profile portable-model-sdc-memory-job-v1", shells)
+            self.assertEqual(re.findall(r"--patch scripts/stress/patches/ascend_npu_burn/(\S+)", shells), names)
+            for old in ("a2-upstream-base.patch", "a2-cann83.patch", "a2-portable-sizing.patch"):
+                self.assertNotIn(old, shells)
+
+    def test_full_candidate_manual_contract_and_real_parameter_flags(self):
+        text = (ROOT / FILES[-1]).read_text(encoding="utf-8")
+        shells = "\n".join(re.findall(r"```bash\n(.*?)\n```", text, re.S))
+        self.assertEqual(len(re.findall(r"docker run -d --name ", shells)), 5)
+        for value in ("cpu-workload.env", "npu-workload.env", "--read-only", "--network none",
+                      "--require-pass", "--npu-operator-parameters", "--hpcg-runtime-seconds",
+                      "--stream-threads", "--hpl-mpi-processes", "-addr=:19322", "set -euo pipefail"):
+            self.assertIn(value, shells)
+        self.assertNotIn("29592", shells)
+        self.assertIn("**PENDING**", text)
 
 
 if __name__ == "__main__":

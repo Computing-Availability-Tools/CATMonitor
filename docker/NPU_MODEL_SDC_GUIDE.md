@@ -43,7 +43,7 @@
 
 离线环境由管理员准备与 ARM64/Python ABI 匹配的 wheel 依赖闭包，并在构建 runtime base 时安装。不要在正在运行的 workload 容器里临时 pip 安装或覆盖包，也不要为这两个模型下载无关 vLLM、模型权重或训练语料。
 
-候选位于个人 fork 的 `codex/npu-model-a3-migration` 分支，本轮 HBM 和界面修复以包含本指南更新的候选提交为准。父基线为 `c1e3d6146ae04e1636bdb52c0afef853a65f03a8`；仅使用该旧基线不会获得本轮全部修复。迁移时记录并固定新的真实 HEAD 和配套镜像身份；源码提交不代表镜像已发布。
+候选统一位于个人 fork 的 `codex/stress-job-parameters` 分支，完整功能基线为 `f636dd000995d7693107197f1310151c29ba4941`。旧迁移分支不再作为新部署入口。迁移时记录并固定交付源码和配套镜像身份；源码提交不代表镜像已发布。当前配套引用、A3 五容器部署和逐步测试见 [候选交付指南](STRESS_JOB_RELEASE_GUIDE.md)。
 
 以下是新镜像构建命令模板，`BUILDER_BASE` 和 `RUNTIME_BASE` 必须由管理员填入已确认的软件栈镜像，不使用任意 latest：
 
@@ -56,18 +56,19 @@ bash scripts/stress/build_npu_burn_image.sh \
   --builder-base-image "$BUILDER_BASE" \
   --runtime-base-image "$RUNTIME_BASE" \
   --image catmonitor/stress-npu:model-sdc-a2-candidate \
-  --compat-profile a2-upstream-model-sdc-memory-v1 \
+  --compat-profile a2-upstream-model-sdc-memory-job-v1 \
   --patch scripts/stress/patches/ascend_npu_burn/portable-runtime-v1.patch \
   --patch scripts/stress/patches/ascend_npu_burn/a2-upstream-base.patch \
   --patch scripts/stress/patches/ascend_npu_burn/model-sdc-v1.patch \
   --patch scripts/stress/patches/ascend_npu_burn/model-memory-v1.patch \
+  --patch scripts/stress/patches/ascend_npu_burn/job-parameters-v1.patch \
   --enable-model-sdc \
   --build-root /path/on-data-disk/npu-model-build
 ```
 
-A2 使用完整 base_config，不添加 a2_config 或缩减算子配置。A3 使用 `--compat-profile portable-model-sdc-memory-v1`，保留 portable-runtime-v1、model-sdc-v1 和 model-memory-v1，去掉 A2 补丁；完整 a3_config 保持不变。不要用 profile=none 描述带补丁的产物。
+A2 使用完整 base_config，不添加 a2_config 或缩减算子配置。A3 使用 `--compat-profile portable-model-sdc-memory-job-v1`，按序应用 portable-runtime-v1、model-sdc-v1、model-memory-v1、job-parameters-v1，去掉 A2 补丁；完整 a3_config 保持不变。不要用 profile=none 描述带补丁的产物。
 
-Control 镜像也需从该候选源码重新构建以包含新协议、CLI 和 Web。CPU workload 无新增模型职责；本轮不要求为了模型功能重建 CPU 镜像。
+Control 镜像也需从该候选源码重新构建以包含新协议、CLI 和 Web。CPU workload 不负责模型，但本轮还增加 CPU 按作业参数；启用 CPU Stress 时使用同批配套 CPU 镜像。
 
 启用模型构建检查后，最终 runtime image 必须输出 `CATMONITOR_MODEL_IMPORT=PASS`。此步骤不运行训练、不访问 NPU 设备，也不生成参考。
 
