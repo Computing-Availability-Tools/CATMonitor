@@ -2,6 +2,7 @@
 
 统一源码分支：`spike677/CATMonitor:codex/stress-job-parameters`；功能基线：
 `f636dd000995d7693107197f1310151c29ba4941`，已整合 develop `0554f54`。
+默认完整功能与 Compose 优化源码提交为 `df9176aad841f626d4fc98f45c5400b31e43a1e2`。
 本批镜像构建提交固定为 `4630b98227a31fc56a679c4785e35abd98d05d4e`；
 后续本页部署对象说明是纯文档更新，不声称镜像因此重新构建。**当前优先交付和验证 A2。**
 本指南是候选交付，不是正式 release 或 A3 配套认证。A3 真实硬件验收为 **PENDING**；
@@ -48,9 +49,9 @@ Monitoring-only 的全局配置仍为 `stress.enabled: false`，不需要 Docker
 
 | 角色 | 候选 registry ref |
 | --- | --- |
-| ARM64 Ascend Control | `ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-job-20261015-r1` |
-| ARM64 CPU workload | `ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-job-20261015-r1` |
-| A2 / CANN 8.5.1 NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a2-cann851-20261015-r1` |
+| ARM64 Ascend Control | `ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-defaults-20261015-r2` |
+| ARM64 CPU workload | `ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-defaults-20261015-r2` |
+| A2 / CANN 8.5.1 NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-defaults-a2-cann851-20261015-r2` |
 | A3 / CANN 9.1 NPU workload | `ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a3-cann91-20261015-r1` |
 
 这些是本批候选引用，只有交付记录中的 push/pull gate 通过才算已发布。不能仅凭标签
@@ -58,6 +59,21 @@ Monitoring-only 的全局配置仍为 `stress.enabled: false`，不需要 Docker
 base 和 profile。管理员以该记录固定 checkout 和镜像 digest。不要覆盖旧 stable/latest。
 
 ### 1.1 已发布的 A2 三件套（2026-10-15）
+
+当前 R2 三个标签已分别完成 push、GHCR manifest/config、pull 后 Image ID 一致性，
+以及匿名 registry 读取验证。**本轮没有重建镜像**：部署默认值与 Compose 改动只在 Git
+的 generator/launcher，三张执行镜像原样复用已验收的 R1 内容，Image ID/digest 与下面
+记录完全相同。R1 标签及已有容器均保留，没有覆盖 stable/latest。
+
+```bash
+docker pull ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-defaults-20261015-r2
+docker pull ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-defaults-20261015-r2
+docker pull ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-defaults-a2-cann851-20261015-r2
+```
+
+只 pull R2 不会改变旧 YAML 的授权、权限或端口。使用上述源码提交或包含它的分支，
+重新生成、审查后重建属于本项目的容器。R2 发布没有重新运行硬件 workload，不能新增
+“完整算子/模型、A3 或隔夜实测通过”的声明。
 
 下列三个 digest 已通过 GHCR manifest/config、`docker pull` 后 Image ID 一致性、
 匿名 registry 读取验证，平台均为 `linux/arm64`。回拉复用了当前节点的已有层，
@@ -95,12 +111,12 @@ git merge-base --is-ancestor f636dd000995d7693107197f1310151c29ba4941 HEAD
 
 # 获得发布人员给出的完整 SOURCE_COMMIT 后固定，不任意选择新 develop。
 # git checkout --detach "$SOURCE_COMMIT"
-export CONTROL_IMAGE=ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-job-20261015-r1
-export CPU_IMAGE=ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-job-20261015-r1
+export CONTROL_IMAGE=ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-defaults-20261015-r2
+export CPU_IMAGE=ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-defaults-20261015-r2
 export NPU_CHIP_GENERATION=A2  # A3 节点显式改为 A3；不根据设备个数猜代际。
 case "$NPU_CHIP_GENERATION" in
   A2)
-    export NPU_IMAGE=ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-job-a2-cann851-20261015-r1
+    export NPU_IMAGE=ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-defaults-a2-cann851-20261015-r2
     export CANN_ENV_SCRIPT=/usr/local/Ascend/ascend-toolkit/set_env.sh
     export NPU_COMPAT_PROFILE=a2-upstream-model-sdc-memory-job-v1 ;;
   A3)
