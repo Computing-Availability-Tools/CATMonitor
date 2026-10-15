@@ -34,7 +34,7 @@ func useTestdata(t *testing.T) {
 	mock := &dcmi.MockProvider{
 		CardListVal: []int{0, 1},
 		Temp:        map[[2]int]int{{0, 0}: 42, {0, 1}: 38},
-		Powers:      map[[2]int]int{{0, 0}: 65, {0, 1}: 60},  // raw 0.1W units: 65 → 6.5W, 60 → 6.0W
+		Powers:      map[[2]int]int{{0, 0}: 65, {0, 1}: 60}, // raw 0.1W units: 65 → 6.5W, 60 → 6.0W
 		Volts:       map[[2]int]uint{{0, 0}: 800, {0, 1}: 800},
 		Healths:     map[[2]int]uint{{0, 0}: 0, {0, 1}: 0},
 		Chips: map[[2]int]*dcmi.ChipInfo{{0, 0}: {
@@ -50,14 +50,14 @@ func useTestdata(t *testing.T) {
 			Freq:        1600,
 		}},
 		Utils: map[[3]int]uint{
-			{0, 0, 2}:  45,  // AICORE
-			{0, 0, 13}: 50,  // NPU
-			{0, 0, 3}:  30,  // AICPU
-			{0, 0, 4}:  20,  // CTRLCPU
-			{0, 0, 12}: 25,  // VECTORCORE
-			{0, 0, 10}: 40,  // HBM_BANDWIDTH
-			{0, 0, 1}:  15,  // DDR
-			{0, 0, 5}:  10,  // DDR_BANDWIDTH
+			{0, 0, 2}:  45, // AICORE
+			{0, 0, 13}: 50, // NPU
+			{0, 0, 3}:  30, // AICPU
+			{0, 0, 4}:  20, // CTRLCPU
+			{0, 0, 12}: 25, // VECTORCORE
+			{0, 0, 10}: 40, // HBM_BANDWIDTH
+			{0, 0, 1}:  15, // DDR
+			{0, 0, 5}:  10, // DDR_BANDWIDTH
 		},
 		Freqs: map[[3]int]uint{
 			{0, 0, 7}:  1800, // AICORE_CURRENT
@@ -68,14 +68,14 @@ func useTestdata(t *testing.T) {
 			{0, 0, 1}:  2400, // DDR
 		},
 		Sensors: map[[3]int]int{
-			{0, 0, 0}:  60,  // CLUSTER
-			{0, 0, 1}:  58,  // PERI
-			{0, 0, 2}:  62,  // AICORE0
-			{0, 0, 3}:  61,  // AICORE1
-			{0, 0, 11}: 65,  // SOC
-			{0, 0, 12}: 50,  // FP
-			{0, 0, 13}: 58,  // N_DIE
-			{0, 0, 14}: 55,  // HBM
+			{0, 0, 0}:  60, // CLUSTER
+			{0, 0, 1}:  58, // PERI
+			{0, 0, 2}:  62, // AICORE0
+			{0, 0, 3}:  61, // AICORE1
+			{0, 0, 11}: 65, // SOC
+			{0, 0, 12}: 50, // FP
+			{0, 0, 13}: 58, // N_DIE
+			{0, 0, 14}: 55, // HBM
 		},
 		NTCs: map[[2]int][4]int{{0, 0}: {45, 44, 43, 42}},
 		DeviceInfo_: map[[4]int]uint{
@@ -85,8 +85,8 @@ func useTestdata(t *testing.T) {
 			{0, 0, 8, 3}: 1200, // LP/DDR_VOLTAGE
 			{0, 0, 8, 4}: 1234, // LP/ACG
 		},
-		FanCounts:  map[[2]int]int{{0, 0}: 2},
-		FanSpeeds:  map[[3]int]int{{0, 0, 0}: 65, {0, 0, 1}: 70},
+		FanCounts: map[[2]int]int{{0, 0}: 2},
+		FanSpeeds: map[[3]int]int{{0, 0, 0}: 65, {0, 0, 1}: 70},
 		Aicpus: map[[2]int]*dcmi.AicpuInfo{{0, 0}: {
 			MaxFreq:  2000,
 			CurFreq:  1800,

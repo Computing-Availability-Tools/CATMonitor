@@ -81,7 +81,7 @@ func (c *MemoryCollector) Collect() ([]collector.Metric, error) {
 		}
 	}
 	// Isolated + free page counters (from /proc/vmstat).
-	if collector.AnyWanted("memory", []string{"isolated_pages", "free_pages"}) {
+	if collector.AnyWanted("memory", []string{"isolated_pages", "isolated_anon_pages", "isolated_file_pages", "free_pages"}) {
 		if m, err := c.collectPageCounters(now); err == nil {
 			metrics = append(metrics, m...)
 		}

@@ -9,46 +9,46 @@ import (
 
 // SWStaticInfo holds static software information as label key-value pairs.
 type SWStaticInfo struct {
-	OSVersion          string
-	NPUDriverVersion   string
-	NPUFirmwareVersion string
-	CANNVersion        string
-	PythonVersion      string
-	TorchVersion       string
-	TorchNPUVersion    string
+	OSVersion           string
+	NPUDriverVersion    string
+	NPUFirmwareVersion  string
+	CANNVersion         string
+	PythonVersion       string
+	TorchVersion        string
+	TorchNPUVersion     string
 	TransformersVersion string
-	MindSpeedVersion   string
-	VLLMVersion        string
-	VLLMAscendVersion  string
-	SGLangVersion      string
-	MindIEVersion      string
-	VerLVersion        string
-	VerLNPUVersion     string
-	GPUDriverVersion   string
-	CUDAVersion        string
+	MindSpeedVersion    string
+	VLLMVersion         string
+	VLLMAscendVersion   string
+	SGLangVersion       string
+	MindIEVersion       string
+	VerLVersion         string
+	VerLNPUVersion      string
+	GPUDriverVersion    string
+	CUDAVersion         string
 }
 
 // collectSWStaticInfo collects static software info. Commands marked as
 // container-mode run via docker exec when dockerContainer is non-empty.
 func collectSWStaticInfo(dockerContainer string) SWStaticInfo {
 	return SWStaticInfo{
-		OSVersion:          collectOSVersion(),
-		NPUDriverVersion:   readFileValue("/usr/local/Ascend/driver/version.info"),
-		NPUFirmwareVersion: readFileValue("/usr/local/Ascend/firmware/version.info"),
-		CANNVersion:        collectCANNVersion(dockerContainer),
-		PythonVersion:      collectPythonVersion(dockerContainer),
-		TorchVersion:       collectPipPackage("torch", dockerContainer),
-		TorchNPUVersion:    collectPipPackage("torch_npu", dockerContainer),
+		OSVersion:           collectOSVersion(),
+		NPUDriverVersion:    readFileValue("/usr/local/Ascend/driver/version.info"),
+		NPUFirmwareVersion:  readFileValue("/usr/local/Ascend/firmware/version.info"),
+		CANNVersion:         collectCANNVersion(dockerContainer),
+		PythonVersion:       collectPythonVersion(dockerContainer),
+		TorchVersion:        collectPipPackage("torch", dockerContainer),
+		TorchNPUVersion:     collectPipPackage("torch_npu", dockerContainer),
 		TransformersVersion: collectPipPackage("transformers", dockerContainer),
-		MindSpeedVersion:   collectPipPackage("mindspeed", dockerContainer),
-		VLLMVersion:        collectPipPackage("vllm", dockerContainer),
-		VLLMAscendVersion:  collectPipPackage("vllm_ascend", dockerContainer),
-		SGLangVersion:      collectPipPackage("sglang", dockerContainer),
-		MindIEVersion:      collectMindIEVersion(),
-		VerLVersion:        collectPipPackage("verl", dockerContainer),
-		VerLNPUVersion:     collectPipPackage("verl_npu", dockerContainer),
-		GPUDriverVersion:   collectGPUDriverVersion(),
-		CUDAVersion:        collectCUDAVersion(),
+		MindSpeedVersion:    collectPipPackage("mindspeed", dockerContainer),
+		VLLMVersion:         collectPipPackage("vllm", dockerContainer),
+		VLLMAscendVersion:   collectPipPackage("vllm_ascend", dockerContainer),
+		SGLangVersion:       collectPipPackage("sglang", dockerContainer),
+		MindIEVersion:       collectMindIEVersion(),
+		VerLVersion:         collectPipPackage("verl", dockerContainer),
+		VerLNPUVersion:      collectPipPackage("verl_npu", dockerContainer),
+		GPUDriverVersion:    collectGPUDriverVersion(),
+		CUDAVersion:         collectCUDAVersion(),
 	}
 }
 
@@ -191,13 +191,13 @@ func collectCUDAVersion() string {
 
 // HWStaticInfo holds static hardware information as label key-value pairs.
 type HWStaticInfo struct {
-	ProductName  string
-	CPUInfo      string
-	MemoryInfo   string
-	DiskInfo     string
-	GPUType      string
-	NPUChipName  string
-	PSUInfo      string
+	ProductName string
+	CPUInfo     string
+	MemoryInfo  string
+	DiskInfo    string
+	GPUType     string
+	NPUChipName string
+	PSUInfo     string
 }
 
 // collectHWStaticInfo collects static hardware info via exec.Command.
@@ -337,9 +337,10 @@ func collectGPUType() string {
 // collectNPUChipName parses `npu-smi info` output to extract the chip name
 // from the first data row after the "===" separator.
 // Output format:
-//   +======================+=================+...
-//   | 0     910B3          | OK              |...
-//   | 0                    | 0000:C1:00.0    |...
+//
+//	+======================+=================+...
+//	| 0     910B3          | OK              |...
+//	| 0                    | 0000:C1:00.0    |...
 func collectNPUChipName() string {
 	out, err := exec.Command("npu-smi", "info").Output()
 	if err != nil {

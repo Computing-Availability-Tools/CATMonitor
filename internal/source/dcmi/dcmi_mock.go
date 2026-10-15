@@ -2,37 +2,43 @@ package dcmi
 
 // MockProvider implements FetchProvider with canned values for testing.
 // Set fields to control return values; zero-value fields return errors.
+
+// Compile-time check: MockProvider must always satisfy the full
+// FetchProvider interface, so a future interface method fails the build here
+// instead of at some far-away SetProvider call site.
+var _ FetchProvider = (*MockProvider)(nil)
+
 type MockProvider struct {
-	Cards       int
-	CardListVal []int
-	DevMax      int // devices per card for DeviceIDInCard; 0 = 1
-	Temp       map[[2]int]int
-	Powers     map[[2]int]int
-	Volts      map[[2]int]uint
-	Healths    map[[2]int]uint
-	HealthRCs  map[[2]int]int        // raw dcmi_get_device_health return code (for CardDrop: -8012)
-	Chips      map[[2]int]*ChipInfo
-	ErrorCodes map[[2]int]uint
+	Cards          int
+	CardListVal    []int
+	DevMax         int // devices per card for DeviceIDInCard; 0 = 1
+	Temp           map[[2]int]int
+	Powers         map[[2]int]int
+	Volts          map[[2]int]uint
+	Healths        map[[2]int]uint
+	HealthRCs      map[[2]int]int // raw dcmi_get_device_health return code (for CardDrop: -8012)
+	Chips          map[[2]int]*ChipInfo
+	ErrorCodes     map[[2]int]uint
 	ErrorCodeLists map[[2]int]*DeviceErrors
-	CardDrops  map[[2]int]bool
-	Resources  map[[2]int]*ResourceInfo
-	Hbms       map[[2]int]*HbmInfo
-	Freqs      map[[3]int]uint      // [card,dev,freqType]
-	Utils      map[[3]int]uint      // [card,dev,rateType]
-	Eccs       map[[3]int]*EccInfo  // [card,dev,devType]
-	Llcs       map[[2]int]*LlcPerf
-	Sensors    map[[3]int]int        // [card,dev,sensorID]
-	NTCs       map[[2]int][4]int
-	DeviceInfo_ map[[4]int]uint     // [card,dev,mainCmd,subCmd]
-	NetHealths map[[2]int]int
-	FanCounts  map[[2]int]int
-	FanSpeeds  map[[3]int]int        // [card,dev,fanID]
-	Aicpus     map[[2]int]*AicpuInfo
-	DriverVer  string
-	DriverHP   uint
-	DvppRatios map[[2]int]*DvppRatio
-	PidLists   map[[2]int][]uint
-	PhyIDs     map[[2]int]int // (card,dev) → physical NPU id; nil/absent = error
+	CardDrops      map[[2]int]bool
+	Resources      map[[2]int]*ResourceInfo
+	Hbms           map[[2]int]*HbmInfo
+	Freqs          map[[3]int]uint     // [card,dev,freqType]
+	Utils          map[[3]int]uint     // [card,dev,rateType]
+	Eccs           map[[3]int]*EccInfo // [card,dev,devType]
+	Llcs           map[[2]int]*LlcPerf
+	Sensors        map[[3]int]int // [card,dev,sensorID]
+	NTCs           map[[2]int][4]int
+	DeviceInfo_    map[[4]int]uint // [card,dev,mainCmd,subCmd]
+	NetHealths     map[[2]int]int
+	FanCounts      map[[2]int]int
+	FanSpeeds      map[[3]int]int // [card,dev,fanID]
+	Aicpus         map[[2]int]*AicpuInfo
+	DriverVer      string
+	DriverHP       uint
+	DvppRatios     map[[2]int]*DvppRatio
+	PidLists       map[[2]int][]uint
+	PhyIDs         map[[2]int]int // (card,dev) → physical NPU id; nil/absent = error
 }
 
 func (m *MockProvider) Init() error { return nil }

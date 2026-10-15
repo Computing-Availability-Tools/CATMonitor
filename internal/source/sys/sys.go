@@ -26,8 +26,8 @@ type CacheInfo struct {
 // migration (decision G); not used by the CPU collector.
 type EdacMC struct {
 	Name    string // "mc0", "mc1"
-	CECount uint64  // correctable error count
-	UECount uint64  // uncorrectable error count
+	CECount uint64 // correctable error count
+	UECount uint64 // uncorrectable error count
 }
 
 // ThermalZone holds one /sys/class/thermal/thermal_zone* reading. Provided
@@ -44,11 +44,11 @@ type ThermalZone struct {
 // may have an empty Driver, and Speed is -1 when no link is up or the kernel
 // does not expose a fixed speed.
 type NetIfaceInfo struct {
-	Name   string
-	MAC    string // /sys/class/net/<iface>/address (empty for some virt ifaces)
-	MTU    int    // /sys/class/net/<iface>/mtu
-	Speed  int    // /sys/class/net/<iface>/speed (Mbps); -1 if unreadable
-	Driver string // basename of .../device/driver symlink (empty for virt ifaces)
+	Name    string
+	MAC     string // /sys/class/net/<iface>/address (empty for some virt ifaces)
+	MTU     int    // /sys/class/net/<iface>/mtu
+	Speed   int    // /sys/class/net/<iface>/speed (Mbps); -1 if unreadable
+	Driver  string // basename of .../device/driver symlink (empty for virt ifaces)
 	PciAddr string // PCI address from .../device symlink (e.g. "0000:c1:00.0"; empty for virt ifaces)
 }
 
@@ -258,9 +258,9 @@ func (s *defaultSource) cpuListFile(name string) ([]int, error) {
 	return parseCPUList(strings.TrimSpace(string(data))), nil
 }
 
-func (s *defaultSource) CpuOnline() ([]int, error)    { return s.cpuListFile("online") }
+func (s *defaultSource) CpuOnline() ([]int, error)   { return s.cpuListFile("online") }
 func (s *defaultSource) CpuOffline() ([]int, error)  { return s.cpuListFile("offline") }
-func (s *defaultSource) CpuIsolated() ([]int, error)  { return s.cpuListFile("isolated") }
+func (s *defaultSource) CpuIsolated() ([]int, error) { return s.cpuListFile("isolated") }
 
 // parseCPUList expands a Linux CPU list string such as "0-3,5,7-9" into the
 // explicit slice [0 1 2 3 5 7 8 9]. Empty input yields an empty slice.

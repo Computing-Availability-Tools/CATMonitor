@@ -273,10 +273,10 @@ func (p *cgoProvider) HbmInfo(card, dev int) (*HbmInfo, error) {
 		return nil, fmt.Errorf("dcmi_get_device_hbm_info: %d", int32(rc))
 	}
 	return &HbmInfo{
-		MemorySize:      uint64(hbm.memory_size),
-		Freq:            uint(hbm.freq),
-		MemoryUsage:     uint64(hbm.memory_usage),
-		Temp:            int(hbm.temp),
+		MemorySize:        uint64(hbm.memory_size),
+		Freq:              uint(hbm.freq),
+		MemoryUsage:       uint64(hbm.memory_usage),
+		Temp:              int(hbm.temp),
 		BandwidthUtilRate: uint(hbm.bandwith_util_rate),
 	}, nil
 }

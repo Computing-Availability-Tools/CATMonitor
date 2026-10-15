@@ -341,14 +341,14 @@ components:
         unit: ""
         static: false
       - name: read_latency
-        cn_name: "磁盘读耗时"
+        cn_name: "磁盘读延迟"
         priority: Low
-        unit: "ms/s"
+        unit: "ms"
         static: false
       - name: write_latency
-        cn_name: "磁盘写耗时"
+        cn_name: "磁盘写延迟"
         priority: Low
-        unit: "ms/s"
+        unit: "ms"
         static: false
       - name: read_sectors_total
         cn_name: "磁盘读扇区总数"

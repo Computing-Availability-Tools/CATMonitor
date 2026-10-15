@@ -52,6 +52,7 @@ func TestParseLscpuMissingDies(t *testing.T) {
 
 func TestTopologyCachesAcrossCalls(t *testing.T) {
 	SetMock(readMock(t, "../../../tests/testdata/lscpu-output.txt"))
+	t.Cleanup(func() { SetMock("") })
 	s := Default()
 
 	t1, err := s.Topology()
@@ -69,6 +70,7 @@ func TestTopologyCachesAcrossCalls(t *testing.T) {
 
 func TestTopologyMockInject(t *testing.T) {
 	SetMock("CPU(s): 64\nSocket(s): 4\n")
+	t.Cleanup(func() { SetMock("") })
 	topo, err := Default().Topology()
 	if err != nil {
 		t.Fatalf("Topology with mock failed: %v", err)

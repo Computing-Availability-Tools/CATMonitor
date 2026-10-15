@@ -73,6 +73,7 @@ func TestParseSizeMB(t *testing.T) {
 
 func TestMemoryDevicesCaches(t *testing.T) {
 	SetMock(readMock(t, "../../../tests/testdata/dmidecode-type17.txt"))
+	t.Cleanup(func() { SetMock("") })
 	d1, err := Default().MemoryDevices()
 	if err != nil {
 		t.Fatalf("first call failed: %v", err)
@@ -115,6 +116,7 @@ func TestParseSystemInfoEmpty(t *testing.T) {
 
 func TestSystemInfoCaches(t *testing.T) {
 	SetSystemMock(readMock(t, "../../../tests/testdata/dmidecode-type1.txt"))
+	t.Cleanup(func() { SetSystemMock("") })
 	s1, err := Default().SystemInfo()
 	if err != nil || s1 == nil {
 		t.Fatalf("first call failed: %v", err)

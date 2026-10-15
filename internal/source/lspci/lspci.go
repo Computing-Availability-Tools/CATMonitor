@@ -25,8 +25,8 @@ type Source interface {
 }
 
 type defaultSource struct {
-	once   sync.Once
-	cache  map[string]string
+	once  sync.Once
+	cache map[string]string
 }
 
 var defaultSrc = &defaultSource{}
@@ -57,8 +57,10 @@ func (s *defaultSource) Description(pciAddr string) string {
 
 // load runs `lspci` once and parses all lines into a map of pciAddr -> description.
 // lspci output format:
-//   0000:c1:00.0 Ethernet controller: Mellanox Technologies MT28908 [ConnectX-6]
-//   0000:c4:00.0 Ethernet controller: Intel Corporation X710 10GbE NIC
+//
+//	0000:c1:00.0 Ethernet controller: Mellanox Technologies MT28908 [ConnectX-6]
+//	0000:c4:00.0 Ethernet controller: Intel Corporation X710 10GbE NIC
+//
 // The description is everything after the class name (the second colon-separated field).
 func (s *defaultSource) load() {
 	s.cache = make(map[string]string)

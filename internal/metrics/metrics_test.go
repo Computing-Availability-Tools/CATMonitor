@@ -219,11 +219,11 @@ func TestScopedFeatureCollection(t *testing.T) {
 			t.Errorf("Selected(%s,%s)=%v want %v", comp, name, got, want)
 		}
 	}
-	check("cpu", "user_time", true)        // in scope + Medium
-	check("cpu", "usage", false)           // High but NOT in scope -> dropped
-	check("cpu", "temperature", false)     // Medium but not in scope -> dropped
-	check("cpu", "frequency", false)       // not in scope -> dropped
-	check("cpu", "not_in_catalog", false)  // scoped: uncatalogued+out-of-scope -> dropped (not default-allow)
+	check("cpu", "user_time", true)       // in scope + Medium
+	check("cpu", "usage", false)          // High but NOT in scope -> dropped
+	check("cpu", "temperature", false)    // Medium but not in scope -> dropped
+	check("cpu", "frequency", false)      // not in scope -> dropped
+	check("cpu", "not_in_catalog", false) // scoped: uncatalogued+out-of-scope -> dropped (not default-allow)
 
 	if !IsWanted("cpu", "user_time") {
 		t.Error("user_time should be wanted (in scope + Medium)")

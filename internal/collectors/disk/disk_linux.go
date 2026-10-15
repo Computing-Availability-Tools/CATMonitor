@@ -76,7 +76,7 @@ func (c *DiskCollector) Collect() ([]collector.Metric, error) {
 				metrics = append(metrics, c.computeThroughput(current, elapsed, now)...)
 			}
 			if collector.AnyWanted("disk", []string{"read_latency", "write_latency"}) {
-				metrics = append(metrics, c.computeLatency(current, elapsed, now)...)
+				metrics = append(metrics, c.computeLatency(current, now)...)
 			}
 		}
 		c.prevDiskStats = current
@@ -183,20 +183,29 @@ func (c *DiskCollector) computeThroughput(current map[string]proc.DiskStat, elap
 	return metrics
 }
 
-func (c *DiskCollector) computeLatency(current map[string]proc.DiskStat, elapsed float64, now time.Time) []collector.Metric {
+// computeLatency emits average per-operation read/write latency (ms): the
+// delta of the cumulative service-time fields divided by the delta of
+// completed-operation counts. A direction with zero completed operations in
+// this interval is skipped (no I/O → no meaningful latency). Same formula
+// as iostat's r_await/w_await.
+func (c *DiskCollector) computeLatency(current map[string]proc.DiskStat, now time.Time) []collector.Metric {
 	var metrics []collector.Metric
 	for dev, curr := range current {
 		if prev, ok := c.prevDiskStats[dev]; ok {
-			readLatency := float64(curr.ReadTime-prev.ReadTime) / elapsed
-			writeLatency := float64(curr.WriteTime-prev.WriteTime) / elapsed
-			metrics = append(metrics, collector.Metric{
-				Component: "disk", Name: "read_latency", Value: roundFloat(readLatency, 2), Unit: "ms/s",
-				Labels: map[string]string{"device": dev}, Timestamp: now,
-			})
-			metrics = append(metrics, collector.Metric{
-				Component: "disk", Name: "write_latency", Value: roundFloat(writeLatency, 2), Unit: "ms/s",
-				Labels: map[string]string{"device": dev}, Timestamp: now,
-			})
+			if readOps := curr.ReadsCompleted - prev.ReadsCompleted; readOps > 0 {
+				readLatency := float64(curr.ReadTime-prev.ReadTime) / float64(readOps)
+				metrics = append(metrics, collector.Metric{
+					Component: "disk", Name: "read_latency", Value: roundFloat(readLatency, 3), Unit: "ms",
+					Labels: map[string]string{"device": dev}, Timestamp: now,
+				})
+			}
+			if writeOps := curr.WritesCompleted - prev.WritesCompleted; writeOps > 0 {
+				writeLatency := float64(curr.WriteTime-prev.WriteTime) / float64(writeOps)
+				metrics = append(metrics, collector.Metric{
+					Component: "disk", Name: "write_latency", Value: roundFloat(writeLatency, 3), Unit: "ms",
+					Labels: map[string]string{"device": dev}, Timestamp: now,
+				})
+			}
 		}
 	}
 	return metrics

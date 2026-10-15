@@ -238,8 +238,8 @@ const METRIC_DESCRIPTIONS = {
   space_detail: '分区空间明细（总量/已用/可用）',
   iops: '每秒读写 IOPS（输入输出操作数）',
   'disk:throughput': '读写吞吐量',
-  read_latency: '读耗时，每秒读 IO 花费的时间',
-  write_latency: '写耗时，每秒写 IO 花费的时间',
+  read_latency: '读延迟，平均每次读 IO 耗时',
+  write_latency: '写延迟，平均每次写 IO 耗时',
   io_wait: 'IO 等待占比，CPU 等待磁盘 IO 的时间占比',
   smart_status: 'SMART 健康状态（PASSED/FAILED）',
   smart_temperature: '硬盘温度',
@@ -943,18 +943,18 @@ function compTitle(key) { return (MANIFEST[key] || {}).title || key.toUpperCase(
 function navOrder(key) { const i = NAV_ORDER.indexOf(key); return i < 0 ? 999 : i; }
 
 function statusOf(score, max) {
-  if (!max) return { label: 'N/A', color: '#9ca3af' };
+  if (!max) return { label: 'N/A', color: 'var(--muted)' };
   const r = score / max;
-  if (r >= 0.9) return { label: 'OK', color: '#2e7d32' };
-  if (r >= 0.75) return { label: 'Good', color: '#689f38' };
-  if (r >= 0.6) return { label: 'Warning', color: '#f57c00' };
-  return { label: 'Critical', color: '#c62828' };
+  if (r >= 0.9) return { label: 'Excellent', color: 'var(--ok)' };
+  if (r >= 0.75) return { label: 'Good', color: 'var(--good)' };
+  if (r >= 0.6) return { label: 'Warning', color: 'var(--warn)' };
+  return { label: 'Critical', color: 'var(--crit)' };
 }
 function gradeColor(grade) {
-  if (grade === 'Excellent') return '#2e7d32';
-  if (grade === 'Good') return '#689f38';
-  if (grade === 'Warning') return '#f57c00';
-  return '#c62828';
+  if (grade === 'Excellent') return 'var(--ok)';
+  if (grade === 'Good') return 'var(--good)';
+  if (grade === 'Warning') return 'var(--warn)';
+  return 'var(--crit)';
 }
 function fmt(v) {
   if (v === null || v === undefined) return '-';
@@ -981,7 +981,7 @@ function meanLine(y) {
   const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   l.setAttribute('x1', 0); l.setAttribute('x2', 100);
   l.setAttribute('y1', y); l.setAttribute('y2', y);
-  l.setAttribute('stroke', '#9ca3af');
+  l.style.stroke = 'var(--axis-mid)';
   l.setAttribute('stroke-width', '1');
   l.setAttribute('stroke-dasharray', '3,2');
   l.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -1004,7 +1004,7 @@ function sparkline(series, color) {
   const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
   poly.setAttribute('points', pts);
   poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke', color);
+  poly.style.stroke = color;
   poly.setAttribute('stroke-width', '1.5');
   poly.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.appendChild(poly);
@@ -1044,7 +1044,7 @@ function renderChart(series, color, snap) {
   const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
   poly.setAttribute('points', pts);
   poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke', color);
+  poly.style.stroke = color;
   poly.setAttribute('stroke-width', '1.5');
   poly.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.appendChild(poly);
@@ -1449,7 +1449,7 @@ function renderOverview(snap) {
     const chips = el('div', 'hero-components');
     for (const c of comps) {
       const ch = (h.components || {})[c.component];
-      const color = ch ? statusOf(ch.score, ch.max).color : '#9ca3af';
+      const color = ch ? statusOf(ch.score, ch.max).color : 'var(--muted)';
       const chip = el('div', 'comp-chip');
       chip.style.cursor = 'pointer';
       chip.innerHTML = '<span class="dot" style="background:' + color + '"></span>' + compTitle(c.component);
@@ -1683,8 +1683,21 @@ function renderDetail(compKey, snap) {
       groups[mt.name].push(mt);
     }
     for (const name of order) {
-      const items = groups[name];
+      let items = groups[name];
       items.sort(metricSortCmp);
+      // NPU 功耗是卡级测量：同卡各 chip 返回相同值，一卡一行。排序后
+      // 同卡 chip 0 在前，取每卡首条——等价于只显示 chip_id=0，且在
+      // chip 0 恰好缺席的边缘情况下该卡仍能显示。
+      if (compKey === 'npu' && name === 'power_draw') {
+        const seenNpu = new Set();
+        items = items.filter(mt => {
+          const id = (mt.labels || {}).npu_id;
+          if (id === undefined) return true;
+          if (seenNpu.has(id)) return false;
+          seenNpu.add(id);
+          return true;
+        });
+      }
       const dispName = METRIC_NAMES[compKey + ':' + name] || METRIC_NAMES[name] || name;
       const unit = items[0].unit || '';
       const grp = el('div', 'metric-group');
@@ -1753,6 +1766,7 @@ function renderDetail(compKey, snap) {
               (mt.name === 'roce_speed_status' && k === 'roce_speed') ||
               (mt.name === 'roce_link_health' && k === 'roce_link') ||
               (mt.name === 'health_status' && k === 'status') ||
+              (compKey === 'npu' && mt.name === 'power_draw' && k === 'chip_id') ||
               ((mt.name.endsWith('_ecc') || mt.name.endsWith('_ecc_isolated')) && (k === 'device_type' || k === 'kind')) ||
               (mt.name.startsWith('aicore') && mt.name.endsWith('_temp') && k === 'aicore') ||
               (mt.name.startsWith('ntc') && mt.name.endsWith('_temp') && k === 'ntc') ||
@@ -1866,14 +1880,27 @@ function showBanner(msg, isError) {
   const b = document.getElementById('banner');
   b.textContent = msg;
   b.classList.remove('hidden');
-  b.style.background = isError ? '#fee2e2' : '#dcfce7';
-  b.style.color = isError ? '#991b1b' : '#166534';
+  b.style.background = isError ? 'var(--banner-err-bg)' : 'var(--banner-ok-bg)';
+  b.style.color = isError ? 'var(--banner-err-text)' : 'var(--banner-ok-text)';
 }
 function hideBanner() { document.getElementById('banner').classList.add('hidden'); }
 
 // ---- wiring ----
 document.getElementById('applyBtn').addEventListener('click', applyInterval);
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+
+// ---- theme toggle ----
+function applyThemeIcon() {
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+}
+document.getElementById('themeBtn').addEventListener('click', function () {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('theme', cur); } catch (e) {}
+  applyThemeIcon();
+});
+applyThemeIcon();
 document.getElementById('autoToggle').addEventListener('change', (e) => {
   autoOn = e.target.checked;
   if (autoOn) startPolling(); else stopPolling();

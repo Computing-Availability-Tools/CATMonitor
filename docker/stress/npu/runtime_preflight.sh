@@ -13,7 +13,7 @@ source "$ASCEND_ENV_HELPER"
 catmonitor_source_ascend_env >&2
 
 if [ "${1-}" = --cases-json ]; then
-    LD_PRELOAD= python3 - <<'PY'
+    LD_PRELOAD='' python3 - <<'PY'
 import hashlib, json, os, sys
 sys.path.insert(0, '/opt/catmonitor/npuburn-python')
 saved_stdout = os.dup(1)
@@ -43,7 +43,7 @@ fi
 if [ "${1-}" = --topology-json ]; then
     # The explicit portable profile supplies this module. No fallback to a
     # guessed PCI slot when a subset cannot be mapped.
-    LD_PRELOAD= python3 - <<'PY'
+    LD_PRELOAD='' python3 - <<'PY'
 import json
 import os
 import sys

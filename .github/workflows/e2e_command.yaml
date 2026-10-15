@@ -1,0 +1,129 @@
+name: E2E Command
+
+# PR comment "/e2e" → authorize (PR author or triage+) → refuse fork PRs → run
+# the full NPU e2e (self-hosted 910B4 runner + dcmi build check) on the PR head
+# SHA, replying with confirmation. Surgical: only the NPU job runs, unlike the
+# 'ready' label which re-runs the whole pr_test pipeline.
+#
+# Why direct workflow_call instead of having a bot add the 'ready' label:
+# labels created with GITHUB_TOKEN are suppressed (they never trigger a new
+# workflow run); a PAT would work but needs a secret. Calling _e2e_test.yaml
+# via workflow_call is part of THIS run — not suppressed, GITHUB_TOKEN is
+# enough.
+#
+# Fork PRs are refused (pr_test.yaml policy: fork code must not execute on the
+# self-hosted runner). /e2e is author-triggerable and a public repo lets anyone
+# open a fork PR — allowing forks here would let arbitrary code run as root on
+# the private NPU machine. The second layer is the checkout pwn guard
+# (allow-unsafe-pr-checkout deliberately NOT set). External contributors who
+# need real-machine validation go through the maintainer-gated 'ready' label.
+#
+# Note: issue_comment workflows fire only from the DEFAULT branch — this file
+# must be merged into main before /e2e becomes usable.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: e2e-command-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve (auth + fork gate)
+    if: ${{ github.event.issue.pull_request != null && github.event.comment.user.type == 'User' && startsWith(github.event.comment.body, '/e2e') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      authorized: ${{ steps.auth.outputs.authorized }}
+      is_fork: ${{ steps.pr.outputs.is_fork }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Resolve PR (head sha + author + fork)
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          PR_JSON=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUM}")
+          HEAD_SHA=$(echo "$PR_JSON" | jq -r '.head.sha')
+          PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login')
+          HEAD_REPO=$(echo "$PR_JSON" | jq -r '.head.repo.full_name')
+          BASE_REPO=$(echo "$PR_JSON" | jq -r '.base.repo.full_name')
+          if [ "$HEAD_REPO" = "$BASE_REPO" ]; then
+            IS_FORK=false
+          else
+            IS_FORK=true
+          fi
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "pr_author=${PR_AUTHOR}"
+            echo "is_fork=${IS_FORK}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check commenter authorization
+        id: auth
+        env:
+          ACTOR: ${{ github.event.comment.user.login }}
+          PR_AUTHOR: ${{ steps.pr.outputs.pr_author }}
+          ASSOC: ${{ github.event.comment.author_association }}
+        run: |
+          set -eu
+          # PR author (case-insensitive) or OWNER/MEMBER/COLLABORATOR (triage+).
+          # Uses the webhook-provided author_association — no extra API call.
+          if [ "${ACTOR,,}" = "${PR_AUTHOR,,}" ]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$ASSOC" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "authorized=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "authorized=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Reject unauthorized
+        if: steps.auth.conclusion == 'success' && steps.auth.outputs.authorized != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" --body "/e2e 拒绝 — 仅 PR 作者或 triage+ 权限可触发。"
+          exit 0
+
+      - name: Reject fork PR
+        if: steps.auth.conclusion == 'success' && steps.auth.outputs.authorized == 'true' && steps.pr.outputs.is_fork == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" --body "/e2e 拒绝 — fork PR 不在 self-hosted NPU runner 上执行代码（仓库安全策略）；如需真机验证请维护者添加 ready 标签人工把关。"
+          exit 0
+
+      - name: Notify trigger
+        if: steps.auth.conclusion == 'success' && steps.auth.outputs.authorized == 'true' && steps.pr.outputs.is_fork == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" --body "/e2e 已触发：NPU 全量测试（41 用例 + dcmi 构建检查）即将在 self-hosted 910B4 上启动（ref=PR head）。"
+
+  e2e-npu:
+    name: E2E NPU (self-hosted, on demand)
+    needs: resolve
+    if: ${{ always() && needs.resolve.outputs.authorized == 'true' && needs.resolve.outputs.is_fork == 'false' }}
+    uses: ./.github/workflows/_e2e_test.yaml
+    with:
+      runner: '["self-hosted", "npu-server", "ARM64"]'
+      dcmi-build: true
+      timeout-minutes: 30
+      ref: ${{ needs.resolve.outputs.head_sha }}

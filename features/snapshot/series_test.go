@@ -59,13 +59,13 @@ func TestTrackedSeriesInvariants(t *testing.T) {
 // while dynamic metrics are excluded.
 func TestFilterStatic(t *testing.T) {
 	in := []collector.Metric{
-		metric("cpu", "usage", 12.3, map[string]string{"core": "total"}),       // dynamic
-		metric("cpu", "model_info", 4, map[string]string{"model_name": "Xeon"}), // static
+		metric("cpu", "usage", 12.3, map[string]string{"core": "total"}),         // dynamic
+		metric("cpu", "model_info", 4, map[string]string{"model_name": "Xeon"}),  // static
 		metric("cpu", "max_freq", 2400, nil),                                     // static
-		metric("cpu", "online_core_num", 4, nil),                                // dynamic (every cycle)
+		metric("cpu", "online_core_num", 4, nil),                                 // dynamic (every cycle)
 		metric("memory", "module_info", 8192, map[string]string{"type": "DDR4"}), // static
-		metric("memory", "usage", 60, nil),                                      // dynamic
-		metric("network", "throughput", 100, nil),                              // dynamic
+		metric("memory", "usage", 60, nil),                                       // dynamic
+		metric("network", "throughput", 100, nil),                                // dynamic
 		metric("system", "device_model", 1, map[string]string{"product_name": "X"}),
 		metric("gpu", "gpu_info", 0, map[string]string{"name": "T4"}),
 		metric("disk", "disk_info", 0, map[string]string{"model": "970"}),

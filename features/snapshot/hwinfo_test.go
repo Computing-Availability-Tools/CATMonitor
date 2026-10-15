@@ -75,6 +75,7 @@ func TestHWNpuInfo(t *testing.T) {
 
 func TestHWDeviceModel(t *testing.T) {
 	dmidecode.SetSystemMock(readHWMock(t, "../../tests/testdata/dmidecode-type1.txt"))
+	t.Cleanup(func() { dmidecode.SetSystemMock("") })
 	c := newTestHW()
 	m := c.deviceModel(time.Now())
 	if m == nil {

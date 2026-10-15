@@ -49,9 +49,9 @@ func realFetch(args ...string) (string, error) {
 }
 
 type defaultSource struct {
-	fetch   fetcher
-	mock    string
-	topoOnce sync.Once
+	fetch     fetcher
+	mock      string
+	topoOnce  sync.Once
 	topoCache string
 }
 

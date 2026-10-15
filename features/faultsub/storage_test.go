@@ -9,11 +9,16 @@ import (
 )
 
 // mockStorage records every Write (mirrors exporter_test.go's mock).
+// Write is called concurrently in production (one goroutine per collector),
+// so the recording itself must be mutex-guarded — like the real JSONLStorage.
 type mockStorage struct {
+	mu      sync.Mutex
 	written [][]collector.Metric
 }
 
 func (m *mockStorage) Write(metrics []collector.Metric) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	cp := make([]collector.Metric, len(metrics))
 	copy(cp, metrics)
 	m.written = append(m.written, cp)
@@ -140,7 +145,19 @@ func TestFaultStorageReadyHealthy(t *testing.T) {
 }
 
 func TestFaultStorageConcurrent(t *testing.T) {
-	fs, _ := newTestStorage()
+	// Inline wiring (same as newTestStorage) so the mock's inner storage is
+	// observable for the post-concurrency assertions below.
+	mock := &mockStorage{}
+	rp := &recordingPusher{}
+	subs := NewSubscriptionManager()
+	subs.Add(&Subscription{
+		Delivery: DeliveryWebhook,
+		Endpoint: "http://eep/fault_event",
+	})
+	det := NewDetector(nil)
+	disp := NewDispatcher(rp, subs, 0, 16, nil)
+	fs := NewFaultStorage(mock, det, disp, nil)
+
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
@@ -160,6 +177,16 @@ func TestFaultStorageConcurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	// Every concurrent write must be delegated to the inner storage exactly
+	// once — a locked mock proves no batch is lost or torn under concurrency.
+	if got := len(mock.written); got != 10 {
+		t.Errorf("expected 10 inner writes, got %d", got)
+	}
+	for i, batch := range mock.written {
+		if len(batch) != 1 {
+			t.Errorf("write #%d has %d metrics, want 1", i, len(batch))
+		}
+	}
 }
 
 func byteID(n int) string {

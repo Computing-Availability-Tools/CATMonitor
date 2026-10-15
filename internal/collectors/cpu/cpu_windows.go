@@ -150,9 +150,9 @@ func (c *CPUCollector) collectModelInfo(now time.Time) ([]collector.Metric, erro
 		Value:     float64(info.NumberOfCores),
 		Unit:      "cores",
 		Labels: map[string]string{
-			"model_name":     info.Name,
-			"logical_cores":  fmt.Sprintf("%d", info.NumberOfLogicals),
-			"max_frequency":  fmt.Sprintf("%d MHz", info.MaxClockSpeed),
+			"model_name":    info.Name,
+			"logical_cores": fmt.Sprintf("%d", info.NumberOfLogicals),
+			"max_frequency": fmt.Sprintf("%d MHz", info.MaxClockSpeed),
 		},
 		Timestamp: now,
 	}}, nil

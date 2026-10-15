@@ -1,22 +1,34 @@
 // ---- config ----
 const HISTORY_POINTS = 60;
-const PALETTE = [
+// Chart series palette. Dark mode swaps two colors that are too dark on a
+// dark background (#334155 dark slate, #b45309 brown) for lightened
+// equivalents; the other 14 read fine on both themes.
+const PALETTE_LIGHT = [
   '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#9333ea', '#0891b2',
   '#ca8a04', '#db2777', '#4f46e5', '#059669', '#b45309', '#6b7280',
+  '#c026d3', '#0284c7', '#65a30d', '#334155',
 ];
+const PALETTE_DARK = [
+  '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#9333ea', '#0891b2',
+  '#ca8a04', '#db2777', '#4f46e5', '#059669', '#f59e0b', '#6b7280',
+  '#c026d3', '#0284c7', '#65a30d', '#94a3b8',
+];
+function currentPalette() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? PALETTE_DARK : PALETTE_LIGHT;
+}
 
 const SECTIONS = [
   { title: 'NPU', accent: '#2563eb', ids: ['npu_power_draw', 'npu_voltage', 'npu_npu_util', 'npu_utilization', 'npu_vector_core_util', 'npu_memory_usage', 'npu_hbm_bandwidth_util', 'npu_aicore_freq', 'npu_hbm_freq', 'npu_hccs_tx_bw', 'npu_hccs_rx_bw', 'npu_pcie_tx_bw', 'npu_pcie_rx_bw'], gridCols: 6, spans: { 'npu_power_draw': 3, 'npu_voltage': 3, 'npu_npu_util': 2, 'npu_utilization': 2, 'npu_vector_core_util': 2, 'npu_memory_usage': 3, 'npu_hbm_bandwidth_util': 3, 'npu_aicore_freq': 3, 'npu_hbm_freq': 3, 'npu_hccs_tx_bw': 3, 'npu_hccs_rx_bw': 3, 'npu_pcie_tx_bw': 3, 'npu_pcie_rx_bw': 3 }, filterLabel: 'NPU ID', filterKey: 'npu_', filterPrefix: 'NPU ', filterSegment: 0, filterLabel2: 'CHIP ID', filterKey2: 'npu_chip_', filterPrefix2: 'Chip ', filterSegment2: 1 },
-  { title: 'GPU', accent: '#ca8a04', ids: ['gpu_power_draw', 'gpu_utilization', 'gpu_temperature', 'gpu_memory_usage', 'gpu_clock_frequency'], gridCols: 3, filterLabel: 'GPU ID', filterKey: 'gpu_', filterPrefix: 'GPU ', filterSegment: 0 },
-  { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'] },
-  { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'] },
-  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 2, filterLabel: 'DISK', filterKey: 'disk_' },
-  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 2, filterLabel: 'NIC', filterKey: 'network_' },
-  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 3 },
+  { title: 'GPU', accent: '#ca8a04', ids: ['gpu_power_draw', 'gpu_utilization', 'gpu_temperature', 'gpu_memory_usage', 'gpu_clock_frequency'], gridCols: 6, spans: { 'gpu_power_draw': 3, 'gpu_utilization': 3, 'gpu_temperature': 2, 'gpu_memory_usage': 2, 'gpu_clock_frequency': 2 }, filterLabel: 'GPU ID', filterKey: 'gpu_', filterPrefix: 'GPU ', filterSegment: 0 },
+  { title: 'CPU', accent: '#16a34a', ids: ['cpu_utilization', 'cpu_load', 'cpu_power'], gridCols: 6, spans: { 'cpu_utilization': 2, 'cpu_load': 2, 'cpu_power': 2 } },
+  { title: '内存', accent: '#9333ea', ids: ['memory_pool', 'memory_swap'], gridCols: 6, spans: { 'memory_pool': 3, 'memory_swap': 3 } },
+  { title: '磁盘', accent: '#ea580c', ids: ['disk_throughput_read', 'disk_throughput_write', 'disk_iops_read', 'disk_iops_write', 'disk_read_latency', 'disk_write_latency'], gridCols: 6, spans: { 'disk_throughput_read': 3, 'disk_throughput_write': 3, 'disk_iops_read': 3, 'disk_iops_write': 3, 'disk_read_latency': 3, 'disk_write_latency': 3 }, filterLabel: 'DISK', filterKey: 'disk_' },
+  { title: '网络', accent: '#0891b2', ids: ['network_rx', 'network_tx'], gridCols: 6, spans: { 'network_rx': 3, 'network_tx': 3 }, filterLabel: 'NIC', filterKey: 'network_' },
+  { title: '机箱', accent: '#92400e', ids: ['chassis_power', 'chassis_temp', 'chassis_fan'], gridCols: 6, spans: { 'chassis_power': 2, 'chassis_temp': 2, 'chassis_fan': 2 } },
 ];
 
 // ---- state ----
-let refreshIntervalMs = 5000;
+let refreshIntervalMs = 3000;
 let pollTimer = null;
 let buffers = {};
 let chartDefs = {};
@@ -72,7 +84,10 @@ function isLegendVisible(chart, series) {
       if (set1 && !set1.has(parts[sec.filterSegment || 0])) return false;
       if (sec.filterKey2) {
         const set2 = filterSets[sec.filterKey2];
-        if (set2 && !set2.has(parts[sec.filterSegment2 || 1])) return false;
+        const seg2 = parts[sec.filterSegment2 || 1];
+        // Empty chip segment = card-level series (deduped by npu_id), so it
+        // is immune to the chip filter.
+        if (set2 && seg2 !== '' && !set2.has(seg2)) return false;
       }
     }
   }
@@ -194,8 +209,8 @@ function showBanner(msg, isError) {
   const b = document.getElementById('banner');
   b.textContent = msg;
   b.classList.remove('hidden');
-  b.style.background = isError ? '#fee2e2' : '#dcfce7';
-  b.style.color = isError ? '#991b1b' : '#166534';
+  b.style.background = isError ? 'var(--banner-err-bg)' : 'var(--banner-ok-bg)';
+  b.style.color = isError ? 'var(--banner-err-text)' : 'var(--banner-ok-text)';
 }
 function hideBanner() {
   document.getElementById('banner').classList.add('hidden');
@@ -491,10 +506,11 @@ function updateBuffers(data) {
 }
 
 function buildColorMap(chart) {
+  const palette = currentPalette();
   const allWithData = (chart.series || []).filter(s => buffers[s.id] && buffers[s.id].length > 0 && isLegendVisible(chart, s));
   const map = {};
   for (let i = 0; i < allWithData.length; i++) {
-    map[allWithData[i].id] = PALETTE[i % PALETTE.length];
+    map[allWithData[i].id] = palette[i % palette.length];
   }
   return map;
 }
@@ -573,9 +589,10 @@ function renderChart(canvas, chart) {
   const plotW = cw - padL - padR;
   const plotH = ch - padT - padB;
 
-  // grid + Y labels
-  ctx.strokeStyle = '#f1f3f5';
-  ctx.fillStyle = '#9ca3af';
+  // grid + Y labels (colors follow the active theme via CSS variables)
+  const cssVars = getComputedStyle(document.documentElement);
+  ctx.strokeStyle = cssVars.getPropertyValue('--grid-line').trim();
+  ctx.fillStyle = cssVars.getPropertyValue('--axis-text').trim();
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -667,8 +684,6 @@ async function fetchData() {
 async function pollTick() {
   const data = await fetchData();
   if (!data) return;
-  refreshIntervalMs = data.refresh_interval_ms || refreshIntervalMs;
-  document.getElementById('intervalDisplay').textContent = (refreshIntervalMs / 1000) + 's';
   if (data.version) {
     const el = document.querySelector('.brand .subtitle');
     if (el) el.textContent = 'v' + data.version + ' · 能效监控';
@@ -726,6 +741,14 @@ function startPolling() {
   pollTick();
 }
 
+function applyInterval() {
+  const sec = parseInt(document.getElementById('intervalInput').value, 10);
+  if (!sec || sec < 1) { showBanner('请输入有效的刷新间隔（秒）', true); return; }
+  refreshIntervalMs = sec * 1000;
+  startPolling();
+  showBanner('刷新间隔已更新为 ' + sec + ' 秒', false);
+}
+
 async function manualRefresh() {
   try { await fetch('/api/refresh', { method: 'POST' }); } catch (e) { /* ignore */ }
   setTimeout(pollTick, 400);
@@ -733,6 +756,27 @@ async function manualRefresh() {
 
 // ---- init ----
 document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+document.getElementById('applyBtn').addEventListener('click', applyInterval);
+document.getElementById('intervalInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') applyInterval();
+});
+
+// ---- theme toggle ----
+function applyThemeIcon() {
+  document.getElementById('themeBtn').textContent =
+    document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+}
+document.getElementById('themeBtn').addEventListener('click', function() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('theme', cur); } catch (e) {}
+  applyThemeIcon();
+  // renderAllCharts rebuilds legends (palette-dependent dots) and redraws
+  // canvases (grid/axis colors are read from CSS variables each draw).
+  renderAllCharts();
+});
+applyThemeIcon();
+
 document.getElementById('resetLayoutBtn').addEventListener('click', function() {
   localStorage.removeItem('dfee-card-order');
   localStorage.removeItem('dfee-card-size');

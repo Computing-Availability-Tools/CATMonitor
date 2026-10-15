@@ -21,18 +21,18 @@ import (
 
 // MemoryDevice holds one SMBIOS Memory Device (type 17) entry.
 type MemoryDevice struct {
-	Locator     string // e.g. "DIMM0"
-	Type        string // e.g. "DDR4"; empty for empty slot
-	Speed       string // e.g. "3200 MT/s"
+	Locator      string // e.g. "DIMM0"
+	Type         string // e.g. "DDR4"; empty for empty slot
+	Speed        string // e.g. "3200 MT/s"
 	Manufacturer string
-	SizeMB      int // 0 for "No Module Installed"
+	SizeMB       int // 0 for "No Module Installed"
 }
 
 // SystemInfo holds the SMBIOS System Information (type 1) entry describing the
 // server/device identity. Static; cached permanently after the first call.
 type SystemInfo struct {
 	Manufacturer string // e.g. "Supermicro"
-	ProductName string // e.g. "X12STW-F" (board/product); "To be filled by O.E.M." when unset
+	ProductName  string // e.g. "X12STW-F" (board/product); "To be filled by O.E.M." when unset
 	Version      string // product version / board revision
 	Serial       string // system serial number
 }
@@ -51,12 +51,12 @@ type Source interface {
 }
 
 type defaultSource struct {
-	once        sync.Once
-	cached      []MemoryDevice
-	systemOnce  sync.Once
-	cachedSys   *SystemInfo
-	mockOut     string
-	mockSysOut  string
+	once       sync.Once
+	cached     []MemoryDevice
+	systemOnce sync.Once
+	cachedSys  *SystemInfo
+	mockOut    string
+	mockSysOut string
 }
 
 var defaultSrc = &defaultSource{}

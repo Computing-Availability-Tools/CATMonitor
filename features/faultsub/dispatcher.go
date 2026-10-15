@@ -21,10 +21,10 @@ type Dispatcher struct {
 	subs    *SubscriptionManager
 	retry   int
 	bufMu   sync.Mutex
-	buffer  []FaultEvent   // ring buffer of recent events
+	buffer  []FaultEvent // ring buffer of recent events
 	bufSize int
-	bufHead int            // next write index
-	count   int            // number of stored events (<= bufSize)
+	bufHead int // next write index
+	count   int // number of stored events (<= bufSize)
 	logger  *slog.Logger
 }
 

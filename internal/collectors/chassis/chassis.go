@@ -44,14 +44,14 @@ func (c *ChassisCollector) Collect() ([]collector.Metric, error) {
 		}
 		name := strings.ToLower(s.Name)
 		switch {
-	// inlet_temp (exact match "Inlet Temp")
-	case name == "inlet temp":
-		metrics = append(metrics, collector.Metric{
-			Component: "chassis", Name: "inlet_temp", Value: roundFloat(s.Value, 1), Unit: "°C",
-			Timestamp: now,
-		})
-	// outlet_temp (exact match "Outlet Temp")
-	case name == "outlet temp":
+		// inlet_temp (exact match "Inlet Temp")
+		case name == "inlet temp":
+			metrics = append(metrics, collector.Metric{
+				Component: "chassis", Name: "inlet_temp", Value: roundFloat(s.Value, 1), Unit: "°C",
+				Timestamp: now,
+			})
+		// outlet_temp (exact match "Outlet Temp")
+		case name == "outlet temp":
 			metrics = append(metrics, collector.Metric{
 				Component: "chassis", Name: "outlet_temp", Value: roundFloat(s.Value, 1), Unit: "°C",
 				Timestamp: now,

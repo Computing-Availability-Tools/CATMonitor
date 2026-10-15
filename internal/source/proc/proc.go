@@ -39,8 +39,8 @@ type CPUStat struct {
 // "cpuN" for individual cores). Bundling ctxt here lets a caller that needs
 // both usage (from cpu times) and context_switches read /proc/stat once.
 type Stat struct {
-	Cores            map[string]CPUStat
-	ContextSwitches  uint64
+	Cores           map[string]CPUStat
+	ContextSwitches uint64
 }
 
 // Loadavg is the parsed /proc/loadavg content.

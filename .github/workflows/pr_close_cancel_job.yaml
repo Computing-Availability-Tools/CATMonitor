@@ -1,0 +1,67 @@
+name: PR Close Cancel Job
+
+# When a PR is closed (merged or dismissed), force-cancel any in-progress
+# workflow runs still attached to that PR's head SHA — saves shared CI
+# minutes and, more importantly, frees the self-hosted 910B4 NPU runner from
+# serving a PR nobody is looking at anymore. Silent (no comment; the PR is
+# already closed).
+#
+# Uses pull_request_target (not pull_request): fork-PR pull_request events
+# carry a read-only GITHUB_TOKEN where actions:write is ignored → force-cancel
+# would always 403; pull_request_target runs with a writable token taken from
+# the default branch. This job only calls the REST API and never checks out
+# PR code, so the usual pull_request_target pwn risk does not apply.
+#
+# Note: pull_request_target reads the workflow file from the DEFAULT branch —
+# this file becomes active only after it is merged into main.
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: close-cancel-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Force-cancel leftover workflow runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -eu
+          RUNS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/actions/runs?head_sha=$PR_SHA&per_page=100")
+          echo "$RUNS" | jq -e '.workflow_runs | type == "array"' >/dev/null 2>&1 || {
+            echo "::warning::API error fetching runs for $PR_SHA: $(echo "$RUNS" | jq -r '.message // "unknown"')"
+            exit 0
+          }
+          CANDIDATES=$(echo "$RUNS" | jq -r --arg self "$SELF_RUN_ID" \
+            '[.workflow_runs[]? | select(.status != "completed" and ((.id | tostring) != $self))] | .[].id' 2>/dev/null || true)
+          if [ -z "$CANDIDATES" ]; then
+            echo "no in-progress runs to cancel for PR head $PR_SHA"
+            exit 0
+          fi
+          CANCEL_COUNT=0
+          while IFS= read -r RUN_ID; do
+            [ -z "$RUN_ID" ] && continue
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/force-cancel" || echo "000")
+            case "$HTTP_CODE" in
+              202) echo "cancelled $RUN_ID"; CANCEL_COUNT=$((CANCEL_COUNT + 1)) ;;
+              409|410) echo "run $RUN_ID already terminal ($HTTP_CODE)" ;;
+              *) echo "::warning::failed to cancel $RUN_ID (HTTP $HTTP_CODE)" ;;
+            esac
+          done <<< "$CANDIDATES"
+          echo "cancelled $CANCEL_COUNT leftover run(s) for PR head $PR_SHA"

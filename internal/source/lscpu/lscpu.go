@@ -19,12 +19,12 @@ import (
 
 // Topology holds the static CPU topology parsed from lscpu.
 type Topology struct {
-	Cores         int               // logical CPU count ("CPU(s)")
-	Sockets       int               // physical CPU / socket count ("Socket(s)")
-	CoresPerSocket int              // ("Core(s) per socket")
-	DiesPerSocket int               // ("Die(s) per socket", default 1)
-	NumaNodes     []string          // NUMA node ids, e.g. ["0","1"]
-	NumaCPU       map[string]string // node id -> cpu list string, e.g. "0"->"0-13"
+	Cores          int               // logical CPU count ("CPU(s)")
+	Sockets        int               // physical CPU / socket count ("Socket(s)")
+	CoresPerSocket int               // ("Core(s) per socket")
+	DiesPerSocket  int               // ("Die(s) per socket", default 1)
+	NumaNodes      []string          // NUMA node ids, e.g. ["0","1"]
+	NumaCPU        map[string]string // node id -> cpu list string, e.g. "0"->"0-13"
 }
 
 // Source is the typed interface for the lscpu data source.
