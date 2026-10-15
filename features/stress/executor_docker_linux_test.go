@@ -45,6 +45,7 @@ func TestDockerNPUSelectionUsesOnlyTypedEnvironment(t *testing.T) {
 	if err := validateBinding(b); err != nil {
 		t.Fatal(err)
 	}
+	b.RequireNPUIdle = true
 	args := e.workloadArgs(b, false, "describe", "--json")
 	got := strings.Join(args, " ")
 	if !strings.Contains(got, "--env NPU_BURN_DEVICE=1,0 --env CATMONITOR_NPU_REQUIRE_IDLE=1 npu ") {
@@ -66,6 +67,34 @@ func TestDockerNPUSelectionUsesOnlyTypedEnvironment(t *testing.T) {
 	b.NPUDevices = workloadapi.DeviceIDs{1, 1}
 	if err := validateBinding(b); err == nil {
 		t.Fatal("duplicate accepted")
+	}
+}
+
+func TestDockerNPUIdlePolicyIsBoundToOperationNotSelection(t *testing.T) {
+	e := &DockerExecExecutor{socket: "/run/docker.sock"}
+	for _, test := range []struct {
+		name        string
+		operation   string
+		requireIdle bool
+		devices     workloadapi.DeviceIDs
+		want        bool
+	}{
+		{"deployment", "describe", false, nil, false},
+		{"selection_only", "describe", false, workloadapi.DeviceIDs{0}, false},
+		{"admission_defaults", "describe", true, nil, true},
+		{"admission_selected", "describe", true, workloadapi.DeviceIDs{0}, true},
+		{"run_defaults", "run", false, nil, true},
+		{"run_selected", "run", false, workloadapi.DeviceIDs{0}, true},
+		{"status", "status", false, workloadapi.DeviceIDs{0}, false},
+		{"cancel", "cancel", false, workloadapi.DeviceIDs{0}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b := Binding{Benchmark: "npu_burn", Container: "npu", NPUDevices: test.devices, RequireNPUIdle: test.requireIdle}
+			args := strings.Join(e.workloadArgs(b, false, test.operation), " ")
+			if strings.Contains(args, "CATMONITOR_NPU_REQUIRE_IDLE=1") != test.want {
+				t.Fatalf("unexpected idle policy: %s", args)
+			}
+		})
 	}
 }
 

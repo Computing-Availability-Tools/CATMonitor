@@ -152,6 +152,7 @@ ENV HOME=/opt/catmonitor/npuburn-home \
     PYTHONPATH=/opt/catmonitor/npuburn-python:${PYTHONPATH} \
     CATMONITOR_STRESS_BENCHMARKS=npu_burn \
     CATMONITOR_NPU_COMPAT_PROFILE=${COMPAT_PROFILE} \
+    CATMONITOR_NPU_REQUIRE_IDLE=0 \
     CATMONITOR_STRESS_STATE_ROOT=/var/lib/catmonitor/stress \
     NPU_BURN_BACKEND=native \
     NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn \
@@ -170,6 +171,9 @@ COPY runtime_preflight.sh /usr/local/bin/catmonitor-npu-burn-preflight
 COPY package_inventory.py /usr/local/libexec/catmonitor/package_inventory.py
 COPY launch.py /usr/local/libexec/catmonitor/launch.py
 COPY model_sdc.py /usr/local/libexec/catmonitor/model_sdc.py
+COPY job_config.py /usr/local/libexec/catmonitor/job_config.py
+COPY job-parameter-base.json /usr/local/share/catmonitor/job-parameter-base.json
+COPY job-parameter-a3.json /usr/local/share/catmonitor/job-parameter-a3.json
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 COPY --from=stress_exec_builder /out/catmonitor-stress-exec /usr/local/bin/catmonitor-stress-exec
 COPY --from=npuburn_builder /opt/catmonitor/build-compat/builder-abi.json /usr/local/share/catmonitor/builder-abi.json

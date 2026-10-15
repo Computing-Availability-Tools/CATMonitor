@@ -112,7 +112,7 @@ bash scripts/stress/generate_stress_deployment.sh \
   --npu-device-mode full --npu-security-profile restricted \
   --npu-burn-device 0 --npu-allowed-devices 0 \
   --npu-allowed-models gpt3,llama2 --allow-npu-reference-generation \
-  --npu-model-memory-mode checkpointed --npu-job-timeout 12h \
+  --npu-model-memory-mode checkpointed --npu-job-timeout 2h \
   --npu-threads 1 --npu-ascend-env-script "$ASCEND_ENV_SCRIPT" \
   --npu-output-dir "$NPU_OUTPUT" --enable-web
 ```

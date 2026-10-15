@@ -3,6 +3,9 @@
 适用于带 NVIDIA GPU 的 Linux 节点。当前提供 NVIDIA Monitoring 和可选 CPU Stress，
 不提供 GPU workload 压测插件。
 
+可使用 [Compose 薄启动入口](README.md#61-简化-compose-启动与查询实际端口)
+统一文件组合，并查询 Web/DFeE 自动回退后的真实端口；手工 `docker run` 仍保留。
+
 > 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
 > `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
 >

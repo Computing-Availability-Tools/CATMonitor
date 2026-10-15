@@ -40,8 +40,9 @@ type ModelCapabilities struct {
 }
 
 type ModelPreflightRequest struct {
-	NPUDevices workloadapi.DeviceIDs     `json:"npu_devices"`
-	NPUModel   *workloadapi.ModelRequest `json:"npu_model"`
+	NPUDevices workloadapi.DeviceIDs      `json:"npu_devices"`
+	NPUModel   *workloadapi.ModelRequest  `json:"npu_model"`
+	Parameters *workloadapi.JobParameters `json:"parameters,omitempty"`
 }
 
 type ModelPreflightFailure struct {
@@ -60,16 +61,17 @@ type ModelPreflightView struct {
 }
 
 type ControlStartRequest struct {
-	Benchmarks     []string                  `json:"benchmarks"`
-	TimeoutSeconds int64                     `json:"timeout_seconds"`
-	Initiator      string                    `json:"initiator"`
-	NPUDevices     workloadapi.DeviceIDs     `json:"npu_devices,omitempty"`
-	NPUCases       workloadapi.CaseNames     `json:"npu_cases,omitempty"`
-	NPUModel       *workloadapi.ModelRequest `json:"npu_model,omitempty"`
+	Benchmarks     []string                   `json:"benchmarks"`
+	TimeoutSeconds int64                      `json:"timeout_seconds"`
+	Initiator      string                     `json:"initiator"`
+	NPUDevices     workloadapi.DeviceIDs      `json:"npu_devices,omitempty"`
+	NPUCases       workloadapi.CaseNames      `json:"npu_cases,omitempty"`
+	NPUModel       *workloadapi.ModelRequest  `json:"npu_model,omitempty"`
+	Parameters     *workloadapi.JobParameters `json:"parameters,omitempty"`
 }
 
 func (r ControlStartRequest) RunOptions() RunOptions {
-	return RunOptions{Timeout: time.Duration(r.TimeoutSeconds) * time.Second, Initiator: r.Initiator, NPUDevices: r.NPUDevices, NPUCases: r.NPUCases, NPUModel: workloadapi.CopyModel(r.NPUModel)}
+	return RunOptions{Timeout: time.Duration(r.TimeoutSeconds) * time.Second, Initiator: r.Initiator, NPUDevices: r.NPUDevices, NPUCases: r.NPUCases, NPUModel: workloadapi.CopyModel(r.NPUModel), Parameters: workloadapi.CopyJobParameters(r.Parameters)}
 }
 
 type ControlAPIError struct {

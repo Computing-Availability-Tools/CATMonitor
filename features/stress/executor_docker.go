@@ -72,6 +72,10 @@ func (e *DockerExecExecutor) workloadArgs(binding Binding, interactive bool, com
 	}
 	if binding.NPUDevices != nil {
 		args = append(args, "--env", "NPU_BURN_DEVICE="+binding.NPUDevices.String())
+	}
+	if binding.Benchmark == "npu_burn" && (binding.RequireNPUIdle || (len(command) > 0 && command[0] == "run")) {
+		// Never inherit a deployment-only REQUIRE_IDLE=0 for job admission/run.
+		// This also protects jobs using deployment-default device selection.
 		args = append(args, "--env", "CATMONITOR_NPU_REQUIRE_IDLE=1")
 	}
 	if binding.NPUCases != nil {
@@ -115,6 +119,9 @@ func validateBinding(binding Binding) error {
 	if !supportedBenchmark(binding.Benchmark) {
 		return fmt.Errorf("unsupported benchmark %q", binding.Benchmark)
 	}
+	if err := binding.Parameters.Validate([]string{binding.Benchmark}, binding.NPUModel, binding.NPUCases); err != nil {
+		return err
+	}
 	if binding.Plugin == "" || binding.Plugin != binding.Benchmark {
 		return fmt.Errorf("benchmark %q has invalid plugin %q", binding.Benchmark, binding.Plugin)
 	}
@@ -136,7 +143,7 @@ func (e *DockerExecExecutor) Describe(ctx context.Context, binding Binding) (*Ex
 		Image string `json:"image"`
 	}
 	workload := binding
-	if binding.Benchmark == "npu_burn" {
+	if binding.Benchmark == "npu_burn" || binding.Parameters != nil {
 		// Bind hardware evidence to this actual container/image, never a mutable
 		// tag or a previous deployment sharing the same friendly name.
 		out, stderr, err := e.runCommand(ctx, nil, e.dockerArgs("inspect", "--type", "container", "--format", `{"id":{{json .Id}},"image":{{json .Image}}}`, binding.Container)...)
@@ -151,8 +158,18 @@ func (e *DockerExecExecutor) Describe(ctx context.Context, binding Binding) (*Ex
 		}
 		workload.Container = identity.ID
 	}
-	args := e.workloadArgs(workload, false, "describe", "--benchmark", binding.Plugin, "--json")
-	stdout, stderr, err := e.runCommand(ctx, nil, args...)
+	command := []string{"describe", "--benchmark", binding.Plugin, "--json"}
+	var stdin io.Reader
+	if binding.Parameters != nil {
+		data, err := json.Marshal(workloadapi.DescribeRequest{Parameters: binding.Parameters})
+		if err != nil {
+			return nil, err
+		}
+		stdin = bytes.NewReader(data)
+		command = append(command, "--parameters", "-")
+	}
+	args := e.workloadArgs(workload, stdin != nil, command...)
+	stdout, stderr, err := e.runCommand(ctx, stdin, args...)
 	if err != nil {
 		return nil, transportError("describe", binding.Container, err, stderr, stdout)
 	}
@@ -162,6 +179,26 @@ func (e *DockerExecExecutor) Describe(ctx context.Context, binding Binding) (*Ex
 	}
 	if err := validateDescribeProfile(binding.Benchmark, &profile); err != nil {
 		return nil, err
+	}
+	if binding.Parameters != nil && profile.FrozenParameters == nil {
+		return nil, errors.New("workload image does not support job parameters; update the workload image")
+	}
+	if profile.FrozenParameters != nil {
+		if err := profile.FrozenParameters.Validate(binding.Benchmark); err != nil {
+			return nil, err
+		}
+		if identity.ID == "" {
+			out, stderr, err := e.runCommand(ctx, nil, e.dockerArgs("inspect", "--type", "container", "--format", `{"id":{{json .Id}},"image":{{json .Image}}}`, binding.Container)...)
+			if err != nil {
+				return nil, transportError("inspect", binding.Container, err, stderr, out)
+			}
+			if err := decodeStrictJSON(out, &identity); err != nil {
+				return nil, err
+			}
+		}
+		if !validSHA256(identity.ID) || !strings.HasPrefix(identity.Image, "sha256:") || !validSHA256(strings.TrimPrefix(identity.Image, "sha256:")) {
+			return nil, errors.New("invalid frozen workload container/image identity")
+		}
 	}
 	profile.Executor = "docker_exec"
 	profile.Container = binding.Container
@@ -176,6 +213,23 @@ func (e *DockerExecExecutor) Describe(ctx context.Context, binding Binding) (*Ex
 func (e *DockerExecExecutor) Run(ctx context.Context, binding Binding, request workloadapi.Request) (workloadapi.Result, error) {
 	if err := validateBinding(binding); err != nil {
 		return workloadapi.Result{}, err
+	}
+	if binding.PinnedContainerID != "" {
+		out, stderr, err := e.runCommand(ctx, nil, e.dockerArgs("inspect", "--type", "container", "--format", `{"id":{{json .Id}},"image":{{json .Image}}}`, binding.Container)...)
+		if err != nil {
+			return workloadapi.Result{}, transportError("inspect", binding.Container, err, stderr, out)
+		}
+		var identity struct {
+			ID    string `json:"id"`
+			Image string `json:"image"`
+		}
+		if err := decodeStrictJSON(out, &identity); err != nil {
+			return workloadapi.Result{}, err
+		}
+		if identity.ID != binding.PinnedContainerID || identity.Image != binding.PinnedImageID {
+			return workloadapi.Result{}, errors.New("workload container/image changed after admission")
+		}
+		binding.Container = identity.ID
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -224,6 +278,11 @@ func (e *DockerExecExecutor) Run(ctx context.Context, binding Binding, request w
 	if result.ProtocolVersion != workloadapi.ProtocolVersion || result.JobID != request.JobID ||
 		result.Benchmark != request.Benchmark || !workloadapi.ValidTerminalStatus(result.Status) {
 		return workloadapi.Result{}, errors.New("workload returned an invalid result envelope")
+	}
+	if request.FrozenParameters != nil && result.Status == workloadapi.StatusHealthy {
+		if err := result.ExecutionParameters.Validate(request.JobID, request.Benchmark, request.FrozenParameters); err != nil {
+			return workloadapi.Result{}, err
+		}
 	}
 	if result.Failure != nil && (result.Status != workloadapi.StatusUnhealthy || request.Benchmark != "npu_burn" || result.Failure.Code != "npu_hbm_oom" || result.Failure.Resource != "npu_hbm") {
 		return workloadapi.Result{}, errors.New("workload returned inconsistent failure evidence")

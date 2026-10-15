@@ -31,7 +31,8 @@ func hasNPUCaseCatalog() bool {
 	switch env("CATMONITOR_NPU_COMPAT_PROFILE") {
 	case "portable-runtime-v1", "a2-portable-runtime-v1", "a2-upstream-base-v1",
 		"model-sdc-v1", "a2-model-sdc-v1",
-		"portable-model-sdc-memory-v1", "a2-upstream-model-sdc-memory-v1":
+		"portable-model-sdc-memory-v1", "a2-upstream-model-sdc-memory-v1",
+		"portable-model-sdc-memory-job-v1", "a2-upstream-model-sdc-memory-job-v1":
 		return true
 	default:
 		return false

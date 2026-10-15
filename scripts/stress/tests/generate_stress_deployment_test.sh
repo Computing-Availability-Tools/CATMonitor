@@ -74,6 +74,7 @@ contains "$NPU_OUT/catmonitor-stress.yaml" 'stream: { enabled: false'
 contains "$NPU_OUT/catmonitor-stress.yaml" 'hpl: { enabled: false'
 contains "$NPU_OUT/catmonitor-stress.yaml" 'hpcg: { enabled: false'
 contains "$NPU_OUT/catmonitor-stress.yaml" 'npu_burn: { enabled: true'
+contains "$NPU_OUT/catmonitor-stress.yaml" 'container: catmonitor-stress-npu, timeout: 2h'
 not_contains "$NPU_OUT/docker-compose.stress.generated.yml" 'catmonitor-stress-cpu:'
 contains "$NPU_OUT/docker-compose.stress.generated.yml" 'catmonitor-stress-npu:'
 contains "$NPU_OUT/docker-compose.stress.generated.yml" 'privileged: true'
@@ -145,7 +146,8 @@ contains "$CUSTOM/docker-compose.stress.generated.yml" 'container_name: site-npu
 contains "$CUSTOM/docker-compose.stress.generated.yml" 'privileged: false'
 contains "$CUSTOM/cpu-workload.env" 'HPL_N=4096'
 contains "$CUSTOM/cpu-workload.env" 'HPL_Q=1'
-contains "$CUSTOM/npu-workload.env" 'CATMONITOR_NPU_REQUIRE_IDLE=1'
+contains "$CUSTOM/npu-workload.env" 'CATMONITOR_NPU_REQUIRE_IDLE=0'
+contains "$CUSTOM/docker-compose.stress.generated.yml" "CATMONITOR_NPU_REQUIRE_IDLE: '0'"
 contains "$CUSTOM/stress-profile.json" '"container":"site-npu"'
 contains "$CUSTOM/stress-deployment-manifest.json" '"cpu_env_sha256":"'
 expect_fail bash "$GENERATOR" --output-dir "$TEST_ROOT/invalid-grid" --cpu-image cpu:test --hpl-profile small --hpl-processes 2

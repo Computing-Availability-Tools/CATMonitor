@@ -20,6 +20,7 @@ func parameterValue(profile *ExecutionProfile, key string) string {
 // Job admission is deliberately uncached: a previous doctor's profile is not
 // proof that the current selection or the current workload resources are safe.
 func (m *Manager) describeJob(binding Binding, timeout time.Duration, parents ...context.Context) (*ExecutionProfile, error) {
+	binding.RequireNPUIdle = binding.Benchmark == "npu_burn"
 	budget := workloadapi.PreflightTimeout(binding.Benchmark, binding.NPUModel != nil)
 	if binding.Benchmark == "npu_burn" && binding.NPUModel != nil {
 		// Let the bounded inner model probe return its diagnostic before the
@@ -43,6 +44,10 @@ func (m *Manager) describeJob(binding Binding, timeout time.Duration, parents ..
 }
 
 func (m *Manager) prepareNPU(requested workloadapi.DeviceIDs, cases workloadapi.CaseNames, timeout time.Duration, parents ...context.Context) (*ExecutionProfile, *NPUSelection, error) {
+	return m.prepareNPUParameters(requested, cases, timeout, nil, parents...)
+}
+
+func (m *Manager) prepareNPUParameters(requested workloadapi.DeviceIDs, cases workloadapi.CaseNames, timeout time.Duration, parameters *workloadapi.JobParameters, parents ...context.Context) (*ExecutionProfile, *NPUSelection, error) {
 	binding := m.binding("npu_burn")
 	base, err := m.describeJob(binding, timeout, parents...)
 	if err != nil {
@@ -109,6 +114,7 @@ func (m *Manager) prepareNPU(requested workloadapi.DeviceIDs, cases workloadapi.
 		selectedCases = cases
 	}
 	binding.NPUCases = append(workloadapi.CaseNames(nil), selectedCases...)
+	binding.Parameters = parameters.For("npu_burn")
 	profile, err := m.describeJob(binding, timeout, parents...)
 	if err != nil {
 		return nil, nil, err
@@ -169,13 +175,19 @@ func (m *Manager) prepareNPUModel(options RunOptions, parents ...context.Context
 	}
 	// Preserve device/idle admission, then perform a model-specific dependency
 	// and immutable-reference admission using the same bound device selection.
-	_, selection, err := m.prepareNPU(options.NPUDevices, nil, options.Timeout, parents...)
+	deviceProfile, selection, err := m.prepareNPU(options.NPUDevices, nil, options.Timeout, parents...)
 	if err != nil {
 		return nil, nil, err
+	}
+	if deviceProfile.Preflight.Status == CheckFail {
+		// Preserve typed runtime/idle failures without probing model HBM or
+		// references on an unready device. Start and PreflightModel reject it.
+		return deviceProfile, selection, nil
 	}
 	binding := m.binding("npu_burn")
 	binding.NPUDevices = append(workloadapi.DeviceIDs(nil), selection.Selected...)
 	binding.NPUModel = model
+	binding.Parameters = options.Parameters.For("npu_burn")
 	profile, err := m.describeJob(binding, options.Timeout, parents...)
 	if err != nil {
 		return nil, nil, err

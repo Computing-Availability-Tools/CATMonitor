@@ -33,6 +33,14 @@ def memory_mode():
     return mode
 
 
+def sdc_tolerances():
+    result = {key: float(os.environ.get("CATMONITOR_MODEL_" + key.upper() + "_TOLERANCE", default))
+              for key, default in (("loss", "0.01"), ("grad", "0.1"), ("checksum", "0.1"))}
+    if any(not math.isfinite(value) or not 0 <= value <= 1 for value in result.values()):
+        raise ValueError("SDC tolerances must be finite and in [0,1]")
+    return result
+
+
 def canonical_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
                                      allow_nan=False).encode()).hexdigest()
@@ -300,7 +308,10 @@ def load_runtime(model, generation):
     package = Path(importlib.import_module("ascend_npu_burn").__file__).resolve().parent
     source = hashlib.sha256()
     for path in sorted(package.rglob("*")):
-        if path.is_file() and path.suffix in (".py", ".json", ".so"):
+        # A job-owned frozen config is already bound below. Later edits to
+        # unrelated deployment JSON must not invalidate that job/reference.
+        suffixes = (".py", ".so") if os.environ.get("CATMONITOR_NPU_FROZEN_CONFIG_FILE") else (".py", ".json", ".so")
+        if path.is_file() and path.suffix in suffixes:
             source.update(path.relative_to(package).as_posix().encode())
             source.update(hashlib.sha256(path.read_bytes()).digest())
     stack = dict(python=platform.python_version(), architecture=platform.machine(),
@@ -315,6 +326,7 @@ def load_runtime(model, generation):
     identity = dict(model=model, generation=generation, config=config, stack=stack,
                     execution=dict(memory_mode=mode, device_strategy="independent_sequential"),
                     metric_protocol="parameter_signature_v2")
+    identity["sdc_tolerances"] = sdc_tolerances()
     return config, identity, factory
 
 
@@ -376,6 +388,8 @@ def execute(model, action, reference, devices, store, output, config, identity,
                   saved_steps=expected if action == "create_reference" else 0,
                   errors=0, csv=str(csv_path), rows=rows)
     report["memory_mode"] = identity.get("execution", {}).get("memory_mode", "standard")
+    report["effective_config"] = dict(config)
+    report["sdc_tolerances"] = dict(identity["sdc_tolerances"])
     write_json(output / "model-result.json", report)
     if action == "create_reference":
         store.publish(reference, baseline, identity, expected, job_id)

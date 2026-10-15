@@ -136,7 +136,7 @@ stress:
     stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
     hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
     hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
-    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 2h }
 collection:
   min_priority: medium     # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 

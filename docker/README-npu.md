@@ -7,6 +7,10 @@ NPU Burn。当前 Stress 镜像只声明已完成 A2/Ascend910B4、CANN 8.3、`r
 Docker Compose 是推荐入口；本页同时给出完整的 `docker run` 入口。两种入口使用
 相同镜像、generator 配置、挂载、权限和 3/4/4/5 容器模型。
 
+不想反复组合多个 `-f` 时，使用 [Compose 薄启动入口](README.md#61-简化-compose-启动与查询实际端口)。
+Web/DFeE 会在起始端口占用时自动递增；启动后用 `urls` 查询实际地址，不要把
+默认 19322 写成每次都保证的监听端口。
+
 > 当前程序内部版本是 `0.3.6`；已发布的 ARM64 Stress pre-release 镜像标签是
 > `arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建），正式 `v0.3.6` 镜像发布后替换。
 
@@ -14,7 +18,8 @@ Docker Compose 是推荐入口；本页同时给出完整的 `docker run` 入口
 
 - Linux/arm64；
 - Docker Engine；
-- 使用 Compose 路径时安装 Docker Compose v2；只使用手工路径时不要求 Compose；
+- 推荐 Docker Compose v2；旧 `docker-compose` 通过薄入口兼容时另需 Python 3 +
+  PyYAML；只使用手工路径时不要求 Compose；
 - 使用 NPU 手工路径时安装 Bash 与 Python 3，用于读取 generator 的
   `stress-profile.json`，不解析 Compose YAML；
 - Ascend 驱动可用，至少存在一个 `/dev/davinciN`；
@@ -826,13 +831,100 @@ OLD_STRESS_YAML_COMPATIBLE=false
 
 ## 10. 故障排查
 
+### Compose 配置问题与驱动问题分开排查
+
+先用薄入口的 `config` 检查相同的文件组合，再用 `ps/logs` 定位服务；不要维护
+另一套手写的 `docker-compose.stress.v1.yml`。旧 Compose 的配置格式差异由入口
+转换，NPU runtime 仍来自 generator 的 `--npu-runtime`，不能为了绕过报错手改 overlay。
+
+`npu-smi` 的 `dcmi module initialize failed` 是容器运行后的驱动访问错误，不是
+Compose YAML 解析错误。先比较宿主和 workload 容器的 `npu-smi info`，以及
+容器 runtime、Devices、mounts、安全设置和业务占用；不能只凭 root 用户、数字
+UID/GID 或切换 runtime 推断确切根因。设备被业务使用时不执行 Burn、不杀业务。
+
+Docker 18.09 的 inspect 结构可能没有 `DeviceRequests`。检查本项目实际使用的
+`--device` 映射应读 `Devices`，无需因此重建容器：
+
+```bash
+docker inspect catmonitor-stress-npu \
+  --format 'runtime={{.HostConfig.Runtime}} privileged={{.HostConfig.Privileged}} readonly={{.HostConfig.ReadonlyRootfs}}'
+docker inspect catmonitor-stress-npu --format '{{json .HostConfig.Devices}}'
+docker inspect catmonitor-stress-npu --format '{{json .Mounts}}'
+```
+
+如 generator 指定了自定义容器名，使用该名称，不要假设一定为默认名。
+
+### 有 NPU 业务时的容器与管理查询
+
+创建/启动容器、CPU 绑核、访问 Ascend 驱动、允许执行 Burn 是四个不同的门禁。
+NPU 被业务使用不意味着 Docker 不能创建容器或 CPU 不能绑核；但普通容器映射
+同一物理设备时，驱动的设备命名空间隔离可能让新容器内 `npu-smi` 返回
+`device is used / -8020`。不要靠增加 CPU/PID 额度或强制更换 runtime 绕过。
+
+124 的 A2/910B4、Docker 18.09、驱动 25.5 对照中：双卡 vLLM TP=2 实际推理期间，
+新普通容器的创建和有效 CPU 集合绑定通过，但管理查询失败；vLLM 退出后，同一
+配置恢复正常。在此期间既有特权 Control 的管理查询仍可用。这不是所有 A2/A3
+环境的认证，也不能据此给其他节点的 `-8005` 确认根因。
+
+后续经授权的临时对照中，正式普通 NPU 容器保持运行，独立双卡 vLLM TP=2
+完成 18 次真实推理：新特权探针的创建、CPU 绑核及 `npu-smi` 全部通过，普通
+探针仍返回 `-8020`。特权探针还能查询到与宿主一致的业务 PID；独立 PID
+命名空间下进程名可能为空，不得据此判为空闲。全部诊断容器随后删除，正式
+容器的 ID、镜像、启动时间和权限均未改变。
+
+- Monitoring 与业务可继续并存，管理查询使用既有、经过批准的 Control 边界；
+  Web/DFeE 不因此获得 Docker Socket 或设备权限。
+- `restricted` workload 维持隔离边界。驱动访问不确定时部署预检仍失败；业务占用
+  本身不阻止部署就绪，但 Run 必须拒绝计算任务，不显示成“服务器 CPU 绑核失败”。
+- 如果管理员确实要求新 workload 容器在同卡业务存在时直接执行 `npu-smi`，
+  当前 generator 的显式 `--npu-device-mode full --npu-security-profile legacy-privileged`
+  提供共享访问模式，已在上述 A2 临时对照验证；正式启用仍需管理员安全审查，
+  不是自动降级策略。特权扩大宿主设备访问权限，不能把显式设备映射或 Controller
+  逻辑白名单视为内核级单卡隔离。仅挂管理节点、盲目放开 capabilities 或忽略
+  Busy 都不是等价修复。
+- 新版镜像、generator 的 `npu-workload.env` 与 Compose 默认
+  `CATMONITOR_NPU_REQUIRE_IDLE=0`：容器启动、healthcheck、普通 describe/doctor 只验证
+  部署依赖与拓扑，不因业务占用拒绝就绪。预检通过不代表设备空闲或获得压测许可。
+- CLI/Web 提交算子或模型 Job 时，Controller 强制设置
+  `CATMONITOR_NPU_REQUIRE_IDLE=1`，不使用缓存的部署 PASS；真正执行前 workload
+  再查一次空闲状态。直接调用新版 `catmonitor-stress-exec run` 也不能用 `0` 绕过。
+  任意业务 PID（即使进程名为空）、未知/不完整进程表或管理查询失败均拒绝下发/启动，
+  不杀业务、不自动排队重试。当前策略是保守的节点级空闲检查，不声称只检查选中卡，
+  也不是对外部调度器的独占预约。
+- 管理员可在部署阶段共存启动容器，但不能据此在业务卡上并发 Burn。单卡子集模式
+  不自动提升为 privileged。该分层修复须更新 Control 和 NPU workload 镜像；只改旧
+  容器环境变量不等于已有完整的运行前门禁，不能当作升级方案。
+
+仅检查部署就绪（不运行负载）：
+
+```bash
+docker exec -e CATMONITOR_NPU_REQUIRE_IDLE=0 catmonitor-stress-npu \
+  /usr/local/bin/catmonitor-stress-exec describe --benchmark npu_burn --json --require-pass
+```
+
+显式检查此刻是否可运行（不运行负载，失败返回非零）：
+
+```bash
+docker exec -e CATMONITOR_NPU_REQUIRE_IDLE=1 catmonitor-stress-npu \
+  /usr/local/bin/catmonitor-stress-exec describe --benchmark npu_burn --json --require-pass
+```
+
+两者仍检查 CANN/torch_npu、Custom Ops、设备映射、PCI 拓扑及可写运行目录；`0`
+只是不执行占用检查，不能修复 `-8020` 驱动访问问题。正式作业继续由 Controller 下发。
+
+参考：[Ascend 官方容器占用说明](https://github.com/Ascend/RecSDK/blob/develop/docker/OVERVIEW.zh.md#非特权容器npu资源占用冲突)。
+
+### 常见提示
+
 - NPU Monitoring 为空：检查 `npu-smi info`、driver/toolkit 挂载和 daemon 日志。
 - NPU Burn unavailable：执行 doctor，核对 CANN、torch_npu、lspci 与 device count。
 - 稀疏设备映射错误：不要手写连续 `0..N-1` host node，让 generator 动态发现。
 - `No available device`：核对容器内 `lspci -D -d 19e5:`、
   `ASCEND_RT_VISIBLE_DEVICES`、`torch_npu.npu.device_count()` 与 logical topology。
-- `aclInit 507899` / `Resource_Busy` / `Device id is invalid`：A2 验收 profile 必须让
-  NPU workload 使用 `--privileged`；不要把该权限授予 Web 或 DFeE。
+- `aclInit 507899` / `Resource_Busy` / `Device id is invalid` 不是同一种根因：先区分
+  驱动命名空间占用、逻辑编号映射与软件栈配套问题，不把所有错误都用 privileged
+  掩盖。只有管理员明确选择共享访问兼容模式时，才为 NPU workload 配置
+  `legacy-privileged`；Web/DFeE 不获得该权限。
 - HPL 立即失败：核对 `HPL_MPI_PROCESSES == P×Q`，不要盲用默认值 1。
 - Web snapshot 未就绪：先检查 `19320/-/ready`，不要另起第二个 Web。
 - Docker API 版本不匹配：当前 Stress Controller 会通过配置的 Unix socket 自动协商，

@@ -12,7 +12,8 @@ import (
 )
 
 // HPL.dat's single-grid override is deployment-owned. No Web/CLI job may
-// supply file paths or arbitrary HPL parameters.
+// supply file paths or arbitrary commands. Typed per-job values are resolved
+// into a private frozen input by PrepareJobParameters before this function.
 func hplInput(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

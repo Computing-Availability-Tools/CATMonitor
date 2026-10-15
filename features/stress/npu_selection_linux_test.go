@@ -40,8 +40,9 @@ func (f *selectionExecutor) Describe(_ context.Context, b Binding) (*ExecutionPr
 		}
 		p.Parameters = append(p.Parameters, ProfileParameter{Key: "selected_cases", Label: "Selected operators", Value: cases}, ProfileParameter{Key: "available_cases", Label: "Available operators", Value: "matmul,conv2d"})
 	}
-	if f.busy && b.NPUDevices != nil {
+	if f.busy && b.RequireNPUIdle {
 		p.Preflight = PreflightResult{Status: CheckFail, Message: "device busy"}
+		p.Assets = append(p.Assets, AssetCheck{Name: "idle_devices", Path: "npu-smi info", Kind: "process_inventory", Required: true, Status: CheckFail, Message: "device busy"})
 	}
 	return p, nil
 }
@@ -95,6 +96,25 @@ func TestNPUJobSelectionPinnedAndArchived(t *testing.T) {
 	r = waitForTerminal(t, m, second.JobID)
 	if !workloadapi.SameDevices(r.Benchmarks[0].NPUSelection.Selected, []int{0}) || r.ConfigurationSHA256 == firstHash {
 		t.Fatal("job selection leaked into next job/default/hash")
+	}
+}
+
+func TestNPUDeploymentReadinessDoesNotAuthorizeBusyJob(t *testing.T) {
+	f := &selectionExecutor{busy: true}
+	m := selectionManager(t, f)
+	if available, reason := m.Availability("npu_burn"); !available {
+		t.Fatalf("business occupancy should not fail deployment readiness: %s", reason)
+	}
+	// Even a cached deployment PASS must not bypass fresh idle admission.
+	for _, options := range []RunOptions{{}, {NPUDevices: workloadapi.DeviceIDs{1}}} {
+		if _, err := m.StartWithOptions([]string{"npu_burn"}, options); err == nil || !strings.Contains(err.Error(), "device busy") {
+			t.Fatalf("busy job must be rejected before dispatch: %v", err)
+		}
+	}
+	f.selectionMu.Lock()
+	defer f.selectionMu.Unlock()
+	if len(f.bindings) != 0 {
+		t.Fatal("busy workload was dispatched")
 	}
 }
 

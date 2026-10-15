@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 function element(tagName = 'div') {
-  return {tagName, children: [], value: '', textContent: '', hidden: false, disabled: false, style: {},
+  const node = {tagName, children: [], value: '', textContent: '', hidden: false, disabled: false, style: {},
     attributes: {}, classList: {add() {}},
     querySelector(selector) { if (!this.selectors) this.selectors = {}; if (!this.selectors[selector]) this.selectors[selector] = element('option'); return this.selectors[selector]; },
     setAttribute(name, value) { this.attributes[name] = value; },
@@ -15,6 +15,10 @@ function element(tagName = 'div') {
     appendChild(value) { this.children.push(value); return value; },
     append(...values) { this.children.push(...values); },
     replaceChildren(...values) { this.children = values; }};
+  // HTMLTextAreaElement.type is getter-only in browsers. A writable generic
+  // object used to hide the real NPU tensor editor crash from this fixture.
+  if (tagName === 'textarea') Object.defineProperty(node, 'type', {get() { return 'textarea'; }});
+  return node;
 }
 const nodes = new Map();
 const document = {getElementById(id) {
@@ -336,5 +340,45 @@ vm.runInContext(`report=null;`, context);
   assert.match(allText(nodes.get('result-cards')), /模型 SDC 对照通过/);
   assert.match(allText(nodes.get('result-cards')), /完整参数 · 激活重计算/);
   await require('./stress_web_model_preflight_test.cjs')();
+  vm.runInContext(`
+    report=null; selected=new Set(['stream']); jobParameterDraft.clear(); jobParameterSelectionKey='';
+    config={benchmarks:[{name:'stream',timeout_seconds:60,profile:{frozen_parameters:{effective:{stream:{threads:4}}}}}]};
+    renderJobParameters();
+  `,context);
+  assert.doesNotMatch(html,/<details id="job-parameters"[^>]*\bopen\b/,'advanced edits are collapsed by default');
+  assert.equal(vm.runInContext('currentJobParameters()',context),undefined,'blank inherits without sending default values');
+  assert.equal(vm.runInContext('jobParameterFields[0].control.placeholder',context),'4');
+  vm.runInContext(`jobParameterFields[0].control.value='2'; jobParameterFields[0].control.input(); renderJobParameters();`,context);
+  await vm.runInContext('start()',context);
+  assert.deepEqual(JSON.parse(requests.at(-1).body).parameters,{stream:{threads:2}});
+  vm.runInContext(`report=null; jobParameterFields[0].control.value='1.5';`,context);
+  const beforeInvalid=requests.length; await vm.runInContext('start()',context);
+  assert.equal(requests.length,beforeInvalid,'invalid editor input must not start a job');
+  vm.runInContext(`
+    jobParameterDraft.clear(); jobParameterSelectionKey=''; selected=new Set(['npu_burn']); selectedNPUCases=new Set(['matmul']);npuMode='operators';
+    config={benchmarks:[{name:'npu_burn',profile:{frozen_parameters:{effective:{npu_burn:{}}},parameters:[{key:'case_catalog',value:JSON.stringify([{name:'matmul',config:{dtype:['float16'],pattern:['gauss_random'],shape:[[[4,8],[8,16]]],run_count:3}},{name:'gpt3',config:{batch_size:1,hidden_size:32}}])}]}}]};
+    renderJobParameters();
+    jobParameterFields.find(f=>f.path.endsWith('.shape')).control.value='[[[16,8],[8,32]]]';
+  `,context);
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(currentJobParameters())',context)),{npu_burn:{operators:{matmul:{shape:[[[16,8],[8,32]]]}}}});
+  assert.equal(vm.runInContext("jobParameterFields.find(f=>f.path.endsWith('.shape')).control.type", context), 'textarea');
+  assert.equal(vm.runInContext("jobParameterFields.find(f=>f.path.endsWith('.run_count')).control.type", context), 'number', 'textarea must not prevent later run_count fields from rendering');
+  vm.runInContext(`
+    selectedNPUCases.add('conv2d');
+    const catalog=JSON.parse(config.benchmarks[0].profile.parameters[0].value);
+    catalog.push({name:'conv2d',config:{dtype:['float16'],pattern:['uniform_random'],input_data:[1,2,16,16],weight_data:[4,2,3,3],run_count:2}});
+    config.benchmarks[0].profile.parameters[0].value=JSON.stringify(catalog);
+    renderJobParameters();
+    const dimensions=jobParameterFields.find(f=>f.path==='npu_burn.operators.conv2d.dimensions');
+    dimensions.control.value='{"input_data":[1,2,8,8],"weight_data":[4,2,3,3]}'; dimensions.control.input();
+    const count=jobParameterFields.find(f=>f.path==='npu_burn.operators.conv2d.run_count');
+    count.control.value='5'; count.control.input();
+  `, context);
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(currentJobParameters())',context)),{npu_burn:{operators:{conv2d:{dimensions:{input_data:[1,2,8,8],weight_data:[4,2,3,3]},run_count:5}}}}, 'multi-operator dimensions and run_count remain editable with readonly textarea.type');
+  vm.runInContext(`jobParameterSelectionKey=''; renderJobParameters();`, context);
+  assert.equal(vm.runInContext("jobParameterFields.find(f=>f.path==='npu_burn.operators.conv2d.run_count').control.value", context), '5', 'rerender preserves this job draft');
+  vm.runInContext(`npuMode='model';selectedNPUModel='gpt3';renderJobParameters();jobParameterFields.find(f=>f.path==='npu_burn.model.batch_size').control.value='2';`,context);
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(currentModelPreflightRequest().parameters)',context)),{npu_burn:{model:{batch_size:2}}},'model preflight uses the same edited request, not stale operator values');
+  console.log('PASS: per-job Web editor inheritance, typed submission and model preflight configuration');
   console.log('PASS: Web selection, CSV grouping/mismatch/legacy report, request and Job-ID cancel (DOM fixture)');
 })().catch(error => { console.error(error); process.exitCode = 1; });

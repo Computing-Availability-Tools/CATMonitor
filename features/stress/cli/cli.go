@@ -54,6 +54,11 @@ func loadClient(configPath string) (*stress.ControlClient, error) {
 }
 
 func runJob(args []string, stdout, stderr io.Writer) int {
+	args, parameters, parameterErr := extractJobParametersArgs(args)
+	if parameterErr != nil {
+		fmt.Fprintln(stderr, "stress:", parameterErr)
+		return 2
+	}
 	args, model, modelErr := extractModelArgs(args)
 	if modelErr != nil {
 		fmt.Fprintln(stderr, "stress:", modelErr)
@@ -70,7 +75,7 @@ func runJob(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	ctx := context.Background()
-	report, err := client.Start(ctx, stress.ControlStartRequest{Benchmarks: names, TimeoutSeconds: int64(timeout / time.Second), Initiator: stress.InitiatorCLI, NPUDevices: devices, NPUCases: cases, NPUModel: model})
+	report, err := client.Start(ctx, stress.ControlStartRequest{Benchmarks: names, TimeoutSeconds: int64(timeout / time.Second), Initiator: stress.InitiatorCLI, NPUDevices: devices, NPUCases: cases, NPUModel: model, Parameters: parameters})
 	if err != nil {
 		fmt.Fprintln(stderr, "stress:", err)
 		return 1
@@ -213,7 +218,22 @@ func printUsage(output io.Writer, mode string) {
   catmonitor stress status [--job JOB_ID] [-c config.yaml] [-o json|table]
   catmonitor stress cancel --job JOB_ID [-c config.yaml]
 
-The CLI is a client of the local catmonitor daemon Stress Controller.`)
+The CLI is a client of the local catmonitor daemon Stress Controller.
+Per-job advanced parameters (omitted fields inherit deployment defaults):
+  --job-parameters JSON | --job-parameters-file FILE (or - for stdin)
+  --hpl-n N --hpl-nb NB --hpl-p P --hpl-q Q
+  --hpl-mpi-processes N --hpl-threads-per-process N
+  --hpcg-nx N --hpcg-ny N --hpcg-nz N --hpcg-runtime-seconds N
+  --hpcg-mpi-processes N --hpcg-threads-per-process N
+  --stream-threads N (array size and NTIMES remain compile-time)
+  --npu-operator-parameters '{"matmul":{"dtype":["float16"],"shape":[[[128,128],[128,128]]],"run_count":2}}'
+  --model-parameters JSON | --model-batch-size N --model-seq-len N
+  --model-hidden-size N --model-layers N --model-attention-heads N
+  --model-intermediate-size N --model-vocab-size N --model-run-count N
+  --model-warmup N --model-sample-pool N --model-random-seed N
+  --model-num-classes N --model-learning-rate NUMBER
+  --sdc-loss-tolerance NUMBER --sdc-grad-tolerance NUMBER --sdc-checksum-tolerance NUMBER
+Training parameters and tolerances must match the immutable SDC reference.`)
 }
 
 type doctorResult struct {

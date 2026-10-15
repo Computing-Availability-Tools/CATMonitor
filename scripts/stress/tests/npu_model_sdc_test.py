@@ -25,7 +25,8 @@ sdc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sdc)
 CONFIG = dict(run_count=2, num_warmup=1)
 IDENTITY = dict(model="gpt3", generation="A2", config=CONFIG,
-                stack={"torch": "fixture", "cann": "fixture"})
+                stack={"torch": "fixture", "cann": "fixture"},
+                sdc_tolerances=dict(loss=0.01, grad=0.1, checksum=0.1))
 
 
 def records(count=3):
@@ -341,7 +342,7 @@ class AppliedUpstreamTests(unittest.TestCase):
         for path in cls.source.rglob("*.py"):
             path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
         # A real patch application, not a hand-reimplemented copy of the code.
-        for name in ("portable-runtime-v1.patch", "a2-upstream-base.patch", "model-sdc-v1.patch", "model-memory-v1.patch"):
+        for name in ("portable-runtime-v1.patch", "a2-upstream-base.patch", "model-sdc-v1.patch", "model-memory-v1.patch", "job-parameters-v1.patch"):
             subprocess.run(["git", "apply", "--unsafe-paths", "--unidiff-zero",
                             str(ROOT / "scripts/stress/patches/ascend_npu_burn" / name)],
                            cwd=cls.source, check=True, capture_output=True)
@@ -432,7 +433,7 @@ class AppliedUpstreamTests(unittest.TestCase):
             shutil.copytree(pristine, source)
             for path in source.rglob("*.py"):
                 path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
-            for name in ("portable-runtime-v1.patch", "model-sdc-v1.patch", "model-memory-v1.patch"):
+            for name in ("portable-runtime-v1.patch", "model-sdc-v1.patch", "model-memory-v1.patch", "job-parameters-v1.patch"):
                 subprocess.run(["git","apply","--unsafe-paths","--unidiff-zero",str(ROOT / "scripts/stress/patches/ascend_npu_burn" / name)], cwd=source, check=True, capture_output=True)
             for filename in ("base_config.json", "a3_config.json"):
                 relative = "ascend_npu_burn/config/" + filename

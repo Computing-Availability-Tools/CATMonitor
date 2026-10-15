@@ -87,13 +87,13 @@ bash scripts/stress/generate_stress_deployment.sh \
   --npu-allowed-devices 0,1 \
   --npu-allowed-models gpt3,llama2 \
   --allow-npu-reference-generation \
-  --npu-model-memory-mode checkpointed --npu-job-timeout 12h \
+  --npu-model-memory-mode checkpointed --npu-job-timeout 2h \
   --enable-web
 ```
 
 示例中的 0、1 是运行时逻辑编号，必须以本节点实际 doctor/拓扑结果为准，不是宿主 `/dev/davinci2`、`/dev/davinci5` 的编号。生成器沿用设备发现机制，不为模型任务扩大设备映射或权限。
 
-`standard` 保持原训练方式；`checkpointed` 显式启用激活重计算，完整 batch、模型形状、精度和步数不变。默认 standard，不自动切换。该模式绑定参考身份，不能混用参考；不支持 Transformers checkpoint API 时拒绝，不降级。它尚未完成 A2/A3 完整训练验证。`12h` 只是一项显式上限，不是预计耗时。
+`standard` 保持原训练方式；`checkpointed` 显式启用激活重计算，完整 batch、模型形状、精度和步数不变。默认 standard，不自动切换。该模式绑定参考身份，不能混用参考；不支持 Transformers checkpoint API 时拒绝，不降级。它尚未完成 A2/A3 完整训练验证。`2h` 是整个作业的超时上限（7200 秒），不是预计耗时，也不改变单用例内部同步超时。
 
 对应 YAML 新增字段仅位于 `stress.benchmarks.npu_burn`：
 

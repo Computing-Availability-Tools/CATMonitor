@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,51 @@ func (f *modelExecutor) Run(ctx context.Context, b Binding, r workloadapi.Reques
 	}
 	return out, err
 }
+func TestNPUOperatorAndModelTwoHourJobLimit(t *testing.T) {
+	for _, job := range []struct {
+		name  string
+		model *workloadapi.ModelRequest
+	}{
+		{name: "operator"},
+		{name: "generate_reference", model: &workloadapi.ModelRequest{Name: "gpt3", Action: "create_reference", ReferenceID: "ref1"}},
+		{name: "sdc_compare", model: &workloadapi.ModelRequest{Name: "llama2", Action: "compare", ReferenceID: "ref1"}},
+	} {
+		for _, timeout := range []time.Duration{0, 2 * time.Hour, 2*time.Hour + time.Second} {
+			t.Run(job.name+"/"+timeout.String(), func(t *testing.T) {
+				f := &modelExecutor{}
+				m := testManager(t, f)
+				m.cfg.Benchmarks["npu_burn"] = BenchmarkConfig{
+					Enabled: true, Plugin: "npu_burn", Container: "npu", Timeout: 2 * time.Hour,
+					AllowedNPUDevices: []int{0}, AllowedNPUModels: []string{"gpt3", "llama2"},
+					AllowNPUReferenceGeneration: true,
+				}
+				started, err := m.StartWithOptions([]string{"npu_burn"}, RunOptions{
+					Timeout: timeout, NPUDevices: workloadapi.DeviceIDs{0}, NPUModel: workloadapi.CopyModel(job.model),
+				})
+				if timeout > 2*time.Hour {
+					if err == nil || !strings.Contains(err.Error(), "exceeds configured maximum 2h0m0s") {
+						t.Fatalf("7201s must be rejected before workload dispatch: %v", err)
+					}
+					f.selectionMu.Lock()
+					defer f.selectionMu.Unlock()
+					if len(f.bindings) != 0 {
+						t.Fatal("over-budget job was dispatched")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				report := waitForTerminal(t, m, started.JobID)
+				profile := report.Benchmarks[0].Profile
+				if report.Status != StatusHealthy || profile.TimeoutSeconds != 7200 || parameterValue(profile, "maximum_job_timeout") != "7200" {
+					t.Fatalf("job must use and archive the two-hour limit: %+v", report)
+				}
+			})
+		}
+	}
+}
+
 func TestModelJobAuthorizationAndHistory(t *testing.T) {
 	f := &modelExecutor{}
 	m := testManager(t, f)
@@ -129,5 +175,23 @@ func TestModelJobAuthorizationAndHistory(t *testing.T) {
 	history, err := m.History(1)
 	if err != nil || history[0].Benchmarks[0].NPUModel.SavedSteps != 3 {
 		t.Fatalf("%+v %v", history, err)
+	}
+}
+
+func TestNPUModelPreflightRejectsBusyAfterDeploymentPass(t *testing.T) {
+	f := &modelExecutor{selectionExecutor: selectionExecutor{busy: true}}
+	m := testManager(t, f)
+	m.cfg.Benchmarks["npu_burn"] = BenchmarkConfig{Enabled: true, Plugin: "npu_burn", Container: "npu", Timeout: time.Minute,
+		AllowedNPUDevices: []int{0, 1}, AllowedNPUModels: []string{"gpt3"}, AllowNPUReferenceGeneration: true}
+	if available, reason := m.Availability("npu_burn"); !available {
+		t.Fatalf("deployment is ready despite business occupancy: %s", reason)
+	}
+	request := ModelPreflightRequest{NPUDevices: workloadapi.DeviceIDs{0}, NPUModel: &workloadapi.ModelRequest{Name: "gpt3", Action: "create_reference", ReferenceID: "ref1"}}
+	view := m.PreflightModel(context.Background(), request)
+	if view.Status != "failed" || len(view.Failures) != 1 || view.Failures[0].Code != "idle_devices" || !strings.Contains(view.Failures[0].Message, "device busy") {
+		t.Fatalf("model admission skipped idle check: %+v", view)
+	}
+	if f.modelBudget != 0 {
+		t.Fatal("model/HBM probe ran despite known busy devices")
 	}
 }

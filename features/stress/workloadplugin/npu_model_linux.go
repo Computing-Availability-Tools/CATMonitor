@@ -23,7 +23,11 @@ func modelArgs(m *workloadapi.ModelRequest, ids workloadapi.DeviceIDs) []string 
 }
 
 func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
-	p := describeNPUBurn(ctx) // Preserve runtime, mapping, idle, readonly-dir gates.
+	return describeNPUModelWithIdle(ctx, env("CATMONITOR_NPU_REQUIRE_IDLE") == "1")
+}
+
+func describeNPUModelWithIdle(ctx context.Context, requireIdle bool) *workloadapi.ExecutionProfile {
+	p := describeNPUBurnWithIdle(ctx, requireIdle) // Runtime, mapping, idle, readonly-dir gates.
 	// Models use direct synchronization, not the operator worker's timer.
 	parameters := p.Parameters[:0]
 	for _, item := range p.Parameters {
@@ -34,6 +38,14 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 	p.Parameters = parameters
 	p.Resources.RuntimeSeconds = 0
 	m := environmentModel()
+	p.Parameters = append(p.Parameters, parameter("model", "Model", m.Name, ""), parameter("model_action", "Model action", m.Action, ""), parameter("model_reference", "Reference ID", m.ReferenceID, ""))
+	p.Parameters = append(p.Parameters, parameter("model_device_strategy", "Model device strategy", "independent_sequential", ""))
+	p.Resources.ProblemSize = m.Name
+	// Do not initialize model/HBM probes on busy or otherwise unready devices.
+	// Retain the failed asset's diagnostic instead of implying missing references.
+	if p.Preflight.Status == workloadapi.CheckFail {
+		return p
+	}
 	check := workloadapi.AssetCheck{Name: "model_reference_preflight", Path: env("NPU_BURN_EXECUTABLE"), Required: true, Kind: "model_sdc", Status: workloadapi.CheckPass, Message: "model imports/reference match passed; hardware validation is NOT_RUN"}
 	memoryCheck := workloadapi.AssetCheck{Name: "model_memory_preflight", Path: env("NPU_BURN_EXECUTABLE"), Required: true, Kind: "memory", Status: workloadapi.CheckFail, Message: "basic HBM screening was not completed"}
 	referenceConfirmed := false
@@ -99,9 +111,6 @@ func describeNPUModel(ctx context.Context) *workloadapi.ExecutionProfile {
 		p.Preflight.Status, p.Preflight.Message = workloadapi.CheckFail, err.Error()
 	}
 	p.Assets = append(p.Assets, check, memoryCheck)
-	p.Parameters = append(p.Parameters, parameter("model", "Model", m.Name, ""), parameter("model_action", "Model action", m.Action, ""), parameter("model_reference", "Reference ID", m.ReferenceID, ""))
-	p.Parameters = append(p.Parameters, parameter("model_device_strategy", "Model device strategy", "independent_sequential", ""))
-	p.Resources.ProblemSize = m.Name
 	return p
 }
 
@@ -131,7 +140,12 @@ func ResolveRequest(request workloadapi.Request) (Command, error) {
 	// the complete runtime/model/idle preflight immediately before execution.
 	ctx, cancel := context.WithTimeout(context.Background(), workloadapi.ModelPreflightTimeout)
 	defer cancel()
-	if p := describeNPUModel(ctx); p.Preflight.Status == workloadapi.CheckFail {
+	if p := describeNPUModelWithIdle(ctx, true); p.Preflight.Status == workloadapi.CheckFail {
+		for _, check := range p.Assets {
+			if check.Required && check.Status == workloadapi.CheckFail {
+				return Command{}, fmt.Errorf("model preflight %s: %s", check.Name, check.Message)
+			}
+		}
 		return Command{}, fmt.Errorf("model preflight: %s", p.Preflight.Message)
 	}
 	output := env("NPU_BURN_OUTPUT_DIR")

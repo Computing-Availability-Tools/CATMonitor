@@ -1,0 +1,52 @@
+--- a/ascend_npu_burn/case_catalog.py
++++ b/ascend_npu_burn/case_catalog.py
+@@ -1,4 +1,5 @@
+ """Hardware-free case inventory; availability here is not hardware certification."""
++import os
+ import copy
+ import json
+ from pathlib import Path
+@@ -18,5 +19,21 @@
+     return result
+ 
+ 
++def frozen_config(generation=None):
++    selected = os.environ.get('CATMONITOR_NPU_FROZEN_CONFIG_FILE')
++    if not selected:
++        return None
++    path = Path(selected)
++    if not path.is_absolute() or path.stat().st_size > 48 * 1024:
++        raise ValueError('invalid frozen NPU configuration')
++    proof = json.loads(path.read_text())
++    if proof['generation'] not in ('A2', 'A3', 'A5') or (generation and proof['generation'] != generation):
++        raise ValueError('frozen NPU generation mismatch')
++    return copy.deepcopy(proof['config'])
++
++
+ def load_config(generation, directory=None):
++    frozen = frozen_config(generation)
++    if frozen is not None:
++        return frozen
+     directory = Path(directory or Path(__file__).parent / 'config')
+--- a/ascend_npu_burn/common/utils.py
++++ b/ascend_npu_burn/common/utils.py
+@@ -73,3 +73,8 @@
+ class ConfigManager:
+     def __init__(self, json_data: Union[str, Dict], config_data: Union[str, Dict] = None):
++        from ascend_npu_burn.case_catalog import frozen_config
++        frozen = frozen_config()
++        if frozen is not None:
++            json_data = frozen
++            config_data = None
+         if isinstance(json_data, str):
+--- a/ascend_npu_burn/benchmarks/model/run_config.py
++++ b/ascend_npu_burn/benchmarks/model/run_config.py
+@@ -65,5 +65,5 @@
+         run_case["sdc_baseline_mode"] = "save" if self.create_reference else "compare"
+-        run_case["sdc_baseline_loss_tol"] = 0.01
+-        run_case["sdc_baseline_grad_tol"] = 0.1
+-        run_case["sdc_baseline_checksum_tol"] = 0.1
++        run_case["sdc_baseline_loss_tol"] = float(os.environ.get("CATMONITOR_MODEL_LOSS_TOLERANCE", "0.01"))
++        run_case["sdc_baseline_grad_tol"] = float(os.environ.get("CATMONITOR_MODEL_GRAD_TOLERANCE", "0.1"))
++        run_case["sdc_baseline_checksum_tol"] = float(os.environ.get("CATMONITOR_MODEL_CHECKSUM_TOLERANCE", "0.1"))
+         return run_case

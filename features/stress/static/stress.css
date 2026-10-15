@@ -549,3 +549,11 @@ footer { padding: 20px; color: #98a2b3; text-align: center; font-size: 11px; }
   .actions { flex-direction: column; }
   .primary-action { width: 100%; }
 }
+.job-parameter-fields { border: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.job-parameter-fields h4, .job-parameter-fields p { grid-column: 1 / -1; margin: 6px 0; }
+.job-parameter-row { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.job-parameter-row input, .job-parameter-row textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; }
+.job-parameter-row textarea { min-height: 65px; font-family: monospace; }
+.job-parameter-row small { overflow-wrap: anywhere; color: #64748b; }
+.result-card pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .job-parameter-fields { grid-template-columns: 1fr; } }

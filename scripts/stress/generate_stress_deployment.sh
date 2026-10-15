@@ -50,7 +50,7 @@ NPU_REFERENCE_GENERATION=false
 NPU_MODEL_MEMORY_MODE=standard
 NPU_CONFIG_DIR=
 NPU_CONFIG_IDENTITY=null
-NPU_JOB_TIMEOUT=30m
+NPU_JOB_TIMEOUT=2h
 NPU_SECURITY_PROFILE=
 FORCE=false
 
@@ -91,7 +91,7 @@ NPU workload profile (enabled only when --npu-image is supplied):
                             Allow single-device creation of immutable references
   --npu-model-memory-mode M  standard (default) or checkpointed; full model shapes
   --npu-config-dir PATH      Complete external JSON config directory (read-only)
-  --npu-job-timeout DURATION Positive s/m/h job limit (default: 30m; not run duration)
+  --npu-job-timeout DURATION Positive s/m/h job limit (default: 2h; not run duration)
   --npu-security-profile P   restricted or legacy-privileged; single is restricted
   --npu-host-root PATH       Fixture root for host discovery (default: /)
   --npu-device-root PATH     Host device directory (default: /dev)
@@ -447,7 +447,7 @@ if [ "$NPU_ENABLED" = true ]; then
     cat >"$OUTPUT_DIR/npu-workload.env" <<EOF
 CATMONITOR_NPU_DEVICE_COUNT=${#device_ids[@]}
 CATMONITOR_NPU_DEVICE_MODE=$NPU_DEVICE_MODE
-CATMONITOR_NPU_REQUIRE_IDLE=1
+CATMONITOR_NPU_REQUIRE_IDLE=0
 CATMONITOR_MODEL_REFERENCE_ROOT=/var/lib/catmonitor/stress/model-references
 CATMONITOR_MODEL_MEMORY_MODE=$NPU_MODEL_MEMORY_MODE
 ASCEND_RT_VISIBLE_DEVICES=$logical_device_csv
@@ -477,7 +477,7 @@ EOF
     environment:
       CATMONITOR_NPU_DEVICE_COUNT: '${#device_ids[@]}'
       CATMONITOR_NPU_DEVICE_MODE: '$NPU_DEVICE_MODE'
-      CATMONITOR_NPU_REQUIRE_IDLE: '1'
+      CATMONITOR_NPU_REQUIRE_IDLE: '0'
       CATMONITOR_MODEL_REFERENCE_ROOT: /var/lib/catmonitor/stress/model-references
       CATMONITOR_MODEL_MEMORY_MODE: '$NPU_MODEL_MEMORY_MODE'
       OPENBLAS_NUM_THREADS: '$NPU_THREADS'

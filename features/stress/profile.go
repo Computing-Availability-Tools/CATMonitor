@@ -206,6 +206,7 @@ func copyExecutionProfile(profile *ExecutionProfile) *ExecutionProfile {
 		return nil
 	}
 	copy := *profile
+	copy.FrozenParameters = workloadapi.CopyFrozenParameters(profile.FrozenParameters)
 	copy.Parameters = append([]ProfileParameter(nil), profile.Parameters...)
 	copy.Assets = append([]AssetCheck(nil), profile.Assets...)
 	if profile.RuntimeIdentity != nil {

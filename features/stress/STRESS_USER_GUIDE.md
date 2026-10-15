@@ -22,6 +22,55 @@ optional NPU Stress（Ascend NPU Burn）
 
 ## 1. 镜像与容器
 
+### 按作业高级参数（开发候选，须配套更新镜像）
+
+CLI/Web 仍调用唯一 daemon Controller。Web 的“高级参数 · 仅本次作业”默认折叠，
+留空继承部署值；改动只进入当前 Job，不写共享 YAML/JSON，不改变下一次作业默认值。
+新 Control 与对应 CPU/NPU workload 必须同步更新；旧 workload 收到显式参数会拒绝，
+不会静默忽略。已发布旧标签不因本地开发自动获得该能力。
+
+```bash
+# STREAM 数组大小/内部重复次数仍为编译参数；这里只设置 OpenMP 线程。
+catmonitor stress run --bench stream --stream-threads 2 --timeout 60s
+
+# 必须 P×Q=MPI 进程数，且 ranks×threads 不超过有效 CPU 容量。
+catmonitor stress run --bench hpl --hpl-n 1024 --hpl-nb 64 \
+  --hpl-p 1 --hpl-q 1 --hpl-mpi-processes 1 --hpl-threads-per-process 1
+
+catmonitor stress run --bench hpcg --hpcg-nx 16 --hpcg-ny 16 --hpcg-nz 16 \
+  --hpcg-runtime-seconds 2 --hpcg-mpi-processes 1 --hpcg-threads-per-process 1
+
+# shape 保持上游每个算子的结构；例中两矩阵收缩维 K 必须一致。
+catmonitor stress run --bench npu_burn --npu-devices 0 --npu-cases matmul \
+  --npu-operator-parameters '{"matmul":{"dtype":["float16"],"shape":[[[128,128],[128,128]]],"pattern":["gauss_random"],"run_count":2}}'
+```
+
+也可用 `--job-parameters-file params.json` / `--job-parameters-file -` 提交同一份
+typed JSON；不能与逐字段 flags 混用。参数不是命令模板，不能指定路径、环境变量、
+容器、可执行程序或未知字段（包括 `exec_count`）。内存预算只是下界筛查，不是独占资源
+预留或峰值显存保证；设备授权和启动前空闲检查仍然有效。
+
+NPU 容器部署默认 `CATMONITOR_NPU_REQUIRE_IDLE=0`，允许在业务运行时完成容器启动
+和部署 doctor/healthcheck（驱动访问、运行依赖及拓扑仍须通过）。这不是“允许并发压测”：
+Controller 在每次算子/模型作业准入时强制检查空闲，workload 在真正执行前再次检查；
+忙碌、未知或不完整占用信息均拒绝，不杀业务、不自动排队。普通预检 PASS 不等于
+资源预约。完整分层规则和只读检查命令见
+[NPU 部署指南](../../docker/README-npu.md#有-npu-业务时的容器与管理查询)。
+HPCG 的本次 nx/ny/nz 必须至少 16，避免上游自动扩展小网格造成“请求值≠执行值”。
+历史部署默认小网格仍按上游规则扩展，但冻结回执记录扩展后的真实尺寸。
+
+模型参数用 `--model-parameters '{"batch_size":1,"run_count":2}'`，或
+`--model-batch-size` / `--model-run-count` 等单字段 flags；配合已有的模型、
+action、reference ID 入口。SDC 的 `--sdc-loss-tolerance`、`--sdc-grad-tolerance`、
+`--sdc-checksum-tolerance` 与训练参数分开，二者都绑定参考身份；任一变化都要求生成
+匹配的新参考，不能用旧参考静默放宽比较。支持范围仍以代际策略、真实 dtype API 和
+本次预检为准；A2 `quant_matmul` 不通过改 shape/batch 自动获得 A3 策略。
+
+Controller 将本次完整有效参数及哈希冻结；Run 使用同一快照，即使随后共享配置变化。
+报告保存 `requested_parameters`、profile 的 `frozen_parameters` 及开始执行后的
+`execution_parameters`。NPU 另核对实际加载的算子配置/模型配置及本轮 CSV；请求、
+预检、启动进程都不等于用例 PASS。取消仍针对 Job ID，保留既有进程组回收机制。
+
 | 镜像 | 作用 | 是否必需 |
 |---|---|---:|
 | Control | daemon、Web、DFeE、CLI | 必需 |
@@ -246,6 +295,9 @@ docker exec "$DAEMON_ID" catmonitor stress cancel --job '<job-id>'
 ```
 
 一次作业可通过 `--timeout 120s` 缩短超时，但不能超过 YAML 中的项目上限。
+NPU Burn 的默认上限为 `2h`（7200 秒），算子、模型参考生成与模型 SDC 对照共用
+`stress.benchmarks.npu_burn.timeout`。这是最长作业时限，不保证持续运行 2 小时；
+不改变默认 300 秒的内部同步超时，Web/CLI 也不能将本次时限提高到部署上限以上。
 同一 daemon 同时只允许一个 active job。
 
 ## 8. Web、结果和历史

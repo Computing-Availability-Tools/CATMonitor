@@ -64,7 +64,7 @@ stress:
       enabled: false
       plugin: npu_burn
       container: catmonitor-stress-npu
-      timeout: 30m
+      timeout: 2h
 ```
 
 ### 3.2 校验

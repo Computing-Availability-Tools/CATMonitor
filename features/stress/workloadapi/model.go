@@ -1,6 +1,7 @@
 package workloadapi
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"time"
@@ -54,18 +55,20 @@ func CopyModel(m *ModelRequest) *ModelRequest {
 }
 
 type ModelResult struct {
-	JobID         string    `json:"job_id"`
-	Model         string    `json:"model"`
-	Action        string    `json:"action"`
-	ReferenceID   string    `json:"reference_id"`
-	Devices       DeviceIDs `json:"devices"`
-	Outcome       string    `json:"outcome"`
-	CheckedSteps  int       `json:"checked_steps"`
-	ExpectedSteps int       `json:"expected_steps"`
-	SavedSteps    int       `json:"saved_steps"`
-	Errors        int       `json:"errors"`
-	CSV           string    `json:"csv"`
-	MemoryMode    string    `json:"memory_mode,omitempty"`
+	JobID           string                     `json:"job_id"`
+	Model           string                     `json:"model"`
+	Action          string                     `json:"action"`
+	ReferenceID     string                     `json:"reference_id"`
+	Devices         DeviceIDs                  `json:"devices"`
+	Outcome         string                     `json:"outcome"`
+	CheckedSteps    int                        `json:"checked_steps"`
+	ExpectedSteps   int                        `json:"expected_steps"`
+	SavedSteps      int                        `json:"saved_steps"`
+	Errors          int                        `json:"errors"`
+	CSV             string                     `json:"csv"`
+	MemoryMode      string                     `json:"memory_mode,omitempty"`
+	EffectiveConfig map[string]json.RawMessage `json:"effective_config,omitempty"`
+	SDCTolerances   *SDCTolerances             `json:"sdc_tolerances,omitempty"`
 }
 
 func (r *ModelResult) Validate(m *ModelRequest, devices DeviceIDs, jobID string) error {

@@ -279,6 +279,10 @@ func describeHPCG(ctx context.Context) *workloadapi.ExecutionProfile {
 }
 
 func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
+	return describeNPUBurnWithIdle(ctx, env("CATMONITOR_NPU_REQUIRE_IDLE") == "1")
+}
+
+func describeNPUBurnWithIdle(ctx context.Context, requireIdle bool) *workloadapi.ExecutionProfile {
 	executable, output, logDir, runtimeHome := env("NPU_BURN_EXECUTABLE"), env("NPU_BURN_OUTPUT_DIR"), env("NPU_BURN_LOG_DIR"), env("HOME")
 	seconds, secondsErr := positive("NPU_BURN_INTERNAL_TIMEOUT_SECONDS")
 	devices, nodes, topology, topologyMessage, topologyErr := npuTopology(ctx)
@@ -310,7 +314,7 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 		deviceAsset.Message = topologyErr.Error()
 	}
 	assets = append(assets, deviceAsset)
-	if env("CATMONITOR_NPU_REQUIRE_IDLE") == "1" {
+	if requireIdle {
 		idle := workloadapi.AssetCheck{Name: "idle_devices", Path: "npu-smi info", Kind: "process_inventory", Required: true, Status: workloadapi.CheckPass, Message: "node-wide process inventory reports no running NPU processes; not an exclusive reservation"}
 		if err := checkNPUIdle(ctx, len(nodes)); err != nil {
 			idle.Status = workloadapi.CheckFail
@@ -336,6 +340,8 @@ func describeNPUBurn(ctx context.Context) *workloadapi.ExecutionProfile {
 		parameter("chip_generation", "Chip generation", env("NPU_BURN_CHIP_GENERATION"), ""), parameter("sdc_detection", "SDC detection", "enabled", ""),
 		parameter("internal_timeout", "Internal stream synchronization timeout", env("NPU_BURN_INTERNAL_TIMEOUT_SECONDS"), "seconds"),
 		parameter("model_memory_mode", "Model memory mode", envDefault("CATMONITOR_MODEL_MEMORY_MODE", "standard"), ""),
+		parameter("idle_check_required", "NPU idle check performed for this preflight", strconv.FormatBool(requireIdle), ""),
+		parameter("idle_policy", "NPU job idle policy", "required_at_submission_and_execution", ""),
 	}
 	params = append(params, caseParams...)
 	return profile("npu_burn", params, workloadapi.ResourceProfile{RuntimeSeconds: seconds, ProblemSize: workload}, assets, mpiNone("MPI is not used by Ascend NPU Burn"), failed, 0)

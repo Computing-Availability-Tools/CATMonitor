@@ -78,7 +78,7 @@ stress:
       enabled: false
       plugin: npu_burn
       container: catmonitor-stress-npu
-      timeout: 30m
+      timeout: 2h
 ```
 
 配置声明固定 plugin/container/timeout 绑定。MPI、线程、问题规模和 NPU 默认设备

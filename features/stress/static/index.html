@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CATMonitor 可靠性压测</title>
-  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261013.5">
+  <link id="stress-style" rel="stylesheet" href="./static/stress.css?v=20261014.1">
 </head>
 <body>
   <header class="topbar">
@@ -141,6 +141,14 @@
           <div id="profile-cards" class="profile-cards"></div>
         </details>
 
+        <details id="job-parameters" class="selection-details" hidden>
+          <summary>高级参数 · 仅本次作业</summary>
+          <p class="selection-hint">留空沿用部署值；修改不会写回共享配置。Controller 按修改后的完整参数重新预检并冻结。时限上限不是压测持续时长。</p>
+          <fieldset id="job-parameter-fields" class="job-parameter-fields"></fieldset>
+          <button id="job-parameter-reset" type="button">恢复部署默认值</button>
+          <p class="selection-hint">STREAM 数组大小与内部重复次数仍为编译参数。模型训练参数或 SDC 阈值变化后，必须生成匹配的新参考；不会静默放宽旧参考。</p>
+        </details>
+
         <div class="run-settings">
           <div class="timeout-field">
             <label for="timeout">作业时限（可选）</label>
@@ -224,6 +232,6 @@
       }
     }, 3000);
   </script>
-  <script src="./static/stress.js?v=20261013.5"></script>
+  <script src="./static/stress.js?v=20261015.1"></script>
 </body>
 </html>

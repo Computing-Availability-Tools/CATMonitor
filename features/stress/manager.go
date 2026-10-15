@@ -91,6 +91,7 @@ func (m *Manager) Start(names []string) (Report, error) {
 }
 
 func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, error) {
+	options.Parameters = workloadapi.CopyJobParameters(options.Parameters)
 	m.mu.Lock()
 	if !m.cfg.Enabled {
 		m.mu.Unlock()
@@ -105,6 +106,9 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 
 	selected, err := m.selected(names)
 	if err != nil {
+		return Report{}, err
+	}
+	if err := options.Parameters.Validate(selected, options.NPUModel, options.NPUCases); err != nil {
 		return Report{}, err
 	}
 	if err := m.validateTimeout(selected, options.Timeout); err != nil {
@@ -134,16 +138,30 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 			if options.NPUModel != nil {
 				profile, npuSelection, describeErr = m.prepareNPUModel(options)
 			} else {
-				profile, npuSelection, describeErr = m.prepareNPU(options.NPUDevices, options.NPUCases, options.Timeout)
+				profile, npuSelection, describeErr = m.prepareNPUParameters(options.NPUDevices, options.NPUCases, options.Timeout, options.Parameters)
 			}
 		} else {
-			profile, describeErr = m.describeJob(m.binding(name), options.Timeout)
+			binding := m.binding(name)
+			binding.Parameters = options.Parameters.For(name)
+			profile, describeErr = m.describeJob(binding, options.Timeout)
 		}
 		if describeErr != nil {
 			return Report{}, fmt.Errorf("benchmark %q describe/preflight failed: %w", name, describeErr)
 		}
 		if profile.Preflight.Status == CheckFail {
 			return Report{}, fmt.Errorf("benchmark %q is unavailable: %s", name, failedPreflightMessage(profile))
+		}
+		if options.Parameters.For(name) != nil && profile.FrozenParameters == nil {
+			return Report{}, fmt.Errorf("benchmark %s image must be updated for job parameters", name)
+		}
+		if f := profile.FrozenParameters; f != nil && f.Effective.HPCG != nil && f.Effective.HPCG.RuntimeSeconds != nil {
+			limit := effectiveTimeout(m.cfg.Benchmarks[name].Timeout)
+			if options.Timeout > 0 && options.Timeout < limit {
+				limit = options.Timeout
+			}
+			if time.Duration(*f.Effective.HPCG.RuntimeSeconds)*time.Second > limit {
+				return Report{}, fmt.Errorf("HPCG target runtime exceeds the effective job timeout")
+			}
 		}
 		profiles[name] = profile
 	}
@@ -160,6 +178,7 @@ func (m *Manager) StartWithOptions(names []string, options RunOptions) (Report, 
 		StartedAt: now, Platform: runtime.GOOS, Status: StatusRunning,
 		TimeoutSeconds:      options.Timeout.Milliseconds() / 1000,
 		ConfigurationSHA256: aggregateConfigurationSHA256(selected, profiles),
+		RequestedParameters: workloadapi.CopyJobParameters(options.Parameters),
 	}
 	for _, name := range selected {
 		report.Benchmarks = append(report.Benchmarks, BenchmarkResult{
@@ -306,6 +325,11 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 		Benchmark: name, TimeoutSeconds: int64(timeout / time.Second),
 		Options: map[string]json.RawMessage{},
 	}
+	if profile != nil && profile.FrozenParameters != nil {
+		request.FrozenParameters = workloadapi.CopyFrozenParameters(profile.FrozenParameters)
+		binding.PinnedContainerID = parameterValue(profile, "workload_container_id")
+		binding.PinnedImageID = parameterValue(profile, "workload_image_id")
+	}
 	if result.NPUSelection != nil {
 		binding.NPUDevices = append(workloadapi.DeviceIDs(nil), result.NPUSelection.Selected...)
 		request.NPUDevices = append(workloadapi.DeviceIDs(nil), binding.NPUDevices...)
@@ -317,6 +341,9 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 	runCtx, cancel := context.WithTimeout(ctx, timeout+transportGrace)
 	defer cancel()
 	envelope, err := m.executor.Run(runCtx, binding, request)
+	if envelope.ExecutionParameters != nil && envelope.ExecutionParameters.Validate(jobID, name, request.FrozenParameters) == nil {
+		result.ExecutionParameters = workloadapi.CopyExecutionParameters(envelope.ExecutionParameters)
+	}
 	if err == nil && name == "npu_burn" && request.NPUModel == nil && envelope.NPUParameters != nil &&
 		envelope.NPUParameters.Validate(jobID, request.NPUCases) == nil {
 		result.NPUParameters = workloadapi.CopyNPUParameters(envelope.NPUParameters)
@@ -360,6 +387,9 @@ func (m *Manager) runBenchmark(ctx context.Context, jobID, name string, timeoutO
 		}
 		return finish(StatusTimeLimitReached, envelope.Message)
 	case StatusHealthy:
+		if request.FrozenParameters != nil && result.ExecutionParameters == nil {
+			return finish(StatusUnhealthy, "workload did not confirm the frozen execution parameters")
+		}
 		if result.NPUSelection != nil && !workloadapi.SameCases(result.NPUSelection.SelectedCases, envelope.NPUCases) {
 			return finish(StatusUnhealthy, "NPU result operator coverage does not match this job's selection")
 		}
@@ -718,6 +748,7 @@ func writeJSONAtomic(path string, value any) error {
 
 func copyReport(report Report) *Report {
 	copy := report
+	copy.RequestedParameters = workloadapi.CopyJobParameters(report.RequestedParameters)
 	copy.Benchmarks = append([]BenchmarkResult(nil), report.Benchmarks...)
 	for i := range copy.Benchmarks {
 		copy.Benchmarks[i].Profile = copyExecutionProfile(report.Benchmarks[i].Profile)
@@ -725,6 +756,7 @@ func copyReport(report Report) *Report {
 		copy.Benchmarks[i].NPUSelection = copyNPUSelection(report.Benchmarks[i].NPUSelection)
 		copy.Benchmarks[i].NPUCSV = copyNPUCSV(report.Benchmarks[i].NPUCSV)
 		copy.Benchmarks[i].NPUParameters = workloadapi.CopyNPUParameters(report.Benchmarks[i].NPUParameters)
+		copy.Benchmarks[i].ExecutionParameters = workloadapi.CopyExecutionParameters(report.Benchmarks[i].ExecutionParameters)
 		if failure := report.Benchmarks[i].Failure; failure != nil {
 			cloned := *failure
 			copy.Benchmarks[i].Failure = &cloned
@@ -732,6 +764,16 @@ func copyReport(report Report) *Report {
 		if model := report.Benchmarks[i].NPUModel; model != nil {
 			cloned := *model
 			cloned.Devices = append(workloadapi.DeviceIDs(nil), model.Devices...)
+			if model.EffectiveConfig != nil {
+				data, _ := json.Marshal(model.EffectiveConfig)
+				cloned.EffectiveConfig = nil
+				_ = json.Unmarshal(data, &cloned.EffectiveConfig)
+			}
+			if model.SDCTolerances != nil {
+				data, _ := json.Marshal(model.SDCTolerances)
+				cloned.SDCTolerances = nil
+				_ = json.Unmarshal(data, &cloned.SDCTolerances)
+			}
 			copy.Benchmarks[i].NPUModel = &cloned
 		}
 	}

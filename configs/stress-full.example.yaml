@@ -17,4 +17,4 @@ stress:
     stream: { enabled: true, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
     hpl: { enabled: true, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 10m }
     hpcg: { enabled: true, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
-    npu_burn: { enabled: true, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
+    npu_burn: { enabled: true, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 2h }

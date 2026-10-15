@@ -124,3 +124,14 @@ func TestNPUIdleFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestNPUIdleRejectsBusinessPIDWithoutProcessName(t *testing.T) {
+	// npu-smi can report host PIDs without names in a separate PID namespace.
+	// Management-query success must not become permission to run on busy cards.
+	output := "| 2 910B4 | OK |\n| 5 910B4 | OK |\n" +
+		"| NPU Chip | Process id | Process name | Process memory(MB) |\n" +
+		"+===+\n| 2 0 | 12345 | | 1762 |\n+===+\n| 5 0 | 12346 | | 1762 |\n+===+\n"
+	if err := parseNPUIdle(output, 2); err == nil {
+		t.Fatal("accepted busy devices because process names were blank")
+	}
+}

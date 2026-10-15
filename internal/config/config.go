@@ -130,7 +130,7 @@ func Default() *Config {
 				"stream":   {Plugin: "stream", Container: "catmonitor-stress-cpu", User: "65532:65532", Timeout: time.Minute},
 				"hpl":      {Plugin: "hpl", Container: "catmonitor-stress-cpu", User: "65532:65532", Timeout: 2 * time.Hour},
 				"hpcg":     {Plugin: "hpcg", Container: "catmonitor-stress-cpu", User: "65532:65532", Timeout: 3 * time.Minute},
-				"npu_burn": {Plugin: "npu_burn", Container: "catmonitor-stress-npu", Timeout: 30 * time.Minute},
+				"npu_burn": {Plugin: "npu_burn", Container: "catmonitor-stress-npu", Timeout: 2 * time.Hour},
 			},
 		},
 		FaultSub: FaultSubConfig{

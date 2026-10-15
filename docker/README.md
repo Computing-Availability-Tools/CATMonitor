@@ -129,6 +129,68 @@ docker exec "$DAEMON_ID" catmonitor stress doctor \
 http://<node-address>:19322/
 ```
 
+### 6.1 简化 Compose 启动与查询实际端口
+
+`docker/compose.sh` 只是现有 Compose 文件的薄启动入口，不是第二套 installer。
+它不构建镜像、不运行压测，不替换 generator，也不会自动停止其他项目。
+先按对应硬件指南设置 `CATMONITOR_IMAGE`；启用 Stress 时先运行原有 generator。
+
+Monitoring-only，例如 Ascend 节点：
+
+```bash
+bash docker/compose.sh --hardware npu --config "$PWD/docker/catmonitor.yaml" config
+bash docker/compose.sh --hardware npu --config "$PWD/docker/catmonitor.yaml" up
+bash docker/compose.sh --hardware npu --config "$PWD/docker/catmonitor.yaml" \
+  --public-host '<node-address>' urls
+```
+
+CPU、NPU、Full 模式分别使用 `--mode cpu`、`--mode npu`、`--mode full`；
+`--generated` 指向已生成的目录，模式和 Control 镜像必须与生成结果一致。
+例如，**仅在已生成 Full 配置后**：
+
+```bash
+bash docker/compose.sh --hardware npu --mode full \
+  --generated /etc/catmonitor/generated-stress config
+bash docker/compose.sh --hardware npu --mode full \
+  --generated /etc/catmonitor/generated-stress up
+bash docker/compose.sh --hardware npu --mode full \
+  --generated /etc/catmonitor/generated-stress --public-host '<node-address>' urls
+```
+
+Generic/GPU 使用 `--hardware generic|gpu --mode cpu`。所有操作都使用相同的
+`--hardware/--mode/--generated/--project`，避免一次启动漏掉某个 overlay。
+已有部署必须沿用它的项目名和 generator 中的 workload 容器名；新项目名并不能
+消除固定 workload 名称以及宿主监听端口冲突。
+
+- 优先使用 `docker compose`。只有 v1 `docker-compose` 时，入口需要 Python 3 和
+  PyYAML，将同一组文件临时转换为 `version: '2.4'`，只处理 profiles 和
+  `bind.create_host_path` 的语法差异，不修改源码 YAML。
+- 未选择的 workload 会排除；runtime、devices、只读根、capabilities、环境与挂载
+  保持原值。旧 Compose 不支持的其他属性仍明确报错，不能静默放宽权限。
+- legacy 路径在删除 `create_host_path: false` 前检查宿主源路径存在；需要的变量
+  必须显式 `export`，不依赖 `.env` 提供这些受保护路径。
+- `config` 检查解析结果，`up` 再检查配置后启动。`ps/logs/exec/stop/down` 委托给
+  同一个 Compose project；默认不会删除 volume。
+
+### 6.2 19322 自动回退的边界
+
+主仓 Web 的默认监听是 `:19322`。**仅遇到端口占用**时，Web 依次尝试
+19323、19324……；DFeE 页面从 `:19323` 同样递增。无需为这两项反复手改 YAML。
+启动顺序和其他进程会影响最终端口，因此上面的 `urls` 从**本次容器启动日志**
+读取真实监听地址；服务尚未就绪时明确报错，不把默认端口当成真实结果。
+
+这不是所有服务的自动选端口机制：daemon Metrics `19320`、faultsub `19321`
+及 DFeE Exporter `9333` 不属于 Web/DFeE 页面的回退范围。第二套完整监控部署
+仍需先处理这些固定端口冲突，不能只改 Web 端口就并行部署。
+
+当前 Compose 使用 `network_mode: host`，Web 实际监听端口就是节点端口；不需要
+额外 `ports:` 映射。`--public-host` 只用于打印 URL，不会建立 NAT/SSH 转发或
+开放防火墙。直连允许的端口只有固定范围时，可显式设置起始地址，例如
+`export CATMONITOR_WEB_ADDR=:5001`，但自动递增不保证仍在防火墙开放范围内。
+要求外部地址永久固定时，应为该端口留出空间或使用反向代理。
+
+当前 Run/Cancel 尚无认证/RBAC；直接通过节点 IP 访问时必须限制可信网络。
+
 ## 7. Monitoring 兼容边界与验证范围
 
 Unified Stress V2 是原 `develop` Monitoring 的增量能力，不替换原有部署契约：

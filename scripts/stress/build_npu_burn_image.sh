@@ -518,6 +518,15 @@ PATCHED_SOURCE_SHA256=$(hash_tree "$STAGED_SOURCE")
 if [ "$MODEL_SDC_ENABLED" = true ] && [ "$COMPAT_PROFILE" = none ]; then
     die "model SDC requires an explicit compatibility profile and model-sdc-v1 patch"
 fi
+case "$COMPAT_PROFILE" in
+    portable-model-sdc-memory-job-v1|a2-upstream-model-sdc-memory-job-v1)
+        [ "$MODEL_SDC_ENABLED" = true ] || die "job model profile requires --enable-model-sdc"
+        grep -q 'def frozen_config(' "$STAGED_SOURCE/ascend_npu_burn/case_catalog.py" && \
+        grep -q 'json_data = frozen' "$STAGED_SOURCE/ascend_npu_burn/common/utils.py" && \
+        grep -q 'CATMONITOR_MODEL_LOSS_TOLERANCE' "$STAGED_SOURCE/ascend_npu_burn/benchmarks/model/run_config.py" || \
+            die "job parameter profile requires the applied job-parameters-v1 patch"
+        ;;
+esac
 
 install -m 0644 "$DOCKERFILE_TEMPLATE" "$CONTEXT/Dockerfile"
 install -m 0755 "$ENTRYPOINT_TEMPLATE" "$CONTEXT/entrypoint.sh"
@@ -527,6 +536,19 @@ install -m 0644 "$RUNTIME_ABI_VALIDATOR_TEMPLATE" "$CONTEXT/validate_runtime_abi
 install -m 0755 "$RUNTIME_PREFLIGHT_TEMPLATE" "$CONTEXT/runtime_preflight.sh"
 install -m 0644 "$REPO_ROOT/docker/stress/npu/launch.py" "$CONTEXT/launch.py"
 install -m 0644 "$REPO_ROOT/docker/stress/npu/model_sdc.py" "$CONTEXT/model_sdc.py"
+install -m 0644 "$REPO_ROOT/docker/stress/npu/job_config.py" "$CONTEXT/job_config.py"
+if [ -f "$STAGED_SOURCE/ascend_npu_burn/config/base_config.json" ]; then
+    install -m 0644 "$STAGED_SOURCE/ascend_npu_burn/config/base_config.json" "$CONTEXT/job-parameter-base.json"
+else
+    case "$COMPAT_PROFILE" in *-job-v1) die "job parameter profile requires the complete bundled base config" ;; esac
+    printf '{}\n' > "$CONTEXT/job-parameter-base.json"
+fi
+if [ -f "$STAGED_SOURCE/ascend_npu_burn/config/a3_config.json" ]; then
+    install -m 0644 "$STAGED_SOURCE/ascend_npu_burn/config/a3_config.json" "$CONTEXT/job-parameter-a3.json"
+else
+    case "$COMPAT_PROFILE" in *-job-v1) die "job parameter profile requires the complete bundled A3 config" ;; esac
+    printf '{}\n' > "$CONTEXT/job-parameter-a3.json"
+fi
 install -m 0644 "$REPO_ROOT/docker/stress/npu/package_inventory.py" "$CONTEXT/package_inventory.py"
 install -m 0644 "$RUNTIME_PACKAGES_TEMPLATE" "$CONTEXT/runtime-packages.txt"
 DOCKERFILE_SHA256=$(sha256_file "$DOCKERFILE_TEMPLATE")
@@ -537,6 +559,9 @@ RUNTIME_ABI_VALIDATOR_SHA256=$(sha256_file "$RUNTIME_ABI_VALIDATOR_TEMPLATE")
 RUNTIME_PREFLIGHT_SHA256=$(sha256_file "$RUNTIME_PREFLIGHT_TEMPLATE")
 LAUNCHER_SHA256=$(sha256_file "$REPO_ROOT/docker/stress/npu/launch.py")
 MODEL_ADAPTER_SHA256=$(sha256_file "$REPO_ROOT/docker/stress/npu/model_sdc.py")
+JOB_PARAMETERS_HELPER_SHA256=$(sha256_file "$REPO_ROOT/docker/stress/npu/job_config.py")
+JOB_PARAMETERS_SCHEMA_SHA256=$(sha256_file "$CONTEXT/job-parameter-base.json")
+JOB_PARAMETERS_A3_SCHEMA_SHA256=$(sha256_file "$CONTEXT/job-parameter-a3.json")
 RUNTIME_PACKAGES_SHA256=$(sha256_file "$RUNTIME_PACKAGES_TEMPLATE")
 BUILD_VALIDATION_NONCE="$(date -u +%s)-$$"
 DOCKER_BUILD_LOG="$RUN_ROOT/docker-build.log"
@@ -797,6 +822,9 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"runtime_preflight_sha256":'; json_string "$RUNTIME_PREFLIGHT_SHA256"
     printf ',"launcher_sha256":'; json_string "$LAUNCHER_SHA256"
     printf ',"model_adapter_sha256":'; json_string "$MODEL_ADAPTER_SHA256"
+    printf ',"job_parameters_helper_sha256":'; json_string "$JOB_PARAMETERS_HELPER_SHA256"
+    printf ',"job_parameters_schema_sha256":'; json_string "$JOB_PARAMETERS_SCHEMA_SHA256"
+    printf ',"job_parameters_a3_schema_sha256":'; json_string "$JOB_PARAMETERS_A3_SCHEMA_SHA256"
     printf ',"runtime_packages_sha256":'; json_string "$RUNTIME_PACKAGES_SHA256"; printf '}'
     printf ',"docker":{"path":'; json_string "$DOCKER_BIN"
     printf ',"server_version":'; json_string "$DOCKER_VERSION"

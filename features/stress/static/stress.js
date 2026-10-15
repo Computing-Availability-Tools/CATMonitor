@@ -17,6 +17,9 @@ let configRefreshedAt = 0;
 let historyReports = [];
 let viewedJobID = '';
 const expandedProfiles = new Set();
+const jobParameterDraft = new Map();
+let jobParameterFields = [];
+let jobParameterSelectionKey = '';
 
 const byId = id => document.getElementById(id);
 const benchmarkInfo = {
@@ -486,6 +489,7 @@ function renderConfig() {
     : '正在准备运行环境…';
   renderProfilePreview();
   renderNPUSelection();
+  renderJobParameters();
   renderSummary();
 }
 
@@ -507,8 +511,11 @@ function unavailableNPUReason(candidate) {
 }
 
 function currentModelPreflightRequest() {
-  return {npu_devices: Array.from(selectedNPUDevices || []).sort((a,b) => a-b),
+  const request = {npu_devices: Array.from(selectedNPUDevices || []).sort((a,b) => a-b),
     npu_model: {name:selectedNPUModel, action:npuModelAction, reference_id:byId('npu-reference-id').value.trim()}};
+  const parameters = currentJobParameters();
+  if (parameters && parameters.npu_burn) request.parameters = {npu_burn: parameters.npu_burn};
+  return request;
 }
 
 function modelPreflightKey() {
@@ -526,7 +533,9 @@ function renderModelPreflight() {
   const items = byId('npu-model-preflight-items');
   items.replaceChildren();
   panel.hidden = true;
-  const request = currentModelPreflightRequest();
+  let request;
+  try { request = currentModelPreflightRequest(); }
+  catch (error) { button.disabled = true; summary.textContent = error.message; return; }
   const model = request.npu_model;
   const valid = !!model.name && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(model.reference_id) &&
     request.npu_devices.length > 0 && (model.action !== 'create_reference' || request.npu_devices.length === 1);
@@ -718,7 +727,110 @@ function renderNPUSelection() {
     row.append(name, document.createTextNode(' · ' + unavailableNPUReason(candidate)));
     unavailableList.appendChild(row);
   }
+  renderJobParameters();
   renderModelPreflight();
+}
+
+const cpuJobFields = {
+  hpl: [['n','N'],['nb','NB'],['p','P'],['q','Q'],['mpi_processes','MPI 进程数'],['threads_per_process','每进程线程数']],
+  hpcg: [['nx','nx'],['ny','ny'],['nz','nz'],['runtime_seconds','运行时间（秒）'],['mpi_processes','MPI 进程数'],['threads_per_process','每进程线程数']],
+  stream: [['threads','OpenMP 线程数']]
+};
+const modelJobFields = ['run_count','num_warmup','batch_size','seq_len','random_seed','sample_pool','num_classes','vocab_size','hidden_size','num_hidden_layers','num_attention_heads','intermediate_size','learning_rate'];
+const jobTensorKeys = ['shape','MKN','BSHN','BNSH','input_data','weight_data','B','N','K','k','C','H','W','seq_len','in.out','batch_size','head_num','head_dim','ESKN','ND'];
+
+function renderJobParameters() {
+  const panel = byId('job-parameters'), fields = byId('job-parameter-fields');
+  if (!panel || !fields) return;
+  panel.hidden = !selected || !selected.size;
+  fields.disabled = !!report && report.status === 'running';
+  const key = JSON.stringify([Array.from(selected || []),npuMode,selectedNPUModel,Array.from(selectedNPUCases || []),((config && config.benchmarks) || []).map(b=>b.profile && b.profile.configuration_sha256)]);
+  if (key === jobParameterSelectionKey) return; // polling must not destroy an edited/focused input
+  jobParameterSelectionKey = key;
+  jobParameterFields = [];
+  fields.replaceChildren();
+  const heading = text => { const h = document.createElement('h4'); h.textContent = text; fields.appendChild(h); };
+  const input = (path, label, defaultValue, kind = 'integer') => {
+    const row = document.createElement('label'); row.className = 'job-parameter-row';
+    const caption = document.createElement('span'); caption.textContent = label;
+    const control = document.createElement(kind === 'json' ? 'textarea' : 'input');
+    // A textarea has a getter-only type; only input controls accept this setter.
+    if (kind !== 'json') control.type = kind === 'integer' || kind === 'number' ? 'number' : 'text';
+    if (control.type === 'number') { control.min = kind === 'number' || path.includes('num_warmup') || path.includes('random_seed') ? '0' : '1'; control.step = kind === 'number' ? 'any' : '1'; }
+    control.value = jobParameterDraft.get(path) || '';
+    control.placeholder = defaultValue == null ? '部署未提供默认值' : (typeof defaultValue === 'object' ? JSON.stringify(defaultValue) : String(defaultValue));
+    const note = document.createElement('small'); note.textContent = '部署默认：' + control.placeholder;
+    control.addEventListener('input', () => {
+      jobParameterDraft.set(path, control.value);
+      modelPreflightResult = null;
+      renderModelPreflight();
+    });
+    row.append(caption, control, note); fields.appendChild(row);
+    jobParameterFields.push({path,kind,control});
+  };
+  for (const item of (config && config.benchmarks) || []) {
+    if (!selected || !selected.has(item.name)) continue;
+    const profile = item.profile || {}, frozen = profile.frozen_parameters;
+    heading(item.name === 'npu_burn' ? 'NPU · 本次参数' : item.name.toUpperCase());
+    if (!frozen) {
+      const note = document.createElement('p'); note.textContent = '当前 workload 镜像未提供按作业参数协议；请同步更新 Control 与对应 workload 镜像。'; fields.appendChild(note); continue;
+    }
+    if (cpuJobFields[item.name]) {
+      const defaults = (frozen.effective || {})[item.name] || {};
+      for (const [name,label] of cpuJobFields[item.name]) input(item.name+'.'+name,label,defaults[name]);
+      continue;
+    }
+    let catalog = []; try { catalog = JSON.parse(profileParameters(profile).case_catalog || '[]'); } catch (_) {}
+    if (npuMode === 'model') {
+      const model = catalog.find(c => c.name === selectedNPUModel), defaults = model && model.config || {};
+      for (const name of modelJobFields) input('npu_burn.model.'+name,name,defaults[name],name === 'learning_rate' ? 'number' : 'integer');
+      heading('SDC 阈值 · 绑定参考身份');
+      for (const [name,def] of [['loss',0.01],['grad',0.1],['checksum',0.1]]) input('npu_burn.sdc_tolerances.'+name,name,def,'number');
+    } else {
+      for (const name of selectedNPUCases || []) {
+        heading(name);
+        const op = catalog.find(c => c.name === name), defaults = op && op.config || {};
+        for (const field of ['dtype','pattern']) if (Object.hasOwn(defaults,field)) input('npu_burn.operators.'+name+'.'+field,field+'（逗号分隔）',defaults[field].join(','),'list');
+        if (Object.hasOwn(defaults,'shape')) input('npu_burn.operators.'+name+'.shape','tensor shape（JSON）',defaults.shape,'json');
+        const dimensions = Object.fromEntries(jobTensorKeys.filter(k=>k !== 'shape' && Object.hasOwn(defaults,k)).map(k=>[k,defaults[k]]));
+        if (Object.keys(dimensions).length) input('npu_burn.operators.'+name+'.dimensions','tensor 维度（JSON 对象）',dimensions,'json');
+        input('npu_burn.operators.'+name+'.run_count','run_count',defaults.run_count);
+      }
+    }
+  }
+}
+
+function currentJobParameters() {
+  const result = {};
+  for (const {path,kind,control} of jobParameterFields) {
+    const raw = control.value.trim(); if (!raw) continue;
+    let value;
+    try {
+      if (kind === 'json') value = JSON.parse(raw);
+      else if (kind === 'list') { value = raw.split(',').map(x=>x.trim()); if (value.some(x=>!x) || new Set(value).size !== value.length) throw new Error('列表不能为空或重复'); }
+      else { value = Number(raw); if (!Number.isFinite(value) || kind === 'integer' && !Number.isSafeInteger(value)) throw new Error('需要有效数值'); }
+    } catch (error) { throw new Error(path+'：'+error.message); }
+    const keys = path.split('.'); let object = result;
+    for (const key of keys.slice(0,-1)) object = object[key] || (object[key] = {});
+    object[keys[keys.length-1]] = value;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function appendExecutionParameters(card, item, job) {
+  const receipt = item.execution_parameters;
+  const frozen = receipt && receipt.frozen;
+  const details = disclosure((job.job_id || '')+':'+item.name+':job-params','本次参数 · 请求、冻结与执行');
+  const content = document.createElement('pre');
+  content.textContent = JSON.stringify({requested:(job.requested_parameters || {})[item.name] || null,
+    admitted:item.profile && item.profile.frozen_parameters && item.profile.frozen_parameters.effective,
+    executed:frozen && frozen.effective || null,
+    frozen_hpl_input:frozen && frozen.hpl_input,
+    execution_sha256:frozen && frozen.sha256 || null,
+    actual_model_config:item.npu_model && item.npu_model.effective_config,
+    actual_sdc_tolerances:item.npu_model && item.npu_model.sdc_tolerances},null,2);
+  const note = document.createElement('p'); note.textContent = receipt ? '执行进程已接收冻结参数；NPU 实际加载配置另行核对。取消或失败不代表用例通过。' : '未取得执行参数回执；不把请求或预检值当作实际执行证据。';
+  details.append(note,content); card.appendChild(details);
 }
 
 function renderHistory() {
@@ -1235,6 +1347,7 @@ function renderReport() {
 
     card.appendChild(head);
     appendMetricContent(card, item, shown.job_id, shown);
+    appendExecutionParameters(card, item, shown);
     if (item.message && !isHBMOOM(item) && (item.name !== 'npu_burn' || item.status !== 'healthy')) {
       const message = document.createElement('div');
       message.className = 'result-message';
@@ -1309,6 +1422,8 @@ async function start() {
     return;
   }
   const payload = {benchmarks};
+  try { const parameters = currentJobParameters(); if (parameters) payload.parameters = parameters; }
+  catch (error) { setError(error.message); return; }
   if (benchmarks.includes('npu_burn')) {
     payload.npu_devices = Array.from(selectedNPUDevices || []);
     if (!payload.npu_devices.length) { setError('请明确选择至少一个 NPU 逻辑设备。'); return; }
@@ -1349,6 +1464,7 @@ async function start() {
         (profile.preflight && profile.preflight.status === 'warn' ? ' [预检警告]' : '');
     });
   if (payload.npu_devices) profileLines.push('本次 NPU logical ID：' + payload.npu_devices.join(','));
+  if (payload.parameters) profileLines.push('仅本次参数修改：'+JSON.stringify(payload.parameters));
   if (payload.npu_cases) profileLines.push('本次 NPU 算子：' + payload.npu_cases.join(','));
   if (payload.npu_model) {
     profileLines.push('本次模型：' + payload.npu_model.name);
@@ -1394,6 +1510,7 @@ byId('cancel').addEventListener('click', cancel);
 byId('timeout').addEventListener('input', renderProfilePreview);
 byId('npu-model-preflight').addEventListener('click', checkModelPreflight);
 byId('npu-reference-id').addEventListener('input', renderModelPreflight);
+byId('job-parameter-reset').addEventListener('click', () => { jobParameterDraft.clear(); jobParameterSelectionKey = ''; modelPreflightResult = null; renderJobParameters(); renderModelPreflight(); });
 byId('show-latest').addEventListener('click', () => {
   viewedJobID = '';
   renderHistory();

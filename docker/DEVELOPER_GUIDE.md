@@ -414,6 +414,35 @@ git diff --check
 
 ## 11. 用户与发布职责边界
 
+### 按作业参数候选的构建边界
+
+本地 `codex/stress-job-parameters` 从公开提交 `5a3537c` 开发；不修改正式版本号。
+本功能同时改变 Control 请求/报告和 CPU/NPU workload 协议，需构建三张匹配候选镜像，
+不能仅更新 Web 后宣称参数已被执行。不自动更新已发布 registry 标签或正在运行的容器。
+
+CPU 使用已有 `build_cpu_runner_image.sh` 的公开源码编译入口，STREAM 编译常量不变。
+NPU 保留完整 bundled 树及 A3 配置，按顺序显式应用：
+
+```text
+portable-runtime-v1.patch
+a2-upstream-base.patch             # 仅 A2；A3 不应用
+model-sdc-v1.patch
+model-memory-v1.patch
+job-parameters-v1.patch
+```
+
+A2 profile 使用 `a2-upstream-model-sdc-memory-job-v1`，A3 profile 使用
+`portable-model-sdc-memory-job-v1`，并传 `--enable-model-sdc`。不可用 `none` 描述已修改
+上游的产物。builder 核验 frozen loader/阈值补丁存在，并记录 helper、不可变 base/A3
+schema 和补丁哈希；运行期临时配置由 executor 写入 tmpfs，CPU/NPU 根文件系统仍只读。
+这不是官方软件栈配套认证，也不代表 A3 硬件验收已完成。
+
+无硬件回归入口：`make test-stress`、`make test-stress-race`、
+`make test-stress-web`；新增 Python fixture 用真实公共 patch chain，Go binary E2E
+验证冻结后环境变化不影响执行。实机另需验证小规模 CPU/NPU 作业、非法参数拒绝、
+CLI/Web 同一 Job 可见和 Cancel 清理。模型先生成匹配参考再跨设备对比；新参数/新镜像
+验收不得由旧结果代替。没有执行的硬件场景标为 NOT_RUN/PENDING。
+
 | 操作 | 普通用户/节点管理员 | 开发者/发布人员 |
 |---|---:|---:|
 | `docker pull` | ✓ | ✓ |

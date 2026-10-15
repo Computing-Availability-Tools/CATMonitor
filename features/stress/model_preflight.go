@@ -12,6 +12,7 @@ import (
 // job, runs a workload, writes a reference/report, or calls Cancel. One bounded
 // probe is permitted at a time; active jobs are never probed by this endpoint.
 func (m *Manager) PreflightModel(ctx context.Context, request ModelPreflightRequest) ModelPreflightView {
+	request.Parameters = workloadapi.CopyJobParameters(request.Parameters)
 	view := ModelPreflightView{Status: "failed", CheckedAt: time.Now(),
 		NPUModel: workloadapi.CopyModel(request.NPUModel), NPUDevices: append(workloadapi.DeviceIDs(nil), request.NPUDevices...),
 		Failures: []ModelPreflightFailure{}}
@@ -21,6 +22,9 @@ func (m *Manager) PreflightModel(ctx context.Context, request ModelPreflightRequ
 	}
 	if err := request.NPUModel.Validate(); err != nil {
 		return block("invalid_request", "模型请求", err.Error())
+	}
+	if err := request.Parameters.Validate([]string{"npu_burn"}, request.NPUModel, nil); err != nil {
+		return block("invalid_request", "本次参数", err.Error())
 	}
 	if err := workloadapi.ValidateDevices(request.NPUDevices); err != nil {
 		return block("invalid_request", "设备选择", err.Error())
@@ -58,7 +62,7 @@ func (m *Manager) PreflightModel(ctx context.Context, request ModelPreflightRequ
 		view.Status = "not_checked"
 		return block("preflight_interrupted", "预检未完成", err.Error())
 	}
-	profile, _, err := m.prepareNPUModel(RunOptions{NPUDevices: view.NPUDevices, NPUModel: view.NPUModel}, ctx)
+	profile, _, err := m.prepareNPUModel(RunOptions{NPUDevices: view.NPUDevices, NPUModel: view.NPUModel, Parameters: request.Parameters}, ctx)
 	if interrupted := ctx.Err(); interrupted != nil {
 		view.Status = "not_checked"
 		return block("preflight_interrupted", "预检未完成", interrupted.Error())

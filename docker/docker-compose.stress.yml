@@ -86,6 +86,9 @@ services:
     read_only: true
     environment:
       CATMONITOR_NPU_DEVICE_MODE: ${CATMONITOR_NPU_DEVICE_MODE:-full}
+      # Container readiness is not permission to start a workload. Controller
+      # admission and workload execution independently require idle devices.
+      CATMONITOR_NPU_REQUIRE_IDLE: '0'
       CATMONITOR_MODEL_MEMORY_MODE: ${CATMONITOR_MODEL_MEMORY_MODE:-standard}
       OPENBLAS_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}
       OMP_NUM_THREADS: ${CATMONITOR_NPU_THREADS:-1}

@@ -91,6 +91,8 @@ func TestNPURunDoesNotReusePreviousCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 	exe := executableFixture(t, root, "burn", "#!/bin/sh\nexit 0\n")
+	smi := executableFixture(t, root, "npu-smi", "#!/bin/sh\nprintf '%s\\n' '| 5 910B4 | OK |' '| NPU Chip | Process id | Process name |' '| No running processes found in NPU 5 |'\n")
+	t.Setenv("NPU_SMI_EXECUTABLE", smi)
 	pci := executableFixture(t, root, "lspci", "#!/bin/sh\necho '0000:01:00.0 Processing accelerators: Huawei Device d803'\n")
 	for k, v := range map[string]string{
 		"NPU_BURN_EXECUTABLE": exe, "CATMONITOR_LSPCI": pci,

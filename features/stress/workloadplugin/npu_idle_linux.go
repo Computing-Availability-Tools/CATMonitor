@@ -16,10 +16,9 @@ var inventoryNPU = regexp.MustCompile(`^\|\s*([0-9]+)\s+(?:Ascend)?[0-9][A-Za-z0
 // Conservative node-wide check. npu-smi card/chip IDs are NOT interpreted as
 // torch indices: any process, unknown table, or incomplete inventory rejects.
 // This is a preflight snapshot, not a reservation against external schedulers.
+// Always enforce this at execution. Only deployment Describe may skip calling
+// it when CATMONITOR_NPU_REQUIRE_IDLE=0; that variable is not a run bypass.
 func checkNPUIdle(ctx context.Context, mappedCount int) error {
-	if env("CATMONITOR_NPU_REQUIRE_IDLE") != "1" {
-		return nil
-	}
 	out, err := exec.CommandContext(ctx, envDefault("NPU_SMI_EXECUTABLE", "/usr/local/bin/npu-smi"), "info").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("cannot verify idle NPU state: %w", err)
