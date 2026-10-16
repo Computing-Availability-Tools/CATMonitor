@@ -537,7 +537,7 @@ func componentStatus(score, max int) string {
 	ratio := float64(score) / float64(max)
 	switch {
 	case ratio >= 0.9:
-		return "OK"
+		return "Excellent"
 	case ratio >= 0.75:
 		return "Good"
 	case ratio >= 0.6:

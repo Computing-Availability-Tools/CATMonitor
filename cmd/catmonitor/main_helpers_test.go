@@ -66,7 +66,7 @@ func TestComponentStatus(t *testing.T) {
 		score, max int
 		want       string
 	}{
-		{90, 100, "OK"},
+		{90, 100, "Excellent"},
 		{89, 100, "Good"},
 		{75, 100, "Good"},
 		{74, 100, "Warning"},
