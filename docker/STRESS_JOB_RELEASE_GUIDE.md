@@ -248,6 +248,9 @@ bash docker/compose.sh --hardware npu --mode full --generated "$GENERATED_DIR" \
 
 薄入口优先 Compose v2；legacy Compose 需要 Python3/PyYAML。它不安装、不构建，
 只组合主仓 canonical 定义和 generator 输出。`--public-host` 不建立 NAT 或开防火墙。
+legacy NPU 使用只读源码 PID-1 helper，不要求宿主 docker-init；旧 docker-py 的
+pids_limit 会转为整数，具体在第 11 节。直接运行新版 YAML 或 `docker run --init`
+不等同于经过此兼容入口。
 
 ### 5.2 不用 Compose：五个 docker run
 
@@ -623,3 +626,57 @@ docker compose --project-directory "$SRC" -p catmonitor85-sidecar \
   -f "$SIDE/sidecar.yml" \
   --profile stress-cpu --profile stress-npu down
 ```
+
+## 11. 83：Compose 1.29.2 / Docker 18.09，免宿主 docker-init 修复
+
+83 的镜像导入和 ID 核对已通过；本节针对创建阶段的两个兼容缺陷，不重新构建镜像，
+不安装宿主 docker-init，不重启 Docker，不改 runtime/权限/CANN 或 generated 配置。
+旧适配将 pids_limit 保留为字符串，旧 docker-py 创建容器要求整数；新适配保持预算
+4096，只纠正类型。NPU 则用镜像现有 Python3 运行只读源码中的 PID-1 helper，
+转发 TERM/INT/HUP、回收孤儿进程并传播原入口退出码，不是简单移除 init 后让 sleep
+冒充回收器。Controller → Docker exec → workload plugin 调用链保持不变。
+
+将完整修复版源码放到 `/home/haoran/CATMonitor-stress-r2`，包含新文件
+`docker/stress/container_init.py`；不要覆盖 `/home/catmonitor/catmonitor83-sidecar`。
+只需替换源码包，但需要重新创建失败的 CPU/NPU 容器才能应用配置；restart 不生效。
+helper 以只读 bind 挂载，部署后不能删除源码目录，不是镜像内 Python 包/wheel 热替换。
+
+```bash
+export DOCKER_HOST=unix:///var/run/docker.sock
+unset DOCKER_CONTEXT COMPOSE_FILE COMPOSE_PROFILES
+export SRC=/home/haoran/CATMonitor-stress-r2
+export PROJECT=catmonitor83-sidecar
+export DEPLOY=/home/catmonitor/catmonitor83-sidecar
+export GENERATED="$DEPLOY/generated"
+export CATMONITOR_IMAGE=ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-defaults-20261015-r2
+export CATMONITOR_STRESS_STATE_DIR="$DEPLOY/stress"
+cd "$SRC"
+
+bash "$SRC/docker/compose.sh" \
+  --backend legacy --hardware npu --mode full \
+  --project "$PROJECT" --generated "$GENERATED" \
+  --overlay "$DEPLOY/sidecar.yml" config
+
+bash "$SRC/docker/compose.sh" \
+  --backend legacy --hardware npu --mode full \
+  --project "$PROJECT" --generated "$GENERATED" \
+  --overlay "$DEPLOY/sidecar.yml" \
+  up --no-build --no-deps --force-recreate \
+  catmonitor-stress-cpu catmonitor-stress-npu
+
+docker inspect "${PROJECT}-cpu" \
+  --format 'PidsLimit={{.HostConfig.PidsLimit}}'
+docker inspect "${PROJECT}-npu" \
+  --format 'Init={{.HostConfig.Init}} Entry={{json .Config.Entrypoint}}'
+docker exec "${PROJECT}-npu" npu-smi info
+CTRL=$(docker ps -q \
+  --filter "label=com.docker.compose.project=$PROJECT" \
+  --filter label=com.docker.compose.service=catmonitor)
+docker exec "$CTRL" catmonitor stress doctor -o table
+```
+
+不再需要前轮单独的 `legacy-fix.yml`；文件可以留存，但上述命令不加载它。
+应看到 PidsLimit=4096、Init=false，以及包含 container_init.py 的 Python entrypoint。
+此命令只重建旁路两 workload，不重启旁路 Controller/Web/DFeE，不操作旧项目。
+配置、数据卷、历史报告和已有镜像均无需清空。83 实际启动、doctor、Cancel/进程清理
+仍需在目标机确认；本地合成进程和 Compose 测试不是 NPU 实机 PASS。

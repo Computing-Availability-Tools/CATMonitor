@@ -102,6 +102,7 @@ test-stress-build-npu:
 
 test-stress-deployment:
 	python3 scripts/stress/tests/compose_launcher_test.py
+	python3 scripts/stress/tests/container_init_test.py
 	python3 scripts/stress/tests/npu_config_profile_test.py
 	python3 scripts/stress/tests/model_migration_docs_test.py
 	python3 scripts/stress/tests/restricted_inputs_test.py

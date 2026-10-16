@@ -88,6 +88,12 @@ privileged。不能因另一节点用了 `ascend` 就全局改 runtime：确认�
 该 runtime 后，使用 generator 的 `--npu-runtime ascend` 重新生成。DCMI 初始化失败
 与设备忙碌是两层问题，`npu-smi info` 失败不能靠关闭空闲检查解决。
 
+legacy 路径将 `pids_limit` 转为整数再传给旧 docker-py，保持原 PID 预算不变。
+NPU 容器使用镜像已有 Python3 加只读挂载的 `docker/stress/container_init.py` 承担
+PID 1，转发停止信号并回收孤儿进程，不依赖宿主 `docker-init`，也不跳过镜像原有的
+Ascend 初始化。源码目录须保留；替换代码后只需重建对应 workload 容器，镜像不变。
+Compose v2 原生配置和手工 `docker run --init` 仍使用 Docker init，不因此自动改变。
+
 Stress 模式的 `up` 使用 Python3 在创建容器前检查合并后的镜像/容器名是否匹配 Controller，NPU 权限是否匹配
 生成 profile、是否残留 restricted 的 cap_drop/security_opt，以及只读根、network none、
 设备节点/数量和 runtime 是否一致/存在。其他项目占用固定 workload 名称时拒绝启动，

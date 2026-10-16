@@ -18,6 +18,20 @@ spec.loader.exec_module(support)
 
 
 class ComposeSupportTest(unittest.TestCase):
+    def test_legacy_pid_limit_is_integer_without_changing_budget(self):
+        for value in (4096, "4096", 512, "512", -1, "-1", 0):
+            with self.subTest(value=value):
+                result = support.legacy_pids_limit(value)
+                self.assertIs(type(result), int)
+                self.assertEqual(result, int(value))
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(support.legacy_pids_limit("${TEST_PIDS:-4096}"), 4096)
+        with patch.dict(os.environ, {"TEST_PIDS": "512"}):
+            self.assertEqual(support.legacy_pids_limit("${TEST_PIDS:-4096}"), 512)
+        for value in (True, None, -2, "1.5", "unlimited", "${UNSET_PIDS}"):
+            with self.subTest(invalid=value), self.assertRaises(ValueError):
+                support.legacy_pids_limit(value)
+
     def test_bridge_uses_published_port_not_container_listener(self):
         output = io.StringIO()
         with redirect_stdout(output):
@@ -158,6 +172,27 @@ class ComposeSupportTest(unittest.TestCase):
             self.assertFalse(override["privileged"])
             self.assertEqual(override["devices"], [str(folder / "davinci5") + ":/dev/davinci5"])
             self.assertNotIn("create_host_path", json.dumps(stress))
+            init = json.loads((folder / "04.json").read_text())["services"]["catmonitor-stress-npu"]
+            self.assertFalse(init["init"])
+            self.assertEqual(init["command"], ["__serve__"])
+            self.assertEqual(init["entrypoint"][-1], "/usr/local/bin/catmonitor-npu-burn")
+            self.assertTrue(Path(init["volumes"][0]["source"]).is_file())
+            self.assertTrue(init["volumes"][0]["read_only"])
+            self.assertNotIn("privileged", init)
+            self.assertNotIn("runtime", init)
+
+    def test_legacy_serializes_pid_limit_as_json_integer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            source = folder / "cpu.yml"
+            source.write_text('services:\n  catmonitor-stress-cpu:\n'
+                              '    pids_limit: "${TEST_PIDS:-4096}"\n')
+            with patch.dict(os.environ, {"TEST_PIDS": "4096"}):
+                support.legacy("cpu", folder, [source])
+            value = json.loads((folder / "00.json").read_text())["services"]["catmonitor-stress-cpu"]["pids_limit"]
+            self.assertIs(type(value), int)
+            self.assertEqual(value, 4096)
+            self.assertFalse((folder / "01.json").exists())
 
     def test_legacy_missing_guarded_source_fails_closed(self):
         try:
@@ -419,6 +454,21 @@ class RealComposeConfigTest(unittest.TestCase):
                     self.assertEqual(len(modern), expected_count)
                     self.assertEqual(set(modern), set(legacy))
                     for service in modern:
+                        if service == "catmonitor-stress-npu":
+                            # Same workload contract, different PID-1 provider:
+                            # native Docker init vs read-only portable helper.
+                            portable = legacy[service]
+                            self.assertFalse(portable.pop("init"))
+                            self.assertTrue(modern[service].pop("init"))
+                            self.assertIsNone(modern[service].pop("command", None))
+                            self.assertIsNone(modern[service].pop("entrypoint", None))
+                            self.assertEqual(portable.pop("command"), ["__serve__"])
+                            self.assertEqual(portable.pop("entrypoint")[-1], "/usr/local/bin/catmonitor-npu-burn")
+                            helper_target = "/usr/local/libexec/catmonitor/container_init.py"
+                            helpers = [v for v in portable["volumes"] if v["target"] == helper_target]
+                            self.assertEqual(len(helpers), 1)
+                            self.assertTrue(helpers[0]["read_only"])
+                            portable["volumes"].remove(helpers[0])
                         for document in (modern, legacy):
                             document[service].pop("profiles", None)
                             for volume in document[service].get("volumes", []):

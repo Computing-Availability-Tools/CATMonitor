@@ -34,6 +34,8 @@ Bridge-mode URLs also use Docker's actual published ports, never the container
 listener as a guessed host port. --project alone does not isolate fixed names.
 Compose v2 is preferred. Legacy docker-compose uses a temporary format-2.4
 view of the same files, requiring Python 3 + PyYAML; originals are not edited.
+Legacy NPU startup uses the read-only repository Python PID-1 helper instead
+of host docker-init; keep the source directory available while deployed.
 EOF
 }
 while [ "$#" -gt 0 ]; do

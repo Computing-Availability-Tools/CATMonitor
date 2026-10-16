@@ -44,12 +44,29 @@ def expand_guarded_source(value):
     return value
 
 
+def legacy_pids_limit(value):
+    """docker-py requires an integer, not Compose v1's interpolated string."""
+    if isinstance(value, str):
+        match = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^}]*))?\}", value)
+        if match:
+            name, operator, default = match.groups()
+            value = os.environ.get(name)
+            if value is None or (operator == ":-" and value == ""):
+                value = default
+        if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
+            value = int(value)
+    if type(value) is not int or value < -1:
+        fail("legacy pids_limit must resolve to an integer >= -1")
+    return value
+
+
 def legacy(mode, output, filenames):
     try:
         import yaml
     except ImportError:
         fail("legacy Compose needs Python 3 + PyYAML; install python3-yaml/python3-pyyaml or use Compose v2")
     selected = {"stress-cpu": mode in ("cpu", "full"), "stress-npu": mode in ("npu", "full")}
+    portable_init = False
     for index, filename in enumerate(filenames):
         document = yaml.safe_load(Path(filename).read_text())
         if not isinstance(document, dict) or set(document) - {"services", "volumes", "version"}:
@@ -60,6 +77,10 @@ def legacy(mode, output, filenames):
                 del services[name]
                 continue
             service = services[name]
+            if "pids_limit" in service:
+                service["pids_limit"] = legacy_pids_limit(service["pids_limit"])
+            if name == "catmonitor-stress-npu" and service.get("init") is True:
+                portable_init = True
             profiles = service.pop("profiles", [])
             if any(profile not in selected for profile in profiles):
                 fail("unknown Compose profile; refusing to silently drop it")
@@ -82,6 +103,24 @@ def legacy(mode, output, filenames):
         # JSON is valid YAML; use a temporary view, never a second maintained
         # set of services. Runtime/devices/security and all values remain intact.
         (Path(output) / ("%02d.json" % index)).write_text(json.dumps(document))
+    if portable_init:
+        # Legacy hosts may have no docker-init. Keep PID-1 reaping/signal
+        # forwarding using the Python already required by the NPU image.
+        # Append after administrator overlays; do not edit generated files or
+        # bypass the image's original Ascend initialization/__serve__ command.
+        helper = Path(__file__).resolve().parent / "stress/container_init.py"
+        if not helper.is_file():
+            fail("portable NPU init helper is missing from the source package")
+        target = "/usr/local/libexec/catmonitor/container_init.py"
+        document = {"version": "2.4", "services": {"catmonitor-stress-npu": {
+            "init": False,
+            "entrypoint": ["python3", "-B", "-s", target, "--",
+                           "/usr/local/bin/catmonitor-npu-burn"],
+            "command": ["__serve__"],
+            "volumes": [{"type": "bind", "source": str(helper),
+                         "target": target, "read_only": True}],
+        }}}
+        (Path(output) / ("%02d.json" % len(filenames))).write_text(json.dumps(document))
 
 
 def load_document(filename):
