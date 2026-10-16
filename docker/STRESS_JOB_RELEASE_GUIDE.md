@@ -195,8 +195,15 @@ Web/DFeE 在端口占用时会递增，但 Metrics、faultsub、Exporter 不自�
 
 ## 4. 一次生成 Full 配置
 
-第 1 节按代际选择对应的 CANN 初始化脚本。若使用自己的其他 runtime，先核实其真实
-路径及版本再调整；不把 A2 的路径套到 A3。本节一次生成 A2 或 A3 的 Full 配置。
+本节使用生成器的完整功能默认值，不重复传 CPU 网格、权限、选卡授权或 Web 开关。
+HPL 默认 N=4096、NB=256、P=1、Q=1、MPI=1；原始镜像 HPL.dat 保留不改。
+旧默认曾保留 HPL.dat 的 4×2 网格却固定 MPI=1，导致预检拒绝；不是 Compose 自动
+选择了 4×2。旧源码 ZIP 需要更新生成器，或临时显式加 `--hpl-profile small`。
+CANN 默认使用镜像自动发现；仅在管理员确有需要时显式覆盖镜像内脚本路径。
+
+2026-10-15 在 124 使用现有 R2 CPU 镜像和修复后的默认生成配置，独立 CPU 容器实际
+HPL 4096/256/1×1、MPI=1 完成，残差检查 1 项通过、0 项失败。该结果不是 85 已部署、
+整套 Controller/Web 重验或满机 HPL 性能认证。
 
 ```bash
 export GENERATED_DIR=/etc/catmonitor/generated-job-stress
@@ -206,25 +213,25 @@ install -d -m 0750 "$GENERATED_DIR" "$STRESS_STATE" "$NPU_OUTPUT"
 
 bash scripts/stress/generate_stress_deployment.sh \
   --output-dir "$GENERATED_DIR" --control-image "$CONTROL_IMAGE" \
-  --cpu-image "$CPU_IMAGE" --hpl-profile small \
-  --stream-threads 1 --hpl-processes 1 --hpl-threads 1 \
-  --hpcg-processes 1 --hpcg-threads 1 --hpcg-nx 16 --hpcg-ny 16 --hpcg-nz 16 --hpcg-runtime 2 \
+  --cpu-image "$CPU_IMAGE" \
   --npu-image "$NPU_IMAGE" --npu-output-dir "$NPU_OUTPUT" \
-  --npu-chip-generation "$NPU_CHIP_GENERATION" --npu-runtime runc \
-  --npu-device-mode full --npu-security-profile legacy-privileged \
-  --npu-burn-device 0 --npu-allowed-devices 0 \
-  --npu-run-case matmul --npu-allowed-models gpt3,llama2 --allow-npu-reference-generation \
-  --npu-model-memory-mode checkpointed --npu-job-timeout 2h \
-  --npu-threads 1 --npu-ascend-env-script "$CANN_ENV_SCRIPT" \
-  --enable-web
+  --npu-chip-generation "$NPU_CHIP_GENERATION"
 
 python3 -m json.tool "$GENERATED_DIR/stress-profile.json"
 ```
 
-CPU 初始采用小规模功能配置，不代表性能压测规模。NPU 初始仅授权 logical 0；如需
-更多设备，先通过 topology，管理员再在新目录生成明确 allowlist。完整 PCI、节点 ID、
+CPU 初始采用小规模功能配置，不代表性能压测规模。NPU 默认授权当前映射内全部 logical ID，
+但只默认选择 0，不自动全卡运行。完整 PCI、节点 ID、
 runtime logical ID 不混同，不把 sparse 节点编号直接当逻辑编号，也不硬编码 16/0..7。
 不默认挂外部实验配置；模型规模变化优先用本次作业参数，参考必须重新匹配。
+
+管理员显式覆盖示例，按需添加到生成命令，不是普通部署的必填参数：
+
+```bash
+# 模型内存策略：--npu-model-memory-mode checkpointed
+# 作业上限延长：--npu-job-timeout 8h
+# 使用原始 HPL.dat（已核实 P=4/Q=2）：--hpl-profile image --hpl-processes 8
+```
 
 ## 5. 启动方式：选择其一
 
@@ -432,3 +439,187 @@ docker stop catmonitor-web catmonitor-dfee catmonitor catmonitor-stress-cpu catm
 升级失败时停止本轮新容器，恢复备份配置和原容器名后启动旧容器；不得清理唯一旧镜像。
 更详细的模型边界见 [模型指南](NPU_MODEL_SDC_GUIDE.md)，构建与受限网络输入见
 [开发者指南](DEVELOPER_GUIDE.md)。其他硬件和单设备模板见 [NPU 节点指南](README-npu.md)。
+
+## 10. 85 / worker3：ZIP 源码、直接替换与旁路
+
+以下使用修复 HPL 默认值后的源码。旧 `fb81582` ZIP 不会因 pull 镜像自动更新；
+需替换源码 ZIP，或仅为旧生成器临时增加 `--hpl-profile small`。新生成器与现有 R2
+执行镜像兼容，无需为本次默认值修复重新构建 Control/NPU；CPU Dockerfile 的新默认值
+只在之后构建的新镜像中生效。没有 Git 也可运行。所有命令在 85 的 Bash 执行。
+
+两种方式二选一：直接替换停止旧 CATMonitor，正常使用 host network；旁路保留旧实例，
+必须增加独立 workload 名称、目录和端口映射。这些隔离参数不是 HPL 调优参数。
+当前 API 无认证/RBAC，只能在可信管理网开放；只部署服务，不自动开始 Burn。
+
+### 10.1 公共准备
+
+把修复版 ZIP 解压到 `/home/haoran/CATMonitor-hpl-default-fix`，不要混用旧生成文件。
+如解压目录不同，只改下面的 SRC。
+
+```bash
+export SRC=/home/haoran/CATMonitor-hpl-default-fix
+export DOCKER_HOST=unix:///var/run/docker.sock
+unset DOCKER_CONTEXT CATMONITOR_WEB_ADDR COMPOSE_FILE COMPOSE_PROFILES
+
+export CONTROL_IMAGE=ghcr.io/spike677/catmonitor-npu:arm64-v0.3.6-stress-defaults-20261015-r2
+export CPU_IMAGE=ghcr.io/spike677/catmonitor-stress-cpu:arm64-v0.3.6-stress-defaults-20261015-r2
+export NPU_IMAGE=ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-stress-defaults-a2-cann851-20261015-r2
+export CATMONITOR_IMAGE="$CONTROL_IMAGE"
+
+docker pull "$CONTROL_IMAGE"
+docker pull "$CPU_IMAGE"
+docker pull "$NPU_IMAGE"
+```
+
+### 10.2 方式 A：直接替换，不制作旧容器备份
+
+会短暂中断 CATMonitor。先在当前实例取消本项目的运行作业并等待终态；不杀其他 NPU
+业务。下面只停止、删除列出的旧 CATMonitor 容器，不 rename/archive，不删除卷、
+历史报告、模型参考、镜像或其他业务。数据不是构建缓存，不能混用 prune 清理。
+
+```bash
+(
+set -e
+for name in \
+  docker-web-1 docker-dfee-1 docker-catmonitor-1 \
+  catmonitor85-r2-web-1 catmonitor85-r2-dfee-1 catmonitor85-r2-catmonitor-1 \
+  catmonitor-stress-cpu catmonitor-stress-npu
+do
+  if docker container inspect "$name" >/dev/null 2>&1; then
+    docker stop "$name"
+    docker rm "$name"
+  fi
+done
+)
+
+export DEPLOY=/home/catmonitor/catmonitor85-r2
+export CATMONITOR_STRESS_STATE_DIR="$DEPLOY/stress"
+
+(
+set -e
+install -d -m 0750 "$CATMONITOR_STRESS_STATE_DIR" "$DEPLOY/npu-output"
+bash "$SRC/scripts/stress/generate_stress_deployment.sh" \
+  --output-dir "$DEPLOY/generated" \
+  --control-image "$CONTROL_IMAGE" \
+  --cpu-image "$CPU_IMAGE" \
+  --npu-image "$NPU_IMAGE" \
+  --npu-output-dir "$DEPLOY/npu-output" \
+  --npu-chip-generation A2 \
+  --force
+
+docker compose --project-directory "$SRC" -p catmonitor85-r2 \
+  -f "$SRC/docker/docker-compose.yml" \
+  -f "$SRC/docker/docker-compose.npu.yml" \
+  -f "$SRC/docker/docker-compose.stress.yml" \
+  -f "$DEPLOY/generated/docker-compose.stress.generated.yml" \
+  --profile stress-cpu --profile stress-npu up -d --no-build
+)
+
+docker ps --filter label=com.docker.compose.project=catmonitor85-r2 \
+  --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+docker exec catmonitor85-r2-catmonitor-1 catmonitor stress doctor -o table
+docker exec catmonitor-stress-npu npu-smi info
+curl -fsS http://127.0.0.1:19320/-/ready
+curl -fsS http://127.0.0.1:19322/api/stress/config
+```
+
+默认访问 `http://51.62.10.85:19322/stress/`，DFeE 为 `http://51.62.10.85:19323/`。
+Web/DFeE 如递增端口，以本次启动日志为准；Metrics 19320 和 Exporter 9333 必须空闲。
+如仍有前轮旁路实例占用 host 端口，先只停止自己创建的那个实例，不停止未知服务。
+
+默认 HPL 运行和宿主机查看：
+
+```bash
+docker exec catmonitor85-r2-catmonitor-1 catmonitor stress run --bench hpl -o table
+docker exec catmonitor85-r2-catmonitor-1 catmonitor stress status -o table
+docker top catmonitor-stress-cpu
+```
+
+以上不传 HPL 参数。需要取消运行中的作业，另开终端按 Job ID 执行：
+
+```bash
+docker exec catmonitor85-r2-catmonitor-1 catmonitor stress cancel --job '<job-id>'
+```
+
+不用重命名保留旧容器。之后仅停止新实例时：
+
+```bash
+docker compose --project-directory "$SRC" -p catmonitor85-r2 \
+  -f "$SRC/docker/docker-compose.yml" \
+  -f "$SRC/docker/docker-compose.npu.yml" \
+  -f "$SRC/docker/docker-compose.stress.yml" \
+  -f "$DEPLOY/generated/docker-compose.stress.generated.yml" \
+  --profile stress-cpu --profile stress-npu down
+```
+
+### 10.3 方式 B：旁路，旧环境保持运行
+
+不要执行 10.2 的停止/删除命令。Docker bridge 必须正常；桥接监控的网络采集视角不与
+host network 完全等价。硬件仍是共享的，不能同时从两套 Controller 向同一卡下发任务。
+Workload 默认能力不变，只增加必要的部署隔离。
+
+```bash
+export SIDE=/home/catmonitor/catmonitor85-sidecar
+export CATMONITOR_STRESS_STATE_DIR="$SIDE/stress"
+
+(
+set -e
+install -d -m 0750 "$SIDE" "$CATMONITOR_STRESS_STATE_DIR" "$SIDE/npu-output"
+bash "$SRC/scripts/stress/generate_stress_deployment.sh" \
+  --output-dir "$SIDE/generated" \
+  --control-image "$CONTROL_IMAGE" \
+  --cpu-image "$CPU_IMAGE" \
+  --cpu-container catmonitor85-sidecar-cpu \
+  --npu-image "$NPU_IMAGE" \
+  --npu-container catmonitor85-sidecar-npu \
+  --npu-output-dir "$SIDE/npu-output" \
+  --npu-chip-generation A2
+)
+
+tee "$SIDE/sidecar.yml" >/dev/null <<'YAML'
+services:
+  catmonitor:
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:19327-19360:19320"
+  web:
+    network_mode: bridge
+    ports:
+      - "51.62.10.85:19327-19360:19322"
+  dfee:
+    network_mode: bridge
+    ports:
+      - "51.62.10.85:19327-19360:19323"
+      - "127.0.0.1:19327-19360:9333"
+YAML
+
+docker compose --project-directory "$SRC" -p catmonitor85-sidecar \
+  -f "$SRC/docker/docker-compose.yml" \
+  -f "$SRC/docker/docker-compose.npu.yml" \
+  -f "$SRC/docker/docker-compose.stress.yml" \
+  -f "$SIDE/generated/docker-compose.stress.generated.yml" \
+  -f "$SIDE/sidecar.yml" \
+  --profile stress-cpu --profile stress-npu up -d --no-build
+
+docker ps --filter label=com.docker.compose.project=catmonitor85-sidecar \
+  --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+docker port catmonitor85-sidecar-web-1 19322/tcp
+docker port catmonitor85-sidecar-dfee-1 19323/tcp
+docker exec catmonitor85-sidecar-catmonitor-1 catmonitor stress doctor -o table
+```
+
+用 `docker port` 输出的实际端口访问 `/stress/`，不是假定宿主仍为 19322。端口不保证
+连续或重建后相同；85 管理 IP 不同时修改 YAML 中两处 `51.62.10.85`。
+
+只停止、删除旁路容器，不动直接部署和业务，不删除数据卷：
+
+```bash
+docker compose --project-directory "$SRC" -p catmonitor85-sidecar \
+  -f "$SRC/docker/docker-compose.yml" \
+  -f "$SRC/docker/docker-compose.npu.yml" \
+  -f "$SRC/docker/docker-compose.stress.yml" \
+  -f "$SIDE/generated/docker-compose.stress.generated.yml" \
+  -f "$SIDE/sidecar.yml" \
+  --profile stress-cpu --profile stress-npu down
+```

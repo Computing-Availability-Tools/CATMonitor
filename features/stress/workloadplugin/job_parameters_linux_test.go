@@ -19,6 +19,55 @@ func trackParameterEnv(t *testing.T) {
 	}
 }
 
+func TestHPLDefaultTupleOverridesEightRankImageWithoutChangingAsset(t *testing.T) {
+	trackParameterEnv(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "HPL.dat")
+	original := "HPL\nimage input\nHPL.out\n6\n1\n8192\n1\n256\n0\n1\n4\n2\n16\n"
+	if err := os.WriteFile(file, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HPL_WORKDIR", dir)
+	for key, value := range map[string]string{"HPL_N": "4096", "HPL_NB": "256", "HPL_P": "1", "HPL_Q": "1", "HPL_MPI_PROCESSES": "1", "HPL_THREADS_PER_PROCESS": "1"} {
+		t.Setenv(key, value)
+	}
+	frozen, err := freezeParameters(context.Background(), "hpl", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hpl := frozen.Effective.HPL
+	if *hpl.N != 4096 || *hpl.NB != 256 || *hpl.P != 1 || *hpl.Q != 1 || *hpl.MPIProcesses != 1 {
+		t.Fatalf("default tuple is inconsistent: %+v", hpl)
+	}
+	if err := validateHPLResources([]byte(frozen.HPLInput), 1, 1, 8, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil || string(data) != original {
+		t.Fatal("default profile rewrote the original HPL.dat", err)
+	}
+	// Explicit image mode clears the four overrides; it does not weaken the
+	// grid/rank check or silently shrink an administrator's input.
+	for _, key := range []string{"HPL_N", "HPL_NB", "HPL_P", "HPL_Q"} {
+		t.Setenv(key, "")
+	}
+	frozen, err = freezeParameters(context.Background(), "hpl", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateHPLResources([]byte(frozen.HPLInput), 1, 1, 8, 1<<30); err == nil || !strings.Contains(err.Error(), "4 x 2 != 1") {
+		t.Fatalf("invalid original grid was not rejected: %v", err)
+	}
+	t.Setenv("HPL_MPI_PROCESSES", "8")
+	frozen, err = freezeParameters(context.Background(), "hpl", nil)
+	if err != nil || frozen.HPLInput != original || *frozen.Effective.HPL.MPIProcesses != 8 {
+		t.Fatal("explicit image profile lost its input/ranks", err)
+	}
+	if err := validateHPLResources([]byte(frozen.HPLInput), 8, 1, 8, 2<<30); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHPLJobFreezeInheritsAndDoesNotModifySharedInput(t *testing.T) {
 	trackParameterEnv(t)
 	dir := t.TempDir()

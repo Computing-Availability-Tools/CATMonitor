@@ -319,16 +319,11 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --output-dir /etc/catmonitor/generated-stress \
   --control-image "$CATMONITOR_IMAGE" \
   --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
-  --stream-threads 0 \
-  --hpl-processes 8 \
-  --hpl-threads 12 \
-  --hpcg-processes 96 \
-  --hpcg-threads 1 \
-  --enable-web \
   --force
 ```
 
-以上是已验证的 96 核 profile；其他节点必须按在线 CPU 数和 HPL `P×Q` 调整。
+默认 HPL 为 N=4096、NB=256、P=1、Q=1、HPL_MPI_PROCESSES=1；无需部署时重复输入。
+原始 HPL.dat 保留；显式 image 模式必须让 MPI 进程数与该文件的 P×Q 一致。
 
 ### 4.2 Compose
 
@@ -374,13 +369,7 @@ docker run -d --name catmonitor-stress-cpu --restart unless-stopped \
   --security-opt no-new-privileges:true \
   --pids-limit 4096 --shm-size=16g \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
-  -e STREAM_THREADS=0 \
-  -e HPL_MPI_PROCESSES=8 \
-  -e HPL_THREADS_PER_PROCESS=12 \
-  -e HPCG_MPI_PROCESSES=96 \
-  -e HPCG_THREADS_PER_PROCESS=1 \
-  -e HPCG_NX=32 -e HPCG_NY=32 -e HPCG_NZ=32 \
-  -e HPCG_RUNTIME_SECONDS=60 \
+  --env-file /etc/catmonitor/generated-stress/cpu-workload.env \
   -v cm-stress-cpu-state:/var/lib/catmonitor/stress \
   --health-cmd='/usr/bin/setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all --reuid=65532 --regid=65532 --init-groups --no-new-privs /usr/local/bin/catmonitor-stress-exec describe --benchmark stream --json' \
   --health-interval=5s --health-timeout=3s --health-retries=12 \

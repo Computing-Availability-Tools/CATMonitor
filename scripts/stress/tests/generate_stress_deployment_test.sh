@@ -18,7 +18,7 @@ bash "$GENERATOR" \
     --output-dir "$CPU_OUT" \
     --control-image ghcr.io/example/catmonitor:fixture \
     --cpu-image ghcr.io/example/cpu:fixture \
-    --hpl-processes 8 --hpl-threads 12 \
+    --hpl-profile image --hpl-processes 8 --hpl-threads 12 \
     --hpcg-processes 96 --hpcg-threads 1 \
     --enable-web
 
@@ -44,6 +44,27 @@ bash "$GENERATOR" --output-dir "$CPU_OUT" --cpu-image ghcr.io/example/cpu:fixtur
 contains "$CPU_OUT/catmonitor-stress.yaml" 'web_enabled: true'
 not_contains "$CPU_OUT/catmonitor-stress.yaml" 'allowed_npu_models:'
 not_contains "$CPU_OUT/catmonitor-stress.yaml" 'allow_npu_reference_generation:'
+contains "$CPU_OUT/cpu-workload.env" 'HPL_N=4096'
+contains "$CPU_OUT/cpu-workload.env" 'HPL_NB=256'
+contains "$CPU_OUT/cpu-workload.env" 'HPL_P=1'
+contains "$CPU_OUT/cpu-workload.env" 'HPL_Q=1'
+contains "$CPU_OUT/cpu-workload.env" 'HPL_MPI_PROCESSES=1'
+contains "$CPU_OUT/docker-compose.stress.generated.yml" "HPL_P: '1'"
+contains "$CPU_OUT/docker-compose.stress.generated.yml" "HPL_Q: '1'"
+
+IMAGE_INPUT="$TEST_ROOT/original-hpl-input"
+bash "$GENERATOR" --output-dir "$IMAGE_INPUT" --cpu-image cpu:test \
+    --hpl-profile image --hpl-processes 8 >/dev/null
+contains "$IMAGE_INPUT/cpu-workload.env" 'HPL_MPI_PROCESSES=8'
+grep -qx 'HPL_N=' "$IMAGE_INPUT/cpu-workload.env" || fail 'image profile changed N'
+grep -qx 'HPL_P=' "$IMAGE_INPUT/cpu-workload.env" || fail 'image profile changed P'
+
+CUSTOM_GRID="$TEST_ROOT/explicit-hpl-grid"
+bash "$GENERATOR" --output-dir "$CUSTOM_GRID" --cpu-image cpu:test \
+    --hpl-n 8192 --hpl-nb 256 --hpl-p 4 --hpl-q 2 --hpl-processes 8 >/dev/null
+contains "$CUSTOM_GRID/cpu-workload.env" 'HPL_P=4'
+contains "$CUSTOM_GRID/cpu-workload.env" 'HPL_Q=2'
+contains "$CUSTOM_GRID/cpu-workload.env" 'HPL_MPI_PROCESSES=8'
 
 HOST="$TEST_ROOT/host"
 mkdir -p \

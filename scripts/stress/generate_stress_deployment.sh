@@ -19,7 +19,7 @@ REPORT_PATH=/var/lib/catmonitor/stress/stress-latest.json
 STREAM_THREADS=0
 HPL_PROCESSES=1
 HPL_THREADS=1
-HPL_PROFILE=image
+HPL_PROFILE=small
 HPL_N=
 HPL_NB=
 HPL_P=
@@ -74,7 +74,7 @@ Optional release identity:
 
 CPU workload profile:
   --cpu-container NAME      Existing/custom workload container binding
-  --hpl-profile NAME        image (unchanged input) or small (4096/256/1x1)
+  --hpl-profile NAME        small (default: 4096/256/1x1) or image (original input)
   --hpl-n/--hpl-nb/--hpl-p/--hpl-q N
                             Explicit dimensions; all four required together
   --stream-threads N         0 leaves OMP_NUM_THREADS unset
@@ -247,7 +247,12 @@ NPU_PRIVILEGED=false
 [ "$CPU_CONTAINER" != "$NPU_CONTAINER" ] || die "CPU and NPU containers must be distinct"
 case "$HPL_PROFILE" in
     image) ;;
-    small) HPL_N=${HPL_N:-4096}; HPL_NB=${HPL_NB:-256}; HPL_P=${HPL_P:-1}; HPL_Q=${HPL_Q:-1} ;;
+    small)
+        # Set one complete default tuple. Partial administrator overrides still
+        # require all four dimensions and must not silently inherit a grid.
+        if [ -z "$HPL_N$HPL_NB$HPL_P$HPL_Q" ]; then
+            HPL_N=4096; HPL_NB=256; HPL_P=1; HPL_Q=1
+        fi ;;
     *) die "--hpl-profile must be image or small" ;;
 esac
 if [ -n "$HPL_N$HPL_NB$HPL_P$HPL_Q" ]; then

@@ -304,9 +304,9 @@ scrape_configs:
 
 ## 4. Stress 运行目录
 
-generator 只生成节点配置和只读 metadata，不启动或删除容器。以下 A2 参数是当前
-96 核验收节点使用的 profile；换机器时必须让 HPL 的 MPI ranks 与 `HPL.dat` 的
-`P×Q` 一致，并按在线 CPU 数设置 HPCG ranks。
+generator 只生成节点配置和只读 metadata，不启动或删除容器。CPU 默认使用自洽的功能
+基线：HPL 4096/256/1×1、MPI=1；HPCG_MPI_PROCESSES=1、32³/60s。
+原始 HPL.dat 仍保留；管理员选择 image 模式时须匹配其 P×Q，不自动扩大负载。
 
 ```bash
 export CATMONITOR_GENERATED_DIR=/etc/catmonitor/generated-stress
@@ -328,12 +328,6 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --output-dir "$CATMONITOR_GENERATED_DIR" \
   --control-image "$CATMONITOR_IMAGE" \
   --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
-  --stream-threads 0 \
-  --hpl-processes 8 \
-  --hpl-threads 12 \
-  --hpcg-processes 96 \
-  --hpcg-threads 1 \
-  --enable-web \
   --force
 ```
 
@@ -376,13 +370,7 @@ docker run -d --name catmonitor-stress-cpu --restart unless-stopped \
   --security-opt no-new-privileges:true \
   --pids-limit 4096 --shm-size=16g \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
-  -e STREAM_THREADS=0 \
-  -e HPL_MPI_PROCESSES=8 \
-  -e HPL_THREADS_PER_PROCESS=12 \
-  -e HPCG_MPI_PROCESSES=96 \
-  -e HPCG_THREADS_PER_PROCESS=1 \
-  -e HPCG_NX=32 -e HPCG_NY=32 -e HPCG_NZ=32 \
-  -e HPCG_RUNTIME_SECONDS=60 \
+  --env-file "$CATMONITOR_GENERATED_DIR/cpu-workload.env" \
   -v cm-stress-cpu-state:/var/lib/catmonitor/stress \
   --health-cmd='/usr/bin/setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all --reuid=65532 --regid=65532 --init-groups --no-new-privs /usr/local/bin/catmonitor-stress-exec describe --benchmark stream --json' \
   --health-interval=5s --health-timeout=3s --health-retries=12 \
@@ -712,11 +700,6 @@ sudo bash scripts/stress/generate_stress_deployment.sh \
   --output-dir "$CATMONITOR_GENERATED_DIR" \
   --control-image "$CATMONITOR_IMAGE" \
   --cpu-image "$CATMONITOR_CPU_STRESS_IMAGE" \
-  --stream-threads 0 \
-  --hpl-processes 8 \
-  --hpl-threads 12 \
-  --hpcg-processes 96 \
-  --hpcg-threads 1 \
   --npu-image "$CATMONITOR_NPU_STRESS_IMAGE" \
   --npu-burn-device all \
   --npu-chip-generation A2 \
@@ -765,11 +748,7 @@ docker run -d --name catmonitor-stress-cpu --restart unless-stopped \
   --security-opt no-new-privileges:true \
   --pids-limit 4096 --shm-size=16g \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
-  -e STREAM_THREADS=0 \
-  -e HPL_MPI_PROCESSES=8 -e HPL_THREADS_PER_PROCESS=12 \
-  -e HPCG_MPI_PROCESSES=96 -e HPCG_THREADS_PER_PROCESS=1 \
-  -e HPCG_NX=32 -e HPCG_NY=32 -e HPCG_NZ=32 \
-  -e HPCG_RUNTIME_SECONDS=60 \
+  --env-file "$CATMONITOR_GENERATED_DIR/cpu-workload.env" \
   -v cm-stress-cpu-state:/var/lib/catmonitor/stress \
   --health-cmd='/usr/bin/setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all --reuid=65532 --regid=65532 --init-groups --no-new-privs /usr/local/bin/catmonitor-stress-exec describe --benchmark stream --json' \
   --health-interval=5s --health-timeout=3s --health-retries=12 \
@@ -979,7 +958,8 @@ docker exec -e CATMONITOR_NPU_REQUIRE_IDLE=1 catmonitor-stress-npu \
   驱动命名空间占用、逻辑编号映射与软件栈配套问题，不把所有错误都用 privileged
   掩盖。只有管理员明确选择共享访问兼容模式时，才为 NPU workload 配置
   `legacy-privileged`；Web/DFeE 不获得该权限。
-- HPL 立即失败：核对 `HPL_MPI_PROCESSES == P×Q`，不要盲用默认值 1。
+- HPL `4×2 != 1`：旧生成器的 image 默认与 MPI=1 不配套。更新后默认 4096/256/1×1、
+  MPI=1；无需 Compose 补参数。显式 image 模式才按原始 HPL.dat 配置对应 MPI ranks。
 - Web snapshot 未就绪：先检查 `19320/-/ready`，不要另起第二个 Web。
 - Docker API 版本不匹配：当前 Stress Controller 会通过配置的 Unix socket 自动协商，
   用户不应手工设置 `DOCKER_API_VERSION`。

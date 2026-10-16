@@ -216,6 +216,13 @@ hpcg.dat
 替管理员猜测。构建使用同一 Debian bookworm build/runtime ABI，并在镜像内提供匹配的
 MPI、OpenBLAS 与 benchmark 运行库。
 
+原始 HPL.dat 继续保存在镜像资产目录，不被默认功能配置覆盖。CPU 镜像、Compose 和
+generator 的默认执行元组统一为 N=4096、NB=256、P=1、Q=1、MPI=1，运行时生成独立
+作业输入，避免管理员输入为 4×2 而默认只起 1 个 MPI 进程。generator 的显式
+`--hpl-profile image --hpl-processes 8` 保留原始 4×2 输入；自定义输入须自行匹配 ranks。
+源码默认值变更不会自动更新已发布的镜像或已生成 YAML；现有 R2 可通过新 generator 的
+env/Compose 覆盖使用一致默认，新构建 CPU 镜像才拥有相同的镜像内默认环境。
+
 ### 5.2 构建
 
 ```bash
