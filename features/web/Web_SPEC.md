@@ -428,7 +428,7 @@ const MANIFEST = {
 
 ### 7.6 状态色映射
 
-`statusOf(score, max)`：比率 ≥0.9 OK(绿) / ≥0.75 Good / ≥0.6 Warning(橙) / 否则 Critical(红)。`gradeColor(grade)` 同色系。无 max 时 N/A(灰)。
+`statusOf(score, max)`：比率 ≥0.9 Excellent(绿) / ≥0.75 Good / ≥0.6 Warning(橙) / 否则 Critical(红)。`gradeColor(grade)` 同色系。无 max 时 N/A(灰)。
 
 ---
 

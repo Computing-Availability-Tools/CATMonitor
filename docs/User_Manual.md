@@ -294,9 +294,9 @@ CATMonitor Health Report
   Component        Score / Max    Status       Deductions
   ----------------------------------------------------------------------
   CPU                12 / 15       Good         temp>75C (-2)
-  MEMORY             15 / 15       OK           -
-  DISK               15 / 15       OK           -
-  NPU                32 / 35       OK           temp>80C (-3)
+  MEMORY             15 / 15       Excellent    -
+  DISK               15 / 15       Excellent    -
+  NPU                32 / 35       Excellent    temp>80C (-3)
   ----------------------------------------------------------------------
   TOTAL              94 / 100      Good
   ----------------------------------------------------------------------
@@ -305,7 +305,7 @@ CATMonitor Health Report
 
 ```
 
-> 表格仅列出 cpu/memory/disk/gpu/npu 五个部件；network/chassis 同样参与评估并计入 TOTAL（各方案下均占 10 分），但不在表中单独列出。扣分明细格式为 `规则名 (-扣分)`，多条以 `;` 分隔；部件状态按 得分/满额 比例映射 OK(≥90%)/Good(≥75%)/Warning(≥60%)/Critical。
+> 表格仅列出 cpu/memory/disk/gpu/npu 五个部件；network/chassis 同样参与评估并计入 TOTAL（各方案下均占 10 分），但不在表中单独列出。扣分明细格式为 `规则名 (-扣分)`，多条以 `;` 分隔；部件状态按 得分/满额 比例映射 Excellent(≥90%)/Good(≥75%)/Warning(≥60%)/Critical，与总评等级（gradeForScore）和 Web 部件徽章（statusOf）同一套四级制。
 
 ### 3.5 stress — 可靠性压测
 
