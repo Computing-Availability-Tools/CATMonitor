@@ -1198,24 +1198,24 @@
 +                            daemon=False)
 +            processes.append(p)
 +            p.start()
-+    
++
 +        ready_cnt = 0
 +        while ready_cnt < ori_target_device_count:
 +            msg, _ = receive(result_queue_worker, processes, min(deadline, ready_deadline))
 +            if msg == "ready":
 +                ready_cnt += 1
-+    
++
 +        sorted_tasks = sorted(tasks, key=lambda x: x.seq)
 +        logger.info(
-+            f"[Engine NUMA:{my_numa_id}] Boardcasting {len(sorted_tasks)} tasks to {ori_target_device_count} devices...")
-+    
++            f"[Engine NUMA:{my_numa_id}] Broadcasting {len(sorted_tasks)} tasks to {ori_target_device_count} devices...")
++
 +        for task in sorted_tasks:
 +            for i in range(ori_target_device_count):
 +                input_queues[i].put(task)
-+    
++
 +        for i in range(ori_target_device_count):
 +            input_queues[i].put(None)
-+    
++
 +        total_expected_results = len(sorted_tasks) * ori_target_device_count
 +        finished_cnt = 0
 +        results_list = []
@@ -1225,15 +1225,15 @@
 +                continue
 +            results_list.append(result_data)
 +            finished_cnt += 1
-+    
++
 +        if any("error" in result for result in results_list):
 +            raise RuntimeError("Worker task failed: " + str(results_list))
 +        join_success(processes, deadline)
-+    
++
 +        result_display(my_numa_id, results_list)
 +        # 生成CSV报告，所有NUMA节点共享同一个文件
 +        generate_csv_report(results_list, args.output)
-+    
++
 +        # 将结果发送到结果队列
 +        if result_queue:
 +            result_queue.put(results_list)

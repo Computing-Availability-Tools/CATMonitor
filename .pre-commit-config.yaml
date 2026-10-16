@@ -21,6 +21,8 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        # Unified-diff context markers must retain their leading space.
+        exclude: '^scripts/stress/patches/ascend_npu_burn/.*\.patch$'
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-merge-conflict
