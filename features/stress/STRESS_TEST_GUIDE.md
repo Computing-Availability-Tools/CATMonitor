@@ -94,6 +94,19 @@ bash tests/e2e/stress_workload_plugin_e2e_test.sh
 - 子进程组被回收；
 - 不接受任意 command/options。
 
+### 5.1 Stress Web 选择契约测试（Node.js）
+
+无浏览器/NPU/容器依赖，仅要求 Node.js；验证 Web 压测页的设备/算子选择与
+模型预检展示契约（PR #15 新增）：
+
+```bash
+node tests/e2e/stress_web_selection_test.cjs        # 设备/算子选择契约
+node tests/e2e/stress_web_model_preflight_test.cjs  # 模型预检展示契约
+
+# 统一入口（可选门禁）
+make test-stress-web
+```
+
 ## 6. 构建 fixture
 
 ```bash

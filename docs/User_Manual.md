@@ -320,9 +320,12 @@ catmonitor stress cancel --job JOB_ID
 
 stress 只在用户显式请求时运行。daemon 是唯一 Stress Controller；CLI 与 Web 通过
 `/run/catmonitor/control.sock` 查看和控制同一作业，daemon 再用固定 Docker Executor
-调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置只声明
-启用项目、容器和最大运行窗口，MPI、线程、问题规模和 NPU logical ID 固化在 workload
-profile 中，不能由 Web 编辑。日常部署与使用见
+调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置声明启用
+项目、容器和最大运行窗口；部署默认值（MPI、线程、问题规模、NPU logical ID）固化在
+workload profile 中。Web 的"高级参数"面板（默认折叠）可对**本次作业**做类型化覆盖——
+STREAM 线程、HPL 规模/网格/MPI、HPCG 规模/运行时间、NPU 设备/算子/参数；参数经校验后
+冻结为本次执行回执，报告与历史保存实际生效值，不以随后变化的部署默认值冒充本次参数。
+脚本、命令、路径、容器绑定和权限始终不可编辑。日常部署与使用见
 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，自动化与实机验收见
 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
