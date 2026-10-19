@@ -3,6 +3,7 @@ package ipmi
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -640,5 +641,59 @@ func TestSDRPartialSensorGetFailure(t *testing.T) {
 	defaultSrc.mu.Unlock()
 	if names != 2 {
 		t.Errorf("name cache should keep both sensors, got %d", names)
+	}
+}
+
+// TestNameCachePersistenceAcrossRestart verifies the full persistence
+// round-trip: a source instance "discovers" names via SDR and persists them
+// to disk; a NEW source instance (simulating a daemon or container restart)
+// lazily loads the persisted names on its first SDR call and serves via
+// targeted `sensor get` without re-running full discovery.
+func TestNameCachePersistenceAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	sdrOut := readMock(t, "../../../tests/testdata/ipmitool-sdr-output.txt")
+
+	// --- First "process": full discovery, persists name cache. ---
+	first := &defaultSource{
+		cacheTTL:       defaultCacheTTL,
+		fetchSDR:       func() (string, error) { return sdrOut, nil },
+		fetchSensorGet: nil, // no per-sensor get: forces discovery path
+		cacheDir:       dir,
+	}
+	if _, err := first.SDR(); err != nil {
+		t.Fatalf("first SDR: %v", err)
+	}
+	if len(first.nameCache) == 0 {
+		t.Fatal("first process: name cache empty after discovery")
+	}
+	first.saveNameCache(dir, first.nameCache, first.nameCacheAt)
+	path := filepath.Join(dir, sensorMapFilename)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("persisted name cache not written: %v", err)
+	}
+
+	// --- Second "process" (restart): only per-sensor get is provided; a
+	// working name cache means no full SDR discovery is needed. ---
+	discoveryCalls := 0
+	second := &defaultSource{
+		cacheTTL:  defaultCacheTTL,
+		fetchSDR:  func() (string, error) { discoveryCalls++; return sdrOut, nil },
+		fetchSensorGet: func(name string) (string, error) {
+			return "Sensor ID: x\nSensor Reading: 42 (+/- 0) degrees C\nStatus: ok", nil
+		},
+		cacheDir: dir,
+	}
+	sensors, err := second.SDR()
+	if err != nil {
+		t.Fatalf("second SDR: %v", err)
+	}
+	if len(sensors) == 0 {
+		t.Fatal("second process: no sensors served")
+	}
+	if discoveryCalls != 0 {
+		t.Errorf("second process ran full discovery %d times; persisted name cache should have been loaded lazily and used targeted gets", discoveryCalls)
+	}
+	if len(second.nameCache) != len(first.nameCache) {
+		t.Errorf("name cache mismatch: first=%d second=%d", len(first.nameCache), len(second.nameCache))
 	}
 }

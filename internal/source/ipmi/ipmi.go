@@ -44,7 +44,13 @@ const (
 	// take 5-7s per sensor (measured on a 910B4 host under load); 5s killed
 	// healthy sensors and forced a full-scan fallback every cycle.
 	sensorGetTimeout  = 15 * time.Second
-	defaultCacheDir   = "/var/lib/catmonitor"
+	// defaultCacheDir is the parent of the JSONL data dir, which is a
+	// mounted volume in docker deployments (data:/var/lib/catmonitor/data).
+	// Persisting the sensor-name cache there means it survives container
+	// recreation; the former parent (/var/lib/catmonitor) sits in the
+	// container's ephemeral layer and lost the file on every recreate,
+	// forcing a ~15-40s full `ipmitool sensor` scan after each recreate.
+	defaultCacheDir   = "/var/lib/catmonitor/data"
 	sensorMapFilename = "ipmi_sensor_map.json"
 )
 
@@ -88,6 +94,7 @@ type defaultSource struct {
 	nameCacheAt    time.Time
 	cacheDir       string
 	mockPower      string
+	diskLoaded     bool // loadNameCache ran once (lazy, on first SDR call)
 
 	inflight bool          // a background refresh or cold-start fetch is running
 	coldDone chan struct{} // closed when the in-flight cold start finishes
@@ -151,6 +158,7 @@ func (s *defaultSource) resetLocked() {
 	s.cachedAt = time.Time{}
 	s.nameCache = nil
 	s.nameCacheAt = time.Time{}
+	s.diskLoaded = false
 	s.inflight = false
 	s.coldDone = nil
 }
@@ -169,8 +177,16 @@ func (s *defaultSource) Available() bool {
 // yet) fetch synchronously, single-flight: concurrent first callers share
 // one fetch instead of racing N ipmitool scans. A cold-start failure caches
 // an empty result for one TTL (graceful, like the pre-SWR behaviour).
+// The persisted sensor-name cache is loaded lazily on the first SDR call,
+// so a daemon (or container) restart within the 24h name-cache TTL skips
+// the full `ipmitool sensor` discovery scan and goes straight to fast
+// per-sensor gets.
 func (s *defaultSource) SDR() ([]Sensor, error) {
 	s.mu.Lock()
+	if !s.diskLoaded {
+		s.diskLoaded = true
+		s.loadNameCacheLocked()
+	}
 	if !s.cachedAt.IsZero() {
 		if time.Since(s.cachedAt) < s.cacheTTL {
 			sensors := s.cached
@@ -307,7 +323,10 @@ func (s *defaultSource) saveNameCache(dir string, names []string, at time.Time) 
 	_ = os.WriteFile(path, data, 0o644)
 }
 
-func (s *defaultSource) loadNameCache() {
+// loadNameCacheLocked reads the persisted sensor-name cache into memory.
+// Callers must hold s.mu; it performs file I/O on the (small) cache file,
+// which is acceptable for the one-time lazy load on the first SDR call.
+func (s *defaultSource) loadNameCacheLocked() {
 	if s.cacheDir == "" {
 		return
 	}
