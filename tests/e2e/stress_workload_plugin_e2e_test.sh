@@ -13,6 +13,7 @@ cat >"$TEST_ROOT/bin/stream" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ -e "$CATMONITOR_E2E_BLOCK" ]; then exec sleep 30; fi
+printf 'Actual OMP_NUM_THREADS=%s\n' "${OMP_NUM_THREADS-}"
 printf 'Copy: 1000\nScale: 900\nAdd: 800\nTriad: 700\n'
 EOF
 cat >"$TEST_ROOT/bin/numactl" <<'EOF'
@@ -40,6 +41,31 @@ printf '%s\n' '{"protocol_version":1,"job_id":"aabb","benchmark":"stream","timeo
 grep -Fq '"status":"healthy"' "$TEST_ROOT/run.json"
 grep -Fq 'Copy: 1000' "$TEST_ROOT/run.json"
 
+# Real binary JSON stdin round trip: Describe resolves defaults, Run uses the
+# exact frozen snapshot even if deployment environment changes afterwards.
+printf '%s\n' '{"parameters":{"stream":{"threads":1}}}' |
+    "$TEST_ROOT/bin/catmonitor-stress-exec" describe --benchmark stream --json --parameters - >"$TEST_ROOT/job-describe.json"
+python3 - "$TEST_ROOT/job-describe.json" "$TEST_ROOT/job-request.json" <<'PY'
+import json,sys
+profile=json.load(open(sys.argv[1]))
+assert profile['preflight']['status']=='pass'
+assert all(asset['name'] and asset['path'] and asset['status'] in ('pass','fail','warn','unsupported') for asset in profile['assets'])
+assert profile['frozen_parameters']['effective']['stream']['threads']==1
+with open(sys.argv[2],'w') as out:
+    json.dump(dict(protocol_version=1,job_id='eeff',benchmark='stream',timeout_seconds=10,
+                   frozen_parameters=profile['frozen_parameters']),out)
+PY
+STREAM_THREADS=65536 "$TEST_ROOT/bin/catmonitor-stress-exec" run --request "$TEST_ROOT/job-request.json" >"$TEST_ROOT/job-run.json"
+python3 - "$TEST_ROOT/job-run.json" <<'PY'
+import json,sys
+result=json.load(open(sys.argv[1]))
+assert result['status']=='healthy',result
+assert result['execution_parameters']['job_id']=='eeff'
+assert result['execution_parameters']['frozen']['effective']['stream']['threads']==1
+assert 'Actual OMP_NUM_THREADS=1' in result['output']
+print('PASS: real workload binary runs frozen per-job parameters, not changed deployment defaults')
+PY
+
 touch "$CATMONITOR_E2E_BLOCK"
 printf '%s\n' '{"protocol_version":1,"job_id":"ccdd","benchmark":"stream","timeout_seconds":20,"options":{}}' |
     "$TEST_ROOT/bin/catmonitor-stress-exec" run --request - >"$TEST_ROOT/cancelled.json" &
@@ -53,3 +79,120 @@ grep -Fq '"accepted":true' "$TEST_ROOT/cancel.json"
 grep -Fq '"status":"cancelled"' "$TEST_ROOT/cancelled.json"
 test ! -e "$TEST_ROOT/state/workload-jobs/ccdd/pgid"
 printf 'PASS: common typed workload plugin describe/run/cancel E2E\n'
+
+# Hardware-free NPU protocol integration: real workload executor, synthetic
+# topology and CSV producer. This is NOT evidence of a real NPU workload.
+mkdir -p "$TEST_ROOT/dev" "$TEST_ROOT/output" "$TEST_ROOT/log" "$TEST_ROOT/home"
+touch "$TEST_ROOT/dev/davinci2" "$TEST_ROOT/dev/davinci5"
+cat >"$TEST_ROOT/bin/lspci" <<'EOF'
+#!/bin/sh
+printf '%s\n' '0000:01:00.0 Processing accelerators: Device d802' '0000:81:00.0 Processing accelerators: Device d802'
+EOF
+cat >"$TEST_ROOT/bin/preflight" <<'EOF'
+#!/bin/sh
+if [ "${1-}" = --cases-json ]; then
+  printf '%s\n' '{"cases":[{"name":"matmul","selectable":true},{"name":"conv2d","selectable":true}],"selected":["matmul","conv2d"],"selection_error":"","configuration_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+fi
+exit 0
+EOF
+cat >"$TEST_ROOT/bin/npu-smi" <<'EOF'
+#!/bin/sh
+if [ "${CATMONITOR_E2E_NPU_BUSY:-0}" = 1 ]; then
+  printf '%s\n' '| 2 910B4 | OK |' '| 5 910B4 | OK |' '| NPU Chip | Process id | Process name |' \
+    '| 2 0 | 12345 | | 100 |' '| 5 0 | 12346 | | 100 |'
+  exit 0
+fi
+printf '%s\n' '| 2 910B4 | OK |' '| 5 910B4 | OK |' '| NPU Chip | Process id | Process name |' \
+ '| No running processes found in NPU 2 |' '| No running processes found in NPU 5 |'
+EOF
+cat >"$TEST_ROOT/bin/npu-burn" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+: >"$CATMONITOR_E2E_NPU_STARTED"
+[ "${1-}" = --device ]
+[ "$2" = "$NPU_BURN_DEVICE" ]
+[ "$CATMONITOR_NPU_JOB_TIMEOUT_SECONDS" = 10 ]
+python3 - <<'PY'
+import json,os
+operators=[dict(name='matmul',config=dict(shape=[[[4,8],[8,16]]],dtype=['float16'],pattern=['gauss_random'],run_count=20)),
+           dict(name='conv2d',config=dict(input_data=[1,2,3,4],weight_data=[4,2,3,3],dtype=['float32'],pattern=['uniform_random'],run_count=20))]
+with open(os.environ['CATMONITOR_NPU_OPERATOR_PARAMETERS_PATH'],'w') as f:
+    json.dump(dict(schema_version=1,job_id=os.environ['CATMONITOR_NPU_JOB_ID'],chip_generation='A2',operators=operators),f)
+PY
+printf 'task,device_id,case_idx,run_count,stream_count,exetime,err_count,result,case_config\n' >"$NPU_BURN_OUTPUT_DIR/npu_burn_results.csv"
+IFS=, read -r -a ids <<<"$2"
+for id in "${ids[@]}"; do
+  if [ "${CATMONITOR_E2E_MISSING_DEVICE:-0}" = 1 ] && [ "$id" = 1 ]; then continue; fi
+  for op in matmul conv2d; do
+    if [ "${CATMONITOR_E2E_MISSING_CASE:-0}" = 1 ] && [ "$op" = conv2d ]; then continue; fi
+    printf '%s,%s,0,20,1,1,0,PASS,fixture\n' "$op" "$id" >>"$NPU_BURN_OUTPUT_DIR/npu_burn_results.csv"
+  done
+done
+EOF
+chmod 0755 "$TEST_ROOT/bin/lspci" "$TEST_ROOT/bin/preflight" "$TEST_ROOT/bin/npu-smi" "$TEST_ROOT/bin/npu-burn"
+export CATMONITOR_STRESS_BENCHMARKS=npu_burn
+export CATMONITOR_LSPCI="$TEST_ROOT/bin/lspci" NPU_SMI_EXECUTABLE="$TEST_ROOT/bin/npu-smi"
+export NPU_BURN_PREFLIGHT_EXECUTABLE="$TEST_ROOT/bin/preflight" NPU_BURN_EXECUTABLE="$TEST_ROOT/bin/npu-burn"
+export NPU_BURN_DEVICE_ROOT="$TEST_ROOT/dev" NPU_BURN_OUTPUT_DIR="$TEST_ROOT/output" NPU_BURN_LOG_DIR="$TEST_ROOT/log" HOME="$TEST_ROOT/home"
+export NPU_BURN_DEVICE=0,1 CATMONITOR_NPU_DEVICE_MODE=full CATMONITOR_NPU_REQUIRE_IDLE=0
+export CATMONITOR_E2E_NPU_STARTED="$TEST_ROOT/npu-started"
+export NPU_BURN_INTERNAL_TIMEOUT_SECONDS=2 NPU_BURN_CHIP_GENERATION=A2 NPU_BURN_RUN_CASE=matmul,conv2d NPU_BURN_GROUP=
+export CATMONITOR_NPU_COMPAT_PROFILE=a2-portable-runtime-v1
+if ! "$TEST_ROOT/bin/catmonitor-stress-exec" describe --benchmark npu_burn --json --require-pass >"$TEST_ROOT/npu-describe.json"; then
+    cat "$TEST_ROOT/npu-describe.json" >&2
+    exit 1
+fi
+# Deployment health is allowed while business runs. A successful readiness
+# response must never be reused as job admission or bypass the direct run gate.
+export CATMONITOR_E2E_NPU_BUSY=1
+"$TEST_ROOT/bin/catmonitor-stress-exec" describe --benchmark npu_burn --json --require-pass >"$TEST_ROOT/npu-busy-readiness.json"
+if CATMONITOR_NPU_REQUIRE_IDLE=1 "$TEST_ROOT/bin/catmonitor-stress-exec" describe --benchmark npu_burn --json --require-pass >"$TEST_ROOT/npu-busy-admission.json"; then
+    printf 'FAIL: explicit idle admission accepted busy NPU\n' >&2
+    exit 1
+fi
+printf '%s\n' '{"protocol_version":1,"job_id":"bbcc","benchmark":"npu_burn","timeout_seconds":10,"npu_devices":[0,1],"options":{}}' |
+    "$TEST_ROOT/bin/catmonitor-stress-exec" run --request - >"$TEST_ROOT/npu-busy-run.json"
+test ! -e "$CATMONITOR_E2E_NPU_STARTED"
+test ! -d "$TEST_ROOT/state/active"
+python3 - "$TEST_ROOT/npu-busy-readiness.json" "$TEST_ROOT/npu-busy-admission.json" "$TEST_ROOT/npu-busy-run.json" <<'PY'
+import json,sys
+ready,admission,result=(json.load(open(path)) for path in sys.argv[1:])
+assert ready['preflight']['status']=='pass'
+assert not any(a['name']=='idle_devices' for a in ready['assets'])
+assert admission['preflight']['status']=='fail'
+assert any(a['name']=='idle_devices' and a['status']=='fail' for a in admission['assets'])
+assert result['status']=='unavailable' and 'NPU busy' in result['message'],result
+PY
+unset CATMONITOR_E2E_NPU_BUSY
+printf 'PASS: busy NPU deployment health and mandatory execution gate (synthetic)\n'
+printf '%s\n' '{"protocol_version":1,"job_id":"eeff","benchmark":"npu_burn","timeout_seconds":10,"npu_devices":[0,1],"npu_cases":["matmul","conv2d"],"options":{}}' |
+    "$TEST_ROOT/bin/catmonitor-stress-exec" run --request - >"$TEST_ROOT/npu-run.json"
+python3 - "$TEST_ROOT/npu-run.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r['status']=='healthy' and r['npu_devices']==[0,1]
+assert r['npu_cases']==['matmul','conv2d']
+assert r['values']['errors']==0
+assert r['npu_parameters']['job_id']=='eeff'
+assert r['npu_parameters']['operators'][0]['config']['shape']==[[[4,8],[8,16]]]
+assert r['npu_parameters']['operators'][1]['config']['run_count']==20
+PY
+export CATMONITOR_E2E_MISSING_DEVICE=1
+printf '%s\n' '{"protocol_version":1,"job_id":"eeee","benchmark":"npu_burn","timeout_seconds":10,"npu_devices":[0,1],"options":{}}' |
+    "$TEST_ROOT/bin/catmonitor-stress-exec" run --request - >"$TEST_ROOT/npu-incomplete.json"
+python3 - "$TEST_ROOT/npu-incomplete.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r['status']=='unhealthy' and 'npu_devices' not in r
+PY
+printf 'PASS: NPU selection/fresh CSV coverage protocol E2E (synthetic)\n'
+unset CATMONITOR_E2E_MISSING_DEVICE
+export CATMONITOR_E2E_MISSING_CASE=1
+printf '%s\n' '{"protocol_version":1,"job_id":"eeaa","benchmark":"npu_burn","timeout_seconds":10,"npu_devices":[0,1],"npu_cases":["matmul","conv2d"],"options":{}}' |
+    "$TEST_ROOT/bin/catmonitor-stress-exec" run --request - >"$TEST_ROOT/npu-incomplete-case.json"
+python3 - "$TEST_ROOT/npu-incomplete-case.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r['status']=='unhealthy' and 'npu_cases' not in r
+PY
+printf 'PASS: NPU operator coverage protocol E2E (synthetic)\n'

@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
 )
 
 const (
@@ -142,6 +145,18 @@ func (m *Manager) applyRunConfiguration(profile *ExecutionProfile, name string, 
 		timeout = timeoutOverride
 	}
 	profile.TimeoutSeconds = int64(timeout / time.Second)
+	maximum := fmt.Sprintf("%d", effectiveTimeout(benchmark.Timeout)/time.Second)
+	setProfileParameter(profile, ProfileParameter{Key: "maximum_job_timeout", Label: "Configured maximum job timeout", Value: maximum, Unit: "seconds"})
+	if name == "npu_burn" {
+		setProfileParameter(profile, ProfileParameter{Key: "allowed_models", Label: "Administrator allowed models", Value: strings.Join(benchmark.AllowedNPUModels, ",")})
+		setProfileParameter(profile, ProfileParameter{Key: "allow_reference_generation", Label: "Reference generation allowed", Value: fmt.Sprint(benchmark.AllowNPUReferenceGeneration)})
+		allowed := benchmark.AllowedNPUDevices
+		value := parameterValue(profile, "devices")
+		if allowed != nil {
+			value = workloadapi.DeviceIDs(allowed).String()
+		}
+		setProfileParameter(profile, ProfileParameter{Key: "allowed_devices", Label: "Administrator allowed logical devices", Value: value})
+	}
 	profile.Executor = "docker_exec"
 	profile.Container = benchmark.Container
 	profile.Plugin = benchmark.Plugin
@@ -155,6 +170,16 @@ func (m *Manager) applyRunConfiguration(profile *ExecutionProfile, name string, 
 		profile.ConfigurationSHA256 = hex.EncodeToString(sum[:])
 	}
 	return profile
+}
+
+func setProfileParameter(profile *ExecutionProfile, value ProfileParameter) {
+	for i := range profile.Parameters {
+		if profile.Parameters[i].Key == value.Key {
+			profile.Parameters[i] = value
+			return
+		}
+	}
+	profile.Parameters = append(profile.Parameters, value)
 }
 
 func aggregateConfigurationSHA256(names []string, profiles map[string]*ExecutionProfile) string {
@@ -181,6 +206,7 @@ func copyExecutionProfile(profile *ExecutionProfile) *ExecutionProfile {
 		return nil
 	}
 	copy := *profile
+	copy.FrozenParameters = workloadapi.CopyFrozenParameters(profile.FrozenParameters)
 	copy.Parameters = append([]ProfileParameter(nil), profile.Parameters...)
 	copy.Assets = append([]AssetCheck(nil), profile.Assets...)
 	if profile.RuntimeIdentity != nil {

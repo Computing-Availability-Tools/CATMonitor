@@ -91,4 +91,5 @@ FAKE_SOURCE_FAIL=true assert_fails "$TEST_ROOT/source.log" run_preflight
 CATMONITOR_NPU_DEVICE_COUNT=3 assert_fails "$TEST_ROOT/device-count.log" run_preflight
 assert_contains "$TEST_ROOT/device-count.log" 'torch_npu device count 2 does not match expected mapped count 3'
 
+python3 "$SCRIPT_DIR/runtime_preflight_json_test.py"
 printf 'PASS: NPU Burn fixed-container runtime preflight\n'

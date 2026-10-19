@@ -3,6 +3,7 @@ package stress
 import (
 	"errors"
 	"fmt"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
 	"path/filepath"
 	"strings"
 )
@@ -33,6 +34,29 @@ func ValidateConfig(cfg Config) error {
 	}
 
 	for name, benchmark := range cfg.Benchmarks {
+		if benchmark.AllowedNPUModels != nil || benchmark.AllowNPUReferenceGeneration {
+			if name != "npu_burn" {
+				return errors.New("model authorization is only valid for npu_burn")
+			}
+			seen := map[string]bool{}
+			for _, model := range benchmark.AllowedNPUModels {
+				if (model != "gpt3" && model != "llama2") || seen[model] {
+					return errors.New("allowed_npu_models must contain unique gpt3/llama2 names")
+				}
+				seen[model] = true
+			}
+			if benchmark.AllowNPUReferenceGeneration && len(benchmark.AllowedNPUModels) == 0 {
+				return errors.New("reference generation requires allowed_npu_models")
+			}
+		}
+		if benchmark.AllowedNPUDevices != nil {
+			if name != "npu_burn" {
+				return errors.New("allowed_npu_devices is only valid for npu_burn")
+			}
+			if err := workloadapi.ValidateDevices(benchmark.AllowedNPUDevices); err != nil {
+				return err
+			}
+		}
 		if !supportedBenchmark(name) {
 			return fmt.Errorf("stress benchmark %q is unsupported", name)
 		}

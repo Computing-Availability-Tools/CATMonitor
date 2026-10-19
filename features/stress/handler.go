@@ -3,6 +3,7 @@ package stress
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -41,6 +42,7 @@ func Register(mux *http.ServeMux, client *ControlClient, listenAddr string, logg
 	mux.HandleFunc("GET /api/stress/runs/{id}", h.job)
 	mux.HandleFunc("POST /api/stress/runs", h.run)
 	mux.HandleFunc("POST /api/stress/runs/{id}/cancel", h.cancel)
+	mux.HandleFunc("POST /api/stress/models/preflight", h.modelPreflight)
 }
 
 func (h *WebHandler) index(w http.ResponseWriter, r *http.Request) {
@@ -128,8 +130,12 @@ func (h *WebHandler) run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Benchmarks     []string `json:"benchmarks"`
-		TimeoutSeconds int64    `json:"timeout_seconds"`
+		Benchmarks     []string                   `json:"benchmarks"`
+		TimeoutSeconds int64                      `json:"timeout_seconds"`
+		NPUDevices     workloadapi.DeviceIDs      `json:"npu_devices,omitempty"`
+		NPUCases       workloadapi.CaseNames      `json:"npu_cases,omitempty"`
+		NPUModel       *workloadapi.ModelRequest  `json:"npu_model,omitempty"`
+		Parameters     *workloadapi.JobParameters `json:"parameters,omitempty"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -139,13 +145,32 @@ func (h *WebHandler) run(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid timeout_seconds")
 		return
 	}
-	report, err := h.client.Start(r.Context(), ControlStartRequest{Benchmarks: body.Benchmarks, TimeoutSeconds: body.TimeoutSeconds, Initiator: InitiatorWeb})
+	report, err := h.client.Start(r.Context(), ControlStartRequest{Benchmarks: body.Benchmarks, TimeoutSeconds: body.TimeoutSeconds, Initiator: InitiatorWeb, NPUDevices: body.NPUDevices, NPUCases: body.NPUCases, NPUModel: body.NPUModel, Parameters: body.Parameters})
 	if err != nil {
 		h.proxyError(w, err)
 		return
 	}
 	report.Cancellable = true
 	writeJSONStatus(w, report, http.StatusAccepted)
+}
+
+func (h *WebHandler) modelPreflight(w http.ResponseWriter, r *http.Request) {
+	// Though read-only, this may import the runtime. Keep the same bounded JSON,
+	// action-header and same-origin protections as other operator requests.
+	if !h.allowRequest(w, r) {
+		return
+	}
+	var request ModelPreflightRequest
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.client.PreflightModel(r.Context(), request)
+	if err != nil {
+		h.proxyError(w, err)
+		return
+	}
+	writeJSON(w, result)
 }
 func (h *WebHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	if !h.allowRequest(w, r) {

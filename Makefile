@@ -1,7 +1,7 @@
 .PHONY: all build test test-verbose test-coverage test-e2e test-stress test-stress-ut \
 	test-monitoring-compat \
 	test-stress-race test-stress-e2e test-stress-build \
-	test-stress-container-e2e \
+	test-stress-container-e2e test-stress-web \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
 	test-stress-audit audit-stress-release install-stress-resources lint check format clean web dfee
 
@@ -74,6 +74,10 @@ test-stress-race:
 test-stress-e2e:
 	GO_BIN="$(GO)" bash tests/e2e/stress_workload_plugin_e2e_test.sh
 
+# Optional frontend contract gate; requires Node.js, no browser/NPU/container.
+test-stress-web:
+	node tests/e2e/stress_web_selection_test.cjs
+
 # Requires a running Docker daemon plus prebuilt control/CPU workload images.
 # Optional NPU coverage uses the same in-container workload plugin protocol.
 test-stress-container-e2e:
@@ -86,12 +90,22 @@ test-stress-build-cpu:
 	bash scripts/stress/tests/build_cpu_runner_image_test.sh
 
 test-stress-build-npu:
-	bash scripts/stress/tests/npu_native_topology_test.sh
+	python3 scripts/stress/tests/job_parameters_test.py
+	python3 scripts/stress/tests/npu_package_inventory_test.py
+	python3 scripts/stress/tests/npu_operator_parameters_test.py
+	python3 scripts/stress/tests/npu_model_sdc_test.py
+	bash scripts/stress/tests/npu_portable_test.sh
+	GO_BIN="$(GO)" bash scripts/stress/tests/npu_native_topology_test.sh
 	bash scripts/stress/tests/ascend_env_test.sh
 	bash scripts/stress/tests/build_npu_burn_image_test.sh
 	bash scripts/stress/tests/runtime_preflight_test.sh
 
 test-stress-deployment:
+	python3 scripts/stress/tests/compose_launcher_test.py
+	python3 scripts/stress/tests/container_init_test.py
+	python3 scripts/stress/tests/npu_config_profile_test.py
+	python3 scripts/stress/tests/model_migration_docs_test.py
+	python3 scripts/stress/tests/restricted_inputs_test.py
 	bash scripts/stress/tests/control_image_build_test.sh
 	bash scripts/stress/tests/generate_stress_deployment_test.sh
 	bash scripts/stress/tests/container_deployment_test.sh

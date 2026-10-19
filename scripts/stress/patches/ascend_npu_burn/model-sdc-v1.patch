@@ -1,0 +1,31 @@
+--- a/ascend_npu_burn/benchmarks/model/run_config.py
++++ b/ascend_npu_burn/benchmarks/model/run_config.py
+@@ -13,9 +13,15 @@
+ # See the Mulan PSL v2 for more details.
+ # ===========================================================================
++import os
+ from pathlib import Path
+ 
+ MODEL_PACKAGE_ROOT = Path(__file__).resolve().parent
+-REFERENCE_ROOT = MODEL_PACKAGE_ROOT / "reference"
+-TRACE_ROOT = MODEL_PACKAGE_ROOT / "model_benchmark" / "results"
++def _runtime_root(name, default):
++    path = Path(os.environ.get(name, str(default)))
++    if not path.is_absolute():
++        raise ValueError(f"{name} must be absolute")
++    return path
++REFERENCE_ROOT = _runtime_root("CATMONITOR_MODEL_REFERENCE_DIR", MODEL_PACKAGE_ROOT / "reference")
++TRACE_ROOT = _runtime_root("CATMONITOR_MODEL_TRACE_DIR", MODEL_PACKAGE_ROOT / "model_benchmark" / "results")
+ 
+ CONFIG_INT_FIELDS = (
+@@ -52,8 +58,8 @@
+         run_case["dtype"] = self._read_config_dtype()
+         run_case["num_steps"] = run_case["run_count"]
+ 
+-        run_case["sdc_log_dir"] = str(TRACE_ROOT / "step_metrics")
+-        run_case["sdc_baseline_dir"] = str(REFERENCE_ROOT)
++        run_case["sdc_log_dir"] = str(_runtime_root("CATMONITOR_MODEL_TRACE_DIR", TRACE_ROOT) / "step_metrics")
++        run_case["sdc_baseline_dir"] = str(_runtime_root("CATMONITOR_MODEL_REFERENCE_DIR", REFERENCE_ROOT))
+         run_case["sdc_baseline_mode"] = "save" if self.create_reference else "compare"
+         run_case["sdc_baseline_loss_tol"] = 0.01
+         run_case["sdc_baseline_grad_tol"] = 0.1

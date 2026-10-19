@@ -64,7 +64,7 @@ stress:
       enabled: false
       plugin: npu_burn
       container: catmonitor-stress-npu
-      timeout: 30m
+      timeout: 2h
 ```
 
 ### 3.2 校验
@@ -120,6 +120,9 @@ catmonitor-stress-exec describe --benchmark stream --json
 MPI、preflight、runtime identity、typed options。失败的 required asset 或 MPI
 检查必须使 preflight 为 `fail`。
 
+默认 Describe 的 RC0 表示 JSON 成功返回，不表示 preflight 通过。
+自动化/healthcheck 必须使用 `--require-pass` 并检查 JSON；fail 应返回非零。
+
 Describe 必须只读，默认 2 秒；NPU runtime import/topology 可以配置为不超过
 30 秒的只读预检。
 
@@ -135,8 +138,17 @@ Describe 必须只读，默认 2 秒；NPU runtime import/topology 可以配置�
 }
 ```
 
-Options 必须按 plugin schema 校验。未声明 option、错误类型、越界设备或未知
-case 必须在 workload 启动前失败。
+当前 `options` 只接受空对象；不开放命令、路径或任意环境变量。
+NPU 可另加 `"npu_devices":[0,1]`：Controller 在实时可见范围及管理员
+`allowed_npu_devices` 中准入，固定到本 Job，并用于相同 Describe/Run。
+省略保留默认，显式空/null、重复、负数、越界、未授权或非 NPU 项目携带设备均拒绝。
+allowlist 未声明时仅授权部署默认，不把可见设备自动当授权。
+NPU 可另加 `"npu_cases":["matmul","conv2d"]`：仅接受新 workload 的实际 catalog
+中通过配置/dtype 准入的显式算子名，不接受 `all`、空/null、重复或 shell 参数。
+省略使用部署默认；旧 workload 没有 catalog 时拒绝显式选算子。目录完整不等于各算子
+硬件已认证，catalog 单独标记 `hardware_validation=NOT_RUN`。
+Docker Executor 只注入已校验的设备、算子/清空 group 和 idle 标志；workload Request
+与 env 必须一致。Control 和 workload 均需更新，不能只更新前端。
 
 ### 5.4 Run result
 
@@ -145,6 +157,11 @@ Run 正常通信时必须输出且只输出一个 JSON envelope。诊断输出�
 
 `healthy` 表示命令和结果校验均通过。CPU 的 `time_limit_reached` 可视为健康
 通过；NPU Burn 未形成完整 PASS/SDC 结果时不得因外部超时变为健康。
+
+NPU 使用每轮独立输出目录，校验 CSV result、err_count、run_count，且每个选中设备
+必须覆盖全部选中算子，额外或缺失组合均失败。通过后 Result 才返回 `npu_devices` /
+`npu_cases`；Report/history 的 `npu_selection` 保留部署默认、请求、固定和实际
+设备/算子。Cancel 只按 Job ID。配置最大时限、本次有效时限和内部同步超时分离。
 
 ### 5.5 State
 
@@ -190,6 +207,11 @@ Controller 必须保留现有 `Status`、`BenchmarkResult`、`Report` 的外部 
 latest 是运行态和最近终态的真源；history 最新优先，最多 100 条，默认返回
 20 条，并移除历史中的大段 command output。
 
+NPU 报告可附带 `npu_csv` 小型可选元数据：本轮 CSV 路径，以及按 logical ID / 算子
+分组的记录数、通过数、失败数、错误数和用例时间合计。Controller 从 plugin 的
+CSV 校验汇总中读取并核对总数；history 删除 command output 时仍保留这些明细。
+此字段不改变执行、取消或成功判据；旧报告缺少明细时不从总数推算分组。
+
 Controller shutdown 必须取消其 active job并等待终态持久化。
 
 ## 7. daemon control API
@@ -212,9 +234,29 @@ Controller shutdown 必须取消其 active job并等待终态持久化。
 | GET | `/stress/jobs/{id}` | 作业状态 |
 | POST | `/stress/jobs` | 提交 typed request |
 | POST | `/stress/jobs/{id}/cancel` | 取消 active job |
+| POST | `/stress/models/preflight` | 对本次模型、设备、参考执行有界只读预检；不创建 Job |
 
 POST 必须要求 `application/json`，请求体上限 64 KiB，拒绝未知字段。Busy 返回
 409；disabled/invalid 返回 400 或 403；不存在返回 404。
+
+模型预检请求为 `npu_devices` 与 `npu_model={name,action,reference_id}`，沿用管理员
+模型/设备 allowlist。Web 对应 `POST /api/stress/models/preflight`，仍只经
+`control.sock` 调用 Controller；要求 JSON、action header 和同源请求。
+响应 HTTP 200 的 `status=ready|failed|not_checked` 是预检语义，不是 workload
+结果；`failures` 只包含必需检查的失败或阻塞项，不包含通过项和未执行的 HBM 检查。
+活跃作业期间不探测 NPU，同一 Controller 同时最多一个有界模型预检。
+配置视图的 `model_capabilities` 独立公开管理员模型授权，不从算子目录或历史 PASS
+推断。前端按模型、设备、动作、参考 ID 和当前配置身份绑定预检显示；选择改变时
+丢弃旧结果。Run 仍重新进行准入，不复用此结果作为资源预约或硬件认证。
+
+算子 `case_catalog` 条目的可选 `config` 保存当前代际合并后的有效 JSON 配置，
+用于只读 tensor 参数预览。执行端的可选 `npu_parameters` 是独立执行回执：包含
+schema_version、job_id、chip_generation 和 operators[{name,config}]，在上游实际
+返回 TestCase 后记录，不重新读取部署目录。Controller 校验 Job ID/算子集合，
+深拷贝并保存到 BenchmarkResult/history，不依赖有界 console output。缺失或无效
+回执不补造、不代替 CSV/SDC 成功门禁；配置 run_count 不等于实际完成次数。
+预览与历史中的每个算子详情均默认折叠且只读；修改必须走“高级参数”的类型化请求、
+预检与冻结链路，不接受任意命令、路径或环境变量注入。
 
 ## 8. CLI
 
@@ -225,6 +267,7 @@ catmonitor stress [run] [--bench ...] [-c config] [-o json|table]
 catmonitor stress doctor [-c config] [-o json|table]
 catmonitor stress status [--job ID] [-c config] [-o json|table]
 catmonitor stress cancel --job ID [-c config]
+catmonitor stress run --bench npu_burn --npu-devices 0,1 --npu-cases matmul,conv2d [--timeout 300s]
 ```
 
 CLI 只从配置读取 control socket 并作为 client；不得读取 Docker socket、启动
@@ -363,3 +406,28 @@ OLD_STRESS_YAML_COMPATIBLE=false
 RC 镜像构建前必须通过 `make test-monitoring-compat`。Fresh Image Acceptance 还
 必须用新镜像执行旧 README 中 daemon、Web、DFeE 的手工 `docker run` 命令；
 不得以源码测试替代镜像级兼容验收。
+
+## 模型 SDC 开发候选
+
+`npu_model={name,action,reference_id}` 与算子选择互斥，沿用统一 Controller 和
+Job-ID Cancel。管理员通过 `allowed_npu_models` 和
+`allow_npu_reference_generation` 授权；参考生成只允许一个明确 logical ID。
+模型请求只接受已声明的类型化训练参数，不接受用户路径、训练脚本或任意未知参数。
+
+`CATMONITOR_MODEL_MEMORY_MODE` 为部署策略：standard（缺省）或 checkpointed。
+后者必须应用显式 model-memory-v1 补丁并通过真实 API 能力检查，不缩减形状、
+batch、精度或步骤，不自动回退。参考身份包含此策略，不允许跨策略/软件栈/
+代际复用。多设备仍逐卡独立执行；没有 DDP/FSDP/联合显存接口。
+
+完整参考发布及本轮 CSV/设备/全部步骤校验成功后，才返回 reference_generated
+或 sdc_passed；两者不能互换。模型同步沿用上游直接同步，整体受 Controller
+时限与进程组清理控制，不冒用算子 worker 的 300 秒软件同步计时器。
+
+明确的 NPU allocator OOM 在 terminal result/history 保存
+`failure={code:npu_hbm_oom,resource:npu_hbm}`，状态仍为 unhealthy（任务未完成）。
+该分类不是硬件故障诊断，不能改为 healthy；取消、驱动错误和一般失败不能
+猜测为 HBM OOM。Web 分别显示资源不足、有效压测通过和参考已生成。
+
+新模型入口与 checkpointed 模式的 A2/A3 全负载验收为 PENDING，源码与合成
+回归不替代新镜像实机验收。部署及矩阵见
+[模型 SDC 指南](../../docker/NPU_MODEL_SDC_GUIDE.md)。

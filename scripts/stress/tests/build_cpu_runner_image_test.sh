@@ -53,6 +53,9 @@ if [ "${1-}" = build ]; then
         "$context/docker/stress/cpu/Dockerfile"
     grep -Fq 'libmpich-dev' "$context/docker/stress/cpu/Dockerfile"
     grep -Fq 'catmonitor-stress-exec' "$context/docker/stress/cpu/Dockerfile"
+    for setting in HPL_N=4096 HPL_NB=256 HPL_P=1 HPL_Q=1 HPL_MPI_PROCESSES=1; do
+        grep -Fq "$setting" "$context/docker/stress/cpu/Dockerfile"
+    done
     ! grep -Fq 'catmonitor-stress-cpu-runner' "$context/docker/stress/cpu/Dockerfile"
     [ "$(grep -Fc 'ARG DEBIAN_MIRROR=""' "$context/docker/stress/cpu/Dockerfile")" -eq 2 ]
     grep -Fq '${root}/debian-security' "$context/docker/stress/cpu/Dockerfile"

@@ -26,6 +26,7 @@ COPY source/ /opt/catmonitor/npuburn-source/
 COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
 COPY validate_entrypoint.sh /usr/local/libexec/catmonitor/validate_entrypoint.sh
 COPY validate_runtime_abi.py /usr/local/libexec/catmonitor/validate_runtime_abi.py
+COPY package_inventory.py /usr/local/libexec/catmonitor/package_inventory.py
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 
 # Optional host driver libraries are staged only in this disposable builder
@@ -34,20 +35,20 @@ COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 COPY build-driver-lib64/ /usr/local/Ascend/driver/lib64/
 
 # Prepare immutable CATMonitor helpers.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn; \
     chmod 0755 /usr/local/libexec/catmonitor/validate_entrypoint.sh; \
     chmod 0644 /usr/local/libexec/catmonitor/ascend_env.sh
 
 # A. Validate the build-capable Ascend software stack.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     source /usr/local/libexec/catmonitor/ascend_env.sh; \
     catmonitor_source_ascend_env; \
     catmonitor_ascend_build_preflight
 
 # B. Build exactly one wheel. This expensive native compilation layer remains
 # cacheable when only final package validation changes.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     source /usr/local/libexec/catmonitor/ascend_env.sh; \
     catmonitor_source_ascend_env; \
     bash build/build.sh; \
@@ -56,7 +57,7 @@ RUN set -euo pipefail; \
 
 # C. Replace any same-version package in the builder with the audited wheel.
 # Installation is local and offline.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     set -- build/dist/ascend_npu_burn-*.whl; \
     [ "$#" -eq 1 ] && [ -f "$1" ]; \
     python3 -m pip install \
@@ -71,7 +72,7 @@ RUN set -euo pipefail; \
 # performs NUMA discovery, which requires runtime topology that a Docker build
 # environment is not required to expose.
 ARG BUILD_VALIDATION_NONCE
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     : "${BUILD_VALIDATION_NONCE:?build validation nonce is required}"; \
     source /usr/local/libexec/catmonitor/ascend_env.sh; \
     catmonitor_source_ascend_env; \
@@ -84,7 +85,7 @@ RUN set -euo pipefail; \
     cd /tmp; \
     package_version=$(python3 -c 'import importlib.metadata as metadata; print(metadata.version("ascend-npu-burn"))'); \
     package_file=$(python3 -c 'import ascend_npu_burn; print(ascend_npu_burn.__file__)'); \
-    python3 -c 'import ascend_npu_burn.custom_ops.custom_ops_lib'; \
+    python3 -c 'import torch; import torch_npu; import ascend_npu_burn.custom_ops.custom_ops_lib'; \
     /usr/local/libexec/catmonitor/validate_entrypoint.sh /usr/local/bin/catmonitor-npu-burn; \
     printf 'CATMONITOR_WHEEL_FILENAME=%s\n' "$wheel_filename"; \
     printf 'CATMONITOR_WHEEL_SHA256=%s\n' "$wheel_sha256"; \
@@ -94,6 +95,10 @@ RUN set -euo pipefail; \
     printf 'CATMONITOR_ENTRYPOINT_EXECUTABLE=PASS\n'; \
     install -d -m 0755 /opt/catmonitor/build-compat; \
     printf 'CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED"; \
+    printf 'CATMONITOR_BUILDER_CANN_VERSION_SOURCE=%s\n' "$CATMONITOR_CANN_VERSION_SOURCE"; \
+    python3 /usr/local/libexec/catmonitor/package_inventory.py capture \
+        --root /opt/catmonitor/npuburn-source/ascend_npu_burn \
+        --manifest /opt/catmonitor/build-compat/package-inventory.json; \
     python3 /usr/local/libexec/catmonitor/validate_runtime_abi.py capture \
         --cann-version "$CATMONITOR_CANN_VERSION" \
         --output /opt/catmonitor/build-compat/builder-abi.json
@@ -107,7 +112,7 @@ SHELL ["/bin/bash", "-c"]
 
 # Install into an isolated overlay. The final image copies only installed
 # package files and metadata, not the wheel archive or builder toolchain.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     set -- /opt/catmonitor/npuburn-source/build/dist/ascend_npu_burn-*.whl; \
     [ "$#" -eq 1 ] && [ -f "$1" ]; \
     python3 -m pip install \
@@ -130,6 +135,7 @@ ARG UPSTREAM_REVISION
 ARG RUNTIME_ASCEND_ENV_SCRIPT
 ARG BUILD_VALIDATION_NONCE
 ARG PCIUTILS_ONLINE_INSTALL=false
+ARG MODEL_SDC_ENABLED=false
 
 LABEL org.opencontainers.image.title="CATMonitor Ascend NPU Burn runtime" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
@@ -142,8 +148,11 @@ LABEL org.opencontainers.image.title="CATMonitor Ascend NPU Burn runtime" \
 
 ENV HOME=/opt/catmonitor/npuburn-home \
     ASCEND_ENV_SCRIPT=${RUNTIME_ASCEND_ENV_SCRIPT} \
+    CATMONITOR_MODEL_SDC_ENABLED=${MODEL_SDC_ENABLED} \
     PYTHONPATH=/opt/catmonitor/npuburn-python:${PYTHONPATH} \
     CATMONITOR_STRESS_BENCHMARKS=npu_burn \
+    CATMONITOR_NPU_COMPAT_PROFILE=${COMPAT_PROFILE} \
+    CATMONITOR_NPU_REQUIRE_IDLE=0 \
     CATMONITOR_STRESS_STATE_ROOT=/var/lib/catmonitor/stress \
     NPU_BURN_BACKEND=native \
     NPU_BURN_EXECUTABLE=/usr/local/bin/catmonitor-npu-burn \
@@ -159,9 +168,16 @@ SHELL ["/bin/bash", "-c"]
 COPY ascend_env.sh /usr/local/libexec/catmonitor/ascend_env.sh
 COPY validate_runtime_abi.py /usr/local/libexec/catmonitor/validate_runtime_abi.py
 COPY runtime_preflight.sh /usr/local/bin/catmonitor-npu-burn-preflight
+COPY package_inventory.py /usr/local/libexec/catmonitor/package_inventory.py
+COPY launch.py /usr/local/libexec/catmonitor/launch.py
+COPY model_sdc.py /usr/local/libexec/catmonitor/model_sdc.py
+COPY job_config.py /usr/local/libexec/catmonitor/job_config.py
+COPY job-parameter-base.json /usr/local/share/catmonitor/job-parameter-base.json
+COPY job-parameter-a3.json /usr/local/share/catmonitor/job-parameter-a3.json
 COPY entrypoint.sh /usr/local/bin/catmonitor-npu-burn
 COPY --from=stress_exec_builder /out/catmonitor-stress-exec /usr/local/bin/catmonitor-stress-exec
 COPY --from=npuburn_builder /opt/catmonitor/build-compat/builder-abi.json /usr/local/share/catmonitor/builder-abi.json
+COPY --from=npuburn_builder /opt/catmonitor/build-compat/package-inventory.json /usr/local/share/catmonitor/package-inventory.json
 COPY --from=npuburn_runtime_package /opt/catmonitor/npuburn-python/ /opt/catmonitor/npuburn-python/
 COPY --from=npuburn_builder /opt/catmonitor/npuburn-source/LICENSE.md /usr/share/licenses/ascend-npu-burn/LICENSE.md
 COPY pciutils-packages/ /opt/catmonitor/pciutils-packages/
@@ -172,7 +188,7 @@ COPY runtime-packages.txt /opt/catmonitor/runtime-packages.txt
 # only when the administrator explicitly enables a Docker build network.
 # NPU Burn silently falls back to eight devices without lspci, which is wrong
 # on 16-die A3 nodes.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     mapfile -t runtime_packages < <(awk 'NF && $1 !~ /^#/ { print $1 }' /opt/catmonitor/runtime-packages.txt); \
     [ "${#runtime_packages[@]}" -gt 0 ]; \
     if command -v lspci >/dev/null 2>&1; then \
@@ -239,18 +255,19 @@ RUN set -euo pipefail; \
 # F. Validate the slim runtime base against the builder ABI. CANN remains in
 # the runtime image; only host driver libraries/devices are mounted later.
 # Host driver libraries from the optional builder input are never copied here.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn; \
     chmod 0755 /usr/local/bin/catmonitor-npu-burn-preflight; \
     chmod 0755 /usr/local/bin/catmonitor-stress-exec; \
     chmod 0644 /usr/local/libexec/catmonitor/ascend_env.sh; \
     chmod 0644 /usr/local/libexec/catmonitor/validate_runtime_abi.py; \
-    printf '#!/usr/bin/env bash\nexec python3 -m ascend_npu_burn.npu_burn "$@"\n' \
+    printf '#!/usr/bin/env bash\nexec python3 -s /usr/local/libexec/catmonitor/launch.py "$@"\n' \
         > /usr/local/bin/npu-burn; \
     chmod 0755 /usr/local/bin/npu-burn; \
     source /usr/local/libexec/catmonitor/ascend_env.sh; \
     catmonitor_source_ascend_env; \
     printf 'CATMONITOR_RUNTIME_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED"; \
+    printf 'CATMONITOR_RUNTIME_CANN_VERSION_SOURCE=%s\n' "$CATMONITOR_CANN_VERSION_SOURCE"; \
     python3 /usr/local/libexec/catmonitor/validate_runtime_abi.py validate \
         --expected /usr/local/share/catmonitor/builder-abi.json \
         --cann-version "$CATMONITOR_CANN_VERSION"; \
@@ -266,8 +283,11 @@ RUN set -euo pipefail; \
 # G. Revalidate the final image without importing the runtime command module or
 # touching NPU devices. The nonce prevents a cached layer from hiding markers
 # that the outer builder records in its manifest.
-RUN set -euo pipefail; \
+RUN unset LD_PRELOAD; set -euo pipefail; \
     : "${BUILD_VALIDATION_NONCE:?build validation nonce is required}"; \
+    python3 /usr/local/libexec/catmonitor/package_inventory.py validate \
+        --root /opt/catmonitor/npuburn-python/ascend_npu_burn \
+        --manifest /usr/local/share/catmonitor/package-inventory.json; \
     lspci_path=$(command -v lspci); \
     lspci_version=$("$lspci_path" --version 2>&1); \
     [ -n "$lspci_version" ]; \
@@ -277,6 +297,15 @@ RUN set -euo pipefail; \
     printf 'CATMONITOR_PCIUTILS_SOURCE=%s\n' "$pciutils_source"; \
     printf 'CATMONITOR_LSPCI_PATH=%s\n' "$lspci_path"; \
     printf 'CATMONITOR_LSPCI_VERSION=%s\n' "${lspci_version%%$'\n'*}"
+
+# Model dependencies must be prepared in the selected runtime base. Do not
+# silently download an unpinned Transformers release or run training at build.
+RUN unset LD_PRELOAD; set -euo pipefail; \
+    if [ "$MODEL_SDC_ENABLED" = true ]; then \
+        source /usr/local/libexec/catmonitor/ascend_env.sh; \
+        catmonitor_source_ascend_env; \
+        python3 -s /usr/local/libexec/catmonitor/model_sdc.py --check-imports; \
+    fi
 
 ENTRYPOINT ["/usr/local/bin/catmonitor-npu-burn"]
 CMD ["__serve__"]

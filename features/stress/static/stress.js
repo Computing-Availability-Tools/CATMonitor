@@ -5,17 +5,30 @@ window.clearTimeout(window.__stressBootTimer);
 let config = null;
 let report = null;
 let selected = null;
+let selectedNPUDevices = null;
+let selectedNPUCases = null;
+let npuMode = 'operators';
+let selectedNPUModel = '';
+let npuModelAction = 'compare';
+let modelPreflightResult = null;
+let modelPreflightInFlight = false;
+let refreshInFlight = false;
+let configRefreshedAt = 0;
 let historyReports = [];
 let viewedJobID = '';
 const expandedProfiles = new Set();
+const jobParameterDraft = new Map();
+let jobParameterFields = [];
+let jobParameterSelectionKey = '';
 
 const byId = id => document.getElementById(id);
 const benchmarkInfo = {
-  stream: {description: '验证持续内存带宽与数据搬运能力', family: 'Memory bandwidth'},
-  hpl: {description: '验证高密度浮点计算与 MPI 运行能力', family: 'Dense compute'},
-  hpcg: {description: '验证内存、计算与通信的综合可靠性', family: 'System workload'},
-  npu_burn: {description: '验证昇腾 NPU 高负载计算与 SDC 检测结果', family: 'Ascend NPU reliability'}
+  stream: {description: '内存带宽'},
+  hpl: {description: '浮点计算 · MPI'},
+  hpcg: {description: '综合计算 · 内存 · MPI'},
+  npu_burn: {description: 'NPU 计算 · SDC 检测'}
 };
+const benchmarkDisplayOrder = ['hpcg', 'hpl', 'stream', 'npu_burn'];
 const statusInfo = {
   healthy: {label: '通过', cls: 'ok'},
   time_limit_reached: {label: '通过 · 达到时限', cls: 'ok'},
@@ -49,7 +62,7 @@ const preflightLabels = {
   pass: '预检通过',
   warn: '预检有警告',
   fail: '预检失败',
-  unsupported: '旧版脚本'
+  unsupported: '不支持'
 };
 
 function visual(status) {
@@ -71,6 +84,15 @@ function jobDuration(value) {
   if (!value || !value.started_at) return '--';
   const end = value.finished_at ? new Date(value.finished_at) : new Date();
   return duration(Math.max(0, end - new Date(value.started_at)));
+}
+function npuJobDuration(job, item) {
+  const start = job && new Date(job.started_at).getTime();
+  const end = job && (job.finished_at ? new Date(job.finished_at).getTime()
+    : (job.status === 'running' ? Date.now() : NaN));
+  const ms = Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : item.duration_ms;
+  if (!Number.isFinite(ms) || ms < 0) return '--';
+  const units = ms >= 3600000 ? [3600000, '小时'] : (ms >= 60000 ? [60000, '分钟'] : [1000, '秒']);
+  return new Intl.NumberFormat('zh-CN', {maximumFractionDigits: 2}).format(ms / units[0]) + ' ' + units[1];
 }
 function activeBenchmark() {
   if (!report || !report.benchmarks) return '';
@@ -152,6 +174,16 @@ function appendProfileParameters(container, profile) {
   const parameters = document.createElement('div');
   parameters.className = 'profile-parameters';
   for (const item of profile.parameters || []) {
+    if (item.key === 'case_catalog') {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = '算子准入原始数据（不是实机结果）';
+      const raw = document.createElement('pre');
+      raw.textContent = item.value;
+      details.append(summary, raw);
+      parameters.appendChild(details);
+      continue;
+    }
     const row = document.createElement('div');
     row.className = 'profile-parameter';
     const label = document.createElement('span');
@@ -163,6 +195,57 @@ function appendProfileParameters(container, profile) {
   }
   container.appendChild(parameters);
 }
+
+function appendOperatorDetails(container, operators, scope) {
+  const tensorKeys = ['shape','MKN','BSHN','BNSH','input_data','weight_data',
+    'B','M','N','K','k','C','H','W','seq_len','batch_size','in.out'];
+  for (const op of operators) {
+    const details = disclosure(scope + ':operator:' + op.name, op.name + ' · tensor 参数');
+    details.className += ' npu-operator-parameters';
+    const effective = op.config;
+    const hint = document.createElement('p');
+    hint.className = 'selection-hint';
+    hint.textContent = scope.startsWith('preview:')
+      ? '当前镜像与代际的有效配置；只读预览，不是本次执行结果。'
+      : '该作业执行端实际加载的配置快照；不随当前选择或外部配置变化。';
+    details.appendChild(hint);
+    if (!effective || typeof effective !== 'object' || Array.isArray(effective)) {
+      const missing = document.createElement('p');
+      missing.className = 'selection-hint';
+      missing.textContent = '当前镜像未提供完整 tensor 配置；不使用默认值推算。';
+      details.appendChild(missing);
+    } else {
+      const shapes = Object.fromEntries(tensorKeys.filter(key => Object.hasOwn(effective, key)).map(key => [key,effective[key]]));
+      const rows = [
+        ['Tensor shape / 维度', Object.keys(shapes).length ? JSON.stringify(shapes) : '配置未提供显式 shape；未推算尺寸'],
+        ['dtype', Object.hasOwn(effective,'dtype') ? JSON.stringify(effective.dtype) : '配置未提供'],
+        ['pattern', Object.hasOwn(effective,'pattern') ? JSON.stringify(effective.pattern) : '配置未提供'],
+        ['run_count', Object.hasOwn(effective,'run_count') ? String(effective.run_count) : '配置未提供']
+      ];
+      appendDetailGrid(details, rows);
+    }
+    container.appendChild(details);
+  }
+}
+
+function appendJobOperatorParameters(container, item, jobID) {
+  const proof = item.npu_parameters;
+  const requested = item.npu_selection && item.npu_selection.selected_cases;
+  const names = proof && Array.isArray(proof.operators) ? proof.operators.map(op => op && op.name) : [];
+  const valid = proof && proof.schema_version === 1 && proof.job_id === jobID &&
+    ['A2','A3','A5'].includes(proof.chip_generation) && names.length && new Set(names).size === names.length &&
+    names.every(name => typeof name === 'string' && !['gpt3','llama2'].includes(name)) &&
+    (!requested || (Array.isArray(requested) && sameSelection(names, requested))) && proof.operators.every(op => op.config &&
+      !Array.isArray(op.config) && Number.isInteger(op.config.run_count) && op.config.run_count > 0);
+  if (valid) {
+    appendOperatorDetails(container, proof.operators, 'job:' + jobID);
+  } else {
+    const missing = document.createElement('p');
+    missing.className = 'selection-hint';
+    missing.textContent = '该报告未保存有效的本次算子参数快照；不以当前配置或启动前预检值代替实际参数。';
+    container.appendChild(missing);
+  }
+}
 function renderProfileBody(container, profile, timeoutOverride) {
   const resources = profile.resources || {};
   const effectiveTimeout = Number.isInteger(timeoutOverride) && timeoutOverride > 0 &&
@@ -171,8 +254,9 @@ function renderProfileBody(container, profile, timeoutOverride) {
     : profile.timeout_seconds;
   const strip = document.createElement('div');
   strip.className = 'resource-strip';
-  appendResource(strip, '作业时限', effectiveTimeout + ' s');
-  appendResource(strip, '总工作单元', resources.total_workers > 0 ? resources.total_workers : '自动');
+  appendResource(strip, '配置最大作业时限', (profileParameters(profile).maximum_job_timeout || profile.timeout_seconds) + ' s');
+  appendResource(strip, '本次有效时限', effectiveTimeout + ' s');
+  appendResource(strip, '总工作单元', resources.total_workers > 0 ? resources.total_workers : '运行时确定');
   appendResource(strip, 'MPI 进程', resources.mpi_processes > 0 ? resources.mpi_processes : '不使用');
   appendResource(strip, '问题规模', resources.problem_size || '由执行器决定');
   container.appendChild(strip);
@@ -240,7 +324,22 @@ function renderProfilePreview() {
     head.append(name, preflight);
     card.appendChild(head);
     if (item.profile) {
-      renderProfileBody(card, item.profile, timeoutOverride);
+      if (item.name === 'npu_burn') {
+        const p = profileParameters(item.profile);
+        const strip = document.createElement('div');
+        strip.className = 'resource-strip';
+        appendResource(strip, '芯片代际', p.chip_generation || '未确认');
+        appendResource(strip, 'SDC 检测', p.sdc_detection === 'enabled' ? '启用' : profileValue(p.sdc_detection));
+        appendResource(strip, '配置最大作业时限', (p.maximum_job_timeout || item.profile.timeout_seconds) + ' s');
+        appendResource(strip, '本次有效时限', (timeoutOverride > 0 && timeoutOverride <= item.profile.timeout_seconds
+          ? timeoutOverride : item.profile.timeout_seconds) + ' s');
+        card.appendChild(strip);
+        const details = disclosure('preview:npu', '部署参数与预检详情');
+        renderProfileBody(details, item.profile, timeoutOverride);
+        card.appendChild(details);
+      } else {
+        renderProfileBody(card, item.profile, timeoutOverride);
+      }
     } else {
       const warning = document.createElement('div');
       warning.className = 'profile-warning';
@@ -307,7 +406,9 @@ function renderConfig() {
   }
   const running = report && report.status === 'running';
 
-  for (const item of config.benchmarks || []) {
+  const displayBenchmarks = (config.benchmarks || []).slice().sort((a, b) =>
+    benchmarkDisplayOrder.indexOf(a.name) - benchmarkDisplayOrder.indexOf(b.name));
+  for (const item of displayBenchmarks) {
     const available = item.enabled && item.available;
     const info = benchmarkInfo[item.name] || {
       description: '验证节点在高负载下的运行可靠性',
@@ -344,14 +445,8 @@ function renderConfig() {
     description.className = 'benchmark-desc';
     description.textContent = info.description;
 
-    const chart = document.createElement('div');
-    chart.className = 'mini-chart';
-    for (let i = 0; i < 5; i++) chart.appendChild(document.createElement('i'));
-
     const foot = document.createElement('div');
     foot.className = 'benchmark-foot';
-    const family = document.createElement('span');
-    family.textContent = info.family;
     const asset = document.createElement('span');
     const preflightStatus = item.profile && item.profile.preflight && item.profile.preflight.status;
     asset.className = 'asset-state ' + (available
@@ -360,17 +455,11 @@ function renderConfig() {
     asset.textContent = available
       ? ((preflightStatus === 'warn' || preflightStatus === 'unsupported') ? '可运行 · 有警告' : '预检通过') +
         ' · ' + item.timeout_seconds + 's'
-      : '未就绪';
-    foot.append(family, asset);
+      : (item.enabled ? '未就绪' : '未启用');
+    foot.append(asset);
 
-    label.append(input, top, description, chart, foot);
-    if (item.name === 'npu_burn' && item.profile) {
-      const deployment = document.createElement('div');
-      deployment.className = 'benchmark-deployment';
-      deployment.textContent = npuDeploymentSummary(item.profile) || '执行环境信息不可用';
-      label.appendChild(deployment);
-    }
-    if (!available && item.message) {
+    label.append(input, top, description, foot);
+    if (item.enabled && !available && item.message) {
       const reason = document.createElement('div');
       reason.className = 'benchmark-reason';
       reason.textContent = item.message;
@@ -387,17 +476,361 @@ function renderConfig() {
   if (selectable.length === 0) reasons.push('当前没有通过资产预检的项目');
   byId('policy').textContent = reasons.length
     ? 'Web 触发不可用：' + reasons.join('；')
-    : '配置已就绪。选择一个或多个项目后启动，项目之间将串行执行。';
+    : '多个项目按顺序执行。';
   byId('policy-state').textContent = reasons.length ? '需要配置' : '已就绪';
+  byId('policy').hidden = !reasons.length;
   byId('policy-state').className = 'policy-badge ' + (reasons.length ? 'blocked' : 'ready');
   byId('start').disabled = !config.enabled || running || selectable.length === 0;
+  byId('start-label').textContent = '开始压测';
   byId('cancel').hidden = !(running && report.cancellable);
   byId('progress-panel').hidden = !running;
   byId('progress-benchmark').textContent = activeBenchmark()
     ? '当前项目：' + activeBenchmark()
     : '正在准备运行环境…';
   renderProfilePreview();
+  renderNPUSelection();
+  renderJobParameters();
   renderSummary();
+}
+
+function logicalIDs(value) {
+  if (!/^\d+(,\d+)*$/.test(value || '')) return [];
+  return value.split(',').map(Number);
+}
+
+function isNPUModel(candidate) {
+  return ['gpt3', 'llama2'].includes(candidate.name) ||
+    (candidate.reason || '').includes('separately prepared SDC reference');
+}
+
+function unavailableNPUReason(candidate) {
+  if ((candidate.reason || '').includes('no upstream A2 QuantMatmul')) {
+    return '上游未提供 A2 的量化矩阵乘策略，不能套用 A3/A5 策略。';
+  }
+  return candidate.reason || '当前代际、dtype 或镜像配置未通过准入检查。';
+}
+
+function currentModelPreflightRequest() {
+  const request = {npu_devices: Array.from(selectedNPUDevices || []).sort((a,b) => a-b),
+    npu_model: {name:selectedNPUModel, action:npuModelAction, reference_id:byId('npu-reference-id').value.trim()}};
+  const parameters = currentJobParameters();
+  if (parameters && parameters.npu_burn) request.parameters = {npu_burn: parameters.npu_burn};
+  return request;
+}
+
+function modelPreflightKey() {
+  const item = ((config && config.benchmarks) || []).find(b => b.name === 'npu_burn');
+  const p = profileParameters(item && item.profile);
+  return JSON.stringify([currentModelPreflightRequest(), config && config.enabled, item && item.enabled, item && item.model_capabilities,
+    p.allowed_models, p.allow_reference_generation, p.model_memory_mode,
+    p.workload_image_id, p.workload_container_id, item && item.profile && item.profile.configuration_sha256]);
+}
+
+function renderModelPreflight() {
+  const button = byId('npu-model-preflight');
+  const summary = byId('npu-model-preflight-summary');
+  const panel = byId('npu-model-preflight-failures');
+  const items = byId('npu-model-preflight-items');
+  items.replaceChildren();
+  panel.hidden = true;
+  let request;
+  try { request = currentModelPreflightRequest(); }
+  catch (error) { button.disabled = true; summary.textContent = error.message; return; }
+  const model = request.npu_model;
+  const valid = !!model.name && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(model.reference_id) &&
+    request.npu_devices.length > 0 && (model.action !== 'create_reference' || request.npu_devices.length === 1);
+  const running = !!report && report.status === 'running';
+  button.disabled = modelPreflightInFlight || running || !valid;
+  if (running) { summary.textContent = '当前作业运行中；预检暂不执行，不代表模型不支持。'; return; }
+  if (modelPreflightInFlight) { summary.textContent = '只读预检中，不会训练或生成参考…'; return; }
+  if (!valid) {
+    summary.textContent = '选择已授权设备、模型并填写有效参考 ID 后预检；生成参考仅限单卡。';
+    return;
+  }
+  if (!modelPreflightResult || modelPreflightResult.key !== modelPreflightKey() ||
+      Date.now() - modelPreflightResult.checkedAt >= 60000) {
+    summary.textContent = '本次选择尚未预检；参数或参考变化后需重新检查。';
+    return;
+  }
+  const result = modelPreflightResult.value;
+  if (result.status === 'ready') {
+    summary.textContent = (model.action === 'compare' ? '本次参考匹配、预检通过' : '本次参考生成预检通过') + '；不代表训练通过，启动前仍会复检。';
+    return;
+  }
+  summary.textContent = result.status === 'not_checked' ? '本次预检未执行。' : '本次预检未通过，以下仅列未通过的项目。';
+  byId('npu-model-preflight-title').textContent = result.status === 'not_checked' ? '当前阻塞项（尚未预检）' : '本次预检未通过';
+  panel.hidden = !result.failures.length;
+  for (const failure of result.failures) {
+    const row = document.createElement('div');
+    row.className = 'unavailable-item';
+    const name = document.createElement('b');
+    name.textContent = model.name + ' · ' + failure.label;
+    row.append(name, document.createTextNode('：' + failure.message));
+    items.appendChild(row);
+  }
+}
+
+async function checkModelPreflight() {
+  renderModelPreflight();
+  if (byId('npu-model-preflight').disabled || npuMode !== 'model') return;
+  const key = modelPreflightKey();
+  const request = currentModelPreflightRequest();
+  modelPreflightInFlight = true;
+  modelPreflightResult = null;
+  renderModelPreflight();
+  try {
+    const value = await readJSON(await fetch('/api/stress/models/preflight', {
+      method:'POST', headers:{'Content-Type':'application/json','X-CATMonitor-Action':'stress'},
+      body:JSON.stringify(request)
+    }));
+    if (!['ready','failed','not_checked'].includes(value.status) || !Array.isArray(value.failures) ||
+        value.failures.some(f => !f || typeof f.code !== 'string' || typeof f.label !== 'string' || typeof f.message !== 'string') ||
+        !value.npu_model || value.npu_model.name !== request.npu_model.name ||
+        value.npu_model.action !== request.npu_model.action || value.npu_model.reference_id !== request.npu_model.reference_id ||
+        !Array.isArray(value.npu_devices) || !sameSelection(request.npu_devices, value.npu_devices) ||
+        (value.status === 'ready' && value.failures.length)) throw new Error('预检响应与本次选择不一致');
+    if (key === modelPreflightKey()) modelPreflightResult = {key, value, checkedAt:Date.now()};
+  } catch (error) {
+    // An unavailable old endpoint or transport failure is not model rejection.
+    if (key === modelPreflightKey()) modelPreflightResult = {key, checkedAt:Date.now(), value:{status:'not_checked',failures:[
+      {label:'只读预检未完成',message:'无法取得本次结果：'+error.message+'。不能认定模型不支持。'}]}};
+  } finally {
+    modelPreflightInFlight = false;
+    renderModelPreflight();
+  }
+}
+
+function renderNPUSelection() {
+  const item = (config.benchmarks || []).find(b => b.name === 'npu_burn');
+  const field = byId('npu-selection');
+  field.hidden = !item || !selected || !selected.has('npu_burn');
+  if (field.hidden) return;
+  const p = profileParameters(item.profile || {});
+  const capabilities = item.model_capabilities;
+  const models = (capabilities ? capabilities.allowed_models : (p.allowed_models || '').split(','))
+    .filter(name => ['gpt3', 'llama2'].includes(name));
+  const memoryPolicy = byId('npu-model-memory');
+  if (memoryPolicy) memoryPolicy.textContent = '完整参数 · ' + (p.model_memory_mode === 'checkpointed' ? '激活重计算' : (p.model_memory_mode === 'standard' ? '标准执行' : '显存策略未记录'));
+  if (!models.includes(selectedNPUModel)) selectedNPUModel = models[0] || '';
+  const modelChoices = byId('npu-model-choices');
+  modelChoices.replaceChildren();
+  for (const name of models) {
+    const choice = document.createElement('button');
+    choice.type = 'button';
+    choice.value = name;
+    choice.className = 'model-choice-button';
+    choice.textContent = name === 'gpt3' ? 'GPT3' : 'Llama2';
+    choice.setAttribute('aria-pressed', String(selectedNPUModel === name));
+    choice.onclick = () => { selectedNPUModel = name; renderNPUSelection(); };
+    modelChoices.appendChild(choice);
+  }
+  if (!models.length) npuMode = 'operators';
+  const operatorMode = byId('npu-mode-operators');
+  const modelMode = byId('npu-mode-model');
+  modelMode.disabled = !models.length;
+  operatorMode.setAttribute('aria-pressed', String(npuMode === 'operators'));
+  modelMode.setAttribute('aria-pressed', String(npuMode === 'model'));
+  operatorMode.onclick = () => { npuMode = 'operators'; renderNPUSelection(); };
+  modelMode.onclick = () => { if (models.length) { npuMode = 'model'; renderNPUSelection(); } };
+  byId('npu-model-availability').hidden = !!models.length;
+  byId('npu-model-availability').textContent = '模型 SDC 尚未在当前部署启用；算子压测不受影响。';
+  const mayPrepareReference = capabilities ? capabilities.allow_reference_generation : p.allow_reference_generation === 'true';
+  if (!mayPrepareReference) npuModelAction = 'compare';
+  byId('npu-model-prepare').disabled = !mayPrepareReference;
+  byId('npu-reference-permission').hidden = mayPrepareReference;
+  byId('npu-model-prepare').onclick = () => {
+    if (mayPrepareReference) { npuModelAction = 'create_reference'; renderNPUSelection(); }
+  };
+  byId('npu-model-compare').onclick = () => { npuModelAction = 'compare'; renderNPUSelection(); };
+  const preparing = npuModelAction === 'create_reference';
+  byId('npu-model-preparing').hidden = !preparing;
+  byId('npu-reference-setup').hidden = preparing;
+  byId('npu-reference-label').textContent = preparing ? '新参考 ID（不能覆盖已有参考）' : '对照参考 ID';
+  byId('npu-reference-id').placeholder = preparing ? '例如 gpt3-a2-baseline-01' : '填写已生成的参考 ID';
+  if (npuMode === 'model' && selected.size === 1) {
+    byId('start-label').textContent = preparing ? '生成参考' : '开始 SDC 检测';
+  } else {
+    byId('start-label').textContent = '开始压测';
+  }
+  byId('npu-model-selection').hidden = npuMode !== 'model';
+  byId('npu-operator-heading').hidden = npuMode === 'model';
+  byId('npu-case-choices').hidden = npuMode === 'model';
+  byId('npu-case-count').hidden = npuMode === 'model';
+  byId('npu-case-hint').hidden = npuMode === 'model';
+  const available = logicalIDs(p.available_devices);
+  const defaults = p.devices === 'all' ? available : logicalIDs(p.devices);
+  const allowed = p.allowed_devices === 'all' ? available : logicalIDs(p.allowed_devices || p.devices);
+  if (selectedNPUDevices === null) selectedNPUDevices = new Set(defaults);
+  selectedNPUDevices = new Set(Array.from(selectedNPUDevices).filter(id => available.includes(id) && allowed.includes(id)));
+  field.disabled = !!report && report.status === 'running';
+  const list = byId('npu-device-choices');
+  list.replaceChildren();
+  for (const id of available) {
+    const label = document.createElement('label');
+    label.className = 'npu-choice';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = selectedNPUDevices.has(id);
+    input.disabled = !allowed.includes(id);
+    input.addEventListener('change', () => {
+      if (input.checked) selectedNPUDevices.add(id); else selectedNPUDevices.delete(id);
+      renderNPUSelection();
+    });
+    label.append(input, document.createTextNode(' logical ' + id + (input.disabled ? '（未授权）' : '') + ' '));
+    list.append(label);
+  }
+  byId('npu-select-all').onclick = () => {
+    selectedNPUDevices = new Set(available.filter(id => allowed.includes(id)));
+    renderNPUSelection();
+  };
+  let catalog = [];
+  try { catalog = JSON.parse(p.case_catalog || '[]'); } catch (_) { /* unavailable image contract */ }
+  const defaultsCases = (p.selected_cases || '').split(',').filter(Boolean);
+  const selectableCases = catalog.filter(item => item.selectable && !isNPUModel(item));
+  const availableCases = selectableCases.map(item => item.name);
+  if (selectedNPUCases === null) selectedNPUCases = new Set(defaultsCases);
+  selectedNPUCases = new Set(Array.from(selectedNPUCases).filter(name => availableCases.includes(name)));
+  const parameterItems = byId('npu-operator-parameter-items');
+  parameterItems.replaceChildren();
+  byId('npu-operator-parameters').hidden = npuMode === 'model' || !selectedNPUCases.size;
+  appendOperatorDetails(parameterItems, selectableCases.filter(op => selectedNPUCases.has(op.name)), 'preview:npu');
+  byId('npu-case-count').textContent = '已选 ' + selectedNPUCases.size + ' 项';
+  byId('npu-case-hint').textContent = catalog.length
+    ? '预检通过不等于实机通过，实际运行结果以作业报告为准。'
+    : '当前镜像未提供算子目录；仅使用部署默认用例。';
+  const cases = byId('npu-case-choices');
+  cases.replaceChildren();
+  for (const candidate of selectableCases) {
+    const label = document.createElement('label');
+    label.className = 'npu-choice';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = selectedNPUCases.has(candidate.name);
+    input.addEventListener('change', () => {
+      if (input.checked) selectedNPUCases.add(candidate.name); else selectedNPUCases.delete(candidate.name);
+      renderNPUSelection();
+    });
+    const name = document.createElement('span');
+    name.textContent = candidate.name;
+    label.append(input, name);
+    cases.append(label);
+  }
+  const unavailable = catalog.filter(item => !item.selectable && !isNPUModel(item));
+  byId('npu-unavailable').hidden = !unavailable.length;
+  const unavailableList = byId('npu-unavailable-items');
+  unavailableList.replaceChildren();
+  for (const candidate of unavailable) {
+    const row = document.createElement('div');
+    row.className = 'unavailable-item';
+    const name = document.createElement('b');
+    name.textContent = candidate.name;
+    row.append(name, document.createTextNode(' · ' + unavailableNPUReason(candidate)));
+    unavailableList.appendChild(row);
+  }
+  renderJobParameters();
+  renderModelPreflight();
+}
+
+const cpuJobFields = {
+  hpl: [['n','N'],['nb','NB'],['p','P'],['q','Q'],['mpi_processes','MPI 进程数'],['threads_per_process','每进程线程数']],
+  hpcg: [['nx','nx'],['ny','ny'],['nz','nz'],['runtime_seconds','运行时间（秒）'],['mpi_processes','MPI 进程数'],['threads_per_process','每进程线程数']],
+  stream: [['threads','OpenMP 线程数']]
+};
+const modelJobFields = ['run_count','num_warmup','batch_size','seq_len','random_seed','sample_pool','num_classes','vocab_size','hidden_size','num_hidden_layers','num_attention_heads','intermediate_size','learning_rate'];
+const jobTensorKeys = ['shape','MKN','BSHN','BNSH','input_data','weight_data','B','N','K','k','C','H','W','seq_len','in.out','batch_size','head_num','head_dim','ESKN','ND'];
+
+function renderJobParameters() {
+  const panel = byId('job-parameters'), fields = byId('job-parameter-fields');
+  if (!panel || !fields) return;
+  panel.hidden = !selected || !selected.size;
+  fields.disabled = !!report && report.status === 'running';
+  const key = JSON.stringify([Array.from(selected || []),npuMode,selectedNPUModel,Array.from(selectedNPUCases || []),((config && config.benchmarks) || []).map(b=>b.profile && b.profile.configuration_sha256)]);
+  if (key === jobParameterSelectionKey) return; // polling must not destroy an edited/focused input
+  jobParameterSelectionKey = key;
+  jobParameterFields = [];
+  fields.replaceChildren();
+  const heading = text => { const h = document.createElement('h4'); h.textContent = text; fields.appendChild(h); };
+  const input = (path, label, defaultValue, kind = 'integer') => {
+    const row = document.createElement('label'); row.className = 'job-parameter-row';
+    const caption = document.createElement('span'); caption.textContent = label;
+    const control = document.createElement(kind === 'json' ? 'textarea' : 'input');
+    // A textarea has a getter-only type; only input controls accept this setter.
+    if (kind !== 'json') control.type = kind === 'integer' || kind === 'number' ? 'number' : 'text';
+    if (control.type === 'number') { control.min = kind === 'number' || path.includes('num_warmup') || path.includes('random_seed') ? '0' : '1'; control.step = kind === 'number' ? 'any' : '1'; }
+    control.value = jobParameterDraft.get(path) || '';
+    control.placeholder = defaultValue == null ? '部署未提供默认值' : (typeof defaultValue === 'object' ? JSON.stringify(defaultValue) : String(defaultValue));
+    const note = document.createElement('small'); note.textContent = '部署默认：' + control.placeholder;
+    control.addEventListener('input', () => {
+      jobParameterDraft.set(path, control.value);
+      modelPreflightResult = null;
+      renderModelPreflight();
+    });
+    row.append(caption, control, note); fields.appendChild(row);
+    jobParameterFields.push({path,kind,control});
+  };
+  for (const item of (config && config.benchmarks) || []) {
+    if (!selected || !selected.has(item.name)) continue;
+    const profile = item.profile || {}, frozen = profile.frozen_parameters;
+    heading(item.name === 'npu_burn' ? 'NPU · 本次参数' : item.name.toUpperCase());
+    if (!frozen) {
+      const note = document.createElement('p'); note.textContent = '当前 workload 镜像未提供按作业参数协议；请同步更新 Control 与对应 workload 镜像。'; fields.appendChild(note); continue;
+    }
+    if (cpuJobFields[item.name]) {
+      const defaults = (frozen.effective || {})[item.name] || {};
+      for (const [name,label] of cpuJobFields[item.name]) input(item.name+'.'+name,label,defaults[name]);
+      continue;
+    }
+    let catalog = []; try { catalog = JSON.parse(profileParameters(profile).case_catalog || '[]'); } catch (_) {}
+    if (npuMode === 'model') {
+      const model = catalog.find(c => c.name === selectedNPUModel), defaults = model && model.config || {};
+      for (const name of modelJobFields) input('npu_burn.model.'+name,name,defaults[name],name === 'learning_rate' ? 'number' : 'integer');
+      heading('SDC 阈值 · 绑定参考身份');
+      for (const [name,def] of [['loss',0.01],['grad',0.1],['checksum',0.1]]) input('npu_burn.sdc_tolerances.'+name,name,def,'number');
+    } else {
+      for (const name of selectedNPUCases || []) {
+        heading(name);
+        const op = catalog.find(c => c.name === name), defaults = op && op.config || {};
+        for (const field of ['dtype','pattern']) if (Object.hasOwn(defaults,field)) input('npu_burn.operators.'+name+'.'+field,field+'（逗号分隔）',defaults[field].join(','),'list');
+        if (Object.hasOwn(defaults,'shape')) input('npu_burn.operators.'+name+'.shape','tensor shape（JSON）',defaults.shape,'json');
+        const dimensions = Object.fromEntries(jobTensorKeys.filter(k=>k !== 'shape' && Object.hasOwn(defaults,k)).map(k=>[k,defaults[k]]));
+        if (Object.keys(dimensions).length) input('npu_burn.operators.'+name+'.dimensions','tensor 维度（JSON 对象）',dimensions,'json');
+        input('npu_burn.operators.'+name+'.run_count','run_count',defaults.run_count);
+      }
+    }
+  }
+}
+
+function currentJobParameters() {
+  const result = {};
+  for (const {path,kind,control} of jobParameterFields) {
+    const raw = control.value.trim(); if (!raw) continue;
+    let value;
+    try {
+      if (kind === 'json') value = JSON.parse(raw);
+      else if (kind === 'list') { value = raw.split(',').map(x=>x.trim()); if (value.some(x=>!x) || new Set(value).size !== value.length) throw new Error('列表不能为空或重复'); }
+      else { value = Number(raw); if (!Number.isFinite(value) || kind === 'integer' && !Number.isSafeInteger(value)) throw new Error('需要有效数值'); }
+    } catch (error) { throw new Error(path+'：'+error.message); }
+    const keys = path.split('.'); let object = result;
+    for (const key of keys.slice(0,-1)) object = object[key] || (object[key] = {});
+    object[keys[keys.length-1]] = value;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function appendExecutionParameters(card, item, job) {
+  const receipt = item.execution_parameters;
+  const frozen = receipt && receipt.frozen;
+  const details = disclosure((job.job_id || '')+':'+item.name+':job-params','本次参数 · 请求、冻结与执行');
+  const content = document.createElement('pre');
+  content.textContent = JSON.stringify({requested:(job.requested_parameters || {})[item.name] || null,
+    admitted:item.profile && item.profile.frozen_parameters && item.profile.frozen_parameters.effective,
+    executed:frozen && frozen.effective || null,
+    frozen_hpl_input:frozen && frozen.hpl_input,
+    execution_sha256:frozen && frozen.sha256 || null,
+    actual_model_config:item.npu_model && item.npu_model.effective_config,
+    actual_sdc_tolerances:item.npu_model && item.npu_model.sdc_tolerances},null,2);
+  const note = document.createElement('p'); note.textContent = receipt ? '执行进程已接收冻结参数；NPU 实际加载配置另行核对。取消或失败不代表用例通过。' : '未取得执行参数回执；不把请求或预检值当作实际执行证据。';
+  details.append(note,content); card.appendChild(details);
 }
 
 function renderHistory() {
@@ -487,7 +920,7 @@ function detailRows(item) {
   const values = resultValues(item);
   const rows = [];
   if (Number.isFinite(item.duration_ms)) {
-    rows.push(['CATMonitor 总耗时', duration(item.duration_ms)]);
+    rows.push([item.name === 'npu_burn' ? '执行阶段耗时' : 'CATMonitor 总耗时', duration(item.duration_ms)]);
   }
   if (Number.isFinite(values.time_seconds)) {
     rows.push(['基准计算时间', metricText(values.time_seconds, 's')]);
@@ -501,11 +934,19 @@ function detailRows(item) {
     if (Number.isFinite(values.process)) rows.push(['MPI 进程', metricValue(values.process)]);
   }
   if (item.name === 'npu_burn') {
-    if (Number.isFinite(values.devices)) rows.push(['NPU 设备', metricValue(values.devices)]);
-    if (Number.isFinite(values.cases)) rows.push(['用例总数', metricValue(values.cases)]);
-    if (Number.isFinite(values.passed)) rows.push(['通过用例', metricValue(values.passed)]);
-    if (Number.isFinite(values.failed)) rows.push(['失败用例', metricValue(values.failed)]);
-    if (Number.isFinite(values.errors)) rows.push(['检测错误', metricValue(values.errors)]);
+    if (item.npu_selection) {
+      const s = item.npu_selection;
+      rows.push(['部署默认逻辑 ID', (s.deployment_default || []).join(',')]);
+      rows.push(['本次请求逻辑 ID', s.requested ? s.requested.join(',') : '使用部署默认']);
+      rows.push(['本次固定逻辑 ID', (s.selected || []).join(',')]);
+      rows.push(['CSV 验证逻辑 ID', s.actual ? s.actual.join(',') : '尚未验证']);
+      if (s.selected_cases) {
+        rows.push(['部署默认算子', (s.default_cases || []).join(',')]);
+        rows.push(['本次请求算子', s.requested_cases ? s.requested_cases.join(',') : '使用部署默认']);
+        rows.push(['本次固定算子', s.selected_cases.join(',')]);
+        rows.push(['CSV 验证算子', s.actual_cases ? s.actual_cases.join(',') : '尚未验证']);
+      }
+    }
     if (Number.isFinite(values.case_time_seconds)) {
       rows.push(['累计用例时间', metricText(values.case_time_seconds, 's')]);
     }
@@ -519,7 +960,258 @@ function detailRows(item) {
   return rows;
 }
 
-function appendMetricContent(card, item, jobID) {
+function disclosure(key, title) {
+  const details = document.createElement('details');
+  details.className = 'result-profile';
+  details.open = expandedProfiles.has(key);
+  details.addEventListener('toggle', () => {
+    if (details.open) expandedProfiles.add(key);
+    else expandedProfiles.delete(key);
+  });
+  const summary = document.createElement('summary');
+  summary.textContent = title;
+  details.appendChild(summary);
+  return details;
+}
+
+// The plugin emits these groups only after validating this job's CSV. Never
+// invent per-device counts by dividing the report's total number of rows.
+function npuCSVGroups(item) {
+  const prefix = 'CATMONITOR_NPU_BURN_CASE_GROUPS=';
+  const lines = (item.output || '').split('\n').filter(line => line.startsWith(prefix));
+  if (!item.npu_csv && !lines.length) return {groups: [], error: ''};
+  try {
+    const groups = item.npu_csv ? item.npu_csv.groups : JSON.parse(lines[lines.length - 1].slice(prefix.length));
+    const keys = new Set();
+    if (!Array.isArray(groups) || !groups.length) throw new Error();
+    const totals = {cases: 0, passed: 0, failed: 0, errors: 0};
+    for (const g of groups) {
+      const key = g.device + ':' + g.operator;
+      if (!Number.isSafeInteger(g.device) || g.device < 0 || typeof g.operator !== 'string' ||
+          !g.operator.trim() || keys.has(key) || !Number.isFinite(g.case_time_seconds) ||
+          g.case_time_seconds < 0) throw new Error();
+      keys.add(key);
+      for (const field of Object.keys(totals)) {
+        if (!Number.isSafeInteger(g[field]) || g[field] < 0) throw new Error();
+        totals[field] += g[field];
+      }
+      if (g.cases < 1 || g.passed + g.failed !== g.cases) throw new Error();
+    }
+    const values = resultValues(item);
+    if (!Object.keys(totals).every(key => totals[key] === values[key])) throw new Error();
+    if (Number.isFinite(values.devices) && new Set(groups.map(g => g.device)).size !== values.devices) throw new Error();
+    const seconds = groups.reduce((sum, g) => sum + g.case_time_seconds, 0);
+    if (Number.isFinite(values.case_time_seconds) && Math.abs(seconds - values.case_time_seconds) > 0.000001) throw new Error();
+    return {groups: groups.slice().sort((a, b) => a.device - b.device || a.operator.localeCompare(b.operator)), error: ''};
+  } catch (_) {
+    return {groups: [], error: 'CSV 分组数据无效或与报告总数不一致，不能展示为完整结果。'};
+  }
+}
+
+function sameSelection(a, b) {
+  return a.length === b.length && new Set(a).size === a.length && a.every(value => b.includes(value));
+}
+
+function npuResultIdentity(item, groups) {
+  const selection = item.npu_selection || {};
+  const p = profileParameters(item.profile);
+  const expectedDevices = selection.selected || (p.devices === 'all' ? logicalIDs(p.available_devices) : logicalIDs(p.devices));
+  const expectedCases = selection.selected_cases || (p.selected_cases || '').split(',').filter(Boolean);
+  const actualDevices = selection.actual || Array.from(new Set(groups.map(g => g.device)));
+  const actualCases = selection.actual_cases || Array.from(new Set(groups.map(g => g.operator)));
+  const differences = [];
+  const devicesText = ids => ids.length ? ids.map(id => 'logical ' + id).join('、') : '未记录';
+  const casesText = names => names.join('、') || '未记录';
+  if (actualDevices.length && expectedDevices.length && !sameSelection(expectedDevices, actualDevices)) {
+    differences.push('设备不一致：本次固定 ' + devicesText(expectedDevices) + '；CSV 实际 ' + devicesText(actualDevices));
+  }
+  if (actualCases.length && expectedCases.length && !sameSelection(expectedCases, actualCases)) {
+    differences.push('算子不一致：本次固定 ' + casesText(expectedCases) + '；CSV 实际 ' + casesText(actualCases));
+  }
+  if (selection.requested && !sameSelection(selection.requested, expectedDevices)) {
+    differences.push('请求设备与本次固定设备不一致：请求 ' + devicesText(selection.requested) + '；固定 ' + devicesText(expectedDevices));
+  }
+  if (selection.requested_cases && !sameSelection(selection.requested_cases, expectedCases)) {
+    differences.push('请求算子与本次固定算子不一致：请求 ' + casesText(selection.requested_cases) + '；固定 ' + casesText(expectedCases));
+  }
+  // Even internally consistent grouped totals cannot override differing CSV
+  // identity metadata. Show that disagreement outside collapsed trace details.
+  if (groups.length && actualDevices.length && !sameSelection(actualDevices, Array.from(new Set(groups.map(g => g.device))))) {
+    differences.push('CSV 分组设备与报告核验设备不一致。');
+  }
+  if (groups.length && actualCases.length && !sameSelection(actualCases, Array.from(new Set(groups.map(g => g.operator))))) {
+    differences.push('CSV 分组算子与报告核验算子不一致。');
+  }
+  if (groups.length) {
+    for (const id of expectedDevices) {
+      for (const name of expectedCases) {
+        if (!groups.some(g => g.device === id && g.operator === name)) {
+          differences.push('CSV 缺少 logical ' + id + ' / ' + name + ' 的结果。');
+        }
+      }
+    }
+  }
+  return {devices: devicesText(actualDevices), cases: casesText(actualCases), differences};
+}
+
+function appendDetailGrid(container, rows) {
+  const grid = document.createElement('div');
+  grid.className = 'detail-grid';
+  for (const [labelText, valueText] of rows) {
+    const detail = document.createElement('div');
+    detail.className = 'detail-item';
+    const label = document.createElement('span');
+    label.className = 'detail-label';
+    label.textContent = labelText;
+    const value = document.createElement('span');
+    value.className = 'detail-value';
+    value.textContent = valueText;
+    detail.append(label, value);
+    grid.appendChild(detail);
+  }
+  container.appendChild(grid);
+}
+
+function appendNPUResult(card, item, jobID, job) {
+  const values = resultValues(item);
+  const breakdown = npuCSVGroups(item);
+  const identity = npuResultIdentity(item, breakdown.groups);
+  const copy = document.createElement('div');
+  copy.className = 'npu-result-identity';
+  for (const text of ['设备：' + identity.devices, '算子：' + identity.cases]) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    copy.appendChild(line);
+  }
+  card.appendChild(copy);
+  const differences = identity.differences.concat(breakdown.error ? [breakdown.error] : []);
+  if (differences.length) {
+    const warning = document.createElement('div');
+    warning.className = 'npu-result-warning';
+    warning.setAttribute('role', 'alert');
+    warning.textContent = '结果核验差异：' + differences.join('；');
+    card.appendChild(warning);
+  }
+  const total = document.createElement('div');
+  total.className = 'npu-case-total';
+  if (Number.isFinite(values.cases) && Number.isFinite(values.passed) && Number.isFinite(values.errors)) {
+    total.textContent = metricValue(values.passed) + ' / ' + metricValue(values.cases) + ' 用例通过 · 检测错误 ' + metricValue(values.errors);
+    if (values.failed > 0 || values.errors > 0 || differences.length) total.className += ' bad';
+  } else {
+    total.className = 'selection-hint';
+    total.textContent = '尚无完整 CSV 用例结果，不能认定通过。';
+  }
+  card.appendChild(total);
+  const elapsed = document.createElement('div');
+  elapsed.className = 'duration-row';
+  elapsed.textContent = '作业耗时：' + npuJobDuration(job, item);
+  card.appendChild(elapsed);
+
+  const details = disclosure(jobID + ':npu:groups', '分设备、分算子结果');
+  const hint = document.createElement('p');
+  hint.className = 'selection-hint';
+  hint.textContent = '用例数是 CSV 结果记录数，不是算子数、设备数或迭代次数。';
+  details.appendChild(hint);
+  if (breakdown.groups.length) {
+    const scroll = document.createElement('div');
+    scroll.className = 'npu-table-scroll';
+    const table = document.createElement('table');
+    table.className = 'npu-group-table';
+    const header = document.createElement('tr');
+    for (const title of ['逻辑设备', '算子', '用例通过数', '检测错误']) {
+      const th = document.createElement('th');
+      th.textContent = title;
+      th.setAttribute('scope', 'col');
+      header.appendChild(th);
+    }
+    const thead = document.createElement('thead');
+    thead.appendChild(header);
+    const tbody = document.createElement('tbody');
+    for (const g of breakdown.groups) {
+      const row = document.createElement('tr');
+      if (g.failed || g.errors) row.className = 'bad';
+      for (const text of [String(g.device), g.operator, g.passed + ' / ' + g.cases, String(g.errors)]) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        row.appendChild(td);
+      }
+      tbody.appendChild(row);
+    }
+    table.append(thead, tbody);
+    scroll.appendChild(table);
+    details.appendChild(scroll);
+  } else {
+    const empty = document.createElement('p');
+    empty.className = 'selection-hint';
+    empty.textContent = breakdown.error || (Number.isFinite(values.cases)
+      ? '该报告未保存 CSV 分组明细；保留原有总数，不推算各设备、算子的用例数。'
+      : '当前作业尚无已核验的 CSV 分组明细。');
+    details.appendChild(empty);
+  }
+  card.appendChild(details);
+
+  const trace = disclosure(jobID + ':npu:trace', '执行配置与结果文件');
+  appendDetailGrid(trace, detailRows(item));
+  const timing = document.createElement('p');
+  timing.className = 'selection-hint';
+  timing.textContent = '累计用例时间是 CSV 各用例时间之和；设备可能并行执行。作业耗时按作业起止时间计算，包含启动、执行及收尾，不含提交前准入检查；两者不同。';
+  trace.appendChild(timing);
+  if (item.profile) renderProfileBody(trace, item.profile, 0);
+  appendJobOperatorParameters(trace, item, jobID);
+  const csv = (item.output || '').match(/^CATMONITOR_NPU_BURN_RESULT_CSV=(.+)$/m);
+  const csvPath = (item.npu_csv && item.npu_csv.path) || (csv && csv[1].trim());
+  if (csvPath) appendDetailGrid(trace, [['本轮 CSV 文件', csvPath]]);
+  if (item.output) {
+    const output = document.createElement('details');
+    const title = document.createElement('summary');
+    title.textContent = '执行输出';
+    const raw = document.createElement('pre');
+    raw.textContent = item.output;
+    output.append(title, raw);
+    trace.appendChild(output);
+  }
+  card.appendChild(trace);
+}
+
+function isHBMOOM(item) {
+  return item && item.status === 'unhealthy' && item.failure && item.failure.code === 'npu_hbm_oom' && item.failure.resource === 'npu_hbm';
+}
+
+function appendMetricContent(card, item, jobID, job) {
+  if (isHBMOOM(item)) {
+    const message = document.createElement('div');
+    message.className = 'resource-warning';
+    message.textContent = '显存不足，本次压测未完成；不等于设备硬件故障。';
+    card.appendChild(message);
+    const request = (item.npu_selection || {}).model || {};
+    if (request.name) appendDetailGrid(card, [['模型',request.name],['逻辑设备',((item.npu_selection || {}).selected || []).join(',')]]);
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = '执行详情';
+    details.appendChild(summary);
+    if (item.profile) renderProfileBody(details, item.profile, 0);
+    if (!request.name) appendJobOperatorParameters(details, item, jobID);
+    const raw = document.createElement('pre');
+    raw.textContent = item.output || item.message || '';
+    details.appendChild(raw);
+    card.appendChild(details);
+    return;
+  }
+  if (item.npu_model || (item.npu_selection && item.npu_selection.model)) {
+    const request = (item.npu_selection || {}).model || {};
+    const result = item.npu_model;
+    const title = document.createElement('div');
+    title.className = 'npu-case-total';
+    title.textContent = result && item.status === 'healthy' ? (result.outcome === 'reference_generated' ? '参考生成成功（不是 SDC 检测通过）' : '模型 SDC 对照通过') : '模型任务未通过或尚未完成：' + item.status;
+    card.appendChild(title);
+    appendDetailGrid(card, [['模型', result ? result.model : request.name], ['操作', result ? result.action : request.action], ['参考 ID', result ? result.reference_id : request.reference_id], ['逻辑设备', result ? result.devices.join(',') : ((item.npu_selection || {}).selected || []).join(',')]]);
+    if (result) appendDetailGrid(card, [['比较步数',result.checked_steps], ['保存步数',result.saved_steps], ['检测错误',result.errors], ['显存策略',result.memory_mode === 'checkpointed' ? '完整参数 · 激活重计算' : (result.memory_mode === 'standard' ? '标准' : '未记录')], ['本轮 CSV',result.csv]]);
+    return;
+  }
+  if (item.name === 'npu_burn') {
+    appendNPUResult(card, item, jobID, job);
+    return;
+  }
   const values = resultValues(item);
   if ((item.name === 'hpl' || item.name === 'hpcg') && Number.isFinite(values.gflops)) {
     const primary = document.createElement('div');
@@ -578,53 +1270,13 @@ function appendMetricContent(card, item, jobID) {
     }
   }
 
-  if (item.name === 'npu_burn' && Number.isFinite(values.cases)) {
-    const passed = Number.isFinite(values.passed) ? values.passed : 0;
-    const failed = Number.isFinite(values.failed) ? values.failed : 0;
-    const errors = Number.isFinite(values.errors) ? values.errors : 0;
-    const primary = document.createElement('div');
-    primary.className = 'primary-metric';
-    if (failed > 0 || errors > 0) primary.classList.add('bad');
-    const label = document.createElement('span');
-    label.className = 'primary-metric-label';
-    label.textContent = 'NPU Burn 用例结果';
-    const line = document.createElement('div');
-    line.className = 'primary-metric-line';
-    const value = document.createElement('strong');
-    value.className = 'primary-metric-value';
-    value.textContent = metricValue(passed) + ' / ' + metricValue(values.cases);
-    const unit = document.createElement('span');
-    unit.className = 'primary-metric-unit';
-    unit.textContent = 'cases passed';
-    line.append(value, unit);
-    const summary = document.createElement('div');
-    summary.className = 'primary-metric-summary';
-    summary.textContent = metricValue(passed) + ' / ' + metricValue(values.cases) +
-      ' cases passed · ' + metricValue(failed) + ' failed · ' + metricValue(errors) + ' errors';
-    primary.append(label, line, summary);
-    card.appendChild(primary);
-  }
-
   const details = detailRows(item);
   if (details.length) {
     const section = document.createElement('div');
     section.className = 'metric-section-label';
     section.textContent = '运行详情';
-    const grid = document.createElement('div');
-    grid.className = 'detail-grid';
-    for (const [labelText, valueText] of details) {
-      const detail = document.createElement('div');
-      detail.className = 'detail-item';
-      const label = document.createElement('span');
-      label.className = 'detail-label';
-      label.textContent = labelText;
-      const value = document.createElement('span');
-      value.className = 'detail-value';
-      value.textContent = valueText;
-      detail.append(label, value);
-      grid.appendChild(detail);
-    }
-    card.append(section, grid);
+    card.appendChild(section);
+    appendDetailGrid(card, details);
   }
 
   if (!Object.keys(values).length) {
@@ -637,17 +1289,8 @@ function appendMetricContent(card, item, jobID) {
   }
 
   if (item.profile) {
-    const details = document.createElement('details');
-    details.className = 'result-profile';
     const profileKey = (jobID || 'unknown-job') + ':' + item.name;
-    details.open = expandedProfiles.has(profileKey);
-    details.addEventListener('toggle', () => {
-      if (details.open) expandedProfiles.add(profileKey);
-      else expandedProfiles.delete(profileKey);
-    });
-    const summary = document.createElement('summary');
-    summary.textContent = '查看当次执行 profile · ' + shortHash(item.profile.configuration_sha256);
-    details.appendChild(summary);
+    const details = disclosure(profileKey, '查看当次执行 profile · ' + shortHash(item.profile.configuration_sha256));
     renderProfileBody(details, item.profile, 0);
     card.appendChild(details);
   }
@@ -656,6 +1299,10 @@ function appendMetricContent(card, item, jobID) {
 function renderReport() {
   const shown = displayedReport();
   const state = visual(shown && shown.status);
+  const incomplete = ((shown && shown.benchmarks) || []).filter(item => item.status !== 'healthy' && item.status !== 'time_limit_reached');
+  if (shown && shown.status === 'unhealthy' && incomplete.length && incomplete.every(isHBMOOM)) {
+    state.label = '显存不足 · 未完成'; state.cls = 'warn';
+  }
   const status = byId('status');
   status.textContent = state.label;
   status.className = 'status-badge ' + state.cls;
@@ -663,7 +1310,7 @@ function renderReport() {
   resultCards.innerHTML = '';
   const viewingHistory = Boolean(viewedJobID && shown && report && shown.job_id !== report.job_id);
   byId('report-kicker').textContent = viewingHistory ? 'HISTORY REPORT' : 'LATEST REPORT';
-  byId('report-title').textContent = viewingHistory ? '历史可靠性压测详情' : '最近一次可靠性压测';
+  byId('report-title').textContent = viewingHistory ? '历史结果' : '本次结果';
   byId('show-latest').hidden = !viewingHistory;
 
   if (!shown) {
@@ -677,30 +1324,31 @@ function renderReport() {
     ? ' · 此作业由其它进程启动，Web 仅监视进度'
     : '';
   byId('meta').textContent =
-    '作业 ' + shown.job_id +
-    ' · 触发来源：' + sourceLabel(shown.initiator) +
-    ' · 开始时间：' + new Date(shown.started_at).toLocaleString('zh-CN') +
-    ' · 配置：' + shortHash(shown.configuration_sha256) +
+    sourceLabel(shown.initiator) +
+    ' · ' + new Date(shown.started_at).toLocaleString('zh-CN') +
     external;
+  byId('meta').title = '作业 ' + shown.job_id + ' · 配置 ' + (shown.configuration_sha256 || '未记录');
   byId('empty-results').hidden = true;
 
   for (const item of shown.benchmarks || []) {
-    const itemState = visual(item.status);
+    const itemState = isHBMOOM(item) ? {cls:'warn',label:'显存不足 · 未完成'} : visual(item.status);
+    if (item.status === 'healthy') itemState.label = item.npu_model && item.npu_model.outcome === 'reference_generated' ? '参考已生成' : '压测通过';
     const card = document.createElement('article');
-    card.className = 'result-card';
+    card.className = 'result-card' + (item.name === 'npu_burn' ? ' npu-result' : '');
     const head = document.createElement('div');
     head.className = 'result-card-head';
     const name = document.createElement('span');
     name.className = 'result-card-name';
-    name.textContent = item.name;
+    name.textContent = item.name === 'npu_burn' ? 'NPU Burn' : item.name;
     const resultState = document.createElement('span');
     resultState.className = 'result-state ' + itemState.cls;
     resultState.textContent = itemState.label;
     head.append(name, resultState);
 
     card.appendChild(head);
-    appendMetricContent(card, item, shown.job_id);
-    if (item.message) {
+    appendMetricContent(card, item, shown.job_id, shown);
+    appendExecutionParameters(card, item, shown);
+    if (item.message && !isHBMOOM(item) && (item.name !== 'npu_burn' || item.status !== 'healthy')) {
       const message = document.createElement('div');
       message.className = 'result-message';
       message.textContent = item.message;
@@ -712,14 +1360,37 @@ function renderReport() {
 }
 
 async function readJSON(response) {
-  const body = await response.json().catch(() => ({}));
+  let body;
+  try {
+    body = await response.json();
+  } catch (_) {
+    throw new Error('接口未返回有效 JSON，请检查访问地址或反向代理配置。');
+  }
   if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status));
   return body;
 }
 
+function refreshFailure(error) {
+  // A transport failure is not a failed workload/preflight verdict. Keep the
+  // last successfully loaded selections/report, but do not present them as
+  // fresh or allow a new operator request until connectivity recovers.
+  const networkError = error && error.name === 'TypeError' &&
+    /failed to fetch|load failed|networkerror|network request failed/i.test(error.message || '');
+  return networkError
+    ? {label: '连接中断', message: '无法连接 Web 服务，请检查地址和网络；通过 SSH 访问时，请确认隧道仍在运行。'}
+    : {label: '读取失败', message: '压测数据读取失败：' + error.message};
+}
+
 async function refresh() {
+  // NPU describe imports the runtime. Do not launch overlapping preflight
+  // probes on every two-second status tick while the previous request waits.
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   try {
-    config = await readJSON(await fetch('/api/stress/config', {cache: 'no-store'}));
+    if (!config || Date.now() - configRefreshedAt >= 60000) {
+      config = await readJSON(await fetch('/api/stress/config', {cache: 'no-store'}));
+      configRefreshedAt = Date.now();
+    }
     const latest = await fetch('/api/stress/latest', {cache: 'no-store'});
     report = latest.ok ? await latest.json() : null;
     const historyResponse = await fetch('/api/stress/history?limit=100', {cache: 'no-store'});
@@ -732,10 +1403,14 @@ async function refresh() {
     renderHistory();
     renderReport();
   } catch (error) {
-    byId('policy').textContent = '配置接口读取失败：' + error.message;
-    byId('policy-state').textContent = '加载失败';
+    const failure = refreshFailure(error);
+    byId('policy').textContent = failure.message;
+    byId('policy-state').textContent = failure.label;
     byId('policy-state').className = 'policy-badge blocked';
-    setError(error.message);
+    byId('start').disabled = true;
+    setError(failure.message);
+  } finally {
+    refreshInFlight = false;
   }
 }
 
@@ -745,6 +1420,22 @@ async function start() {
   if (!benchmarks.length) {
     setError('请至少选择一个已就绪的可靠性压测项目。');
     return;
+  }
+  const payload = {benchmarks};
+  try { const parameters = currentJobParameters(); if (parameters) payload.parameters = parameters; }
+  catch (error) { setError(error.message); return; }
+  if (benchmarks.includes('npu_burn')) {
+    payload.npu_devices = Array.from(selectedNPUDevices || []);
+    if (!payload.npu_devices.length) { setError('请明确选择至少一个 NPU 逻辑设备。'); return; }
+    const npu = (config.benchmarks || []).find(b => b.name === 'npu_burn');
+    if (npuMode === 'model') {
+      payload.npu_model = {name:selectedNPUModel, action:npuModelAction, reference_id:byId('npu-reference-id').value.trim()};
+      if (!payload.npu_model.name || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(payload.npu_model.reference_id)) { setError('请选择已授权模型并填写有效参考 ID。'); return; }
+      if (payload.npu_model.action === 'create_reference' && payload.npu_devices.length !== 1) { setError('生成参考时只能选择一台逻辑设备。'); return; }
+    } else if (profileParameters(npu.profile || {}).case_catalog) {
+      payload.npu_cases = Array.from(selectedNPUCases || []);
+      if (!payload.npu_cases.length) { setError('请明确选择至少一个 NPU 算子。'); return; }
+    }
   }
   const raw = byId('timeout').value.trim();
   const timeoutSeconds = raw ? Number(raw) : 0;
@@ -769,18 +1460,26 @@ async function start() {
       const workers = resources.total_workers > 0 ? resources.total_workers + ' 工作单元' : '工作单元自动';
       return item.name.toUpperCase() + '：' + workers +
         '，时限 ' + (timeoutSeconds || profile.timeout_seconds || item.timeout_seconds) + 's' +
-        '，配置 ' + (timeoutSeconds ? '提交后生成新哈希' : shortHash(profile.configuration_sha256)) +
+        '，配置 ' + ((timeoutSeconds || item.name === 'npu_burn') ? '提交后生成新哈希' : shortHash(profile.configuration_sha256)) +
         (profile.preflight && profile.preflight.status === 'warn' ? ' [预检警告]' : '');
     });
+  if (payload.npu_devices) profileLines.push('本次 NPU logical ID：' + payload.npu_devices.join(','));
+  if (payload.parameters) profileLines.push('仅本次参数修改：'+JSON.stringify(payload.parameters));
+  if (payload.npu_cases) profileLines.push('本次 NPU 算子：' + payload.npu_cases.join(','));
+  if (payload.npu_model) {
+    profileLines.push('本次模型：' + payload.npu_model.name);
+    profileLines.push('本次任务：' + (payload.npu_model.action === 'create_reference' ? '生成参考（不是 SDC 检测通过）' : 'SDC 对照检测'));
+    profileLines.push('参考 ID：' + payload.npu_model.reference_id);
+  }
   if (!window.confirm(
     '将启动高负载可靠性压测：\n\n' + profileLines.join('\n') +
-    '\n\n参数只读，确认按以上 profile 执行吗？'
+    '\n\n设备将固定到本次作业；Controller 会重新验证权限、拓扑与运行条件。确认执行吗？'
   )) return;
   try {
     report = await readJSON(await fetch('/api/stress/runs', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-CATMonitor-Action': 'stress'},
-      body: JSON.stringify({benchmarks, timeout_seconds: timeoutSeconds})
+      body: JSON.stringify({...payload, timeout_seconds: timeoutSeconds})
     }));
     viewedJobID = '';
     renderConfig();
@@ -809,6 +1508,9 @@ async function cancel() {
 byId('start').addEventListener('click', start);
 byId('cancel').addEventListener('click', cancel);
 byId('timeout').addEventListener('input', renderProfilePreview);
+byId('npu-model-preflight').addEventListener('click', checkModelPreflight);
+byId('npu-reference-id').addEventListener('input', renderModelPreflight);
+byId('job-parameter-reset').addEventListener('click', () => { jobParameterDraft.clear(); jobParameterSelectionKey = ''; modelPreflightResult = null; renderJobParameters(); renderModelPreflight(); });
 byId('show-latest').addEventListener('click', () => {
   viewedJobID = '';
   renderHistory();

@@ -1,0 +1,17 @@
+--- a/ascend_npu_burn/common/enum.py
++++ b/ascend_npu_burn/common/enum.py
+@@ -55,2 +55,3 @@ class ChipGeneration(Enum):
+     A5 = "A5"
+     A3 = "A3"
++    A2 = "A2"
+--- a/ascend_npu_burn/npu_burn.py
++++ b/ascend_npu_burn/npu_burn.py
+@@ -108,1 +108,1 @@
+-        "--chip_generation", type=str, choices=["A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
++        "--chip_generation", type=str, choices=["A2", "A3", "A5"], default="A5", help="NPU chip generation (default: A5)"
+--- a/ascend_npu_burn/case_catalog.py
++++ b/ascend_npu_burn/case_catalog.py
+@@ -23,2 +23,2 @@
+-    if generation in ('A2', 'A3'):
++    if generation == 'A3':
+         data = merge_config(data, json.loads((directory / (generation.lower() + '_config.json')).read_text()))

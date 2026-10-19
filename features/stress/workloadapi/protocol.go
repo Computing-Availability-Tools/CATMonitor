@@ -22,27 +22,37 @@ const (
 // Request is the only payload accepted by a workload container. It contains
 // no command, executable path, environment or untyped argument vector.
 type Request struct {
-	ProtocolVersion int                        `json:"protocol_version"`
-	JobID           string                     `json:"job_id"`
-	Benchmark       string                     `json:"benchmark"`
-	TimeoutSeconds  int64                      `json:"timeout_seconds"`
-	Options         map[string]json.RawMessage `json:"options"`
+	ProtocolVersion  int                        `json:"protocol_version"`
+	JobID            string                     `json:"job_id"`
+	Benchmark        string                     `json:"benchmark"`
+	TimeoutSeconds   int64                      `json:"timeout_seconds"`
+	Options          map[string]json.RawMessage `json:"options"`
+	NPUDevices       DeviceIDs                  `json:"npu_devices,omitempty"`
+	NPUCases         CaseNames                  `json:"npu_cases,omitempty"`
+	NPUModel         *ModelRequest              `json:"npu_model,omitempty"`
+	FrozenParameters *FrozenParameters          `json:"frozen_parameters,omitempty"`
 }
 
 // Result is the common CPU/NPU terminal envelope returned by
 // catmonitor-stress-exec.
 type Result struct {
-	ProtocolVersion int                `json:"protocol_version"`
-	JobID           string             `json:"job_id"`
-	Benchmark       string             `json:"benchmark"`
-	Status          string             `json:"status"`
-	StartedAt       time.Time          `json:"started_at"`
-	FinishedAt      time.Time          `json:"finished_at"`
-	DurationMS      int64              `json:"duration_ms"`
-	Message         string             `json:"message"`
-	Values          map[string]float64 `json:"values,omitempty"`
-	Source          string             `json:"source,omitempty"`
-	Output          string             `json:"output,omitempty"`
+	ProtocolVersion     int                    `json:"protocol_version"`
+	JobID               string                 `json:"job_id"`
+	Benchmark           string                 `json:"benchmark"`
+	Status              string                 `json:"status"`
+	StartedAt           time.Time              `json:"started_at"`
+	FinishedAt          time.Time              `json:"finished_at"`
+	DurationMS          int64                  `json:"duration_ms"`
+	Message             string                 `json:"message"`
+	Values              map[string]float64     `json:"values,omitempty"`
+	Source              string                 `json:"source,omitempty"`
+	Output              string                 `json:"output,omitempty"`
+	NPUDevices          DeviceIDs              `json:"npu_devices,omitempty"`
+	NPUCases            CaseNames              `json:"npu_cases,omitempty"`
+	NPUModel            *ModelResult           `json:"npu_model,omitempty"`
+	NPUParameters       *NPUOperatorParameters `json:"npu_parameters,omitempty"`
+	Failure             *Failure               `json:"failure,omitempty"`
+	ExecutionParameters *ExecutionParameters   `json:"execution_parameters,omitempty"`
 }
 
 // State is returned by the workload status operation.
@@ -99,6 +109,7 @@ type ExecutionProfile struct {
 	TimeoutSeconds      int64              `json:"timeout_seconds"`
 	ScriptSHA256        string             `json:"script_sha256,omitempty"`
 	ConfigurationSHA256 string             `json:"configuration_sha256"`
+	FrozenParameters    *FrozenParameters  `json:"frozen_parameters,omitempty"`
 }
 
 type ProfileParameter struct {

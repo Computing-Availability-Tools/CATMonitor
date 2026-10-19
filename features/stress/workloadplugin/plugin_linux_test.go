@@ -183,7 +183,7 @@ func TestNPUBurnDescribeFailsWhenRuntimePreflightFails(t *testing.T) {
 
 func TestNPUSummaryRequiresCompletePass(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "npu_burn_results.csv")
-	data := "task,device,x,y,z,exetime,error,result\nmatmul,0,1,1,1,2.5,0,PASS\nmatmul,1,1,1,1,3.5,0,PASS\n"
+	data := "task,device_id,case_idx,run_count,stream_count,exetime,err_count,result\nmatmul,0,1,1,1,2.5,0,PASS\nmatmul,1,1,1,1,3.5,0,PASS\n"
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
