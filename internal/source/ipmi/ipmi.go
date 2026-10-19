@@ -43,7 +43,7 @@ const (
 	// sensorGetTimeout bounds one `ipmitool sensor get` call. Slow BMCs can
 	// take 5-7s per sensor (measured on a 910B4 host under load); 5s killed
 	// healthy sensors and forced a full-scan fallback every cycle.
-	sensorGetTimeout  = 15 * time.Second
+	sensorGetTimeout = 15 * time.Second
 	// defaultCacheDir is the parent of the JSONL data dir, which is a
 	// mounted volume in docker deployments (data:/var/lib/catmonitor/data).
 	// Persisting the sensor-name cache there means it survives container

@@ -676,8 +676,8 @@ func TestNameCachePersistenceAcrossRestart(t *testing.T) {
 	// working name cache means no full SDR discovery is needed. ---
 	discoveryCalls := 0
 	second := &defaultSource{
-		cacheTTL:  defaultCacheTTL,
-		fetchSDR:  func() (string, error) { discoveryCalls++; return sdrOut, nil },
+		cacheTTL: defaultCacheTTL,
+		fetchSDR: func() (string, error) { discoveryCalls++; return sdrOut, nil },
 		fetchSensorGet: func(name string) (string, error) {
 			return "Sensor ID: x\nSensor Reading: 42 (+/- 0) degrees C\nStatus: ok", nil
 		},
