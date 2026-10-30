@@ -82,6 +82,26 @@ func TestSYS001DaemonOutput(t *testing.T) {
 		if m["component"] != "cpu" {
 			t.Errorf("JSONL component = %v, want cpu", m["component"])
 		}
+		// Aggregate-only archive: the JSONL write filter drops every cpu
+		// per-core sample (core label other than "total"). The fixture
+		// /proc/stat carries cpu0..cpu3 lines, so per-core samples would
+		// otherwise appear here. Per-core values remain visible via
+		// /metrics and the snapshot files.
+		perCore := 0
+		for _, line := range lines {
+			var mm map[string]any
+			if err := json.Unmarshal([]byte(line), &mm); err != nil {
+				t.Fatalf("invalid JSONL line %q: %v", line, err)
+			}
+			if labels, ok := mm["labels"].(map[string]any); ok {
+				if core, ok := labels["core"].(string); ok && core != "total" {
+					perCore++
+				}
+			}
+		}
+		if perCore > 0 {
+			t.Errorf("cpu JSONL contains %d per-core lines, want 0 (aggregate-only archive)", perCore)
+		}
 	})
 
 	t.Run("TC-024_counter_types", func(t *testing.T) {

@@ -62,6 +62,99 @@ func TestWriteCreatesDatedFilePerComponent(t *testing.T) {
 	}
 }
 
+func TestWriteFilterDropsUnwantedMetrics(t *testing.T) {
+	dir := t.TempDir()
+	// Representative keep-if-true predicate: drop cpu samples whose core
+	// label is not "total" (the daemon installs this via WithWriteFilter).
+	pred := func(m collector.Metric) bool {
+		if m.Component == "cpu" {
+			if core, ok := m.Labels["core"]; ok && core != "total" {
+				return false
+			}
+		}
+		return true
+	}
+	s, err := New(dir, 0, WithWriteFilter(pred))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer s.Close()
+
+	batch := []collector.Metric{
+		{Component: "cpu", Name: "usage", Value: 12.3, Labels: map[string]string{"core": "total"}, Timestamp: time.Now()},
+		{Component: "cpu", Name: "usage", Value: 4.2, Labels: map[string]string{"core": "0"}, Timestamp: time.Now()},
+		{Component: "cpu", Name: "frequency", Value: 2600, Labels: map[string]string{"core": "7"}, Timestamp: time.Now()},
+		{Component: "cpu", Name: "avg_freq", Value: 2600, Timestamp: time.Now()},
+		{Component: "cpu", Name: "temperature", Value: 45.5, Labels: map[string]string{"cpu": "1", "sensor": "CPU1 Temp"}, Timestamp: time.Now()},
+		{Component: "npu", Name: "npu_util", Value: 80, Labels: map[string]string{"device_id": "1"}, Timestamp: time.Now()},
+	}
+	if err := s.Write(batch); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	today := time.Now().Format("2006-01-02")
+
+	// cpu file: total usage + avg_freq + temperature survive; per-core
+	// usage/frequency samples are dropped.
+	cpuData, err := os.ReadFile(filepath.Join(dir, "cpu_"+today+".jsonl"))
+	if err != nil {
+		t.Fatalf("read cpu file: %v", err)
+	}
+	var kept []collector.Metric
+	for _, line := range strings.Split(strings.TrimSpace(string(cpuData)), "\n") {
+		if line == "" {
+			continue
+		}
+		var m collector.Metric
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("unmarshal %q: %v", line, err)
+		}
+		kept = append(kept, m)
+	}
+	if len(kept) != 3 {
+		t.Fatalf("expected 3 persisted cpu metrics, got %d: %s", len(kept), cpuData)
+	}
+	for _, m := range kept {
+		if core, ok := m.Labels["core"]; ok && core != "total" {
+			t.Errorf("per-core metric persisted: %+v", m)
+		}
+	}
+
+	// npu file: untouched by the cpu-scoped predicate.
+	npuData, err := os.ReadFile(filepath.Join(dir, "npu_"+today+".jsonl"))
+	if err != nil {
+		t.Fatalf("read npu file: %v", err)
+	}
+	if n := strings.Count(string(npuData), "\n"); n != 1 {
+		t.Errorf("npu: expected 1 line, got %d", n)
+	}
+}
+
+func TestWriteWithoutFilterKeepsEverything(t *testing.T) {
+	perCore := collector.Metric{
+		Component: "cpu", Name: "usage", Value: 4.2,
+		Labels: map[string]string{"core": "0"}, Timestamp: time.Now(),
+	}
+	for _, opts := range [][]Option{nil, {WithWriteFilter(nil)}} {
+		dir := t.TempDir()
+		s, err := New(dir, 0, opts...)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if err := s.Write([]collector.Metric{perCore}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		s.Close()
+		today := time.Now().Format("2006-01-02")
+		data, err := os.ReadFile(filepath.Join(dir, "cpu_"+today+".jsonl"))
+		if err != nil {
+			t.Fatalf("read cpu file: %v", err)
+		}
+		if n := strings.Count(string(data), "\n"); n != 1 {
+			t.Errorf("opts=%v: expected 1 line, got %d", opts, n)
+		}
+	}
+}
+
 func TestStartupCleanupDeletesExpiredKeepsFresh(t *testing.T) {
 	dir := t.TempDir()
 	today := time.Now()

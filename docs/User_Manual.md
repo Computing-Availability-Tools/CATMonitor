@@ -556,10 +556,12 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 ### 8.1 采集指标（JSONL，每行一条）
 
 ```jsonl
-{"component":"cpu","name":"usage","value":45.2,"unit":"%","labels":{"core":"0"},"timestamp":"2026-07-25T10:30:00Z"}
+{"component":"cpu","name":"usage","value":45.2,"unit":"%","labels":{"core":"total"},"timestamp":"2026-07-25T10:30:00Z"}
 ```
 
 文件路径：`{data_dir}/{component}_{date}.jsonl`，按天轮转，超 `max_file_age` 清理。
+
+> **存档聚合策略**：CPU 部件的 per-core 样本（`core` 标签为数字，如 `{"core":"0"}`）**不写入** JSONL 存档，存档只保留聚合值——`core=total` 系列（usage、8 项 time、4 项 util）与无标签的 `avg_freq`。per-core 实时值仍可通过 `:19320` `/metrics` 端点与 Web「全部指标」面板查看。此策略将多核主机的 CPU 存档量缩减约 core 数倍（128 核 @1s 采集从每秒 ~1800 行降至 14 行）。
 
 ### 8.2 健康度（CLI 输出，不落盘）
 

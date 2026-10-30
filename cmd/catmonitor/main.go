@@ -144,7 +144,7 @@ func runDaemon() {
 	metrics.SetCollectionThreshold(cfg.Collection.MinPriority)
 	collector.SetWantedChecker(metrics.AnyWanted)
 
-	store, err := storage.New(cfg.Storage.DataDir, cfg.Storage.MaxFileAge)
+	store, err := storage.New(cfg.Storage.DataDir, cfg.Storage.MaxFileAge, storage.WithWriteFilter(persistToJSONL))
 	if err != nil {
 		logger.Error("failed to create storage", "error", err)
 		os.Exit(1)
@@ -433,6 +433,23 @@ func getOutputFormat() string {
 func isCollectorEnabled(cfg *config.Config, name string) bool {
 	if c, ok := cfg.Collectors[name]; ok {
 		return c.Enabled
+	}
+	return true
+}
+
+// persistToJSONL reports whether a metric should be written to the JSONL
+// archive. CPU per-core samples (any core label other than "total") are
+// excluded so the archive only holds aggregate series (usage, the 8 time
+// fields, the 4 state utils, plus label-less aggregates like avg_freq);
+// on many-core hosts this shrinks the per-cycle CPU volume by ~core-count.
+// Everything upstream of the storage layer is unaffected: the in-memory
+// cache, :19320 Prometheus endpoint, snapshot files, web all-metrics panel
+// and the straggler KPI tap still see per-core samples.
+func persistToJSONL(m collector.Metric) bool {
+	if m.Component == "cpu" {
+		if core, ok := m.Labels["core"]; ok && core != "total" {
+			return false
+		}
 	}
 	return true
 }
