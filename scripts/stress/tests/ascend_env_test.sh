@@ -194,4 +194,42 @@ assert_contains "$HELPER" 'ctypes.CDLL("libascend_hal.so")'
 assert_contains "$HELPER" '("torch_npu", "TORCH_NPU")'
 assert_contains "$HELPER" '("tbe", "TBE")'
 
+# Preload must be scoped away from source/path/version captures, then restored.
+cat >"$TEST_ROOT/preload-env.sh" <<'EOF'
+[ -z "${LD_PRELOAD:-}" ] || return 4
+printf 'vendor diagnostic\n'
+export ASCEND_TOOLKIT_HOME=/fixture/toolkit
+EOF
+(
+    source "$HELPER"
+    export LD_PRELOAD=fixture-not-a-real-library
+    export ASCEND_ENV_SCRIPT="$TEST_ROOT/preload-env.sh"
+    catmonitor_source_ascend_env >"$TEST_ROOT/preload.stdout" 2>"$TEST_ROOT/preload.stderr"
+    [ "$LD_PRELOAD" = fixture-not-a-real-library ] || exit 5
+    unset LD_PRELOAD
+) || fail 'preload scoping failed'
+assert_contains "$TEST_ROOT/preload.stderr" 'vendor diagnostic'
+if grep -Fq 'vendor diagnostic' "$TEST_ROOT/preload.stdout"; then fail 'diagnostic polluted stdout'; fi
+if command -v cc >/dev/null 2>&1; then
+    cat >"$TEST_ROOT/noisy.c" <<'EOF'
+#include <stdio.h>
+__attribute__((constructor)) static void noisy(void) { puts("PRELOAD_STDOUT_NOISE"); }
+EOF
+    cc -shared -fPIC "$TEST_ROOT/noisy.c" -o "$TEST_ROOT/noisy.so"
+    # Demonstrate the fixture really contaminates subprocess stdout.
+    LD_PRELOAD="$TEST_ROOT/noisy.so" /usr/bin/printf 'probe\n' >"$TEST_ROOT/noisy.log"
+    assert_contains "$TEST_ROOT/noisy.log" 'PRELOAD_STDOUT_NOISE'
+    (
+        source "$HELPER"
+        export ASCEND_ENV_SCRIPT="$TEST_ROOT/preload-env.sh"
+        export LD_PRELOAD="$TEST_ROOT/noisy.so"
+        catmonitor_source_ascend_env >"$TEST_ROOT/clean.stdout" 2>"$TEST_ROOT/clean.stderr"
+        [ "$LD_PRELOAD" = "$TEST_ROOT/noisy.so" ] || exit 5
+        unset LD_PRELOAD
+    ) || fail 'real preload isolation failed'
+    if grep -Fq PRELOAD_STDOUT_NOISE "$TEST_ROOT/clean.stdout"; then fail 'preload polluted metadata'; fi
+    printf 'PRELOAD_CONSTRUCTOR_REGRESSION=PASS\n'
+else
+    printf 'PRELOAD_CONSTRUCTOR_REGRESSION=NOT_RUN (cc unavailable)\n'
+fi
 printf 'PASS: ascend_env.sh\n'

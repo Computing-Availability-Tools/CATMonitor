@@ -136,7 +136,7 @@ stress:
     stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
     hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
     hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
-    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 2h }
 collection:
   min_priority: medium     # low (全采) | medium (跳过 Low) | high (仅 High)——按优先级阈值预过滤采集
 
@@ -320,9 +320,12 @@ catmonitor stress cancel --job JOB_ID
 
 stress 只在用户显式请求时运行。daemon 是唯一 Stress Controller；CLI 与 Web 通过
 `/run/catmonitor/control.sock` 查看和控制同一作业，daemon 再用固定 Docker Executor
-调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置只声明
-启用项目、容器和最大运行窗口，MPI、线程、问题规模和 NPU logical ID 固化在 workload
-profile 中，不能由 Web 编辑。日常部署与使用见
+调用 CPU/NPU workload 容器中的 `catmonitor-stress-exec` typed plugin。配置声明启用
+项目、容器和最大运行窗口；部署默认值（MPI、线程、问题规模、NPU logical ID）固化在
+workload profile 中。Web 的"高级参数"面板（默认折叠）可对**本次作业**做类型化覆盖——
+STREAM 线程、HPL 规模/网格/MPI、HPCG 规模/运行时间、NPU 设备/算子/参数；参数经校验后
+冻结为本次执行回执，报告与历史保存实际生效值，不以随后变化的部署默认值冒充本次参数。
+脚本、命令、路径、容器绑定和权限始终不可编辑。日常部署与使用见
 [STRESS_USER_GUIDE.md](../features/stress/STRESS_USER_GUIDE.md)，自动化与实机验收见
 [STRESS_TEST_GUIDE.md](../features/stress/STRESS_TEST_GUIDE.md)。
 
@@ -553,10 +556,12 @@ catmonitor-dfee -addr :19323 -exporter=enabled -exporter-port=9333 -snapshot-dir
 ### 8.1 采集指标（JSONL，每行一条）
 
 ```jsonl
-{"component":"cpu","name":"usage","value":45.2,"unit":"%","labels":{"core":"0"},"timestamp":"2026-07-25T10:30:00Z"}
+{"component":"cpu","name":"usage","value":45.2,"unit":"%","labels":{"core":"total"},"timestamp":"2026-07-25T10:30:00Z"}
 ```
 
 文件路径：`{data_dir}/{component}_{date}.jsonl`，按天轮转，超 `max_file_age` 清理。
+
+> **存档聚合策略**：CPU 部件的 per-core 样本（`core` 标签为数字，如 `{"core":"0"}`）**不写入** JSONL 存档，存档只保留聚合值——`core=total` 系列（usage、8 项 time、4 项 util）与无标签的 `avg_freq`。per-core 实时值仍可通过 `:19320` `/metrics` 端点与 Web「全部指标」面板查看。此策略将多核主机的 CPU 存档量缩减约 core 数倍（128 核 @1s 采集从每秒 ~1800 行降至 14 行）。
 
 ### 8.2 健康度（CLI 输出，不落盘）
 

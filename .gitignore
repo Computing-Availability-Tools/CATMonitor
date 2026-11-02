@@ -12,7 +12,11 @@ bin/catmonitor
 *.dylib
 *.test
 *.out
+__pycache__/
+*.pyc
 coverage.html
+/.delivery/
+/.worktrees/
 .idea/
 .vscode/
 features/web/data/

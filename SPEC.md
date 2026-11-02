@@ -245,7 +245,7 @@ stress:                    # 可靠性压测（默认 off，显式启用）；�
     stream: { enabled: false, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
     hpl: { enabled: false, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 2h }
     hpcg: { enabled: false, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
-    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
+    npu_burn: { enabled: false, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 2h }
 snapshot:                 # daemon 统一生产 snapshot 供 web/dfee 只读消费
   enabled: true           # 代码默认 off（config.Default()），随仓 configs/catmonitor.yaml 设为 true；off 时 daemon 不写 snapshot 文件，行为同前
   dir: /var/lib/catmonitor/snapshot   # snapshot_<comp>.json + snapshot.json 目录

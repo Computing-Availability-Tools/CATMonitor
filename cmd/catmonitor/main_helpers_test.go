@@ -260,3 +260,33 @@ func TestRunList(t *testing.T) {
 		}
 	}
 }
+
+// persistToJSONL keeps the CPU archive aggregate-only: every core label
+// other than "total" is dropped (including frequency, whose aggregate is
+// the label-less avg_freq, and the static cache sizes that carry core="0").
+// Other components and other label keys are untouched.
+func TestPersistToJSONL(t *testing.T) {
+	cases := []struct {
+		name string
+		m    collector.Metric
+		want bool
+	}{
+		{"cpu usage total", collector.Metric{Component: "cpu", Name: "usage", Labels: map[string]string{"core": "total"}}, true},
+		{"cpu usage core 0", collector.Metric{Component: "cpu", Name: "usage", Labels: map[string]string{"core": "0"}}, false},
+		{"cpu time field core 127", collector.Metric{Component: "cpu", Name: "user_time", Labels: map[string]string{"core": "127"}}, false},
+		{"cpu util core 5", collector.Metric{Component: "cpu", Name: "user_util", Labels: map[string]string{"core": "5"}}, false},
+		{"cpu frequency core 17", collector.Metric{Component: "cpu", Name: "frequency", Labels: map[string]string{"core": "17"}}, false},
+		{"cpu avg_freq unlabeled", collector.Metric{Component: "cpu", Name: "avg_freq"}, true},
+		{"cpu l1d_cache_size core 0", collector.Metric{Component: "cpu", Name: "l1d_cache_size", Labels: map[string]string{"core": "0"}}, false},
+		{"cpu temperature socket label", collector.Metric{Component: "cpu", Name: "temperature", Labels: map[string]string{"cpu": "1", "sensor": "CPU1 Temp"}}, true},
+		{"cpu mce errors socket label", collector.Metric{Component: "cpu", Name: "cpu_ce_errors", Labels: map[string]string{"cpu": "0"}}, true},
+		{"npu per-device", collector.Metric{Component: "npu", Name: "npu_util", Labels: map[string]string{"device_id": "1"}}, true},
+		{"disk per-mount", collector.Metric{Component: "disk", Name: "usage", Labels: map[string]string{"mount_point": "/"}}, true},
+		{"memory unlabeled", collector.Metric{Component: "memory", Name: "usage"}, true},
+	}
+	for _, tc := range cases {
+		if got := persistToJSONL(tc.m); got != tc.want {
+			t.Errorf("%s: persistToJSONL(%+v) = %v, want %v", tc.name, tc.m, got, tc.want)
+		}
+	}
+}

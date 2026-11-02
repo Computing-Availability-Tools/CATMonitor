@@ -25,6 +25,7 @@ LEGACY_BASE_IMAGE=
 BUILDER_BASE_IMAGE=
 RUNTIME_BASE_IMAGE=
 BASE_MODE="split"
+GO_IMAGE=golang:1.23-bookworm
 TARGET_IMAGE=
 DOCKER_BIN=
 LEGACY_ASCEND_ENV_SCRIPT_OVERRIDE=${ASCEND_ENV_SCRIPT:-}
@@ -32,6 +33,7 @@ BUILDER_ASCEND_ENV_SCRIPT_OVERRIDE=
 RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE=
 BUILD_DRIVER_LIB_DIR=
 COMPAT_PROFILE=none
+MODEL_SDC_ENABLED=auto
 BUILD_NETWORK=default
 BUILD_NETWORK_EXPLICIT=false
 BUILD_ROOT=/var/tmp/catmonitor-npu-burn-build
@@ -72,7 +74,13 @@ Build controls:
                             only by the disposable builder stage; it is never
                             copied into the final runtime image
   --compat-profile NAME     Compatibility identity (default: none)
+  --enable-model-sdc        Validate GPT3/Llama2 imports (automatic for model-sdc
+                            compatibility profiles); requires the explicit patch
+                            chain and prepared runtime dependencies
+  --disable-model-sdc       Disable model validation for non-job profiles;
+                            conflicts with complete model/job profiles
   --build-network NAME      Docker build network: default, host, or none
+  --go-image IMAGE          Local Go builder (default: golang:1.23-bookworm)
                             (default: default; offline package input selects
                             none unless this option is explicit)
   --pciutils-package PATH   Compatible offline pciutils RPM/DEB; repeat for
@@ -120,7 +128,10 @@ while [ "$#" -gt 0 ]; do
         --runtime-ascend-env-script) require_value "$@"; RUNTIME_ASCEND_ENV_SCRIPT_OVERRIDE=$2; shift 2 ;;
         --build-driver-lib-dir) require_value "$@"; BUILD_DRIVER_LIB_DIR=$2; shift 2 ;;
         --compat-profile) require_value "$@"; COMPAT_PROFILE=$2; shift 2 ;;
+        --enable-model-sdc) MODEL_SDC_ENABLED=true; shift ;;
+        --disable-model-sdc) MODEL_SDC_ENABLED=false; shift ;;
         --build-network) require_value "$@"; BUILD_NETWORK=$2; BUILD_NETWORK_EXPLICIT=true; shift 2 ;;
+        --go-image) require_value "$@"; GO_IMAGE=$2; shift 2 ;;
         --pciutils-package) require_value "$@"; PCIUTILS_PACKAGES+=("$2"); shift 2 ;;
         --patch) require_value "$@"; PATCH_FILES+=("$2"); shift 2 ;;
         --build-root) require_value "$@"; BUILD_ROOT=$2; shift 2 ;;
@@ -160,12 +171,13 @@ if [ "$SOURCE_ORIGIN" = bundled ] && [ "$SOURCE_METADATA_EXPLICIT" = true ]; the
     die "--source-metadata is only valid with --source"
 fi
 for base_image_record in \
+    "--go-image:$GO_IMAGE" \
     "--builder-base-image:$BUILDER_BASE_IMAGE" \
     "--runtime-base-image:$RUNTIME_BASE_IMAGE"; do
     base_image_option=${base_image_record%%:*}
     base_image_value=${base_image_record#*:}
     case "$base_image_value" in
-        -*|*[!A-Za-z0-9._/@:-]*) die "$base_image_option contains unsupported characters" ;;
+        ''|-*|*[!A-Za-z0-9._/@:-]*) die "$base_image_option contains unsupported characters" ;;
     esac
 done
 case "$TARGET_IMAGE" in
@@ -213,6 +225,13 @@ case "$COMPAT_PROFILE" in
             die "compat profile $COMPAT_PROFILE requires at least one --patch"
         ;;
 esac
+
+if [ "$MODEL_SDC_ENABLED" = auto ]; then
+    case "$COMPAT_PROFILE" in
+        *model-sdc*) MODEL_SDC_ENABLED=true ;;
+        *) MODEL_SDC_ENABLED=false ;;
+    esac
+fi
 
 for tool in readlink install mktemp tar sha256sum find grep date awk wc tee; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
@@ -403,6 +422,9 @@ inspect_base() {
 }
 inspect_base builder "$BUILDER_BASE_IMAGE" BUILDER_BASE_IMAGE
 inspect_base runtime "$RUNTIME_BASE_IMAGE" RUNTIME_BASE_IMAGE
+if [ "$BUILD_NETWORK" = none ]; then
+    "$DOCKER_BIN" image inspect "$GO_IMAGE" >/dev/null 2>&1 || die "offline Go builder image is unavailable: $GO_IMAGE"
+fi
 [ "$BUILDER_BASE_IMAGE_OS" = linux ] && [ "$RUNTIME_BASE_IMAGE_OS" = linux ] || \
     die "builder and runtime base images must use linux"
 [ "$BUILDER_BASE_IMAGE_ARCH" = "$RUNTIME_BASE_IMAGE_ARCH" ] || \
@@ -504,6 +526,18 @@ if grep -q $'\r' "$STAGED_SOURCE/build/build.sh"; then
     die "patched source build/build.sh must use LF line endings"
 fi
 PATCHED_SOURCE_SHA256=$(hash_tree "$STAGED_SOURCE")
+if [ "$MODEL_SDC_ENABLED" = true ] && [ "$COMPAT_PROFILE" = none ]; then
+    die "model SDC requires an explicit compatibility profile and model-sdc-v1 patch"
+fi
+case "$COMPAT_PROFILE" in
+    portable-model-sdc-memory-job-v1|a2-upstream-model-sdc-memory-job-v1)
+        [ "$MODEL_SDC_ENABLED" = true ] || die "job model profile requires model SDC; --disable-model-sdc conflicts with this profile"
+        grep -q 'def frozen_config(' "$STAGED_SOURCE/ascend_npu_burn/case_catalog.py" && \
+        grep -q 'json_data = frozen' "$STAGED_SOURCE/ascend_npu_burn/common/utils.py" && \
+        grep -q 'CATMONITOR_MODEL_LOSS_TOLERANCE' "$STAGED_SOURCE/ascend_npu_burn/benchmarks/model/run_config.py" || \
+            die "job parameter profile requires the applied job-parameters-v1 patch"
+        ;;
+esac
 
 install -m 0644 "$DOCKERFILE_TEMPLATE" "$CONTEXT/Dockerfile"
 install -m 0755 "$ENTRYPOINT_TEMPLATE" "$CONTEXT/entrypoint.sh"
@@ -511,6 +545,22 @@ install -m 0644 "$ASCEND_ENV_TEMPLATE" "$CONTEXT/ascend_env.sh"
 install -m 0755 "$ENTRYPOINT_VALIDATOR_TEMPLATE" "$CONTEXT/validate_entrypoint.sh"
 install -m 0644 "$RUNTIME_ABI_VALIDATOR_TEMPLATE" "$CONTEXT/validate_runtime_abi.py"
 install -m 0755 "$RUNTIME_PREFLIGHT_TEMPLATE" "$CONTEXT/runtime_preflight.sh"
+install -m 0644 "$REPO_ROOT/docker/stress/npu/launch.py" "$CONTEXT/launch.py"
+install -m 0644 "$REPO_ROOT/docker/stress/npu/model_sdc.py" "$CONTEXT/model_sdc.py"
+install -m 0644 "$REPO_ROOT/docker/stress/npu/job_config.py" "$CONTEXT/job_config.py"
+if [ -f "$STAGED_SOURCE/ascend_npu_burn/config/base_config.json" ]; then
+    install -m 0644 "$STAGED_SOURCE/ascend_npu_burn/config/base_config.json" "$CONTEXT/job-parameter-base.json"
+else
+    case "$COMPAT_PROFILE" in *-job-v1) die "job parameter profile requires the complete bundled base config" ;; esac
+    printf '{}\n' > "$CONTEXT/job-parameter-base.json"
+fi
+if [ -f "$STAGED_SOURCE/ascend_npu_burn/config/a3_config.json" ]; then
+    install -m 0644 "$STAGED_SOURCE/ascend_npu_burn/config/a3_config.json" "$CONTEXT/job-parameter-a3.json"
+else
+    case "$COMPAT_PROFILE" in *-job-v1) die "job parameter profile requires the complete bundled A3 config" ;; esac
+    printf '{}\n' > "$CONTEXT/job-parameter-a3.json"
+fi
+install -m 0644 "$REPO_ROOT/docker/stress/npu/package_inventory.py" "$CONTEXT/package_inventory.py"
 install -m 0644 "$RUNTIME_PACKAGES_TEMPLATE" "$CONTEXT/runtime-packages.txt"
 DOCKERFILE_SHA256=$(sha256_file "$DOCKERFILE_TEMPLATE")
 ENTRYPOINT_SHA256=$(sha256_file "$ENTRYPOINT_TEMPLATE")
@@ -518,6 +568,11 @@ ASCEND_ENV_SHA256=$(sha256_file "$ASCEND_ENV_TEMPLATE")
 ENTRYPOINT_VALIDATOR_SHA256=$(sha256_file "$ENTRYPOINT_VALIDATOR_TEMPLATE")
 RUNTIME_ABI_VALIDATOR_SHA256=$(sha256_file "$RUNTIME_ABI_VALIDATOR_TEMPLATE")
 RUNTIME_PREFLIGHT_SHA256=$(sha256_file "$RUNTIME_PREFLIGHT_TEMPLATE")
+LAUNCHER_SHA256=$(sha256_file "$REPO_ROOT/docker/stress/npu/launch.py")
+MODEL_ADAPTER_SHA256=$(sha256_file "$REPO_ROOT/docker/stress/npu/model_sdc.py")
+JOB_PARAMETERS_HELPER_SHA256=$(sha256_file "$REPO_ROOT/docker/stress/npu/job_config.py")
+JOB_PARAMETERS_SCHEMA_SHA256=$(sha256_file "$CONTEXT/job-parameter-base.json")
+JOB_PARAMETERS_A3_SCHEMA_SHA256=$(sha256_file "$CONTEXT/job-parameter-a3.json")
 RUNTIME_PACKAGES_SHA256=$(sha256_file "$RUNTIME_PACKAGES_TEMPLATE")
 BUILD_VALIDATION_NONCE="$(date -u +%s)-$$"
 DOCKER_BUILD_LOG="$RUN_ROOT/docker-build.log"
@@ -588,11 +643,13 @@ set +e
     --file "$CONTEXT/Dockerfile" \
     --tag "$TARGET_IMAGE" \
     --network "$BUILD_NETWORK" \
+    --build-arg "GO_IMAGE=$GO_IMAGE" \
     --build-arg "BUILDER_BASE_IMAGE=$BUILDER_BASE_IMAGE" \
     --build-arg "RUNTIME_BASE_IMAGE=$RUNTIME_BASE_IMAGE" \
     --build-arg "SOURCE_SHA256=$SOURCE_SHA256" \
     --build-arg "PATCHED_SOURCE_SHA256=$PATCHED_SOURCE_SHA256" \
     --build-arg "COMPAT_PROFILE=$COMPAT_PROFILE" \
+    --build-arg "MODEL_SDC_ENABLED=$MODEL_SDC_ENABLED" \
     --build-arg "SOURCE_ORIGIN=$SOURCE_ORIGIN" \
     --build-arg "UPSTREAM_REPOSITORY=$UPSTREAM_REPOSITORY" \
     --build-arg "UPSTREAM_REVISION=$UPSTREAM_REVISION" \
@@ -620,6 +677,9 @@ build_marker() {
         }
     ' "$DOCKER_BUILD_LOG"
 }
+if [ "$MODEL_SDC_ENABLED" = true ]; then
+    [ "$(build_marker CATMONITOR_MODEL_IMPORT)" = PASS ] || die "GPT3/Llama2 model import validation did not pass"
+fi
 
 BUILDER_ASCEND_ENV_SCRIPT_SELECTED=$(build_marker CATMONITOR_BUILDER_ASCEND_ENV_SCRIPT) || \
     die "Docker build did not report the builder Ascend environment script"
@@ -627,6 +687,10 @@ RUNTIME_ASCEND_ENV_SCRIPT_SELECTED=$(build_marker CATMONITOR_RUNTIME_ASCEND_ENV_
     die "Docker build did not report the runtime Ascend environment script"
 CANN_VERSION=$(build_marker CATMONITOR_CANN_VERSION) || \
     die "Docker build did not report the CANN version"
+BUILDER_CANN_VERSION_SOURCE=$(build_marker CATMONITOR_BUILDER_CANN_VERSION_SOURCE) || \
+    die "Docker build did not report builder CANN version provenance"
+RUNTIME_CANN_VERSION_SOURCE=$(build_marker CATMONITOR_RUNTIME_CANN_VERSION_SOURCE) || \
+    die "Docker build did not report runtime CANN version provenance"
 DRIVER_MOUNT_PRESENT_AT_BUILD=$(build_marker CATMONITOR_DRIVER_MOUNT_PRESENT_AT_BUILD) || \
     die "Docker build did not report build-time driver presence"
 for marker in LIBASCEND_HAL TORCH TORCH_NPU TBE; do
@@ -767,6 +831,11 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"entrypoint_validator_sha256":'; json_string "$ENTRYPOINT_VALIDATOR_SHA256"
     printf ',"runtime_abi_validator_sha256":'; json_string "$RUNTIME_ABI_VALIDATOR_SHA256"
     printf ',"runtime_preflight_sha256":'; json_string "$RUNTIME_PREFLIGHT_SHA256"
+    printf ',"launcher_sha256":'; json_string "$LAUNCHER_SHA256"
+    printf ',"model_adapter_sha256":'; json_string "$MODEL_ADAPTER_SHA256"
+    printf ',"job_parameters_helper_sha256":'; json_string "$JOB_PARAMETERS_HELPER_SHA256"
+    printf ',"job_parameters_schema_sha256":'; json_string "$JOB_PARAMETERS_SCHEMA_SHA256"
+    printf ',"job_parameters_a3_schema_sha256":'; json_string "$JOB_PARAMETERS_A3_SCHEMA_SHA256"
     printf ',"runtime_packages_sha256":'; json_string "$RUNTIME_PACKAGES_SHA256"; printf '}'
     printf ',"docker":{"path":'; json_string "$DOCKER_BIN"
     printf ',"server_version":'; json_string "$DOCKER_VERSION"
@@ -797,6 +866,8 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"runtime":{"ascend_env_script":'; json_string "$RUNTIME_ASCEND_ENV_SCRIPT_SELECTED"
     printf ',"builder_ascend_env_script":'; json_string "$BUILDER_ASCEND_ENV_SCRIPT_SELECTED"
     printf ',"cann_version":'; json_string "$CANN_VERSION"
+    printf ',"builder_cann_version_source":'; json_string "$BUILDER_CANN_VERSION_SOURCE"
+    printf ',"cann_version_source":'; json_string "$RUNTIME_CANN_VERSION_SOURCE"
     printf ',"pciutils":true,"pciutils_source":'; json_string "$PCIUTILS_SOURCE"
     printf ',"pciutils_package_format":'; json_string "$PCIUTILS_PACKAGE_FORMAT"
     printf ',"pciutils_package_count":%s' "${#PCIUTILS_PACKAGES[@]}"
@@ -827,6 +898,7 @@ MANIFEST_TEMP=$(mktemp "$MANIFEST_PATH.tmp.XXXXXXXX")
     printf ',"torch_import":true,"torch_npu_import":true,"tbe_import":true'
     printf ',"wheel_build":true,"wheel_install":true,"ascend_npu_burn_import":true'
     printf ',"custom_ops_import":true'
+    printf ',"model_sdc_enabled":%s,"model_import":%s' "$MODEL_SDC_ENABLED" "$MODEL_SDC_ENABLED"
     printf ',"runtime_pci_topology_dependency":true'
     printf ',"version_command":true,"driver_mount_present_at_build":%s' "$DRIVER_MOUNT_PRESENT_AT_BUILD"
     printf ',"runtime_abi_metadata":true,"host_driver_in_final_image":false'

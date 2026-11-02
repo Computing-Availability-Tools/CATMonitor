@@ -1,0 +1,31 @@
+--- a/ascend_npu_burn/benchmarks/model/model_base.py
++++ b/ascend_npu_burn/benchmarks/model/model_base.py
+@@ -15,3 +15,4 @@
+ import logging
++import os
+ import time
+ import torch
+@@ -25,5 +26,23 @@
+ logger = logging.getLogger("ascend-npu-burn")
+ 
+ 
++def _catmonitor_model_memory_mode():
++    mode = os.environ.get("CATMONITOR_MODEL_MEMORY_MODE", "standard")
++    if mode not in ("standard", "checkpointed"):
++        raise ValueError("model memory mode must be standard or checkpointed")
++    return mode
++
++
+ def build_training_head(torch_module, decoder, hidden_size, class_count):
++    if _catmonitor_model_memory_mode() == "checkpointed":
++        enable = getattr(decoder, "gradient_checkpointing_enable", None)
++        if not getattr(decoder, "supports_gradient_checkpointing", False) or not callable(enable):
++            raise ValueError("requested model does not support gradient checkpointing; no fallback")
++        # Keep full batch/shape/dtype/steps and preserve dropout RNG state.
++        # Checkpointed references are never interchangeable with standard ones.
++        enable(gradient_checkpointing_kwargs={
++            "use_reentrant": False, "preserve_rng_state": True,
++        })
++        decoder.config.use_cache = False
++
+     class TrainingHead(torch_module.nn.Module):

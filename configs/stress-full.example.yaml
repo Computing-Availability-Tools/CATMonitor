@@ -17,4 +17,16 @@ stress:
     stream: { enabled: true, plugin: stream, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 1m }
     hpl: { enabled: true, plugin: hpl, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 10m }
     hpcg: { enabled: true, plugin: hpcg, container: catmonitor-stress-cpu, user: "65532:65532", timeout: 3m }
-    npu_burn: { enabled: true, plugin: npu_burn, container: catmonitor-stress-npu, timeout: 30m }
+    # Prefer generate_stress_deployment.sh: it resolves the complete logical
+    # allowlist from the mapped device count. This static example deliberately
+    # authorizes only logical 0; replace it with this deployment's verified IDs.
+    # Enabling capabilities never starts a job or creates a reference. Keep the
+    # Web operator API on a trusted management network (no authentication/RBAC).
+    npu_burn:
+      enabled: true
+      plugin: npu_burn
+      container: catmonitor-stress-npu
+      timeout: 2h
+      allowed_npu_devices: [0]
+      allowed_npu_models: [gpt3, llama2]
+      allow_npu_reference_generation: true

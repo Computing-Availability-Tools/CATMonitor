@@ -1,6 +1,10 @@
 package stress
 
-import "time"
+import (
+	"time"
+
+	"github.com/Computing-Availability-Tools/CATMonitor/features/stress/workloadapi"
+)
 
 // ControlConfigView is the read-only daemon-owned Stress configuration exposed
 // to CLI and Web clients. It deliberately omits Docker socket and binary paths.
@@ -16,25 +20,58 @@ type ControlConfigView struct {
 }
 
 type ControlBenchmarkView struct {
-	Name           string            `json:"name"`
-	Plugin         string            `json:"plugin"`
-	Container      string            `json:"container"`
-	Enabled        bool              `json:"enabled"`
-	Available      bool              `json:"available"`
-	Message        string            `json:"message,omitempty"`
-	TimeoutSeconds int64             `json:"timeout_seconds"`
-	Profile        *ExecutionProfile `json:"profile,omitempty"`
-	ProfileError   string            `json:"profile_error,omitempty"`
+	Name              string             `json:"name"`
+	Plugin            string             `json:"plugin"`
+	Container         string             `json:"container"`
+	Enabled           bool               `json:"enabled"`
+	Available         bool               `json:"available"`
+	Message           string             `json:"message,omitempty"`
+	TimeoutSeconds    int64              `json:"timeout_seconds"`
+	Profile           *ExecutionProfile  `json:"profile,omitempty"`
+	ProfileError      string             `json:"profile_error,omitempty"`
+	ModelCapabilities *ModelCapabilities `json:"model_capabilities,omitempty"`
+}
+
+// Authorization is daemon configuration, not an inference from operator
+// admission or old hardware results. It remains readable when Describe fails.
+type ModelCapabilities struct {
+	AllowedModels            []string `json:"allowed_models"`
+	AllowReferenceGeneration bool     `json:"allow_reference_generation"`
+}
+
+type ModelPreflightRequest struct {
+	NPUDevices workloadapi.DeviceIDs      `json:"npu_devices"`
+	NPUModel   *workloadapi.ModelRequest  `json:"npu_model"`
+	Parameters *workloadapi.JobParameters `json:"parameters,omitempty"`
+}
+
+type ModelPreflightFailure struct {
+	Code    string `json:"code"`
+	Label   string `json:"label"`
+	Message string `json:"message"`
+}
+
+type ModelPreflightView struct {
+	Status              string                    `json:"status"`
+	NPUDevices          workloadapi.DeviceIDs     `json:"npu_devices"`
+	NPUModel            *workloadapi.ModelRequest `json:"npu_model"`
+	CheckedAt           time.Time                 `json:"checked_at"`
+	ConfigurationSHA256 string                    `json:"configuration_sha256,omitempty"`
+	Failures            []ModelPreflightFailure   `json:"failures"`
 }
 
 type ControlStartRequest struct {
-	Benchmarks     []string `json:"benchmarks"`
-	TimeoutSeconds int64    `json:"timeout_seconds"`
-	Initiator      string   `json:"initiator"`
+	Benchmarks     []string                   `json:"benchmarks"`
+	TimeoutSeconds int64                      `json:"timeout_seconds"`
+	Initiator      string                     `json:"initiator"`
+	NPUDevices     workloadapi.DeviceIDs      `json:"npu_devices,omitempty"`
+	NPUCases       workloadapi.CaseNames      `json:"npu_cases,omitempty"`
+	NPUModel       *workloadapi.ModelRequest  `json:"npu_model,omitempty"`
+	Parameters     *workloadapi.JobParameters `json:"parameters,omitempty"`
 }
 
 func (r ControlStartRequest) RunOptions() RunOptions {
-	return RunOptions{Timeout: time.Duration(r.TimeoutSeconds) * time.Second, Initiator: r.Initiator}
+	return RunOptions{Timeout: time.Duration(r.TimeoutSeconds) * time.Second, Initiator: r.Initiator, NPUDevices: r.NPUDevices, NPUCases: r.NPUCases, NPUModel: workloadapi.CopyModel(r.NPUModel), Parameters: workloadapi.CopyJobParameters(r.Parameters)}
 }
 
 type ControlAPIError struct {

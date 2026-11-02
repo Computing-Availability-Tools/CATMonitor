@@ -33,10 +33,20 @@ else
     printf 'ERROR: failed to source Ascend environment helper:\n%s\n' "$ASCEND_ENV_HELPER" >&2
     exit "$helper_status"
 fi
-catmonitor_source_ascend_env
+if [ "${1-}" = "__model__" ]; then
+    # Describe must have JSON-only stdout. Runtime diagnostics stay visible.
+    catmonitor_source_ascend_env >&2
+else
+    catmonitor_source_ascend_env
+fi
 
 if [ "${1-}" = "__serve__" ]; then
     exec sleep infinity
+fi
+
+if [ "${1-}" = "__model__" ]; then
+    shift
+    exec python3 -s /usr/local/libexec/catmonitor/model_sdc.py "$@"
 fi
 
 exec npu-burn "$@"

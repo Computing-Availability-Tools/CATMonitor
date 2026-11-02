@@ -28,6 +28,7 @@ func NewControlHandler(manager *Manager, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("/stress/config", h.config)
 	mux.HandleFunc("/stress/latest", h.latest)
 	mux.HandleFunc("/stress/history", h.history)
+	mux.HandleFunc("/stress/models/preflight", h.modelPreflight)
 	mux.HandleFunc("/stress/jobs", h.jobs)
 	mux.HandleFunc("/stress/jobs/", h.job)
 	return mux
@@ -63,6 +64,9 @@ func (h *ControlHandler) config(w http.ResponseWriter, r *http.Request) {
 			Name: name, Plugin: plugin, Container: item.Container, Enabled: item.Enabled,
 			TimeoutSeconds: int64(effectiveTimeout(item.Timeout) / time.Second),
 		}
+		if name == "npu_burn" {
+			entry.ModelCapabilities = &ModelCapabilities{AllowedModels: append([]string{}, item.AllowedNPUModels...), AllowReferenceGeneration: item.AllowNPUReferenceGeneration}
+		}
 		if cfg.Enabled && item.Enabled {
 			entry.Available, entry.Message = h.manager.Availability(name)
 			profile, err := h.manager.Describe(name)
@@ -78,6 +82,19 @@ func (h *ControlHandler) config(w http.ResponseWriter, r *http.Request) {
 		view.Benchmarks = append(view.Benchmarks, entry)
 	}
 	writeControlJSON(w, http.StatusOK, view)
+}
+
+func (h *ControlHandler) modelPreflight(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var request ModelPreflightRequest
+	if err := decodeControlBody(w, r, &request); err != nil {
+		writeControlError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeControlJSON(w, http.StatusOK, h.manager.PreflightModel(r.Context(), request))
 }
 
 func (h *ControlHandler) latest(w http.ResponseWriter, r *http.Request) {

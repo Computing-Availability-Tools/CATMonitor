@@ -23,6 +23,15 @@ extend-ignore-identifiers-re = [
     ".*bandwith.*",
 ]
 
+[default.extend-identifiers]
+# Exact upstream tensor-configuration key, not an English word.
+ND = "ND"
+
+[type.ascend-runtime-patch]
+extend-glob = ["portable-runtime-v1.patch"]
+# Removed lines must match pinned upstream, including its original spelling.
+extend-ignore-re = ['(?m)^-[^\r\n]*\bBoardcasting\b']
+
 [files]
 extend-exclude = [
     "third_party/*",

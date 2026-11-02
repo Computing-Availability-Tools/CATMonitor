@@ -65,6 +65,9 @@ EOF
 }
 
 catmonitor_cann_version_from_env() {
+    # Scoped to metadata subprocesses; do not remove preload from the workload.
+    local LD_PRELOAD=
+    export LD_PRELOAD
     local selected=$1
     local version=unknown
     local install_info
@@ -80,11 +83,13 @@ catmonitor_cann_version_from_env() {
             detected=$(awk -F= '$1 == "version" { print $2; exit }' "$install_info")
             if [ -n "$detected" ]; then
                 version=$detected
+                CATMONITOR_CANN_VERSION_SOURCE=$install_info
                 break
             fi
         done
         shopt -u nullglob
         if [ "$version" != unknown ]; then
+            CATMONITOR_CANN_VERSION=$version
             printf '%s\n' "$version"
             return 0
         fi
@@ -95,24 +100,31 @@ catmonitor_cann_version_from_env() {
             version=${selected%/set_env.sh}
             version=${version##*/}
             version=${version#cann-}
+            CATMONITOR_CANN_VERSION_SOURCE=$selected
             ;;
         *)
             if [ -n "${ASCEND_TOOLKIT_HOME:-}" ]; then
                 version=${ASCEND_TOOLKIT_HOME%/}
                 version=${version##*/}
+                CATMONITOR_CANN_VERSION_SOURCE=ASCEND_TOOLKIT_HOME
             fi
             ;;
     esac
+    CATMONITOR_CANN_VERSION=$version
     printf '%s\n' "$version"
 }
 
 catmonitor_source_ascend_env() {
+    # Vendor setup runs helper executables. Avoid inherited preload stdout in
+    # their path captures. Bash restores the caller's variable on return.
+    local LD_PRELOAD=
+    export LD_PRELOAD
     local selected
     local nounset_was_enabled=false
     local source_status=0
 
     selected=$(catmonitor_find_ascend_env) || return 1
-    printf 'Using Ascend environment:\n%s\n' "$selected"
+    printf 'Using Ascend environment:\n%s\n' "$selected" >&2
 
     # Vendor environment scripts commonly append an unset LD_LIBRARY_PATH or
     # PYTHONPATH. Keep CATMonitor strict mode, but do not impose nounset on a
@@ -121,7 +133,7 @@ catmonitor_source_ascend_env() {
         *u*) nounset_was_enabled=true; set +u ;;
     esac
     # shellcheck disable=SC1090
-    if source "$selected"; then
+    if source "$selected" >&2; then
         source_status=0
     else
         source_status=$?
@@ -135,8 +147,10 @@ catmonitor_source_ascend_env() {
     fi
 
     export CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED=$selected
-    CATMONITOR_CANN_VERSION=$(catmonitor_cann_version_from_env "$selected")
+    CATMONITOR_CANN_VERSION_SOURCE=unknown
+    catmonitor_cann_version_from_env "$selected" >/dev/null
     export CATMONITOR_CANN_VERSION
+    export CATMONITOR_CANN_VERSION_SOURCE
 
     printf 'CATMONITOR_ASCEND_ENV_SCRIPT=%s\n' "$CATMONITOR_ASCEND_ENV_SCRIPT_SELECTED"
     printf 'CATMONITOR_CANN_VERSION=%s\n' "$CATMONITOR_CANN_VERSION"

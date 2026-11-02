@@ -62,4 +62,7 @@ func TestDefaultStressConfigIsSafeAndDeterministic(t *testing.T) {
 	if cfg.Benchmarks["stream"].User != "65532:65532" || cfg.Benchmarks["npu_burn"].User != "" {
 		t.Fatalf("unexpected default workload users: %+v", cfg.Benchmarks)
 	}
+	if cfg.Benchmarks["npu_burn"].Timeout != 2*time.Hour {
+		t.Fatalf("NPU operator/model SDC default maximum must be 2h: %+v", cfg.Benchmarks["npu_burn"])
+	}
 }

@@ -7,9 +7,9 @@ Control 与 Stress workload 镜像。节点管理员如果只需要拉取镜像�
 构建镜像不会自动部署 CATMonitor，也不会执行 HPL、HPCG 或 NPU Burn 真实负载。
 运行参数、设备映射和资源规模仍由部署阶段负责。
 
-当前程序内部版本是 `0.3.6`，已发布的 Linux/ARM64 Stress pre-release 标签是
-`arm64-v0.3.5-stress`（基于 v0.3.5 时期代码构建）。pre-release 标签不能被描述为
-正式 `v0.3.6` 镜像。
+当前已发布候选的源码、镜像身份和有限验收范围统一在
+[交付指南](STRESS_JOB_RELEASE_GUIDE.md) 维护；本页使用构建模板，不把旧 pre-release
+或新开发产物当成正式 release。程序版本和正式 tag 由项目 owner 管理。
 
 ## 1. 镜像矩阵与职责
 
@@ -41,7 +41,7 @@ workload 镜像，不会创建 Unix Runner 服务或 workload 容器。
 git status --short
 export RC_SOURCE="$(git rev-parse HEAD)"
 export RC_SHORT_SHA="$(git rev-parse --short=12 HEAD)"
-export IMAGE_TAG='arm64-v0.3.5-stress'
+export IMAGE_TAG="arm64-v0.3.6-stress-${RC_SHORT_SHA}"
 
 printf 'RC_SOURCE=%s\nIMAGE_TAG=%s\n' "$RC_SOURCE" "$IMAGE_TAG"
 ```
@@ -107,6 +107,42 @@ NPU workload 在线安装 `pciutils` 时会继承临时代理。完全离线时�
 ```bash
 unset HTTP_PROXY HTTPS_PROXY NO_PROXY
 ```
+
+### 3.1 受限网络和企业 CA
+
+Git/curl 使用宿主代理；`docker pull` 由 daemon 发起，宿主 `export` 不保证 daemon
+可联网。Go 模块、Docker build 和系统包下载也各有独立网络/CA 边界。不要打开
+`set -x` 或输出代理凭据。企业 CA 应分别安装到需要联网的宿主、daemon 和 build
+stage（必要时 runtime）；使用获准 CA 基础镜像/安装层，不关闭 TLS 验证，也没有
+虚构的通用 `--ca` 参数。mirror 和代理只由管理员临时选择，不写入用户 YAML。
+
+### 3.2 已有镜像、离线输入与只读检查
+
+节点已有获准镜像时直接 inspect，不强制重复 pull；离线可用 `docker save/load` 传递
+获准发行镜像，核对 Image ID/平台。build-root 放另一块盘不迁移 Docker layers。
+完全离线构建必须准备所有 FROM（含 Go builder）、Go 模块、源码/patch、wheel 和系统
+包闭包。NPU 缺 lspci 时重复传 `--pciutils-package /absolute/package.rpm` 或 `.deb`，
+匹配基础 OS/架构和动态库，不挂宿主 lspci。只有真实禁网构建成功才能写 OFFLINE_BUILD=PASS。
+CPU Dockerfile 仍通过 APT 安装工具链，**CPU 完整离线构建未实现/验收**；应分发获准
+预构建 CPU 镜像。单个依赖清单检查不证明闭包完整。
+
+需要预先核对站点输入时，将 [site.env 模板](examples/site.env.example) 复制到仓库外，
+填入真实镜像 ID、Docker endpoint/data-root、独立 config/state/output 路径与授权设备：
+
+```bash
+set -a
+. /absolute/path/to/site.env
+set +a
+export DOCKER_HOST="$DOCKER_ENDPOINT"
+cd "$SOURCE_DIR"
+python3 scripts/stress/check_site_inputs.py
+```
+
+只读检查不会 pull/build/run 或修改 daemon；失败不得继续部署。源码 ZIP 可由可信交付
+环节提供 `source-identity.json`（`commit` + `files` 相对路径/SHA-256 字典），须覆盖
+全部交付文件，不能由待验目录临时自证。`--offline-inputs /path/inputs.json` 可检查
+声明的 `root/files/images`；这不是自动下载器/安装器。host network 的端口冲突必须在
+目标 daemon 所在网络空间检查，不能仅用另一 project 名或 `-p` 声称隔离。
 
 ## 4. 构建 Control 镜像
 
@@ -180,6 +216,13 @@ hpcg.dat
 替管理员猜测。构建使用同一 Debian bookworm build/runtime ABI，并在镜像内提供匹配的
 MPI、OpenBLAS 与 benchmark 运行库。
 
+原始 HPL.dat 继续保存在镜像资产目录，不被默认功能配置覆盖。CPU 镜像、Compose 和
+generator 的默认执行元组统一为 N=4096、NB=256、P=1、Q=1、MPI=1，运行时生成独立
+作业输入，避免管理员输入为 4×2 而默认只起 1 个 MPI 进程。generator 的显式
+`--hpl-profile image --hpl-processes 8` 保留原始 4×2 输入；自定义输入须自行匹配 ranks。
+源码默认值变更不会自动更新已发布的镜像或已生成 YAML；现有 R2 可通过新 generator 的
+env/Compose 覆盖使用一致默认，新构建 CPU 镜像才拥有相同的镜像内默认环境。
+
 ### 5.2 构建
 
 ```bash
@@ -227,8 +270,9 @@ docker run --rm --network none \
 
 ### 6.1 支持边界
 
-当前 V2 发布声明只覆盖已经完成实机验收的 A2/Ascend910B4、CANN 8.3 profile。
-A3 尚未完成 V2 实机验收，A5 未验证。镜像 build PASS 不能替代对应 SoC/CANN 的
+历史 A2/CANN 8.3 profile 与当前完整参数候选是不同软件栈。当前 A2/CANN 8.5.1
+候选的有限实测范围见交付指南；A3 完整硬件验收 PENDING，A5 未验证。
+镜像 build PASS 不能替代对应 SoC/CANN 的
 doctor、拓扑、cancel 和真实 workload 验收。
 
 正常 release 构建使用仓库 `third_party/ascend_npu_burn` 下的受审 bundled source。
@@ -249,8 +293,8 @@ runtime base：精简 CANN runtime/Python/torch/torch_npu
 ### 6.3 A2 构建示例
 
 ```bash
-export NPU_BUILDER_BASE='<reviewed-a2-cann83-builder-image>'
-export NPU_RUNTIME_BASE='<reviewed-a2-cann83-runtime-image>'
+export NPU_BUILDER_BASE='<approved-pinned-a2-builder-image>'
+export NPU_RUNTIME_BASE='<approved-pinned-a2-runtime-image>'
 export NPU_IMAGE="catmonitor-stress-npu:${IMAGE_TAG}"
 export NPU_BUILD_ROOT="/srv/catmonitor-build/npu-${RC_SHORT_SHA}"
 
@@ -258,8 +302,13 @@ bash scripts/stress/build_npu_burn_image.sh \
   --builder-base-image "$NPU_BUILDER_BASE" \
   --runtime-base-image "$NPU_RUNTIME_BASE" \
   --image "$NPU_IMAGE" \
-  --compat-profile a2-cann83 \
-  --patch scripts/stress/patches/ascend_npu_burn/a2-cann83.patch \
+  --compat-profile a2-upstream-model-sdc-memory-job-v1 \
+  --patch scripts/stress/patches/ascend_npu_burn/portable-runtime-v1.patch \
+  --patch scripts/stress/patches/ascend_npu_burn/a2-upstream-base.patch \
+  --patch scripts/stress/patches/ascend_npu_burn/model-sdc-v1.patch \
+  --patch scripts/stress/patches/ascend_npu_burn/model-memory-v1.patch \
+  --patch scripts/stress/patches/ascend_npu_burn/job-parameters-v1.patch \
+  --enable-model-sdc \
   --build-driver-lib-dir /usr/local/Ascend/driver/lib64 \
   --build-network default \
   --build-root "$NPU_BUILD_ROOT" \
@@ -278,7 +327,18 @@ stage；driver 不会被复制进最终 runtime 镜像。运行时仍由节点�
 - builder/runtime ABI；
 - `pciutils/lspci`、入口文件和 workload executable。
 
-它不会创建、启动、停止容器，也不会运行真实 NPU workload。
+构建内部会使用临时 build/validation 容器，但不会部署或停止现有服务，也不运行真实
+NPU workload。开启模型能力要求 runtime base 已准备固定版本的 Transformers 和依赖，
+真实 GPT2Model/LlamaModel/Custom Ops 导入必须通过；不在运行容器里临时覆盖包。
+`model-sdc` compatibility profile 默认开启上述模型导入检查，`--enable-model-sdc`
+保留为显式兼容入口。完整 model/job profile 拒绝 `--disable-model-sdc`，不能产出
+名义上完整但缺少模型依赖的镜像。部署 generator 默认开放模型/参考入口不替代构建校验。
+
+A3 使用 `portable-model-sdc-memory-job-v1`，顺序为 portable-runtime → model-sdc →
+model-memory → job-parameters，**不加 A2 补丁**。完整可执行示例只在
+[交付指南第 2 节](STRESS_JOB_RELEASE_GUIDE.md#2-a3-构建补丁契约a2-用户和使用已发布镜像者跳过)
+维护。其他历史 profile 的适用边界见 [补丁说明](../scripts/stress/patches/ascend_npu_burn/README.md)。
+构建保留完整 bundled 树和 base/A3 配置；带兼容补丁的产物不能标成 `profile=none`。
 
 ### 6.4 构建后验证
 
@@ -354,25 +414,26 @@ registry 或受控的 `docker save/load`，并重新核对 Image ID 与平台。
 
 ## 9. 镜像标签
 
-当前 Linux/ARM64 Stress 集成标签：
+开发候选应使用架构、目标版本、用途及不可变提交后缀，例如：
 
 ```text
-arm64-v0.3.5-stress
+arm64-v0.3.6-stress-<shortsha>
 ```
 
 含义：
 
 ```text
 arm64   = Linux/ARM64 构建
-v0.3.5 = 构建该镜像时的 owner 版本
-stress  = Stress 集成候选，不是通用 0.3.5 镜像
+v0.3.6 = 目标版本线，不代表已获正式发布授权
+stress  = Stress 集成候选
+shortsha = 本批源码身份；不能代替完整 commit / Image ID / digest
 ```
 
 推荐流程：
 
 ```text
 clean source
-→ build 五张同源 Stress 镜像
+→ build 所选硬件需要的 Control 与 workload 镜像
 → image smoke
 → Compose/docker run matrix
 → 实机 doctor 与 workload acceptance
@@ -381,13 +442,13 @@ clean source
 → owner 批准后决定正式版本和 tag
 ```
 
-不要把该构建标记为普通 `:v0.3.5` 或 `:latest`。`Image ID` 是本地镜像配置身份；
+不要擅自标记为普通版本或覆盖 `:latest`。`Image ID` 是本地镜像配置身份；
 registry digest 是远端 manifest 身份，二者概念不同，发布记录必须分别保存。
 
 推送后至少验证：
 
 ```bash
-export PUBLISHED_IMAGE='ghcr.io/spike677/catmonitor-npu:arm64-v0.3.5-stress'
+: "${PUBLISHED_IMAGE:?set the image ref published in this run}"
 docker manifest inspect "$PUBLISHED_IMAGE" >/dev/null
 docker pull "$PUBLISHED_IMAGE"
 docker image inspect "$PUBLISHED_IMAGE" \
@@ -411,6 +472,11 @@ git diff --check
 容器和实机验收。镜像 build PASS 不等于 release acceptance PASS。
 
 ## 11. 用户与发布职责边界
+
+本功能同时改变 Control 请求/报告和 CPU/NPU workload 协议，需构建三张匹配候选镜像，
+不能仅更新 Web 后宣称参数已被执行。不自动更新已发布 registry 标签或正在运行的容器。
+精确补丁链在第 6 节维护。CPU/NPU 根文件系统保持只读，运行期临时配置由 executor 写入
+有界 tmpfs；模型参数/镜像变化须匹配新参考。构建/ABI 检查不等于官方配套认证。
 
 | 操作 | 普通用户/节点管理员 | 开发者/发布人员 |
 |---|---:|---:|

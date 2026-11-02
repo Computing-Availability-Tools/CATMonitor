@@ -19,6 +19,13 @@ type JSONLStorage struct {
 	dataDir string
 	maxAge  time.Duration // 0 = keep forever (no retention cleanup)
 
+	// writeFilter, when set, drops metrics for which it returns false before
+	// they are persisted (keep-if-true). Installed via WithWriteFilter; used
+	// to keep the append-only archive small by excluding e.g. per-core CPU
+	// samples. In-memory consumers upstream of the storage layer are not
+	// affected.
+	writeFilter func(collector.Metric) bool
+
 	// mu guards the shared files map and the retention cleanup only.
 	// The per-metric file writes themselves run WITHOUT the lock: each
 	// component's file is written only by that component's collector
@@ -30,14 +37,27 @@ type JSONLStorage struct {
 	lastDay string // date (2006-01-02) of the last retention cleanup
 }
 
+// Option configures a JSONLStorage at construction time.
+type Option func(*JSONLStorage)
+
+// WithWriteFilter installs a keep-if-true predicate applied to every metric
+// before it is written to the JSONL archive. Metrics for which pred returns
+// false are not persisted. A nil pred is a no-op.
+func WithWriteFilter(pred func(collector.Metric) bool) Option {
+	return func(s *JSONLStorage) {
+		s.writeFilter = pred
+	}
+}
+
 // jsonlDateRe extracts the date suffix from "<component>_<YYYY-MM-DD>.jsonl".
 var jsonlDateRe = regexp.MustCompile(`^(.+)_(\d{4}-\d{2}-\d{2})\.jsonl$`)
 
 // New creates a new JSONLStorage with the given data directory. When
 // maxAge > 0, JSONL files whose embedded date is older than maxAge are
 // deleted immediately (startup cleanup) and again on each calendar-day
-// rollover (triggered by the first Write of a new day).
-func New(dataDir string, maxAge time.Duration) (*JSONLStorage, error) {
+// rollover (triggered by the first Write of a new day). Options may install
+// a write filter (see WithWriteFilter).
+func New(dataDir string, maxAge time.Duration, opts ...Option) (*JSONLStorage, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
@@ -45,6 +65,11 @@ func New(dataDir string, maxAge time.Duration) (*JSONLStorage, error) {
 		dataDir: dataDir,
 		maxAge:  maxAge,
 		files:   make(map[string]*os.File),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
 	}
 	if maxAge > 0 {
 		s.cleanupExpired()
@@ -56,8 +81,18 @@ func New(dataDir string, maxAge time.Duration) (*JSONLStorage, error) {
 }
 
 // Write appends metrics to the per-component JSONL files, grouped by
-// component. See the struct comment for the locking model.
+// component. Metrics dropped by the write filter (if installed) are never
+// persisted. See the struct comment for the locking model.
 func (s *JSONLStorage) Write(metrics []collector.Metric) error {
+	if s.writeFilter != nil {
+		kept := make([]collector.Metric, 0, len(metrics))
+		for _, m := range metrics {
+			if s.writeFilter(m) {
+				kept = append(kept, m)
+			}
+		}
+		metrics = kept
+	}
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	s.maybeCleanup(dateStr)

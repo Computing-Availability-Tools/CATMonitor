@@ -55,6 +55,11 @@ func (c *ControlClient) Start(ctx context.Context, request ControlStartRequest) 
 	err := c.request(ctx, http.MethodPost, "/stress/jobs", request, &result, http.StatusAccepted)
 	return result, err
 }
+func (c *ControlClient) PreflightModel(ctx context.Context, request ModelPreflightRequest) (ModelPreflightView, error) {
+	var result ModelPreflightView
+	err := c.request(ctx, http.MethodPost, "/stress/models/preflight", request, &result, http.StatusOK)
+	return result, err
+}
 func (c *ControlClient) Job(ctx context.Context, id string) (Report, error) {
 	var result Report
 	err := c.request(ctx, http.MethodGet, "/stress/jobs/"+url.PathEscape(id), nil, &result, http.StatusOK)

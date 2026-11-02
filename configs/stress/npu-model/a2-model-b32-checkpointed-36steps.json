@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "name": "a2-model-b32-checkpointed-36steps",
+  "models": ["gpt3", "llama2"],
+  "model_overrides": {
+    "batch_size": 32,
+    "num_warmup": 4,
+    "run_count": 32
+  },
+  "model_memory_mode": "checkpointed",
+  "required_model_parameters": {
+    "seq_len": 512,
+    "num_hidden_layers": 36,
+    "hidden_size": 1280,
+    "num_attention_heads": 20,
+    "intermediate_size": 5120,
+    "random_seed": 1,
+    "sample_pool": 32,
+    "num_classes": 100,
+    "learning_rate": 0.00001,
+    "dtype": "bfloat16"
+  },
+  "validation": {
+    "date": "2026-10-13",
+    "platform": "linux/arm64",
+    "soc": "Ascend910B4",
+    "chip_generation": "A2",
+    "hbm_capacity_mib_per_device": 32768,
+    "cann": "8.5.1",
+    "torch": "2.9.0+cpu",
+    "torch_npu": "2.9.0.post1+gitee7ba04",
+    "transformers": "4.57.6",
+    "image_source_commit": "6f94e58b8336687dfe3bbefc6e297d9027d93865",
+    "npu_image": "ghcr.io/spike677/catmonitor-stress-npu:arm64-v0.3.6-a2-6f94e58b8336",
+    "npu_image_id": "sha256:fbe4d8720a9286689b42b2f048de337e18ad91081fc3f9cc179a477269e1ef1d",
+    "npu_registry_digest": "sha256:dfd2a0b69547878d452d8ca9a0a8114ef0e45e4d74435a975aa2c0aa35e6f3f4",
+    "compatibility_profile": "a2-upstream-model-sdc-memory-v1",
+    "logical_devices": [0, 1],
+    "reference_device": 0,
+    "execution": "independent_sequential",
+    "gpt3": {"result": "PASS", "checked_steps_per_device": 36, "errors": 0},
+    "llama2": {"result": "PASS", "checked_steps_per_device": 36, "errors": 0},
+    "observed_max_aicore_percent": 53,
+    "observed_max_temperature_c": 88,
+    "sustained_saturation": "NOT_PROVEN",
+    "full_64_warmup_2048_measured_steps": "NOT_RUN",
+    "a3_hardware": "NOT_RUN"
+  }
+}
