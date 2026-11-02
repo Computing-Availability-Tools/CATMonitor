@@ -1,0 +1,63 @@
+{
+  "skill_name": "catmonitor-faults",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这台机器最近有没有掉卡？",
+      "expected_output": "前置检查后探测 faultsub REST API，查询 events（type=card_drop）与 snapshot，报告掉卡事件及恢复状态；faultsub 未启用时明确说明并给出开启指引",
+      "files": [],
+      "expectations": [
+        "执行了前置检查（catmonitor 存在性 + REST 探活）",
+        "查询了 /faultsub/events?type=card_drop 或 /faultsub/snapshot",
+        "正确解析事件字段（npu_id、severity、recovered、timestamp）",
+        "服务不可用时没有编造查询结果，并说明了 faultsub.enabled 配置要求"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "现在有哪些活跃的 NPU 故障？",
+      "expected_output": "查询 /faultsub/snapshot，按 npu_id 列出当前活跃故障，解读类型含义与 severity",
+      "files": [],
+      "expectations": [
+        "查询了 /faultsub/snapshot",
+        "按设备区分列出故障及类型含义",
+        "区分了活跃故障（snapshot）与历史事件（events）"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "帮我订阅掉卡和 HBM UCE 的故障通知",
+      "expected_output": "确认用户意图后注册 poll 订阅（agent 无法接收 webhook），报告订阅 id 并告知管理与删除方式",
+      "files": [],
+      "expectations": [
+        "执行了 POST /faultsub/subscriptions 且 delivery 为 poll",
+        "订阅过滤条件包含 card_drop 和 hbm_uce",
+        "向用户报告了返回的订阅 id",
+        "说明了如何删除订阅（DELETE /faultsub/subscriptions/{id}）"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "过去一天这台机器出过什么 NPU 故障？",
+      "expected_output": "查询 /faultsub/events 并带正确的 since 参数（RFC3339，24 小时前），汇总故障类型、涉及设备与恢复状态",
+      "files": [],
+      "expectations": [
+        "执行了 /faultsub/events 且 since 参数为合法 RFC3339 格式",
+        "按故障类型或设备汇总事件",
+        "标注了哪些已恢复（recovered=true）哪些仍活跃"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "catmonitor 的 19321 端口连不上，直接帮我看看 NPU 有没有故障",
+      "expected_output": "判断 faultsub 未启用，退化为用 catmonitor collect 查 NPU 关键指标（card_drop/health_status/error_code 等）做一次现状检查，并说明这是指标快照而非故障事件历史",
+      "files": [],
+      "expectations": [
+        "没有编造 faultsub 查询结果",
+        "说明了端口不通的原因（faultsub 默认关闭）与开启方法",
+        "用 collect 的 NPU 指标做了替代的现状检查",
+        "明确区分了指标现状与故障事件历史的差别"
+      ]
+    }
+  ]
+}

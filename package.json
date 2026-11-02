@@ -1,0 +1,28 @@
+{
+  "name": "catmonitor-skills",
+  "version": "0.1.0",
+  "description": "CATMonitor Agent Skills installer (health / metrics / faults) for Claude Code, OpenCode and other Agent Skills compatible agents",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ggboom12138/CATMonitor.git"
+  },
+  "bin": {
+    "catmonitor-skills": "scripts/skills-cli.js"
+  },
+  "files": [
+    "skills/",
+    "scripts/skills-cli.js"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "keywords": [
+    "catmonitor",
+    "agent-skills",
+    "claude",
+    "opencode",
+    "monitoring",
+    "npu"
+  ]
+}

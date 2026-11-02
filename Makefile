@@ -3,7 +3,8 @@
 	test-stress-race test-stress-e2e test-stress-build \
 	test-stress-container-e2e test-stress-web \
 	test-stress-build-cpu test-stress-build-npu test-stress-deployment \
-	test-stress-audit audit-stress-release install-stress-resources lint check format clean web dfee
+	test-stress-audit audit-stress-release install-stress-resources lint check format clean web dfee \
+	skills-install skills-lint
 
 GO ?= go
 BIN=bin/catmonitor
@@ -139,6 +140,16 @@ install: build
 	cp $(BIN) /usr/local/bin/catmonitor
 	mkdir -p /etc/catmonitor
 	cp configs/catmonitor.yaml /etc/catmonitor/catmonitor.yaml
+
+# Install Agent Skills (skills/catmonitor-*) for Claude Code. Default target
+# is the user-level ~/.claude/skills; override with DEST=... (e.g. a project's
+# .claude/skills). Preview only: bash scripts/install_skills.sh --list
+skills-install:
+	bash scripts/install_skills.sh --dest "$(if $(DEST),$(DEST),$(HOME)/.claude/skills)"
+
+# Validate Agent Skills SKILL.md frontmatter (same check as pre-commit).
+skills-lint:
+	python3 scripts/lint_skills.py
 
 # Install only reusable deployment resources. Node-specific configuration and
 # NPU device mappings are generated explicitly by generate_stress_deployment.sh.

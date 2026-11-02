@@ -1,0 +1,72 @@
+{
+  "skill_name": "catmonitor-metrics",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "查一下这台服务器 NPU 的温度",
+      "expected_output": "前置检查后执行 catmonitor collect -o json，过滤 component=npu 且 name=temperature 的行，按 npu_id 逐卡列出温度值",
+      "files": [],
+      "expectations": [
+        "执行了 command -v catmonitor 前置检查",
+        "执行了 catmonitor collect -o json",
+        "正确解析 JSONL（逐行，而非当作 JSON 数组）",
+        "结果按 npu_id 区分各卡并带单位"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "现在 CPU 和内存使用情况怎么样？",
+      "expected_output": "执行单次采集，展示 cpu.usage、cpu.load_average、memory.usage 等关键指标",
+      "files": [],
+      "expectations": [
+        "执行了 catmonitor collect -o json 或等价命令",
+        "报告包含 CPU 使用率与内存使用率",
+        "数值与单位均来自命令输出，未编造"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "这台机器能监控哪些东西？",
+      "expected_output": "执行 catmonitor list 展示 7 个采集器，并概述各部件可查的代表性指标",
+      "files": [],
+      "expectations": [
+        "执行了 catmonitor list",
+        "列出了 cpu/memory/disk/gpu/npu/network/chassis 部件",
+        "给出了各部件代表性指标示例"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "磁盘空间还剩多少？",
+      "expected_output": "执行采集并过滤 disk.space_usage，按 mount_point 逐挂载点展示使用率",
+      "files": [],
+      "expectations": [
+        "执行了 catmonitor collect -o json",
+        "按挂载点区分展示各文件系统使用率",
+        "对接近阈值的挂载点给出提示（如有）"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "用 catmonitor collect --component npu 只采集 NPU 指标",
+      "expected_output": "指出 --component flag 未实现（历史文档误列），改用全量采集后过滤，或说明可通过配置调整",
+      "files": [],
+      "expectations": [
+        "没有盲目执行 catmonitor collect --component npu",
+        "明确说明该 flag 未实现",
+        "给出了正确的替代方案（全量采集 + 过滤）"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "看看 NPU 温度过去一段时间的趋势",
+      "expected_output": "判断需要历史数据，检查 snapshot 目录是否存在 snapshot_npu.json，读取 history 字段的 npu_temperature 序列；若 daemon/snapshot 未开启则说明并退化为当前值",
+      "files": [],
+      "expectations": [
+        "没有声称 collect 能给出历史趋势",
+        "尝试读取 snapshot_npu.json 的 history 字段或说明数据源不可用",
+        "说明了趋势数据需要 daemon + snapshot.enabled"
+      ]
+    }
+  ]
+}

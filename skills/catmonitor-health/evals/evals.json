@@ -1,0 +1,63 @@
+{
+  "skill_name": "catmonitor-health",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我体检一下这台服务器",
+      "expected_output": "前置检查 catmonitor 存在与版本后，执行 catmonitor health -o json，解析 HealthScore，生成包含总分、等级、逐部件扣分明细和诊断建议的巡检报告",
+      "files": [],
+      "expectations": [
+        "执行了 command -v catmonitor 或 catmonitor version 前置检查",
+        "执行了 catmonitor health -o json（显式 -o json 而非默认 table）",
+        "报告包含健康总分与等级",
+        "报告包含各部件得分与扣分明细（如有）",
+        "对扣分规则给出了解释或建议"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "这台机器健康分为什么这么低？",
+      "expected_output": "执行健康检查并重点解读 deductions，定位扣分最多的部件和规则，按严重程度排序给出建议",
+      "files": [],
+      "expectations": [
+        "执行了 catmonitor health -o json",
+        "逐条列出了触发的扣分规则及扣分值",
+        "解释了规则语义（如 UCE、SMART failed、card_drop 的含义）",
+        "按严重程度给出了处理建议"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "看看这台服务器的 CPU 和内存健康状况",
+      "expected_output": "执行健康检查，在报告中重点解读 cpu 与 memory 部件的得分和扣分",
+      "files": [],
+      "expectations": [
+        "执行了 catmonitor health -o json",
+        "报告至少涵盖 cpu 和 memory 部件",
+        "没有编造数据，所有数字来自命令输出"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "生成一份巡检报告存到 /tmp/health_report.md",
+      "expected_output": "执行健康检查并把 Markdown 巡检报告写入指定路径",
+      "files": [],
+      "expectations": [
+        "执行了 catmonitor health -o json",
+        "将报告写入 /tmp/health_report.md",
+        "报告结构完整（总分/等级/部件明细/结论）"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "服务器上没有装 catmonitor，用别的命令帮我看看健康状态",
+      "expected_output": "不冒充本技能执行，明确告知需要安装 CATMonitor Go 版；可建议安装方式但不假装已执行健康检查",
+      "files": [],
+      "expectations": [
+        "做了 command -v catmonitor 前置检查并发现缺失",
+        "没有编造 CATMonitor 健康检查结果",
+        "给出了安装指引或明确说明本技能不可用"
+      ]
+    }
+  ]
+}

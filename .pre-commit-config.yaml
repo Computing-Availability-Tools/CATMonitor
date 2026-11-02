@@ -56,6 +56,13 @@ repos:
         files: '\.go$'
         exclude: 'third_party/.*'
 
+      - id: lint-skills
+        name: lint-skills (Agent Skills SKILL.md frontmatter)
+        entry: python3 scripts/lint_skills.py
+        language: system
+        pass_filenames: false
+        files: '^skills/.*\.md$'
+
       - id: go-vet
         name: go vet (static analysis)
         entry: go vet ./...

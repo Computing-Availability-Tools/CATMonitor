@@ -31,6 +31,7 @@ CATMonitor 是 CAT (Computing Availability Tools) 系列软件之一，用于采
 - **来源层架构**：`internal/source/`（15 包）抽象数据获取与解析，采集器不直接读文件/执行命令，无硬件时优雅降级
 - **跨平台**：Linux (x86_64 / arm64) / Windows (x86_64)，构建标签隔离平台代码；纯 Go 构建无架构限制，Linux/arm64 可原生构建运行（NPU DCMI 经 `-tags dcmi` 在 arm64 原生编译，容器化镜像已提供 arm64 制品）
 - **易扩展**：新增部件采集器只需实现统一接口并注册，核心代码零修改
+- **Agent Skills**：内置面向 AI Agent（Claude Code 等）的只读技能包 [`skills/`](skills/README.md)——健康巡检 `catmonitor-health` / 指标查询 `catmonitor-metrics` / NPU 故障事件 `catmonitor-faults`，`make skills-install` 一键安装，或 `npx catmonitor-skills` 在线安装
 
 > 各特性功能规格见 [SPEC.md](SPEC.md)，各特性的设计与规格见对应 `features/<feature>/*_SPEC.md`。
 
@@ -122,6 +123,7 @@ catmonitor stress cancel --job JOB_ID
 | [使用手册](docs/User_Manual.md) | 构建、安装、配置、命令、Web/dfee/exporter 用法与示例 |
 | [SPEC.md](SPEC.md) | 功能规格说明书（不含技术细节） |
 | [DESIGN.md](DESIGN.md) | 架构与模块设计 |
+| [Agent Skills](skills/README.md) | 面向 AI Agent 的技能包（清单、安装、编写规范） |
 | [docs/CATMonitor_indi_list.md](docs/CATMonitor_indi_list.md) | 采集指标清单（216 项） |
 | [docs/test_report.md](docs/test_report.md) | v0.3.6 真机测试报告（Ascend 910B4 / linux/arm64 端到端）+ v0.3.5/V1 历史报告 |
 | [docker/README.md](docker/README.md) | 三类 Control、可选 Stress workload、Compose 与手工部署入口 |
@@ -154,6 +156,7 @@ CATMonitor/
 │   ├── faultsub/            #   故障订阅推送（FaultStorage + HTTP Webhook + REST）
 │   └── stragglerout/        #   落后节点 KPI 文件输出（StragglerStorage + KPIWriter）
 ├── configs/                 # 默认配置（catmonitor.yaml + metrics.yaml）
+├── skills/                  # Agent Skills（catmonitor-health/metrics/faults，AI Agent 技能包）
 ├── docker/                  # 容器化（Generic/GPU/NPU Control + CPU/NPU workload + Compose/手工指南）
 ├── docs/                    # 文档（指标清单 / 使用手册 / 测试报告）
 ├── tests/ scripts/          # 测试框架与数据 / 安装脚本
